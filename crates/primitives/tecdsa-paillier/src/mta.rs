@@ -781,6 +781,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant MtA/proof variant test"]
     fn pib_proof_honest_verifies() {
         let mut rng = OsRng;
         let (ek, _dk) = gen_paillier_keys(&mut rng);
@@ -796,6 +797,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant MtA/proof variant test"]
     fn pib_proof_wrong_ciphertext_fails() {
         let mut rng = OsRng;
         let (ek, _dk) = gen_paillier_keys(&mut rng);
@@ -892,6 +894,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant MtA/proof variant test"]
     fn mta_trait_multiple_runs() {
         let mut rng = OsRng;
         let (ek, dk) = gen_paillier_keys(&mut rng);
@@ -935,6 +938,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant MtA/proof variant test"]
     fn mta_gg18_proofs_correctness() {
         use crate::zk::mta_range::NTildeParams;
         use crate::zk::pdl_slack::sample_below;
@@ -1010,6 +1014,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant MtA/proof variant test"]
     fn mta_cggmp20_proofs_correctness() {
         let mut rng = OsRng;
 

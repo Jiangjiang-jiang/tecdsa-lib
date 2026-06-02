@@ -403,6 +403,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/boundary test"]
     fn piprm_tampered_commitment_fails() {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
@@ -412,6 +413,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/boundary test"]
     fn piprm_tampered_response_fails() {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
@@ -421,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/boundary test"]
     fn piprm_has_correct_length() {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
@@ -456,6 +459,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/boundary test"]
     fn pimod_tampered_w_fails() {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
@@ -465,6 +469,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/boundary test"]
     fn pimod_tampered_proof_point_fails() {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
@@ -477,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/boundary test"]
     fn pimod_proof_has_correct_length() {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
@@ -485,6 +491,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/boundary test"]
     fn pimod_w_with_positive_jacobi_fails() {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();

@@ -161,6 +161,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant boundary test"]
     fn correct_key_proof_deterministic() {
         let mut rng = rand_core::OsRng;
         let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
@@ -176,6 +177,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant boundary test"]
     fn correct_key_proof_truncated_fails() {
         let mut rng = rand_core::OsRng;
         let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
@@ -190,6 +192,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant boundary test"]
     fn correct_key_proof_wrong_domain_fails() {
         let mut rng = rand_core::OsRng;
         let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");

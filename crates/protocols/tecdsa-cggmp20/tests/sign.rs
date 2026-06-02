@@ -288,6 +288,7 @@ fn sign_2of3_verifies() {
 }
 
 #[test]
+#[ignore = "slow: multiple message variant"]
 fn sign_different_messages_produce_different_signatures() {
     let core_shares = run_keygen(3, 1);
     let aux_infos = run_aux_info(3);

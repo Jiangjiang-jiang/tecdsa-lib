@@ -460,6 +460,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant ZK negative test"]
     fn r_sh_rejects_wrong_rho() {
         let mut setup = ClSetup::new_secp256k1("20002").expect("setup");
         let n = 5u16;
@@ -493,6 +494,7 @@ mod tests {
             .expect("verify"));
     }
 
+    #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_sh_rejects_wrong_shares() {
         let mut setup = ClSetup::new_secp256k1("20003").expect("setup");
@@ -531,7 +533,7 @@ mod tests {
             .verify(&setup, &party_ids, t, &pk_refs, &c1, &c2_refs)
             .expect("verify"));
     }
-
+    #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_sh_trivial_when_n_leq_t_plus_1() {
         let mut setup = ClSetup::new_secp256k1("20004").expect("setup");

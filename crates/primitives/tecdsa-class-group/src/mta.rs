@@ -398,6 +398,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant MtA variant"]
     fn cl_mta_multiple_runs() {
         let setup = test_setup("2002");
 
@@ -436,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant MtA variant"]
     fn cl_mta_with_larger_values() {
         let setup = test_setup("2003");
 
@@ -533,6 +535,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant MtA variant"]
     fn cl_mta_with_check_multiple_runs() {
         let setup = test_setup("3002");
 

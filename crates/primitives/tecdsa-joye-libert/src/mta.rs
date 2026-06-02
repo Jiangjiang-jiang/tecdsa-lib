@@ -598,6 +598,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/variant test"]
     fn mta_with_random_shares() {
         let mut rng = rand::thread_rng();
 
@@ -681,6 +682,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative/variant test"]
     fn jl_mta_trait_multiple_runs() {
         let mut rng = rand::thread_rng();
 

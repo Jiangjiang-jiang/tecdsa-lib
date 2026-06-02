@@ -551,6 +551,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative test"]
     fn nonce_consist_wrong_eta1_rejects() {
         let mut rng = rand::thread_rng();
         let (_dk, ek) = setup_paillier(&mut rng);

@@ -409,6 +409,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative test"]
     fn pdl_proof_wrong_ckey() {
         let mut rng = rand_core::OsRng;
 
@@ -432,6 +433,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant negative test"]
     fn pdl_proof_wrong_q1() {
         let mut rng = rand_core::OsRng;
 

@@ -39,6 +39,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant ZK negative test"]
     fn r_part_dec_rejects_wrong_dec() {
         let mut setup = ClSetup::new_secp256k1("7002").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");

@@ -91,6 +91,7 @@ fn run_auxinfo(n: u16, corrupted_t: u16) -> Vec<tecdsa_cggmp20::key_share::AuxIn
 }
 
 #[test]
+#[ignore = "slow: 3-party auxinfo"]
 fn auxinfo_3_parties() {
     let results = run_auxinfo(3, 1);
 

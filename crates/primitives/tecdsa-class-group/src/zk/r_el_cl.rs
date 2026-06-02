@@ -299,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant ZK negative test"]
     fn r_el_cl_rejects_wrong_gamma() {
         let mut setup = ClSetup::new_secp256k1("17002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");

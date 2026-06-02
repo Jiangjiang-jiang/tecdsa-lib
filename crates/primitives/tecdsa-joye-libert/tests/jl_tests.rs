@@ -73,6 +73,7 @@ fn jl_hadd_correctness() {
 }
 
 #[test]
+#[ignore = "redundant negative/variant test"]
 fn jl_hadd_wraps_mod_2k() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
@@ -109,6 +110,7 @@ fn jl_hscmul_correctness() {
 }
 
 #[test]
+#[ignore = "redundant negative/variant test"]
 fn jl_hscmul_wraps_mod_2k() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();

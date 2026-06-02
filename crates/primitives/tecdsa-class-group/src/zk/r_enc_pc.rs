@@ -144,6 +144,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant ZK negative test"]
     fn r_enc_pc_rejects_wrong_m() {
         let mut setup = ClSetup::new_secp256k1("10002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");

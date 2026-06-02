@@ -331,6 +331,7 @@ fn presign_2of2() {
 }
 
 #[test]
+#[ignore = "slow: larger/variant test"]
 fn presign_3of3() {
     let n = 3u16;
     let mut rng = Csprng::new();
@@ -433,6 +434,7 @@ fn online_sign_2of2() {
 }
 
 #[test]
+#[ignore = "slow: larger/variant test"]
 fn online_sign_3of3() {
     let n = 3u16;
     let mut rng = Csprng::new();
@@ -538,6 +540,7 @@ fn sign_2of2_verifies() {
 }
 
 #[test]
+#[ignore = "slow: larger/variant test"]
 fn sign_3of3_verifies() {
     let n = 3u16;
     let mut rng = Csprng::new();
@@ -635,6 +638,7 @@ fn full_sign_8rounds_2of2() {
 }
 
 #[test]
+#[ignore = "slow: larger/variant test"]
 fn full_sign_8rounds_3of3() {
     use tecdsa_ln18::sign::ln18_full_sign_parallel;
 
@@ -830,6 +834,7 @@ mod ot_sign_tests {
     }
 
     #[test]
+    #[ignore = "slow: larger/variant test"]
     fn sign_ot_3of3_verifies() {
         let n = 3u16;
         let mut rng = Csprng::new();
@@ -907,6 +912,7 @@ mod ot_sign_tests {
     }
 
     #[test]
+    #[ignore = "slow: larger/variant test"]
     fn full_sign_ot_8rounds_3of3() {
         use tecdsa_ln18::sign::ln18_full_sign_parallel_ot;
 

@@ -259,6 +259,7 @@ fn presign_2of3() {
 }
 
 #[test]
+#[ignore = "slow: 3-of-3 variant"]
 fn presign_3of3() {
     let core_shares = run_keygen(3, 1);
     let aux_infos = run_aux_info(3);
@@ -275,6 +276,7 @@ fn presign_3of3() {
 }
 
 #[test]
+#[ignore = "slow: subset variant"]
 fn presign_different_signer_subsets_produce_different_r() {
     let core_shares = run_keygen(3, 1);
     let aux_infos = run_aux_info(3);

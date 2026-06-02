@@ -302,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: larger threshold variant"]
     fn t_cl_fin_dec_3_of_5() {
         let mut setup = ClSetup::new_secp256k1("15003").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");

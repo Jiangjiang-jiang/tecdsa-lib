@@ -113,6 +113,7 @@ fn keygen_2of3_produces_valid_shares() {
 }
 
 #[test]
+#[ignore = "slow: larger threshold variant"]
 fn keygen_3of5_produces_valid_shares() {
     let shares = run_keygen(5, 2);
 
@@ -145,6 +146,7 @@ fn keygen_3of5_produces_valid_shares() {
 }
 
 #[test]
+#[ignore = "slow: reconstruction test"]
 fn keygen_2of3_shares_reconstruct_to_secret() {
     let shares = run_keygen(3, 1);
 

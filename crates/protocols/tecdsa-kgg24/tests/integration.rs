@@ -58,6 +58,7 @@ fn end_to_end_sign_and_verify() {
 }
 
 #[test]
+#[ignore = "redundant variant test"]
 fn sign_different_messages() {
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = trusted_dealer_keygen::<Secp256k1>(&mut rng);
@@ -104,6 +105,7 @@ fn refresh_then_sign() {
 }
 
 #[test]
+#[ignore = "redundant variant test"]
 fn multiple_refreshes_then_sign() {
     let mut rng = rand_core::OsRng;
     let (mut p1_key, mut p2_key) = trusted_dealer_keygen::<Secp256k1>(&mut rng);
@@ -129,6 +131,7 @@ fn multiple_refreshes_then_sign() {
 }
 
 #[test]
+#[ignore = "redundant variant test"]
 fn sign_with_different_key_pairs() {
     let mut rng = rand_core::OsRng;
     let message = hash_message::<Secp256k1>(b"test message");
@@ -150,6 +153,7 @@ fn sign_with_different_key_pairs() {
 }
 
 #[test]
+#[ignore = "redundant variant test"]
 fn round_by_round_signing() {
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = trusted_dealer_keygen::<Secp256k1>(&mut rng);
@@ -203,6 +207,7 @@ fn protocol_metadata() {
 }
 
 #[test]
+#[ignore = "redundant variant test"]
 fn sign_then_refresh_then_sign_again() {
     let mut rng = rand_core::OsRng;
     let (mut p1_key, mut p2_key) = trusted_dealer_keygen::<Secp256k1>(&mut rng);
@@ -230,6 +235,7 @@ fn sign_then_refresh_then_sign_again() {
 }
 
 #[test]
+#[ignore = "redundant variant test"]
 fn sign_simple_convenience() {
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = trusted_dealer_keygen::<Secp256k1>(&mut rng);

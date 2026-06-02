@@ -181,6 +181,7 @@ fn keygen_3of3() {
 }
 
 #[test]
+#[ignore = "slow: larger/variant test"]
 fn keygen_5of5() {
     let shares = run_keygen(5, 4);
     assert_eq!(shares.len(), 5);

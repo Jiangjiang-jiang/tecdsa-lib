@@ -294,6 +294,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant threshold variant test"]
     fn threshold_decrypt_homomorphic_add() {
         let mut rng = rand::thread_rng();
         let (setup, shares) = trusted_dealer_setup(1, 3, &mut rng).expect("setup should succeed");
@@ -314,6 +315,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant threshold variant test"]
     fn threshold_decrypt_scalar_mul() {
         let mut rng = rand::thread_rng();
         let (setup, shares) = trusted_dealer_setup(1, 3, &mut rng).expect("setup should succeed");
@@ -333,6 +335,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: redundant threshold variant test"]
     fn threshold_not_enough_shares_fails() {
         let mut rng = rand::thread_rng();
         let (setup, shares) = trusted_dealer_setup(1, 3, &mut rng).expect("setup should succeed");

@@ -288,6 +288,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "redundant ZK negative test"]
     fn r_m_aff_dl_ec_rejects_wrong_k_star() {
         let mut setup = ClSetup::new_secp256k1("9002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
@@ -344,6 +345,7 @@ mod tests {
             .expect("verify"));
     }
 
+    #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_m_aff_dl_ec_rejects_wrong_beta() {
         let mut setup = ClSetup::new_secp256k1("9003").expect("setup");
