@@ -449,9 +449,9 @@ impl Jtx25RobustPresignMachine {
                 .pk_from_qfi(
                     &setup
                         .pk_element(&individual_cl_pks[my_idx])
-                        .map_err(|e| Jtx25Error::ClError(e))?,
+                        .map_err(Jtx25Error::ClError)?,
                 )
-                .map_err(|e| Jtx25Error::ClError(e))?,
+                .map_err(Jtx25Error::ClError)?,
         );
         let drg_out = drg_gen_with_secret(
             &mut setup,
@@ -914,7 +914,7 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         .drg_commitments
                         .iter()
                         .map(|bytes| {
-                            point_from_bytes(bytes, "drg_commit").map_err(|e| TecdsaError::Other(e))
+                            point_from_bytes(bytes, "drg_commit").map_err(TecdsaError::Other)
                         })
                         .collect::<Result<_, _>>()?;
 
