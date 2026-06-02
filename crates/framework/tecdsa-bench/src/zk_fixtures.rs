@@ -50,9 +50,7 @@ pub fn cl_setup_with_keys() -> (
 pub fn jl_keys() -> (
     tecdsa_joye_libert::kgen::JlPublicKey,
     tecdsa_joye_libert::kgen::JlSecretKey,
+    num_bigint::BigUint,
 ) {
-    tecdsa_joye_libert::kgen::generate_keypair(
-        tecdsa_joye_libert::kgen::SecurityLevel::Sec128,
-        &mut OsRng,
-    )
+    tecdsa_joye_libert::kgen::generate_keypair_with_qnr(256, 32, &mut OsRng)
 }

@@ -6,6 +6,11 @@ use k256::Secp256k1;
 use rand_core::OsRng;
 use tecdsa_bench::zk_fixtures::*;
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::backend::Integer;
+
+fn sample_below_int(bound: &Integer) -> Integer {
+    bound.random_below_ref(&mut OsRng)
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // 1. Curve ZK (DlogProof, DdhProof, EgexpProof, ProdProof, ReProof)
@@ -286,7 +291,122 @@ fn class_group_zk(c: &mut Criterion) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// 4. eVRF ZK (DLEQ)
+// 4. Paillier self-authored ZK
+// ═══════════════════════════════════════════════════════════════════════
+
+fn paillier_zk(c: &mut Criterion) {
+    let mut g = c.benchmark_group("zk/paillier");
+    g.sample_size(10);
+
+    let (dk, ek) = paillier_keys();
+
+    // NICorrectKeyProof
+    {
+        use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
+        let proof = NICorrectKeyProof::prove(&dk, b"bench");
+        g.bench_function("correct_key/prove", |b| {
+            b.iter(|| NICorrectKeyProof::prove(&dk, b"bench"))
+        });
+        g.bench_function("correct_key/verify", |b| {
+            b.iter(|| proof.verify(&ek, b"bench"))
+        });
+    }
+
+    // HomoElGamalProof
+    {
+        use tecdsa_paillier::zk::homo_elgamal::{
+            HomoElGamalProof, HomoElGamalStatement, HomoElGamalWitness,
+        };
+        let x = random_scalar();
+        let r = random_scalar();
+        let gen = C::generator();
+        let h = gen * random_scalar();
+        let y = gen * x;
+        let d = gen * r;
+        let e_pt = h * r + gen * x;
+        let stmt = HomoElGamalStatement::<C> {
+            G: gen,
+            H: h,
+            Y: y,
+            D: d,
+            E: e_pt,
+        };
+        let wit = HomoElGamalWitness::<C> { x, r };
+        let proof = HomoElGamalProof::prove(&wit, &stmt, &mut OsRng);
+        g.bench_function("homo_elgamal/prove", |b| {
+            b.iter(|| HomoElGamalProof::prove(&wit, &stmt, &mut OsRng))
+        });
+        g.bench_function("homo_elgamal/verify", |b| b.iter(|| proof.verify(&stmt)));
+    }
+
+    // PiEqProof
+    {
+        use tecdsa_paillier::zk::pi_eq::PiEqProof;
+        let x1 = random_scalar();
+        let x1_bytes = scalar_to_bytes(&x1);
+        let x1_point = C::generator() * x1;
+        let q_int = tecdsa_paillier::conv::group_order_integer::<C>();
+        let t = sample_below_int(&q_int);
+        let x_hat_1 = Integer::from_bytes_msf(&x1_bytes) + &t * &q_int;
+        let (ct, nonce) = paillier_encrypt(&ek, &x_hat_1);
+        let proof = PiEqProof::<C>::prove(
+            b"bench", &ek, &dk, &ct, &x1_point, &x_hat_1, &nonce, &mut OsRng,
+        );
+        g.bench_function("pi_eq/prove", |b| {
+            b.iter(|| {
+                PiEqProof::<C>::prove(
+                    b"bench", &ek, &dk, &ct, &x1_point, &x_hat_1, &nonce, &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("pi_eq/verify", |b| {
+            b.iter(|| proof.verify(b"bench", &ek, &ct, &x1_point))
+        });
+    }
+
+    g.finish();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 5. Joye-Libert ZK
+// ═══════════════════════════════════════════════════════════════════════
+
+fn joye_libert_zk(c: &mut Criterion) {
+    let mut g = c.benchmark_group("zk/joye_libert");
+    g.sample_size(10);
+
+    let (jl_pk, jl_sk, jl_x) = jl_keys();
+
+    // ZkJlEncProof
+    {
+        use num_bigint::BigUint;
+        use tecdsa_joye_libert::zk::zkjl_enc::ZkJlEncProof;
+        let m = BigUint::from(42u64);
+        let (ct, r) = tecdsa_joye_libert::enc_dec::encrypt(&jl_pk, &m, &mut OsRng);
+        let proof = ZkJlEncProof::prove(&jl_pk, &ct.c, &m, &r, jl_pk.k, &mut OsRng);
+        g.bench_function("zkjl_enc/prove", |b| {
+            b.iter(|| ZkJlEncProof::prove(&jl_pk, &ct.c, &m, &r, jl_pk.k, &mut OsRng))
+        });
+        g.bench_function("zkjl_enc/verify", |b| {
+            b.iter(|| proof.verify(&jl_pk, &ct.c))
+        });
+    }
+
+    // ZkJlModProof
+    {
+        use tecdsa_joye_libert::zk::zkjlmod::ZkJlModProof;
+        let proof = ZkJlModProof::prove(&jl_pk, &jl_sk, &jl_x, &mut OsRng);
+        g.bench_function("zkjlmod/prove", |b| {
+            b.iter(|| ZkJlModProof::prove(&jl_pk, &jl_sk, &jl_x, &mut OsRng))
+        });
+        g.bench_function("zkjlmod/verify", |b| b.iter(|| proof.verify()));
+    }
+
+    g.finish();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 6. eVRF ZK (DLEQ)
 // ═══════════════════════════════════════════════════════════════════════
 
 fn evrf_zk(c: &mut Criterion) {
@@ -312,5 +432,13 @@ fn evrf_zk(c: &mut Criterion) {
 // Entry point
 // ═══════════════════════════════════════════════════════════════════════
 
-criterion_group!(benches, curve_zk, pedersen_mod_zk, class_group_zk, evrf_zk,);
+criterion_group!(
+    benches,
+    curve_zk,
+    pedersen_mod_zk,
+    class_group_zk,
+    paillier_zk,
+    joye_libert_zk,
+    evrf_zk,
+);
 criterion_main!(benches);
