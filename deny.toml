@@ -1,6 +1,9 @@
 [advisories]
 vulnerability = "deny"
-unmaintained = "warn"
+# `unmaintained` is now a scope selector (all|workspace|transitive|none),
+# not a lint level. "workspace" only flags our own crates, so a transitive
+# unmaintained dependency won't block PRs. Switch to "all" for a stricter audit.
+unmaintained = "workspace"
 
 [licenses]
 unlicensed = "deny"
@@ -15,9 +18,42 @@ allow = [
     "0BSD",
 ]
 
+# One exception per crate: the schema uses singular `crate`, not `crates = [...]`.
 [[licenses.exceptions]]
+crate = "bicycl-rs"
 allow = ["GPL-3.0-or-later"]
-crates = ["bicycl-rs", "bicycl-rs-sys", "tecdsa-class-group", "tecdsa-wmy23"]
+
+[[licenses.exceptions]]
+crate = "bicycl-rs-sys"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "tecdsa-class-group"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "tecdsa-wmy23"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "tecdsa-tx25"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "tecdsa-jtx25"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "tecdsa-wmc24"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "tecdsa-llz25"
+allow = ["GPL-3.0-or-later"]
+
+[[licenses.exceptions]]
+crate = "tecdsa-trout"
+allow = ["GPL-3.0-or-later"]
 
 [bans]
 multiple-versions = "warn"
