@@ -465,7 +465,7 @@ fn wire_lin17_keygen() {
             .expect("Lin17 P2 construction");
 
     let machines = vec![(p1_id, p1), (p2_id, p2)];
-    let results = WireOrchestrator::new(machines, 10).run();
+    let results = WireOrchestrator::new(machines, 20).run();
     assert_all_ok(&results, "Lin17");
 }
 
@@ -490,7 +490,7 @@ fn wire_kgg24_keygen() {
             .expect("KGG24 P2 construction");
 
     let machines = vec![(p1_id, p1), (p2_id, p2)];
-    let results = WireOrchestrator::new(machines, 10).run();
+    let results = WireOrchestrator::new(machines, 20).run();
     assert_all_ok(&results, "KGG24");
 }
 
@@ -515,7 +515,7 @@ fn wire_xal21_keygen() {
             .expect("XAL+21 P2 construction");
 
     let machines = vec![(p1_id, p1), (p2_id, p2)];
-    let results = WireOrchestrator::new(machines, 10).run();
+    let results = WireOrchestrator::new(machines, 20).run();
     assert_all_ok(&results, "XAL+21");
 }
 
@@ -540,6 +540,6 @@ fn wire_abc24_keygen() {
             .expect("ABC+24 P2 construction");
 
     let machines = vec![(p1_id, p1), (p2_id, p2)];
-    let results = WireOrchestrator::new(machines, 10).run();
+    let results = WireOrchestrator::new(machines, 20).run();
     assert_all_ok(&results, "ABC+24");
 }
