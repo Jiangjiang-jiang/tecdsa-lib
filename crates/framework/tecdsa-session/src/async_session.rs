@@ -71,6 +71,12 @@ where
     /// exhausted), or exceeding the maximum round count.
     pub async fn run(mut self) -> Result<M::Output, SessionError> {
         loop {
+            // Encode + send with retry
+            let encoded = self.runner.step_encode()?;
+            for (recipient, bytes) in encoded {
+                self.send_with_retry(&recipient, bytes).await?;
+            }
+
             if self.runner.is_done() {
                 return self.runner.finish();
             }
@@ -79,12 +85,6 @@ where
                 return Err(SessionError::MaxRoundsExceeded(
                     self.runner.config.max_rounds,
                 ));
-            }
-
-            // Encode + send with retry
-            let encoded = self.runner.step_encode()?;
-            for (recipient, bytes) in encoded {
-                self.send_with_retry(&recipient, bytes).await?;
             }
 
             // Receive with round-level timeout + decode

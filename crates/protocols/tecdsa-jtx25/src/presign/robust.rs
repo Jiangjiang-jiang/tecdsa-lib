@@ -527,8 +527,7 @@ impl Jtx25RobustPresignMachine {
                         .y_element
                         .to_bytes(ctx)
                         .map_err(|e| Jtx25Error::ClError(e.into()))?;
-                    BicyclQfi::from_bytes(ctx, &bytes)
-                        .map_err(|e| Jtx25Error::ClError(e.into()))?
+                    BicyclQfi::from_bytes(ctx, &bytes).map_err(|e| Jtx25Error::ClError(e.into()))?
                 },
                 drg_my_share: own_share,
             },
@@ -915,8 +914,7 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         .drg_commitments
                         .iter()
                         .map(|bytes| {
-                            point_from_bytes(bytes, "drg_commit")
-                                .map_err(|e| TecdsaError::Other(e))
+                            point_from_bytes(bytes, "drg_commit").map_err(|e| TecdsaError::Other(e))
                         })
                         .collect::<Result<_, _>>()?;
 
@@ -945,7 +943,9 @@ impl StateMachine for Jtx25RobustPresignMachine {
                     let my_share = PedersenVssShare {
                         index: (my_idx + 1) as u16,
                         value: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(val_bytes),
-                        randomness: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(rand_bytes),
+                        randomness: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
+                            rand_bytes,
+                        ),
                     };
 
                     // Verify R_enc proof for phi_bar_i.
@@ -964,7 +964,8 @@ impl StateMachine for Jtx25RobustPresignMachine {
                     let from_cl_pk = ClPublicKey::from_raw(
                         self.setup
                             .pk_from_qfi(
-                                &self.setup
+                                &self
+                                    .setup
                                     .pk_element(&self.individual_cl_pks[from_idx])
                                     .map_err(|e| TecdsaError::Other(format!("pk_elt: {e}")))?,
                             )
@@ -1099,11 +1100,9 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         .drg_comb_y
                         .to_qfi(&self.setup)
                         .map_err(|e| TecdsaError::Other(format!("drg_comb_y from {from}: {e}")))?;
-                    let pc_dl_ok = pi_pc_dl
-                        .verify(&self.setup, &drg_comb_y)
-                        .map_err(|e| {
-                            TecdsaError::Other(format!("R_PC-DL verify from {from}: {e}"))
-                        })?;
+                    let pc_dl_ok = pi_pc_dl.verify(&self.setup, &drg_comb_y).map_err(|e| {
+                        TecdsaError::Other(format!("R_PC-DL verify from {from}: {e}"))
+                    })?;
 
                     if !dl_cl_x_ok || !dl_cl_k_ok || !pc_dl_ok {
                         self.round = PresignRobustRound::Round2(state);

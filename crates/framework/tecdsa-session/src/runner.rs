@@ -142,7 +142,8 @@ where
             }
 
             let current = self.machine.current_round();
-            if header.round == current {
+            let is_two_party_p2p = self.parties.len() == 2 && header.to != 0xFFFF;
+            if header.round == current || (is_two_party_p2p && header.round > current) {
                 self.machine
                     .handle(*from, msg)
                     .map_err(SessionError::Protocol)?;

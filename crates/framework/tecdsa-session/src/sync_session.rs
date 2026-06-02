@@ -65,15 +65,6 @@ where
     /// number of rounds is exceeded.
     pub fn run(mut self) -> Result<M::Output, SessionError> {
         loop {
-            if self.runner.is_done() {
-                return self.runner.finish();
-            }
-            if self.runner.current_round() >= self.runner.config.max_rounds {
-                return Err(SessionError::MaxRoundsExceeded(
-                    self.runner.config.max_rounds,
-                ));
-            }
-
             // Encode + send
             let encoded = self.runner.step_encode()?;
             for (recipient, bytes) in encoded {
@@ -85,6 +76,15 @@ where
                         self.transport.broadcast(self.my_id, bytes);
                     }
                 }
+            }
+
+            if self.runner.is_done() {
+                return self.runner.finish();
+            }
+            if self.runner.current_round() >= self.runner.config.max_rounds {
+                return Err(SessionError::MaxRoundsExceeded(
+                    self.runner.config.max_rounds,
+                ));
             }
 
             // Receive + decode
@@ -170,10 +170,6 @@ where
                 continue;
             }
             let runner = runners[i].as_mut().unwrap();
-            if runner.is_done() {
-                // Will be finished below after the receive phase.
-                continue;
-            }
             match runner.step_encode() {
                 Ok(encoded) => {
                     let my_id = all_parties[i];
@@ -201,7 +197,6 @@ where
             }
             let runner = runners[i].as_mut().unwrap();
             if runner.is_done() {
-                // Finish now.
                 let r = runners[i].take().unwrap();
                 results[i] = Some(r.finish());
                 continue;
@@ -220,8 +215,27 @@ where
             }
             let runner = runners[i].as_ref().unwrap();
             if runner.is_done() {
-                let r = runners[i].take().unwrap();
-                results[i] = Some(r.finish());
+                let runner = runners[i].as_mut().unwrap();
+                match runner.step_encode() {
+                    Ok(encoded) => {
+                        let my_id = all_parties[i];
+                        for (recipient, bytes) in encoded {
+                            match recipient {
+                                Recipient::Party(to) => {
+                                    network.send(my_id, to, bytes);
+                                }
+                                Recipient::Broadcast => {
+                                    network.broadcast(my_id, bytes);
+                                }
+                            }
+                        }
+                        let r = runners[i].take().unwrap();
+                        results[i] = Some(r.finish());
+                    }
+                    Err(e) => {
+                        results[i] = Some(Err(e));
+                    }
+                }
             }
         }
     }

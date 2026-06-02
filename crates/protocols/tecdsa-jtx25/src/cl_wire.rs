@@ -105,7 +105,6 @@ impl SerREncProof {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerRDlClProof {
     pub t1: SerializedQfi,
