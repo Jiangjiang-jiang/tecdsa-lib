@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+use tecdsa_protocol::{PhaseEligibility, PhaseMode, PhaseModes, ProtocolMetadata};
+
+pub const METADATA: ProtocolMetadata = ProtocolMetadata {
+    name: "GGN16",
+    version: "1.0",
+    primitive: "Threshold ECDSA",
+    signing_rounds_paper: 6,
+    signing_rounds_impl: 6,
+    security_model: "Malicious with dishonest majority (threshold-optimal, n = t+1)",
+    presign_rounds: 5,
+    online_sign_rounds: 1,
+    keygen_rounds: 2,
+    mta_variant: "Threshold Paillier (shared key)",
+    has_refresh: false,
+    phase_modes: PhaseModes {
+        keygen: PhaseMode::Interactive,
+        aux: PhaseMode::NotApplicable,
+        presign: PhaseMode::Interactive,
+        sign: PhaseMode::Interactive,
+        refresh: PhaseMode::NotApplicable,
+    },
+    main_table: PhaseEligibility {
+        keygen: true,
+        presign: true,
+        sign: true,
+    },
+    wire_table: PhaseEligibility {
+        keygen: true,
+        presign: true,
+        sign: true,
+    },
+};

@@ -1,0 +1,38 @@
+[package]
+name = "tecdsa-dkls23"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "DKLs23 threshold ECDSA protocol (OT/VOLE-based, 3 rounds)"
+
+[features]
+default = ["serde", "secp256k1"]
+serde = ["dep:serde"]
+secp256k1 = ["tecdsa-curve/secp256k1"]
+
+[dependencies]
+tecdsa-core.workspace = true
+tecdsa-bigint.workspace = true
+tecdsa-curve.workspace = true
+tecdsa-protocol.workspace = true
+tecdsa-vss.workspace = true
+tecdsa-ot.workspace = true
+tecdsa-commit.workspace = true
+k256.workspace = true
+elliptic-curve.workspace = true
+sha2.workspace = true
+rand_core.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+subtle.workspace = true
+serde = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+tecdsa-testkit.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

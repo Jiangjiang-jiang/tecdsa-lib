@@ -1,0 +1,72 @@
+[package]
+name = "tecdsa"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Threshold ECDSA library — public facade"
+
+[features]
+default = ["curve-secp256k1"]
+curve-secp256k1 = ["tecdsa-curve/secp256k1"]
+curve-secp256r1 = ["tecdsa-curve/secp256r1"]
+
+# --- MIT/Apache-2.0 protocols (no GPL dependencies) ---
+cggmp20 = ["dep:tecdsa-cggmp20"]
+dkls23 = ["dep:tecdsa-dkls23"]
+gg18 = ["dep:tecdsa-gg18"]
+ggn16 = ["dep:tecdsa-ggn16"]
+ln18 = ["dep:tecdsa-ln18"]
+xal23 = ["dep:tecdsa-xal23"]
+lin17 = ["dep:tecdsa-lin17"]
+kgg24 = ["dep:tecdsa-kgg24"]
+xal21 = ["dep:tecdsa-xal21"]
+xal21-paillier = ["xal21", "dep:tecdsa-paillier"]
+xal21-jl = ["xal21", "dep:tecdsa-joye-libert"]
+xal21-ot = ["xal21", "dep:tecdsa-ot"]
+abc24 = ["dep:tecdsa-abc24"]
+
+# --- GPL-3.0-or-later protocols (depend on tecdsa-class-group / bicycl-rs) ---
+# Enabling any of these features makes the binary GPL-3.0-or-later.
+wmy23-gpl = ["dep:tecdsa-wmy23"]
+tx25-gpl = ["dep:tecdsa-tx25"]
+jtx25-gpl = ["dep:tecdsa-jtx25"]
+wmc24-gpl = ["dep:tecdsa-wmc24"]
+llz25-gpl = ["dep:tecdsa-llz25"]
+trout-gpl = ["dep:tecdsa-trout"]
+xal21-cl-gpl = ["xal21", "dep:tecdsa-class-group"]
+
+[dependencies]
+tecdsa-core = { workspace = true }
+tecdsa-curve = { workspace = true }
+tecdsa-fs = { workspace = true }
+tecdsa-wire = { workspace = true }
+tecdsa-commit = { workspace = true }
+tecdsa-protocol = { workspace = true }
+tecdsa-vss = { workspace = true }
+tecdsa-bigint = { workspace = true }
+tecdsa-cggmp20 = { workspace = true, optional = true }
+tecdsa-dkls23 = { workspace = true, optional = true }
+tecdsa-gg18 = { workspace = true, optional = true }
+tecdsa-ggn16 = { workspace = true, optional = true }
+tecdsa-ln18 = { workspace = true, optional = true }
+tecdsa-wmy23 = { workspace = true, optional = true }
+tecdsa-tx25 = { workspace = true, optional = true }
+tecdsa-jtx25 = { workspace = true, optional = true }
+tecdsa-wmc24 = { workspace = true, optional = true }
+tecdsa-llz25 = { workspace = true, optional = true }
+tecdsa-trout = { workspace = true, optional = true }
+tecdsa-xal23 = { workspace = true, optional = true }
+tecdsa-lin17 = { workspace = true, optional = true }
+tecdsa-kgg24 = { workspace = true, optional = true }
+tecdsa-xal21 = { workspace = true, optional = true }
+tecdsa-paillier = { workspace = true, optional = true }
+tecdsa-class-group = { workspace = true, optional = true }
+tecdsa-joye-libert = { workspace = true, optional = true }
+tecdsa-ot = { workspace = true, optional = true }
+tecdsa-abc24 = { workspace = true, optional = true }
+tecdsa-session = { workspace = true }
+
+[lints]
+workspace = true

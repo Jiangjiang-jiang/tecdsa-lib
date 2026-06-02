@@ -1,0 +1,2 @@
+[env]
+RUSTFLAGS = { value = "-C overflow-checks=on", force = true }

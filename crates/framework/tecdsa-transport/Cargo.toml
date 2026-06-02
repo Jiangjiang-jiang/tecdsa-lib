@@ -1,0 +1,18 @@
+[package]
+name = "tecdsa-transport"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Transport trait and in-memory adapter for tecdsa"
+
+[dependencies]
+tecdsa-core = { workspace = true }
+tecdsa-protocol = { workspace = true }
+tecdsa-wire = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+
+[lints]
+workspace = true

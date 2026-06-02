@@ -1,0 +1,26 @@
+[package]
+name = "tecdsa-commit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hash and Pedersen-EC commitments for tecdsa"
+
+[dependencies]
+tecdsa-core = { workspace = true }
+tecdsa-curve = { workspace = true }
+elliptic-curve = { workspace = true }
+sha2 = { workspace = true }
+rand_core = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+k256 = { workspace = true }
+proptest = { workspace = true }
+sha2 = { workspace = true }
+hex = "0.4"
+
+[lints]
+workspace = true

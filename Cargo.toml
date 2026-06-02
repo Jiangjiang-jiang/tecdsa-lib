@@ -1,0 +1,150 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core/*",
+    "crates/primitives/*",
+    "crates/framework/*",
+    "crates/protocols/*",
+    "crates/tecdsa",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Jiangjiang-jiang/tecdsa-lib"
+
+[workspace.dependencies]
+# Curves
+k256 = { version = "0.14.0-rc", default-features = false, features = ["arithmetic", "serde", "expose-field"] }
+p256 = { version = "0.14.0-rc", default-features = false, features = ["arithmetic", "serde"] }
+elliptic-curve = { version = "0.14.0-rc", default-features = false, features = ["sec1"] }
+generic-ec = { version = "0.5", features = ["curve-secp256k1", "serde"] }
+
+# Big integers
+crypto-bigint = { version = "0.6", features = ["serde"] }
+num-bigint = { version = "0.4", features = ["serde"] }
+num-traits = "0.2"
+num-integer = "0.1"
+
+# Hashing
+sha2 = "0.10"
+sha3 = "0.10"
+digest = "0.10"
+hmac = "0.12"
+
+# Randomness
+rand_core = { version = "0.6", default-features = false }
+rand = "0.8"
+
+# Security
+zeroize = { version = "1", features = ["derive"] }
+subtle = "2.6"
+
+# Serialization
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = "1"
+bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+
+# Transcript
+merlin = "3"
+
+# Digest
+udigest = "0.2"
+
+# Errors
+thiserror = { version = "2", default-features = false }
+
+# Async (transport only)
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Testing
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+
+# Workspace crates — core
+tecdsa-core = { path = "crates/core/tecdsa-core", default-features = false }
+tecdsa-bigint = { path = "crates/core/tecdsa-bigint" }
+tecdsa-curve = { path = "crates/core/tecdsa-curve", default-features = false }
+# Workspace crates — primitives
+tecdsa-commit = { path = "crates/primitives/tecdsa-commit" }
+tecdsa-fs = { path = "crates/primitives/tecdsa-fs" }
+tecdsa-vss = { path = "crates/primitives/tecdsa-vss" }
+tecdsa-paillier = { path = "crates/primitives/tecdsa-paillier" }
+tecdsa-pedersen-mod = { path = "crates/primitives/tecdsa-pedersen-mod" }
+tecdsa-class-group = { path = "crates/primitives/tecdsa-class-group" }
+tecdsa-joye-libert = { path = "crates/primitives/tecdsa-joye-libert" }
+tecdsa-ot = { path = "crates/primitives/tecdsa-ot" }
+tecdsa-elgamal = { path = "crates/primitives/tecdsa-elgamal" }
+tecdsa-evrf = { path = "crates/primitives/tecdsa-evrf" }
+tecdsa-hd = { path = "crates/primitives/tecdsa-hd" }
+# Workspace crates — framework
+tecdsa-protocol = { path = "crates/framework/tecdsa-protocol", default-features = false }
+tecdsa-wire = { path = "crates/framework/tecdsa-wire" }
+tecdsa-transport = { path = "crates/framework/tecdsa-transport" }
+tecdsa-session = { path = "crates/framework/tecdsa-session" }
+tecdsa-testkit = { path = "crates/framework/tecdsa-testkit" }
+tecdsa-bench = { path = "crates/framework/tecdsa-bench" }
+# Workspace crates — protocols
+tecdsa-cggmp20 = { path = "crates/protocols/tecdsa-cggmp20" }
+tecdsa-dkls23 = { path = "crates/protocols/tecdsa-dkls23" }
+tecdsa-gg18 = { path = "crates/protocols/tecdsa-gg18" }
+tecdsa-ggn16 = { path = "crates/protocols/tecdsa-ggn16" }
+tecdsa-ln18 = { path = "crates/protocols/tecdsa-ln18" }
+tecdsa-wmy23 = { path = "crates/protocols/tecdsa-wmy23" }
+tecdsa-llz25 = { path = "crates/protocols/tecdsa-llz25" }
+tecdsa-tx25 = { path = "crates/protocols/tecdsa-tx25" }
+tecdsa-jtx25 = { path = "crates/protocols/tecdsa-jtx25" }
+tecdsa-wmc24 = { path = "crates/protocols/tecdsa-wmc24" }
+tecdsa-trout = { path = "crates/protocols/tecdsa-trout" }
+tecdsa-xal23 = { path = "crates/protocols/tecdsa-xal23" }
+tecdsa-lin17 = { path = "crates/protocols/tecdsa-lin17" }
+tecdsa-kgg24 = { path = "crates/protocols/tecdsa-kgg24" }
+tecdsa-xal21 = { path = "crates/protocols/tecdsa-xal21" }
+tecdsa-abc24 = { path = "crates/protocols/tecdsa-abc24" }
+
+# External Paillier ecosystem (LFDT-Lockness, MIT/Apache-2.0)
+# Vendored: crates.io 0.3.2 broken (glass_pumpkin 1.10 rand_core 0.10 mismatch, upstream issue #23)
+fast-paillier = { version = "0.3", default-features = true }
+paillier-zk = { version = "0.7.0-alpha", default-features = true, features = ["serde"] }
+
+# Class-group (GPL-3.0-or-later via BICYCL)
+# v0.2.2: all types impl Send (Context, RandGen, schemes, keys, ciphertexts)
+# v0.2.3: Qfi::to_bytes/from_bytes for compact binary serialization
+# v0.2.4: bytes-based encrypt/decrypt/scal/power_of_f/dlog_in_F (no more decimal)
+# v0.2.5: Qfi::dup for deep copy (NIM H-label extraction)
+bicycl-rs = { version = "0.2.5" }
+bicycl-rs-sys = { version = "0.2.3" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# `all` (correctness/suspicious/style/complexity/perf) is denied — these are
+# real issues and block CI. `pedantic` is opinionated style noise (e.g.
+# doc_markdown backticks, must_use_candidate); we keep it off so contributors
+# aren't blocked on nitpicks. Cargo.toml is the single source of truth, so
+# local `cargo clippy` and CI agree automatically.
+all = { level = "deny", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+
+# Domain-specific allows: these clippy::all lints fight the natural shape of
+# cryptographic protocol code, so we allow them workspace-wide rather than
+# scattering dozens of #[allow]s. All are style/complexity lints, not
+# correctness/suspicious/perf — the valuable parts of clippy::all stay denied.
+#   - needless_range_loop: indexed field/group arithmetic over parallel vecs
+#     and bit positions (e.g. `&e >> i`) reads more clearly as a range loop.
+#   - too_many_arguments: protocol round functions legitimately take many
+#     keys/parameters; bundling them into structs obscures the math.
+#   - large_enum_variant: protocol message enums naturally have variants of
+#     differing size; boxing every large variant adds allocations for no gain.
+needless_range_loop = "allow"
+too_many_arguments = "allow"
+large_enum_variant = "allow"
+
+# Vendor patch: fast-paillier 0.3.2 bridges glass_pumpkin 1.10 (rand_core 0.10) with our rand_core 0.6.
+# Remove when upstream merges fix (https://github.com/LFDT-Lockness/fast-paillier/issues/23).
+[patch.crates-io]
+fast-paillier = { path = "vendor/fast-paillier" }
+

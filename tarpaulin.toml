@@ -1,0 +1,15 @@
+[default]
+# Workspace-wide coverage configuration for cargo-tarpaulin.
+# Run: cargo tarpaulin --workspace --out Html --output-dir coverage
+workspace = true
+all-features = true
+timeout = "600"
+out = ["Html", "Lcov"]
+output-dir = "coverage"
+exclude-files = [
+    "target/*",
+    "vendor/*",
+    "tests/*",
+    "benches/*",
+    "examples/*",
+]

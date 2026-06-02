@@ -1,0 +1,29 @@
+{
+  "description": "Wire format v1 KAT vectors (MPCE envelope + bincode 2.x FixedInt BigEndian)",
+  "vectors": [
+    {
+      "name": "zero_header_small_payload",
+      "header": {
+        "session_id": "0000000000000000000000000000000000000000000000000000000000000000",
+        "protocol_id": 0,
+        "round": 0,
+        "from": 0,
+        "to": 0
+      },
+      "payload_hex": "0102030405",
+      "encoded_hex": "4d50434501000000000000280000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050102030405"
+    },
+    {
+      "name": "nonzero_header_empty_payload",
+      "header": {
+        "session_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "protocol_id": 42,
+        "round": 7,
+        "from": 1,
+        "to": 2
+      },
+      "payload_hex": "",
+      "encoded_hex": "4d5043450100000000000028aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa002a0007000100020000000000000000"
+    }
+  ]
+}

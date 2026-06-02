@@ -1,0 +1,21 @@
+[package]
+name = "bicycl-rs"
+version = "0.2.1"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Safe Rust wrapper for BICYCL C API"
+readme = "README.md"
+include = [
+  "Cargo.toml",
+  "README.md",
+  "LICENSE",
+  "src/**",
+  "examples/**",
+  "tests/**",
+]
+keywords = ["crypto", "class-group", "bicycl"]
+categories = ["cryptography", "api-bindings"]
+
+[dependencies]
+bicycl-rs-sys = { path = "../bicycl-rs-sys", version = "0.2.0" }
+thiserror = "2"

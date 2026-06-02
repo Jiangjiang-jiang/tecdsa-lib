@@ -1,0 +1,31 @@
+[package]
+name = "tecdsa-session"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Session layer connecting StateMachine + Wire + Transport for production MPC wallet deployment"
+
+[features]
+default = []
+async = ["dep:tokio", "dep:async-trait"]
+
+[dependencies]
+tecdsa-core.workspace = true
+tecdsa-protocol.workspace = true
+tecdsa-wire.workspace = true
+tecdsa-transport.workspace = true
+serde.workspace = true
+bincode.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["time", "sync", "macros", "rt-multi-thread"], optional = true }
+async-trait = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tecdsa-testkit.workspace = true
+rand.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,81 @@
+name: CI
+
+# Runs on every PR and on pushes to main.
+# Goal: fast, reliable feedback for all contributors. The slow #[ignore]'d
+# integration tests are NOT run here — see nightly.yml for those.
+# Compile cost (notably the class-group C++/cmake build) is absorbed by
+# Swatinem/rust-cache, so doc-only or unrelated PRs finish in ~1-2 min.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # NOTE: we intentionally do NOT set `RUSTFLAGS: -D warnings` here.
+  # .cargo/config.toml sets RUSTFLAGS with `force = true` (for overflow-checks),
+  # which overrides any env RUSTFLAGS — so that approach silently did nothing.
+  # Lint levels are the single source of truth in the root Cargo.toml
+  # ([workspace.lints]: clippy::all = deny, pedantic = allow). Rustdoc
+  # warning-as-error is set via RUSTDOCFLAGS in the doc job.
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # Deny level comes from [workspace.lints] in Cargo.toml (clippy::all = deny).
+      - run: cargo clippy --locked --workspace --all-features --all-targets
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      # Heavy-crate concurrency is capped via .config/nextest.toml so the
+      # crypto tests don't OOM the 7 GB GitHub runner.
+      - run: cargo nextest run --locked --workspace --all-features --no-fail-fast
+
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # `cargo doc` builds the docs and fails on hard doc errors, but we do not
+      # set RUSTDOCFLAGS=-D warnings: broken intra-doc-link nits (e.g. `[n]`
+      # math notation) should not block PRs. They still print as warnings.
+      - run: cargo doc --locked --workspace --no-deps --all-features
+
+  deny:
+    name: Supply chain audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2

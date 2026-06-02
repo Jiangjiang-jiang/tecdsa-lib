@@ -1,0 +1,39 @@
+[package]
+name = "tecdsa-kgg24"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "KGG24 two-party ECDSA protocol with proactive security (Koziel-Gordon-Gentry 2024)"
+
+[features]
+default = ["serde", "secp256k1"]
+serde = ["dep:serde"]
+secp256k1 = ["tecdsa-curve/secp256k1"]
+
+[dependencies]
+tecdsa-core.workspace = true
+tecdsa-bigint.workspace = true
+tecdsa-curve.workspace = true
+tecdsa-protocol.workspace = true
+tecdsa-paillier.workspace = true
+tecdsa-commit.workspace = true
+elliptic-curve.workspace = true
+
+k256.workspace = true
+serde = { workspace = true, optional = true }
+sha2.workspace = true
+rand_core.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+
+bincode.workspace = true
+
+[dev-dependencies]
+tecdsa-testkit.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

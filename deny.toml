@@ -1,0 +1,24 @@
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "0BSD",
+]
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-or-later"]
+crates = ["bicycl-rs", "bicycl-rs-sys", "tecdsa-class-group", "tecdsa-wmy23"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"

@@ -1,0 +1,986 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#![allow(
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::doc_markdown,
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::module_name_repetitions,
+    non_snake_case
+)]
+
+//! WMC24 key generation protocol (3 rounds).
+//!
+//! Runs three concurrent DKGs:
+//! 1. **DKG-CL**: threshold CL key pair (pk, {pk_i, sk_i}) using delta-scaled Shamir
+//! 2. **DKG-Sig**: ECDSA signing key (X, {X_i, x_i}) using PVSS
+//! 3. **DKG-ElG**: threshold ElGamal key (elek, {elek_i, eldk_i}) - additive shares
+//!
+//! For simplicity, DKG-CL uses a trusted-setup pattern (same as JTX25).
+//! DKG-Sig uses PVSS. DKG-ElG uses simple additive shares.
+
+use std::collections::BTreeMap;
+
+use elliptic_curve::group::GroupEncoding;
+use elliptic_curve::CurveArithmetic;
+use num_bigint::{BigInt, BigUint};
+use tecdsa_class_group::bicycl_glue::{BicyclPublicKey, BicyclQfi, BicyclSecretKey, ClSetup};
+use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
+use tecdsa_class_group::zk::r_key::RKeyProof;
+use tecdsa_class_group::zk::r_sh::RShProof;
+use tecdsa_core::TecdsaError;
+use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+
+use crate::error::Wmc24Error;
+use crate::key_share::Wmc24KeyShare;
+
+// ---------------------------------------------------------------------------
+// Message type
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub enum Wmc24KeygenMsg {
+    Round1(Vec<u8>),
+    Round2(Vec<u8>),
+    Round3(Vec<u8>),
+}
+
+// ---------------------------------------------------------------------------
+// Internal round states
+// ---------------------------------------------------------------------------
+
+struct Round1State {
+    my_id: PartyId,
+    all_parties: Vec<PartyId>,
+    threshold: u16,
+    cl_sk_raw: BicyclSecretKey,
+    cl_pk_raw: BicyclPublicKey,
+    cl_sk_decimal: Vec<u8>,
+    cl_pk_abc: (String, String, String),
+    /// This party's ElGamal decryption key share.
+    eldk_i: k256::Scalar,
+    /// This party's ElGamal public key share = eldk_i * G.
+    elek_i: k256::ProjectivePoint,
+    received: BTreeMap<PartyId, Round1Msg>,
+    outgoing: Vec<Outgoing<Wmc24KeygenMsg>>,
+    cl_setup_seed: String,
+    use_128bit_security: bool,
+}
+
+struct Round1Msg {
+    cl_pk_abc: (String, String, String),
+    /// ElGamal public key share (compressed bytes).
+    elek_i_bytes: Vec<u8>,
+}
+
+struct Round2State {
+    my_id: PartyId,
+    all_parties: Vec<PartyId>,
+    threshold: u16,
+    _cl_sk_raw: BicyclSecretKey,
+    cl_pk_raw: BicyclPublicKey,
+    cl_sk_decimal: Vec<u8>,
+    cl_pk_abcs: BTreeMap<PartyId, (String, String, String)>,
+    my_pvss: tecdsa_class_group::pvss_share::PvssShareOutput,
+    received: BTreeMap<PartyId, Round2Msg>,
+    outgoing: Vec<Outgoing<Wmc24KeygenMsg>>,
+    cl_setup_seed: String,
+    use_128bit_security: bool,
+    /// All ElGamal PK shares (in party order).
+    elek_shares: Vec<k256::ProjectivePoint>,
+    /// This party's ElGamal DK share.
+    eldk_i: k256::Scalar,
+}
+
+struct Round2Msg {
+    c1: BicyclQfi,
+    c2s: Vec<BicyclQfi>,
+}
+
+struct Round3State {
+    my_id: PartyId,
+    all_parties: Vec<PartyId>,
+    threshold: u16,
+    secret_share: k256::Scalar,
+    my_public_share: k256::ProjectivePoint,
+    received: BTreeMap<PartyId, Round3Msg>,
+    outgoing: Vec<Outgoing<Wmc24KeygenMsg>>,
+    cl_setup_seed: String,
+    use_128bit_security: bool,
+    cl_sk_decimal: Vec<u8>,
+    cl_pk_abcs: BTreeMap<PartyId, (String, String, String)>,
+    pvss_c1_abcs: BTreeMap<PartyId, (String, String, String)>,
+    elek_shares: Vec<k256::ProjectivePoint>,
+    eldk_i: k256::Scalar,
+}
+
+struct Round3Msg {
+    public_share: k256::ProjectivePoint,
+}
+
+enum KeygenRound {
+    Round1(Round1State),
+    Round2(Round2State),
+    Round3(Round3State),
+    Done(Wmc24KeyShare),
+    Poisoned,
+}
+
+use crate::curve_wire::point_from_bytes;
+use tecdsa_class_group::pvss_share::{
+    pvss_share_decrypt, pvss_share_distribute, pvss_share_verify, PvssShareOutput,
+};
+
+// ---------------------------------------------------------------------------
+// Public machine
+// ---------------------------------------------------------------------------
+
+pub struct Wmc24KeygenMachine {
+    round: KeygenRound,
+    setup: ClSetup,
+    all_parties: Vec<PartyId>,
+}
+
+impl Wmc24KeygenMachine {
+    pub fn new(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        threshold: u16,
+        cl_setup_seed: &str,
+        use_128bit_security: bool,
+    ) -> tecdsa_core::Result<Self> {
+        if !all_parties.contains(&my_id) {
+            return Err(TecdsaError::Other("my_id not found in all_parties".into()));
+        }
+        let n = all_parties.len();
+        if threshold == 0 || threshold as usize > n {
+            return Err(TecdsaError::Other(format!(
+                "threshold {threshold} out of range for {n} parties"
+            )));
+        }
+
+        let mut setup = if use_128bit_security {
+            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+        } else {
+            ClSetup::new_secp256k1(cl_setup_seed)
+        }
+        .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
+
+        // Generate CL keypair.
+        let (cl_sk_raw, cl_pk_raw) = setup
+            .keygen()
+            .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
+        let cl_sk_decimal = setup
+            .sk_to_bytes(&cl_sk_raw)
+            .map_err(|e| TecdsaError::Other(format!("sk_to_decimal: {e}")))?;
+
+        let pk_elt = setup
+            .pk_element(&cl_pk_raw)
+            .map_err(|e| TecdsaError::Other(format!("pk_element: {e}")))?;
+        let cl_pk_abc = qfi_to_abc(&setup, &pk_elt)
+            .map_err(|e| TecdsaError::Other(format!("qfi_to_abc: {e}")))?;
+
+        // Generate R_key proof.
+        let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_decimal)
+            .map_err(|e| TecdsaError::Other(format!("R_key prove: {e}")))?;
+
+        // Generate ElGamal key share.
+        // Use a deterministic approach: sample from CL setup and reduce mod q.
+        let (elg_sk, _) = setup
+            .keygen()
+            .map_err(|e| TecdsaError::Other(format!("ElGamal keygen: {e}")))?;
+        let elg_sk_bytes = setup
+            .sk_to_bytes(&elg_sk)
+            .map_err(|e| TecdsaError::Other(format!("elg sk_to_bytes: {e}")))?;
+        let q_bytes = setup
+            .q_bytes()
+            .map_err(|e| TecdsaError::Other(format!("q_bytes: {e}")))?;
+        let q = BigUint::from_bytes_be(&q_bytes);
+        let elg_bu = BigUint::from_bytes_be(&elg_sk_bytes);
+        let elg_reduced = elg_bu % &q;
+        let eldk_i = tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&elg_reduced);
+        let elek_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * eldk_i;
+
+        // Serialize and queue Round 1 broadcast.
+        let r1_payload = serialize_round1(&setup, &cl_pk_abc, &proof, &elek_i)
+            .map_err(|e| TecdsaError::Other(format!("R1 serialize: {e}")))?;
+
+        let outgoing = vec![Outgoing {
+            to: Recipient::Broadcast,
+            msg: Wmc24KeygenMsg::Round1(r1_payload),
+        }];
+
+        let state = Round1State {
+            my_id,
+            all_parties: all_parties.clone(),
+            threshold,
+            cl_sk_raw,
+            cl_pk_raw,
+            cl_sk_decimal,
+            cl_pk_abc,
+            eldk_i,
+            elek_i,
+            received: BTreeMap::new(),
+            outgoing,
+            cl_setup_seed: cl_setup_seed.to_string(),
+            use_128bit_security,
+        };
+
+        Ok(Self {
+            round: KeygenRound::Round1(state),
+            setup,
+            all_parties,
+        })
+    }
+
+    fn expected_count(&self) -> usize {
+        self.all_parties.len() - 1
+    }
+}
+
+impl StateMachine for Wmc24KeygenMachine {
+    type Output = Wmc24KeyShare;
+    type Inbound = Wmc24KeygenMsg;
+    type Outbound = Wmc24KeygenMsg;
+
+    fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
+        // Reject messages from self.
+        let my_id = match &self.round {
+            KeygenRound::Round1(s) => s.my_id,
+            KeygenRound::Round2(s) => s.my_id,
+            KeygenRound::Round3(s) => s.my_id,
+            _ => PartyId(u16::MAX),
+        };
+        if from == my_id {
+            return Err(TecdsaError::Other("received message from self".into()));
+        }
+
+        if !self.all_parties.contains(&from) {
+            return Err(TecdsaError::Other(format!(
+                "message from unknown party {from}"
+            )));
+        }
+
+        let round = std::mem::replace(&mut self.round, KeygenRound::Poisoned);
+
+        match (round, msg) {
+            (KeygenRound::Round1(mut state), Wmc24KeygenMsg::Round1(data)) => {
+                if state.received.contains_key(&from) {
+                    self.round = KeygenRound::Round1(state);
+                    return Err(TecdsaError::Other(format!("duplicate R1 from {from}")));
+                }
+
+                let (peer_pk_abc, peer_proof, peer_elek_bytes) =
+                    deserialize_round1(&data, &self.setup).map_err(|e| {
+                        TecdsaError::Other(format!("R1 deserialize from {from}: {e}"))
+                    })?;
+
+                let peer_pk_qfi = abc_to_qfi(&self.setup, &peer_pk_abc)
+                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi from {from}: {e}")))?;
+                let peer_pk_raw = self
+                    .setup
+                    .pk_from_qfi(&peer_pk_qfi)
+                    .map_err(|e| TecdsaError::Other(format!("pk_from_qfi from {from}: {e}")))?;
+
+                let valid = peer_proof
+                    .verify(&self.setup, &peer_pk_raw)
+                    .map_err(|e| TecdsaError::Other(format!("R_key verify from {from}: {e}")))?;
+                if !valid {
+                    return Err(TecdsaError::Other(format!(
+                        "R_key proof failed for party {from}"
+                    )));
+                }
+
+                state.received.insert(
+                    from,
+                    Round1Msg {
+                        cl_pk_abc: peer_pk_abc,
+                        elek_i_bytes: peer_elek_bytes,
+                    },
+                );
+
+                if state.received.len() == self.expected_count() {
+                    let new_state = self.transition_r1_to_r2(state)?;
+                    self.round = KeygenRound::Round2(new_state);
+                } else {
+                    self.round = KeygenRound::Round1(state);
+                }
+                Ok(())
+            }
+
+            (KeygenRound::Round2(mut state), Wmc24KeygenMsg::Round2(data)) => {
+                if state.received.contains_key(&from) {
+                    self.round = KeygenRound::Round2(state);
+                    return Err(TecdsaError::Other(format!("duplicate R2 from {from}")));
+                }
+
+                let (c1, c2s, proof) = deserialize_round2(&data, &self.setup)
+                    .map_err(|e| TecdsaError::Other(format!("R2 deserialize from {from}: {e}")))?;
+
+                let n = state.all_parties.len();
+                let party_ids: Vec<u16> = (1..=n as u16).collect();
+
+                let mut ordered_pks: Vec<BicyclPublicKey> = Vec::with_capacity(n);
+                for pid in &state.all_parties {
+                    let abc = state
+                        .cl_pk_abcs
+                        .get(pid)
+                        .ok_or_else(|| TecdsaError::Other(format!("missing pk_abc for {pid}")))?;
+                    let qfi = abc_to_qfi(&self.setup, abc)
+                        .map_err(|e| TecdsaError::Other(format!("abc_to_qfi for {pid}: {e}")))?;
+                    let pk = self
+                        .setup
+                        .pk_from_qfi(&qfi)
+                        .map_err(|e| TecdsaError::Other(format!("pk_from_qfi for {pid}: {e}")))?;
+                    ordered_pks.push(pk);
+                }
+
+                let valid = pvss_share_verify(
+                    &self.setup,
+                    &party_ids,
+                    &ordered_pks,
+                    state.threshold,
+                    &c1,
+                    &c2s,
+                    &proof,
+                )
+                .map_err(|e| TecdsaError::Other(format!("PVSS verify from {from}: {e}")))?;
+
+                if !valid {
+                    return Err(TecdsaError::Other(format!(
+                        "PVSS R_Sh proof failed for party {from}"
+                    )));
+                }
+
+                state.received.insert(from, Round2Msg { c1, c2s });
+
+                if state.received.len() == self.expected_count() {
+                    let new_state = self.transition_r2_to_r3(state)?;
+                    self.round = KeygenRound::Round3(new_state);
+                } else {
+                    self.round = KeygenRound::Round2(state);
+                }
+                Ok(())
+            }
+
+            (KeygenRound::Round3(mut state), Wmc24KeygenMsg::Round3(data)) => {
+                if state.received.contains_key(&from) {
+                    self.round = KeygenRound::Round3(state);
+                    return Err(TecdsaError::Other(format!("duplicate R3 from {from}")));
+                }
+
+                let (public_share, proof, pd) = deserialize_round3(&data, &self.setup)
+                    .map_err(|e| TecdsaError::Other(format!("R3 deserialize from {from}: {e}")))?;
+
+                let from_pk_abc = state
+                    .cl_pk_abcs
+                    .get(&from)
+                    .ok_or_else(|| TecdsaError::Other(format!("missing CL pk abc for {from}")))?;
+                let from_pk_qfi = abc_to_qfi(&self.setup, from_pk_abc)
+                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi pk from {from}: {e}")))?;
+                let from_pk_raw = self
+                    .setup
+                    .pk_from_qfi(&from_pk_qfi)
+                    .map_err(|e| TecdsaError::Other(format!("pk_from_qfi from {from}: {e}")))?;
+
+                let from_c1_abc = state
+                    .pvss_c1_abcs
+                    .get(&from)
+                    .ok_or_else(|| TecdsaError::Other(format!("missing PVSS c1 abc for {from}")))?;
+                let from_c1 = abc_to_qfi(&self.setup, from_c1_abc)
+                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi c1 from {from}: {e}")))?;
+
+                let dummy_c2 = self
+                    .setup
+                    .identity()
+                    .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
+                let ct_for_verify = self
+                    .setup
+                    .ct_from_components(&from_c1, &dummy_c2)
+                    .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
+
+                let valid = proof
+                    .verify(&self.setup, &from_pk_raw, &ct_for_verify, &pd)
+                    .map_err(|e| TecdsaError::Other(format!("R_Dec_DL verify from {from}: {e}")))?;
+                if !valid {
+                    return Err(TecdsaError::Other(format!(
+                        "R_Dec_DL proof failed for party {from}"
+                    )));
+                }
+
+                state.received.insert(from, Round3Msg { public_share });
+
+                if state.received.len() == self.expected_count() {
+                    let output = finalize_keygen(state, &self.setup)?;
+                    self.round = KeygenRound::Done(output);
+                } else {
+                    self.round = KeygenRound::Round3(state);
+                }
+                Ok(())
+            }
+
+            (KeygenRound::Done(_), _) => Err(TecdsaError::Other("keygen already complete".into())),
+            (KeygenRound::Poisoned, _) => {
+                Err(TecdsaError::Other("keygen machine is poisoned".into()))
+            }
+            (round, _) => {
+                self.round = round;
+                Err(TecdsaError::Other(
+                    "unexpected msg type for current round".into(),
+                ))
+            }
+        }
+    }
+
+    fn drain_outgoing(&mut self) -> Vec<Outgoing<Self::Outbound>> {
+        match &mut self.round {
+            KeygenRound::Round1(s) => std::mem::take(&mut s.outgoing),
+            KeygenRound::Round2(s) => std::mem::take(&mut s.outgoing),
+            KeygenRound::Round3(s) => std::mem::take(&mut s.outgoing),
+            KeygenRound::Done(_) | KeygenRound::Poisoned => Vec::new(),
+        }
+    }
+
+    fn is_done(&self) -> bool {
+        matches!(self.round, KeygenRound::Done(_))
+    }
+
+    fn finish(self) -> tecdsa_core::Result<Self::Output> {
+        match self.round {
+            KeygenRound::Done(share) => Ok(share),
+            _ => Err(TecdsaError::Other("keygen not complete".into())),
+        }
+    }
+
+    fn current_round(&self) -> u16 {
+        match &self.round {
+            KeygenRound::Round1(_) => 1,
+            KeygenRound::Round2(_) => 2,
+            KeygenRound::Round3(_) => 3,
+            KeygenRound::Done(_) => 4,
+            KeygenRound::Poisoned => 0,
+        }
+    }
+
+    fn ia_report(&self) -> Option<&IaReport> {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Round transitions
+// ---------------------------------------------------------------------------
+
+impl Wmc24KeygenMachine {
+    fn transition_r1_to_r2(&mut self, state: Round1State) -> tecdsa_core::Result<Round2State> {
+        let n = state.all_parties.len();
+        let my_id = state.my_id;
+        let my_idx = state
+            .all_parties
+            .iter()
+            .position(|p| *p == my_id)
+            .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
+
+        let mut cl_pk_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
+        let mut ordered_pks: Vec<BicyclPublicKey> = Vec::with_capacity(n);
+        let mut elek_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
+
+        for pid in &state.all_parties {
+            if *pid == my_id {
+                let pk_elt = self
+                    .setup
+                    .pk_element(&state.cl_pk_raw)
+                    .map_err(|e| TecdsaError::Other(format!("pk_element: {e}")))?;
+                let pk_clone = self
+                    .setup
+                    .pk_from_qfi(&pk_elt)
+                    .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
+                ordered_pks.push(pk_clone);
+                cl_pk_abcs.insert(*pid, state.cl_pk_abc.clone());
+                elek_shares.push(state.elek_i);
+            } else {
+                let r1_msg = state
+                    .received
+                    .get(pid)
+                    .ok_or_else(|| TecdsaError::Other(format!("missing R1 from {pid}")))?;
+                let qfi = abc_to_qfi(&self.setup, &r1_msg.cl_pk_abc)
+                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
+                let pk = self
+                    .setup
+                    .pk_from_qfi(&qfi)
+                    .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
+                ordered_pks.push(pk);
+                cl_pk_abcs.insert(*pid, r1_msg.cl_pk_abc.clone());
+
+                // Decode ElGamal PK share from bytes.
+                let elek_j = point_from_bytes(&r1_msg.elek_i_bytes, &format!("elek from {pid}"))
+                    .map_err(TecdsaError::Other)?;
+                elek_shares.push(elek_j);
+            }
+        }
+
+        // Run PVSS ShareDist for ECDSA signing key.
+        let party_ids: Vec<u16> = (1..=n as u16).collect();
+
+        let pvss_output = pvss_share_distribute(
+            &mut self.setup,
+            &party_ids,
+            &ordered_pks,
+            state.threshold,
+            my_idx,
+        )
+        .map_err(|e| TecdsaError::Other(format!("pvss_distribute: {e}")))?;
+
+        let r2_payload = serialize_round2(&self.setup, &pvss_output)
+            .map_err(|e| TecdsaError::Other(format!("R2 serialize: {e}")))?;
+
+        let outgoing = vec![Outgoing {
+            to: Recipient::Broadcast,
+            msg: Wmc24KeygenMsg::Round2(r2_payload),
+        }];
+
+        let my_pk_elt = self
+            .setup
+            .pk_element(&state.cl_pk_raw)
+            .map_err(|e| TecdsaError::Other(format!("pk_element: {e}")))?;
+        let my_pk_clone = self
+            .setup
+            .pk_from_qfi(&my_pk_elt)
+            .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
+
+        Ok(Round2State {
+            my_id,
+            all_parties: state.all_parties,
+            threshold: state.threshold,
+            _cl_sk_raw: state.cl_sk_raw,
+            cl_pk_raw: my_pk_clone,
+            cl_sk_decimal: state.cl_sk_decimal,
+            cl_pk_abcs,
+            my_pvss: pvss_output,
+            received: BTreeMap::new(),
+            outgoing,
+            cl_setup_seed: state.cl_setup_seed,
+            use_128bit_security: state.use_128bit_security,
+            elek_shares,
+            eldk_i: state.eldk_i,
+        })
+    }
+
+    fn transition_r2_to_r3(&mut self, state: Round2State) -> tecdsa_core::Result<Round3State> {
+        let my_id = state.my_id;
+        let my_idx = state
+            .all_parties
+            .iter()
+            .position(|p| *p == my_id)
+            .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
+
+        let mut x_i = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
+            &state.my_pvss.secret_share_bytes,
+        );
+
+        for pid in &state.all_parties {
+            if *pid == my_id {
+                continue;
+            }
+            let r2_msg = state
+                .received
+                .get(pid)
+                .ok_or_else(|| TecdsaError::Other(format!("missing R2 from {pid}")))?;
+
+            let share_bytes = pvss_share_decrypt(
+                &self.setup,
+                &state.cl_sk_decimal,
+                &r2_msg.c1,
+                &r2_msg.c2s[my_idx],
+            )
+            .map_err(|e| TecdsaError::Other(format!("pvss_decrypt from {pid}: {e}")))?;
+            let share_j = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&share_bytes);
+
+            x_i += share_j;
+        }
+
+        let big_x_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_i;
+        let big_x_i_bytes = big_x_i.to_bytes().to_vec();
+
+        let c1_ref = &state.my_pvss.c1;
+        let c2_my_ref = &state.my_pvss.c2s[my_idx];
+        let ct_ref = self
+            .setup
+            .ct_from_components(c1_ref, c2_my_ref)
+            .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
+
+        let pd = self
+            .setup
+            .exp_bytes(c1_ref, &state.cl_sk_decimal)
+            .map_err(|e| TecdsaError::Other(format!("exp for pd: {e}")))?;
+
+        let r_dec_dl_proof = RDecDlProof::prove(
+            &mut self.setup,
+            &state.cl_pk_raw,
+            &ct_ref,
+            &pd,
+            &state.cl_sk_decimal,
+        )
+        .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove: {e}")))?;
+
+        let r3_payload = serialize_round3(&self.setup, &big_x_i_bytes, &pd, &r_dec_dl_proof)
+            .map_err(|e| TecdsaError::Other(format!("R3 serialize: {e}")))?;
+
+        let outgoing = vec![Outgoing {
+            to: Recipient::Broadcast,
+            msg: Wmc24KeygenMsg::Round3(r3_payload),
+        }];
+
+        let mut pvss_c1_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
+        let own_c1_abc = qfi_to_abc(&self.setup, &state.my_pvss.c1)
+            .map_err(|e| TecdsaError::Other(format!("qfi_to_abc own c1: {e}")))?;
+        pvss_c1_abcs.insert(my_id, own_c1_abc);
+        for (pid, r2_msg) in &state.received {
+            let c1_abc = qfi_to_abc(&self.setup, &r2_msg.c1)
+                .map_err(|e| TecdsaError::Other(format!("qfi_to_abc c1 from {pid}: {e}")))?;
+            pvss_c1_abcs.insert(*pid, c1_abc);
+        }
+
+        Ok(Round3State {
+            my_id,
+            all_parties: state.all_parties,
+            threshold: state.threshold,
+            secret_share: x_i,
+            my_public_share: big_x_i,
+            received: BTreeMap::new(),
+            outgoing,
+            cl_setup_seed: state.cl_setup_seed,
+            use_128bit_security: state.use_128bit_security,
+            cl_sk_decimal: state.cl_sk_decimal,
+            cl_pk_abcs: state.cl_pk_abcs,
+            pvss_c1_abcs,
+            elek_shares: state.elek_shares,
+            eldk_i: state.eldk_i,
+        })
+    }
+}
+
+fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<Wmc24KeyShare> {
+    let n = state.all_parties.len();
+    let my_id = state.my_id;
+    let my_idx = state
+        .all_parties
+        .iter()
+        .position(|p| *p == my_id)
+        .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
+
+    let mut public_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
+    for pid in &state.all_parties {
+        if *pid == my_id {
+            public_shares.push(state.my_public_share);
+        } else {
+            let r3_msg = state
+                .received
+                .get(pid)
+                .ok_or_else(|| TecdsaError::Other(format!("missing R3 from {pid}")))?;
+            public_shares.push(r3_msg.public_share);
+        }
+    }
+
+    let indices: Vec<u16> = (1..=n as u16).collect();
+    let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
+
+    let public_key = public_shares.iter().zip(lagrange_coeffs.iter()).fold(
+        <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY,
+        |acc, (x_j, lambda_j)| acc + *x_j * lambda_j,
+    );
+
+    let party_index = (my_idx + 1) as u16;
+
+    let mut cl_pk_shares: Vec<BicyclQfi> = Vec::with_capacity(n);
+    for pid in &state.all_parties {
+        let abc = state
+            .cl_pk_abcs
+            .get(pid)
+            .ok_or_else(|| TecdsaError::Other(format!("missing pk_abc for {pid}")))?;
+        let qfi =
+            abc_to_qfi(setup, abc).map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
+        cl_pk_shares.push(qfi);
+    }
+
+    let first_pk_abc = state
+        .cl_pk_abcs
+        .values()
+        .next()
+        .ok_or_else(|| TecdsaError::Other("no CL PKs available".into()))?;
+    let first_pk_qfi = abc_to_qfi(setup, first_pk_abc)
+        .map_err(|e| TecdsaError::Other(format!("first pk abc_to_qfi: {e}")))?;
+    let cl_pk = setup
+        .pk_from_qfi(&first_pk_qfi)
+        .map_err(|e| TecdsaError::Other(format!("first pk pk_from_qfi: {e}")))?;
+
+    // Compute aggregate ElGamal public key: elek = sum(elek_j).
+    let elek = state.elek_shares.iter().fold(
+        <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY,
+        |acc, p| acc + *p,
+    );
+
+    Ok(Wmc24KeyShare {
+        party_index,
+        secret_share: state.secret_share,
+        public_key,
+        public_shares,
+        cl_sk_share: state.cl_sk_decimal,
+        cl_pk,
+        cl_pk_shares,
+        cl_setup_seed: state.cl_setup_seed,
+        use_128bit_security: state.use_128bit_security,
+        eldk_i: state.eldk_i,
+        elek_shares: state.elek_shares,
+        elek,
+        threshold: state.threshold,
+        total: n as u16,
+        n_parties_dkg: n,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Threshold CL key sharing (delta-scaled Shamir)
+// ---------------------------------------------------------------------------
+
+pub fn shamir_share_delta(
+    setup: &mut ClSetup,
+    sk_bytes: &[u8],
+    n: usize,
+    t: usize,
+) -> Result<Vec<Vec<u8>>, Wmc24Error> {
+    let sk = BigUint::from_bytes_be(sk_bytes);
+
+    let mut delta = BigUint::from(1u32);
+    for i in 2..=n {
+        delta *= BigUint::from(i as u64);
+    }
+    let delta_sk = &delta * &sk;
+
+    let mut coeffs: Vec<BigInt> = vec![BigInt::from(delta_sk)];
+    for _ in 1..t {
+        let (rsk, _) = setup.keygen()?;
+        let r = setup.sk_to_bytes(&rsk)?;
+        let r_val = BigInt::from(BigUint::from_bytes_be(&r));
+        coeffs.push(r_val);
+    }
+
+    let mut shares = Vec::with_capacity(n);
+    for i in 1..=n {
+        let x = BigInt::from(i as i64);
+        let mut val = BigInt::from(0);
+        let mut x_pow = BigInt::from(1);
+        for coeff in &coeffs {
+            val += coeff * &x_pow;
+            x_pow *= &x;
+        }
+        let (_, val_bytes) = val.to_bytes_be();
+        shares.push(val_bytes);
+    }
+
+    Ok(shares)
+}
+
+// ---------------------------------------------------------------------------
+// QFI serialization helpers
+// ---------------------------------------------------------------------------
+
+fn qfi_to_abc(setup: &ClSetup, qfi: &BicyclQfi) -> Result<(String, String, String), Wmc24Error> {
+    let ctx = setup.ctx();
+    let a = qfi
+        .a_decimal(ctx)
+        .map_err(|e| Wmc24Error::ClError(e.into()))?;
+    let b = qfi
+        .b_decimal(ctx)
+        .map_err(|e| Wmc24Error::ClError(e.into()))?;
+    let c = qfi
+        .c_decimal(ctx)
+        .map_err(|e| Wmc24Error::ClError(e.into()))?;
+    Ok((a, b, c))
+}
+
+fn abc_to_qfi(setup: &ClSetup, abc: &(String, String, String)) -> Result<BicyclQfi, Wmc24Error> {
+    let ctx = setup.ctx();
+    BicyclQfi::from_abc_decimal(ctx, &abc.0, &abc.1, &abc.2)
+        .map_err(|e| Wmc24Error::ClError(e.into()))
+}
+
+// ---------------------------------------------------------------------------
+// Wire-format serialization
+// ---------------------------------------------------------------------------
+
+fn write_field(buf: &mut Vec<u8>, data: &[u8]) {
+    buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    buf.extend_from_slice(data);
+}
+
+fn read_field(data: &[u8], pos: usize) -> Result<(&[u8], usize), Wmc24Error> {
+    if pos + 4 > data.len() {
+        return Err(Wmc24Error::InvalidInput("truncated field length".into()));
+    }
+    let len = u32::from_le_bytes(
+        data[pos..pos + 4]
+            .try_into()
+            .map_err(|_| Wmc24Error::InvalidInput("bad length bytes".into()))?,
+    ) as usize;
+    let start = pos + 4;
+    let end = start + len;
+    if end > data.len() {
+        return Err(Wmc24Error::InvalidInput("truncated field data".into()));
+    }
+    Ok((&data[start..end], end))
+}
+
+fn read_string_field(data: &[u8], pos: usize) -> Result<(String, usize), Wmc24Error> {
+    let (bytes, new_pos) = read_field(data, pos)?;
+    let s = std::str::from_utf8(bytes)
+        .map_err(|e| Wmc24Error::InvalidInput(format!("invalid UTF-8: {e}")))?
+        .to_string();
+    Ok((s, new_pos))
+}
+
+fn write_qfi_abc(buf: &mut Vec<u8>, abc: &(String, String, String)) {
+    write_field(buf, abc.0.as_bytes());
+    write_field(buf, abc.1.as_bytes());
+    write_field(buf, abc.2.as_bytes());
+}
+
+fn read_qfi_abc(data: &[u8], pos: usize) -> Result<((String, String, String), usize), Wmc24Error> {
+    let (a, pos) = read_string_field(data, pos)?;
+    let (b, pos) = read_string_field(data, pos)?;
+    let (c, pos) = read_string_field(data, pos)?;
+    Ok(((a, b, c), pos))
+}
+
+fn serialize_round1(
+    setup: &ClSetup,
+    pk_abc: &(String, String, String),
+    proof: &RKeyProof,
+    elek_i: &k256::ProjectivePoint,
+) -> Result<Vec<u8>, Wmc24Error> {
+    let mut buf = Vec::new();
+    write_qfi_abc(&mut buf, pk_abc);
+    let t_abc = qfi_to_abc(setup, &proof.t)?;
+    write_qfi_abc(&mut buf, &t_abc);
+    write_field(&mut buf, &proof.z);
+    write_field(&mut buf, &proof.e);
+    // ElGamal PK share.
+    let elek_bytes = elek_i.to_bytes();
+    write_field(&mut buf, elek_bytes.as_ref());
+    Ok(buf)
+}
+
+// Return tuple mirrors the round-1 wire layout (CL key abc, proof, elek bytes);
+// a type alias would obscure the correspondence with the message fields.
+#[allow(clippy::type_complexity)]
+fn deserialize_round1(
+    data: &[u8],
+    setup: &ClSetup,
+) -> Result<((String, String, String), RKeyProof, Vec<u8>), Wmc24Error> {
+    let (pk_abc, pos) = read_qfi_abc(data, 0)?;
+    let (t_abc, pos) = read_qfi_abc(data, pos)?;
+    let (z_bytes, pos) = read_field(data, pos)?;
+    let (e_bytes, pos) = read_field(data, pos)?;
+    let (elek_bytes, _pos) = read_field(data, pos)?;
+    let t = abc_to_qfi(setup, &t_abc)?;
+    let proof = RKeyProof {
+        t,
+        z: z_bytes.to_vec(),
+        e: e_bytes.to_vec(),
+    };
+    Ok((pk_abc, proof, elek_bytes.to_vec()))
+}
+
+fn serialize_round2(setup: &ClSetup, pvss: &PvssShareOutput) -> Result<Vec<u8>, Wmc24Error> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(pvss.c2s.len() as u32).to_le_bytes());
+    let c1_abc = qfi_to_abc(setup, &pvss.c1)?;
+    write_qfi_abc(&mut buf, &c1_abc);
+    for c2 in &pvss.c2s {
+        let c2_abc = qfi_to_abc(setup, c2)?;
+        write_qfi_abc(&mut buf, &c2_abc);
+    }
+    write_field(&mut buf, &pvss.proof.k);
+    write_field(&mut buf, &pvss.proof.rho_response);
+    Ok(buf)
+}
+
+fn deserialize_round2(
+    data: &[u8],
+    setup: &ClSetup,
+) -> Result<(BicyclQfi, Vec<BicyclQfi>, RShProof), Wmc24Error> {
+    if data.len() < 4 {
+        return Err(Wmc24Error::InvalidInput("R2 data too short".into()));
+    }
+    let n = u32::from_le_bytes(
+        data[0..4]
+            .try_into()
+            .map_err(|_| Wmc24Error::InvalidInput("bad n".into()))?,
+    ) as usize;
+    let mut pos = 4;
+    let (c1_abc, new_pos) = read_qfi_abc(data, pos)?;
+    pos = new_pos;
+    let c1 = abc_to_qfi(setup, &c1_abc)?;
+    let mut c2s = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (c2_abc, new_pos) = read_qfi_abc(data, pos)?;
+        pos = new_pos;
+        c2s.push(abc_to_qfi(setup, &c2_abc)?);
+    }
+    let (k_bytes, new_pos) = read_field(data, pos)?;
+    pos = new_pos;
+    let (rho_response_bytes, _) = read_field(data, pos)?;
+    let proof = RShProof {
+        k: k_bytes.to_vec(),
+        rho_response: rho_response_bytes.to_vec(),
+    };
+    Ok((c1, c2s, proof))
+}
+
+fn serialize_round3(
+    setup: &ClSetup,
+    public_share_bytes: &[u8],
+    pd: &BicyclQfi,
+    proof: &RDecDlProof,
+) -> Result<Vec<u8>, Wmc24Error> {
+    let mut buf = Vec::new();
+    write_field(&mut buf, public_share_bytes);
+    let pd_abc = qfi_to_abc(setup, pd)?;
+    write_qfi_abc(&mut buf, &pd_abc);
+    let t1_abc = qfi_to_abc(setup, &proof.t1)?;
+    let t2_abc = qfi_to_abc(setup, &proof.t2)?;
+    write_qfi_abc(&mut buf, &t1_abc);
+    write_qfi_abc(&mut buf, &t2_abc);
+    write_field(&mut buf, &proof.z);
+    write_field(&mut buf, &proof.e);
+    Ok(buf)
+}
+
+fn deserialize_round3(
+    data: &[u8],
+    setup: &ClSetup,
+) -> Result<(k256::ProjectivePoint, RDecDlProof, BicyclQfi), Wmc24Error> {
+    let (point_bytes, pos) = read_field(data, 0)?;
+    let point = point_from_bytes(point_bytes, "public_share").map_err(Wmc24Error::InvalidInput)?;
+    let (pd_abc, pos) = read_qfi_abc(data, pos)?;
+    let pd = abc_to_qfi(setup, &pd_abc)?;
+    let (t1_abc, pos) = read_qfi_abc(data, pos)?;
+    let (t2_abc, pos) = read_qfi_abc(data, pos)?;
+    let (z_bytes, pos) = read_field(data, pos)?;
+    let (e_bytes, _) = read_field(data, pos)?;
+    let t1 = abc_to_qfi(setup, &t1_abc)?;
+    let t2 = abc_to_qfi(setup, &t2_abc)?;
+    let proof = RDecDlProof {
+        t1,
+        t2,
+        z: z_bytes.to_vec(),
+        e: e_bytes.to_vec(),
+    };
+    Ok((point, proof, pd))
+}

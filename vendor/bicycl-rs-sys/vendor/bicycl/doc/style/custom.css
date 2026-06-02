@@ -1,0 +1,67 @@
+html {
+    /*
+      Side nav width slightly larger than default to fit the title.
+      MUST be = `TREEVIEW_WIDTH`
+    */
+    --side-nav-fixed-width: 320px;
+    --top-height: 150px;
+
+    /* Color customization */
+    --primary-color: #500a82;
+    --separator-color: #805ba6;
+    --note-color: #f2f1fd;
+    --note-color-dark: #6925A2;
+    --note-color-darker: #491673;;
+
+    /* Table of content font size */
+    --toc-font-size: 15px;
+}
+
+/* Color customization */
+@media (prefers-color-scheme: dark) {
+    html:not(.light-mode) {
+        /* define dark-mode variable overrides here if you DON'T use doxygen-awesome-darkmode-toggle.js */
+        --page-background-color: #1c0631;
+        --primary-color: #1fb6ff;
+    }
+}
+
+/* Arrow size customization */
+.arrow {
+    font-size: 90%;
+    margin-right: 10px;
+}
+
+/* Pages font size customization */
+div.ingroups, div.summary {
+  font-size: 11pt;
+}
+
+div.toc h3 {
+  font-size: var(--page-font-size);
+}
+
+/* Title area font size customization */
+#projectbrief {
+  font-size: 85%;
+}
+
+
+/* Footer customization */
+li.footer {
+  border-right-width: 1px;
+  border-right-style: solid;
+  border-right-color: var(--separator-color);
+}
+
+.navpath li.footer {
+  padding-right: 10px;
+}
+
+li.footer #gitlab
+{
+  vertical-align: middle;
+  height: 18px;
+  width: auto;
+  padding-left: 5px;
+}

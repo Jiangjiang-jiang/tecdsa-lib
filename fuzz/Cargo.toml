@@ -1,0 +1,29 @@
+[package]
+name = "tecdsa-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[[bin]]
+name = "wire_envelope"
+path = "fuzz_targets/wire_envelope.rs"
+doc = false
+
+[[bin]]
+name = "wire_roundtrip"
+path = "fuzz_targets/wire_roundtrip.rs"
+doc = false
+
+[[bin]]
+name = "header_validation"
+path = "fuzz_targets/header_validation.rs"
+doc = false
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tecdsa-wire = { path = "../crates/framework/tecdsa-wire" }
+
+[workspace]

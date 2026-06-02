@@ -1,0 +1,27 @@
+name: Nightly (slow tests)
+
+# Runs the slow #[ignore]'d integration tests (full keygen/presign/sign flows)
+# that are too heavy for per-PR CI. Runs once a day and on demand, so the slow
+# suite is exercised regularly without making contributors wait on every PR.
+
+on:
+  schedule:
+    # 03:00 UTC daily.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  slow-tests:
+    name: Slow tests (--run-ignored all)
+    runs-on: ubuntu-latest
+    # Heavy crypto integration tests can take a long time; give them room.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --locked --workspace --all-features --no-fail-fast --run-ignored all

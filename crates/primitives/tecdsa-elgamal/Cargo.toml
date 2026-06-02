@@ -1,0 +1,15 @@
+[package]
+name = "tecdsa-elgamal"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "EC ElGamal encryption with threshold decryption for tecdsa"
+
+[dependencies]
+elliptic-curve = { workspace = true, features = ["arithmetic"] }
+k256 = { workspace = true }
+
+[lints]
+workspace = true

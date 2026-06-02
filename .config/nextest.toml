@@ -1,0 +1,19 @@
+# cargo-nextest configuration.
+# Docs: https://nexte.st/docs/configuration/
+
+[profile.default]
+# Show output for failures only; keep CI logs readable.
+failure-output = "immediate-final"
+# Warn about slow tests (so we know what belongs in the nightly #[ignore]
+# bucket) but never terminate them — nightly integration tests run long.
+slow-timeout = "60s"
+
+# The Paillier and class-group tests are memory- and CPU-heavy (big-int math
+# and the bicycl C++ class-group). Cap how many run at once so they don't
+# exhaust a small CI runner (GitHub-hosted runners have ~2 cores / 7 GB).
+[test-groups]
+heavy-crypto = { max-threads = 2 }
+
+[[profile.default.overrides]]
+filter = "package(tecdsa-paillier) | package(tecdsa-class-group)"
+test-group = "heavy-crypto"

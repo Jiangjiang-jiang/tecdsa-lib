@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! Message types for the CGGMP20 threshold key generation protocol.
+
+use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
+use serde::{Deserialize, Serialize};
+use tecdsa_commit::HashCommitment;
+use tecdsa_curve::zk::dlog::DlogProof;
+use tecdsa_curve::TecdsaCurve;
+
+/// Round 1 broadcast: hash commitment to Feldman polynomial + Schnorr nonce.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MsgRound1 {
+    pub commitment: HashCommitment,
+}
+
+/// Round 2 broadcast: decommitment data.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound(serialize = "", deserialize = ""))]
+pub struct MsgRound2Broad<C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
+    /// Random session contribution.
+    pub rid: [u8; 32],
+    /// Feldman polynomial commitments `C_j = a_j * G`.
+    #[serde(with = "tecdsa_curve::serde_projective::vec")]
+    pub feldman_commitments: Vec<C::ProjectivePoint>,
+    /// Schnorr commitment `R_i = r_i * G`.
+    #[serde(with = "tecdsa_curve::serde_projective")]
+    pub schnorr_commitment: C::ProjectivePoint,
+    /// Nonce used when creating the hash commitment in Round 1.
+    pub decommit_nonce: [u8; 32],
+}
+
+/// Round 2 unicast: VSS share for the recipient.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C::Scalar: Serialize",
+    deserialize = "C::Scalar: Deserialize<'de>"
+))]
+pub struct MsgRound2Uni<C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
+    /// The VSS share value `f_i(j)` for the recipient party.
+    pub vss_share: <C as CurveArithmetic>::Scalar,
+}
+
+/// Round 3 broadcast: Schnorr proof of secret share knowledge.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound(serialize = "", deserialize = ""))]
+pub struct MsgRound3<C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
+    /// Schnorr proof that the sender knows its secret share `x_i`.
+    pub schnorr_proof: DlogProof<C>,
+}
+
+/// Unified envelope for all keygen messages.
+///
+/// Uses a single type for both `Inbound` and `Outbound` so that the
+/// `Orchestrator` constraint `Outbound: Into<Inbound>` is trivially satisfied.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C::Scalar: Serialize",
+    deserialize = "C::Scalar: Deserialize<'de>"
+))]
+pub enum KeygenMsg<C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
+    Round1(MsgRound1),
+    Round2Broad(MsgRound2Broad<C>),
+    Round2Uni(MsgRound2Uni<C>),
+    Round3(MsgRound3<C>),
+}
