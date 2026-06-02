@@ -47,6 +47,35 @@ pub fn cl_setup_with_keys() -> (
     (setup, sk, pk)
 }
 
+pub fn sample_below(bound: &Integer) -> Integer {
+    bound.random_below_ref(&mut OsRng)
+}
+
+pub fn group_order() -> Integer {
+    tecdsa_paillier::conv::group_order_integer::<C>()
+}
+
+/// Ring-Pedersen auxiliary parameters (N_tilde, h1, h2) for MtA range proofs.
+pub fn ntilde_params() -> (Integer, Integer, Integer) {
+    let p = Integer::generate_safe_prime(&mut OsRng, 256);
+    let q = Integer::generate_safe_prime(&mut OsRng, 256);
+    let n_tilde = &p * &q;
+    let h1 = Integer::sample_in_mult_group_of(&mut OsRng, &n_tilde);
+    let lambda = (&p - Integer::one()) * (&q - Integer::one());
+    let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2");
+    (n_tilde, h1, h2)
+}
+
+pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
+    if exp.cmp0().is_lt() {
+        let base_inv = base.invert_ref(modulus).expect("base must be invertible");
+        let pos_exp = -exp.clone();
+        base_inv.pow_mod_ref(&pos_exp, modulus).expect("pow_mod")
+    } else {
+        base.pow_mod_ref(exp, modulus).expect("pow_mod")
+    }
+}
+
 pub fn jl_keys() -> (
     tecdsa_joye_libert::kgen::JlPublicKey,
     tecdsa_joye_libert::kgen::JlSecretKey,
