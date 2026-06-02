@@ -13,6 +13,12 @@ tecdsa-transport = { workspace = true }
 tecdsa-protocol = { workspace = true }
 tecdsa-curve = { workspace = true }
 tecdsa-paillier = { workspace = true }
+tecdsa-pedersen-mod = { workspace = true }
+tecdsa-class-group = { workspace = true }
+tecdsa-joye-libert = { workspace = true }
+tecdsa-evrf = { workspace = true }
+tecdsa-fs = { workspace = true }
+num-bigint = { workspace = true }
 tecdsa-lin17 = { workspace = true }
 tecdsa-kgg24 = { workspace = true }
 tecdsa-xal21 = { workspace = true }
@@ -44,6 +50,10 @@ harness = false
 
 [[bench]]
 name = "twoparty"
+harness = false
+
+[[bench]]
+name = "zk_proofs"
 harness = false
 
 [lints]
