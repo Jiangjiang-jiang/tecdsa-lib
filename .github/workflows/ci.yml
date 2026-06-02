@@ -52,7 +52,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # Heavy-crate concurrency is capped via .config/nextest.toml so the
-      - run: cargo nextest run --locked --workspace --all-features --no-fail-fast
+      - run: cargo nextest run --locked --release --workspace --all-features --no-fail-fast
 
   doc:
     name: Documentation

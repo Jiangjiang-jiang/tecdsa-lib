@@ -24,4 +24,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --locked --workspace --all-features --no-fail-fast --run-ignored all
+      - run: cargo nextest run --locked --release --workspace --all-features --no-fail-fast --run-ignored all
