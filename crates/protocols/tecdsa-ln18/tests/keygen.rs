@@ -141,7 +141,7 @@ fn keygen_2of2() {
 
 #[test]
 fn keygen_3of3() {
-    let shares = run_keygen(3, 1);
+    let shares = run_keygen(3, 2);
     assert_eq!(shares.len(), 3);
 
     // All parties agree on the public key.
