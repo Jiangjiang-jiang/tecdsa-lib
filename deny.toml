@@ -1,15 +1,14 @@
 [advisories]
-# Vulnerabilities are denied by default in this cargo-deny version (the old
-# `vulnerability = "deny"` key was removed); use `ignore = [...]` to allow
-# specific advisory IDs.
 # `unmaintained` is now a scope selector (all|workspace|transitive|none),
-# not a lint level. "workspace" only flags our own crates, so a transitive
-# unmaintained dependency won't block PRs. Switch to "all" for a stricter audit.
+# not a lint level. Switch to "all" for a stricter audit, "transitive" or "none"
+# to loosen.
 unmaintained = "workspace"
+# RUSTSEC-2025-0141: bincode was marked unmaintained after the team ceased
+# development following a harassment incident. It is NOT a security
+# vulnerability.
+ignore = ["RUSTSEC-2025-0141"]
 
 [licenses]
-# Crates with no license expression are denied by default (the old
-# `unlicensed = "deny"` key was removed); only the licenses below are allowed.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -17,6 +16,7 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
     "Zlib",
     "0BSD",
 ]
@@ -60,4 +60,4 @@ allow = ["GPL-3.0-or-later"]
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"

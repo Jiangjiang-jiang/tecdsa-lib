@@ -19,12 +19,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # NOTE: we intentionally do NOT set `RUSTFLAGS: -D warnings` here.
-  # .cargo/config.toml sets RUSTFLAGS with `force = true` (for overflow-checks),
-  # which overrides any env RUSTFLAGS — so that approach silently did nothing.
-  # Lint levels are the single source of truth in the root Cargo.toml
-  # ([workspace.lints]: clippy::all = deny, pedantic = allow). Rustdoc
-  # warning-as-error is set via RUSTDOCFLAGS in the doc job.
 
 jobs:
   fmt:
@@ -58,7 +52,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # Heavy-crate concurrency is capped via .config/nextest.toml so the
-      # crypto tests don't OOM the 7 GB GitHub runner.
       - run: cargo nextest run --locked --workspace --all-features --no-fail-fast
 
   doc:
@@ -78,4 +71,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@v2.0.20
