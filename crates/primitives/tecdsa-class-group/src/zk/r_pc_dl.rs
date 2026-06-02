@@ -23,9 +23,9 @@ use super::{challenge_from_qfi, sample_random_mod_q};
 
 /// Public-checked DL proof.
 pub struct RPcDlProof {
-    t: Qfi,
-    z: Vec<u8>,
-    e: Vec<u8>,
+    pub t: Qfi,
+    pub z: Vec<u8>,
+    pub e: Vec<u8>,
 }
 
 impl RPcDlProof {

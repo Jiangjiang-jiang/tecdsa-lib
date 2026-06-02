@@ -21,12 +21,12 @@ use super::{
 
 /// Encryption public-check proof.
 pub struct REncPcProof {
-    t1: Qfi,
-    t2: Qfi,
-    s: Qfi,
-    u1: Vec<u8>,
-    u2: Vec<u8>,
-    e: Vec<u8>,
+    pub t1: Qfi,
+    pub t2: Qfi,
+    pub s: Qfi,
+    pub u1: Vec<u8>,
+    pub u2: Vec<u8>,
+    pub e: Vec<u8>,
 }
 
 impl REncPcProof {

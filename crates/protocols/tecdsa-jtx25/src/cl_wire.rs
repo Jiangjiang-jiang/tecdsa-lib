@@ -9,11 +9,13 @@ use elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
 
 use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclQfi, ClSetup};
-#[cfg(feature = "robust")]
-use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
 use tecdsa_class_group::zk::r_dl_cl::RDlClProof;
 use tecdsa_class_group::zk::r_enc::REncProof;
+#[cfg(feature = "robust")]
+use tecdsa_class_group::zk::r_enc_pc::REncPcProof;
 use tecdsa_class_group::zk::r_part_dec::RPartDecProof;
+#[cfg(feature = "robust")]
+use tecdsa_class_group::zk::r_pc_dl::RPcDlProof;
 
 use crate::error::Jtx25Error;
 
@@ -103,41 +105,6 @@ impl SerREncProof {
     }
 }
 
-#[cfg(feature = "robust")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SerRShProof {
-    pub k: Vec<u8>,
-    pub rho_response: Vec<u8>,
-}
-
-#[cfg(feature = "robust")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SerRDecDlProof {
-    pub t1: SerializedQfi,
-    pub t2: SerializedQfi,
-    pub z: Vec<u8>,
-    pub e: Vec<u8>,
-}
-
-#[cfg(feature = "robust")]
-impl SerRDecDlProof {
-    pub fn from_proof(setup: &ClSetup, proof: &RDecDlProof) -> Result<Self, String> {
-        Ok(Self {
-            t1: SerializedQfi::from_qfi(setup, &proof.t1)?,
-            t2: SerializedQfi::from_qfi(setup, &proof.t2)?,
-            z: proof.z.clone(),
-            e: proof.e.clone(),
-        })
-    }
-    pub fn to_proof(&self, setup: &ClSetup) -> Result<RDecDlProof, String> {
-        Ok(RDecDlProof {
-            t1: self.t1.to_qfi(setup)?,
-            t2: self.t2.to_qfi(setup)?,
-            z: self.z.clone(),
-            e: self.e.clone(),
-        })
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerRDlClProof {
@@ -237,4 +204,69 @@ pub(crate) fn copy_ct(
 ) -> Result<BicyclCiphertext, Jtx25Error> {
     let (c1, c2) = setup.ct_components(ct)?;
     Ok(setup.ct_from_components(&c1, &c2)?)
+}
+
+// ---------------------------------------------------------------------------
+// DRG proof serialization (robust only)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "robust")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SerREncPcProof {
+    pub t1: SerializedQfi,
+    pub t2: SerializedQfi,
+    pub s: SerializedQfi,
+    pub u1: Vec<u8>,
+    pub u2: Vec<u8>,
+    pub e: Vec<u8>,
+}
+
+#[cfg(feature = "robust")]
+impl SerREncPcProof {
+    pub fn from_proof(setup: &ClSetup, proof: &REncPcProof) -> Result<Self, String> {
+        Ok(Self {
+            t1: SerializedQfi::from_qfi(setup, &proof.t1)?,
+            t2: SerializedQfi::from_qfi(setup, &proof.t2)?,
+            s: SerializedQfi::from_qfi(setup, &proof.s)?,
+            u1: proof.u1.clone(),
+            u2: proof.u2.clone(),
+            e: proof.e.clone(),
+        })
+    }
+    pub fn to_proof(&self, setup: &ClSetup) -> Result<REncPcProof, String> {
+        Ok(REncPcProof {
+            t1: self.t1.to_qfi(setup)?,
+            t2: self.t2.to_qfi(setup)?,
+            s: self.s.to_qfi(setup)?,
+            u1: self.u1.clone(),
+            u2: self.u2.clone(),
+            e: self.e.clone(),
+        })
+    }
+}
+
+#[cfg(feature = "robust")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SerRPcDlProof {
+    pub t: SerializedQfi,
+    pub z: Vec<u8>,
+    pub e: Vec<u8>,
+}
+
+#[cfg(feature = "robust")]
+impl SerRPcDlProof {
+    pub fn from_proof(setup: &ClSetup, proof: &RPcDlProof) -> Result<Self, String> {
+        Ok(Self {
+            t: SerializedQfi::from_qfi(setup, &proof.t)?,
+            z: proof.z.clone(),
+            e: proof.e.clone(),
+        })
+    }
+    pub fn to_proof(&self, setup: &ClSetup) -> Result<RPcDlProof, String> {
+        Ok(RPcDlProof {
+            t: self.t.to_qfi(setup)?,
+            z: self.z.clone(),
+            e: self.e.clone(),
+        })
+    }
 }

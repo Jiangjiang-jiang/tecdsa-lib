@@ -15,32 +15,33 @@
     non_snake_case
 )]
 
-//! JTX25 presigning protocol (2 rounds).
+//! JTX25 robust presigning protocol (2 rounds).
 //!
 //! Produces a message-independent [`Jtx25RobustPresignature`] using threshold CL
-//! homomorphic encryption and distributed randomness generation (DRG).
+//! homomorphic encryption and DRG (Distributed Randomness Generation).
 //!
-//! ## Protocol Rounds (JTX25 Section 3+4)
+//! ## Protocol Rounds (JTX25 Section 4)
 //!
 //! ### Presign Round 1
 //! Each P_i:
 //! 1. Sample phi_i, k_i <- Z_q randomly
 //! 2. Compute threshold CL encryption: phi_bar_i <- t-CL.Enc(pk, phi_i)
-//! 3. Compute R_i = g^{k_i}
-//! 4. Send R_cl-enc proof for phi_bar_i
-//! 5. For ROBUST: run DRG ShareDist for k_i ({C_{k_{j,i}}}, pi_sh_i)
-//! 6. Broadcast (phi_bar_i, R_cl-enc proof, {C_{k_{j,i}}}, pi_sh_i)
+//! 3. Prove R_enc for phi_bar_i
+//! 4. DRG.Gen(k_i): Pedersen VSS + CL Enc(ek_i, k_i) + R_Enc-PC proof
+//! 5. Broadcast (phi_bar_i, pi_enc, DRG.Gen output)
 //!
 //! ### Presign Round 2
 //! Upon receiving Round 1 from all P_j:
-//! 1. Verify R_cl-enc proofs AND R_sh proofs (both must pass)
-//! 2. For ROBUST: ShareComb for k_i, get R_i, prove R_cl-dec-dl
-//! 3. Compute phi_bar = sum of all phi_bar_j (homomorphic sum)
-//! 4. Compute phi_bar_x_i = phi_bar * (lambda_i * x_i) (scalar multiply)
-//! 5. Prove R_dl-cl: (X_i, phi_bar, phi_bar_x_i; x_i)
-//! 6. Compute phi_bar_k_i = phi_bar * k_i
-//! 7. Prove R_dl-cl: (R_i, phi_bar, phi_bar_k_i; k_i)
-//! 8. Broadcast (phi_bar_x_i, pi_dl-cl_0, phi_bar_k_i, pi_dl-cl_1, R_i, pi_cl-dec-dl)
+//! 1. Verify R_enc proofs AND DRG.GenVf (Pedersen VSS + R_Enc-PC)
+//! 2. DRG.Comb: combine received shares -> k_i + re-encrypt + R_Enc-PC
+//! 3. DRG.RevealExp: R_i = g^{k_i} + R_PC-DL proof
+//! 4. Compute phi_bar = sum of all phi_bar_j (homomorphic sum)
+//! 5. Compute phi_bar_x_i = phi_bar * (lambda_i * x_i)
+//! 6. Prove R_dl-cl: (X_lambda_i, phi_bar, phi_bar_x_i; lambda_i * x_i)
+//! 7. Compute phi_bar_k_i = phi_bar * k_i
+//! 8. Prove R_dl-cl: (R_i, phi_bar, phi_bar_k_i; k_i)
+//! 9. Broadcast (phi_bar_x_i, pi_dl-cl_0, phi_bar_k_i, pi_dl-cl_1,
+//!    R_i, DRG.Comb ct+proof, pi_pc-dl)
 
 use std::collections::BTreeMap;
 
@@ -51,17 +52,20 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclPublicKey, BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
+use tecdsa_class_group::cl_enc::ClPublicKey;
+use tecdsa_class_group::drg::{
+    drg_comb, drg_gen_verify, drg_gen_with_secret, DrgGenOutput, PedersenVssShare,
+};
 use tecdsa_class_group::zk::r_dl_cl::RDlClProof;
 use tecdsa_class_group::zk::r_enc::REncProof;
-use tecdsa_class_group::zk::r_sh::RShProof;
+use tecdsa_class_group::zk::r_pc_dl::RPcDlProof;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use crate::cl_wire::{
-    add_ct_components, copy_ct, point_from_bytes, scalar_mul_ct, SerRDecDlProof, SerRDlClProof,
-    SerREncProof, SerRShProof, SerializedClCt, SerializedQfi,
+    add_ct_components, copy_ct, point_from_bytes, scalar_mul_ct, SerRDlClProof, SerREncPcProof,
+    SerREncProof, SerRPcDlProof, SerializedClCt, SerializedQfi,
 };
 use crate::error::Jtx25Error;
 use crate::key_share::Jtx25KeyShare;
@@ -188,12 +192,16 @@ struct R1Payload {
     phi_bar_i: SerializedClCt,
     /// R_enc proof for phi_bar_i.
     r_enc_proof: SerREncProof,
-    /// PVSS for k_i: c1 = h^rho.
-    pvss_c1: SerializedQfi,
-    /// PVSS for k_i: c2_j for each party.
-    pvss_c2s: Vec<SerializedQfi>,
-    /// R_Sh proof for PVSS.
-    pvss_proof: SerRShProof,
+    /// DRG.Gen: Pedersen VSS commitments (compressed EC points).
+    drg_commitments: Vec<Vec<u8>>,
+    /// DRG.Gen: CL ciphertext of k_i under own individual pk.
+    drg_ciphertext: SerializedClCt,
+    /// DRG.Gen: F-subgroup element Y = f^{k_i}.
+    drg_y: SerializedQfi,
+    /// DRG.Gen: R_Enc-PC proof.
+    drg_proof: SerREncPcProof,
+    /// DRG.Gen: Pedersen VSS shares (value, randomness) for each party.
+    drg_shares: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -210,14 +218,16 @@ struct R2Payload {
     phi_bar_k_i: SerializedClCt,
     /// R_dl-cl proof for (R_i, phi_bar, phi_bar_k_i; k_i).
     pi_dl_cl_k: SerRDlClProof,
-    /// R_i = k_i * G.
+    /// R_i = k_i * G (from DRG.RevealExp).
     r_point_bytes: Vec<u8>,
-    /// R_Dec_DL proof for k_i ShareComb.
-    pi_dec_dl: SerRDecDlProof,
-    /// Partial decryption pd for R_Dec_DL verification.
-    pd: SerializedQfi,
-    /// PVSS c1 used for pd.
-    pd_c1: SerializedQfi,
+    /// DRG.Comb: re-encrypted ciphertext of combined k_i.
+    drg_comb_ct: SerializedClCt,
+    /// DRG.Comb: R_Enc-PC proof for combined k_i ciphertext.
+    drg_comb_proof: SerREncPcProof,
+    /// DRG.Comb: F-subgroup element Y = f^{k_i} for combined share.
+    drg_comb_y: SerializedQfi,
+    /// DRG.RevealExp: R_PC-DL proof for R_i = g^{k_i}.
+    pi_pc_dl: SerRPcDlProof,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,8 +236,14 @@ struct R2Payload {
 
 struct ReceivedR1 {
     phi_bar_i: BicyclCiphertext,
-    pvss_c1: BicyclQfi,
-    pvss_c2s: Vec<BicyclQfi>,
+    /// DRG.Gen: Pedersen VSS commitments.
+    drg_commitments: Vec<k256::ProjectivePoint>,
+    /// DRG.Gen: CL ciphertext of k_i (stored for audit, not directly consumed).
+    _drg_ciphertext: BicyclCiphertext,
+    /// DRG.Gen: F-subgroup element Y = f^{k_i} (stored for audit).
+    _drg_y: BicyclQfi,
+    /// DRG.Gen: Pedersen VSS share designated for us.
+    drg_my_share: PedersenVssShare,
 }
 
 struct ReceivedR2 {
@@ -246,7 +262,10 @@ struct Round1State {
     phi_i: k256::Scalar,
     _phi_i_bytes: Vec<u8>,
     _enc_randomness: Vec<u8>,
-    own_pvss_share: k256::Scalar,
+    /// Own k_i secret (from DRG.Gen, used in DRG.Comb via own_drg_gen).
+    _own_k_i: k256::Scalar,
+    /// Own DRG.Gen output (for DRG.Comb in Round 2).
+    own_drg_gen: DrgGenOutput,
     received: BTreeMap<PartyId, ReceivedR1>,
     outgoing: Vec<Outgoing<Jtx25RobustPresignMsg>>,
 }
@@ -300,11 +319,7 @@ impl Drop for KeyMaterial {
     }
 }
 
-// Helpers imported from crate::cl_wire
-
-use tecdsa_class_group::pvss_share::{
-    pvss_share_decrypt, pvss_share_distribute, pvss_share_verify,
-};
+// DRG operations imported from tecdsa_class_group::drg
 
 // ---------------------------------------------------------------------------
 // Presign state machine
@@ -314,17 +329,17 @@ pub struct Jtx25RobustPresignMachine {
     round: PresignRobustRound,
     setup: ClSetup,
     key_mat: KeyMaterial,
-    /// Individual CL PKs for PVSS (not the aggregate threshold PK).
+    /// Individual CL PKs for DRG (not the aggregate threshold PK).
     individual_cl_pks: Vec<BicyclPublicKey>,
 }
 
 impl Jtx25RobustPresignMachine {
-    /// Create a new JTX25 presign state machine.
+    /// Create a new JTX25 robust presign state machine.
     ///
     /// Immediately runs presign Round 1:
     /// 1. Sample phi_i, k_i
     /// 2. Encrypt phi_i under aggregate threshold CL pk
-    /// 3. PVSS distribute k_i
+    /// 3. DRG.Gen for k_i (Pedersen VSS + CL encrypt + R_Enc-PC)
     /// 4. Queue broadcast
     pub fn new(
         my_id: PartyId,
@@ -427,45 +442,65 @@ impl Jtx25RobustPresignMachine {
             &enc_randomness,
         )?;
 
-        // --- Step 3: PVSS distribute k_i ---
-        // Use 1-based party IDs for PVSS evaluation points and Lagrange interpolation.
-        // PartyId.0 is 0-based, but PVSS polynomial evaluation needs non-zero points
-        // for Lagrange interpolation to work (can't evaluate at x=0).
-        let party_ids_1based: Vec<u16> = all_parties.iter().map(|p| p.0 + 1).collect();
-        let pvss_out = pvss_share_distribute(
+        // --- Step 3: DRG.Gen for k_i ---
+        let k_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rand::rngs::OsRng);
+        let my_cl_pk = ClPublicKey::from_raw(
+            setup
+                .pk_from_qfi(
+                    &setup
+                        .pk_element(&individual_cl_pks[my_idx])
+                        .map_err(|e| Jtx25Error::ClError(e))?,
+                )
+                .map_err(|e| Jtx25Error::ClError(e))?,
+        );
+        let drg_out = drg_gen_with_secret(
             &mut setup,
-            &party_ids_1based,
-            &individual_cl_pks,
+            &my_cl_pk,
+            &k_i,
             threshold,
-            my_idx,
-        )?;
+            n as u16,
+            &mut rand::rngs::OsRng,
+        )
+        .map_err(|e| Jtx25Error::InvalidInput(format!("drg_gen: {e}")))?;
 
         // --- Step 4: Build Round 1 payload ---
         let phi_bar_i_ser = SerializedClCt::from_bicycl_ct(&setup, &phi_bar_i)
             .map_err(|e| Jtx25Error::InvalidInput(format!("serialize phi_bar: {e}")))?;
         let r_enc_proof_ser = SerREncProof::from_proof(&setup, &r_enc_proof)
             .map_err(|e| Jtx25Error::InvalidInput(format!("serialize r_enc_proof: {e}")))?;
-        let pvss_c1_ser = SerializedQfi::from_qfi(&setup, &pvss_out.c1)
-            .map_err(|e| Jtx25Error::InvalidInput(format!("serialize pvss_c1: {e}")))?;
-        let pvss_c2s_ser: Vec<SerializedQfi> = pvss_out
-            .c2s
+
+        // Serialize DRG commitments as compressed EC points.
+        let drg_commits_ser: Vec<Vec<u8>> = drg_out
+            .commitments
             .iter()
-            .map(|c2| {
-                SerializedQfi::from_qfi(&setup, c2)
-                    .map_err(|e| Jtx25Error::InvalidInput(format!("serialize c2: {e}")))
+            .map(|c| c.to_bytes().to_vec())
+            .collect();
+        let drg_ct_ser = SerializedClCt::from_bicycl_ct(&setup, drg_out.ciphertext.inner())
+            .map_err(|e| Jtx25Error::InvalidInput(format!("serialize drg_ct: {e}")))?;
+        let drg_y_ser = SerializedQfi::from_qfi(&setup, &drg_out.y_element)
+            .map_err(|e| Jtx25Error::InvalidInput(format!("serialize drg_y: {e}")))?;
+        let drg_proof_ser = SerREncPcProof::from_proof(&setup, &drg_out.proof)
+            .map_err(|e| Jtx25Error::InvalidInput(format!("serialize drg_proof: {e}")))?;
+
+        // Serialize shares (value + randomness bytes for each party).
+        let drg_shares_ser: Vec<(Vec<u8>, Vec<u8>)> = drg_out
+            .vss_shares
+            .iter()
+            .map(|s| {
+                let v = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&s.value);
+                let r = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&s.randomness);
+                (v, r)
             })
-            .collect::<Result<_, _>>()?;
-        let pvss_proof_ser = SerRShProof {
-            k: pvss_out.proof.k.clone(),
-            rho_response: pvss_out.proof.rho_response.clone(),
-        };
+            .collect();
 
         let r1_payload = R1Payload {
             phi_bar_i: phi_bar_i_ser,
             r_enc_proof: r_enc_proof_ser,
-            pvss_c1: pvss_c1_ser,
-            pvss_c2s: pvss_c2s_ser,
-            pvss_proof: pvss_proof_ser,
+            drg_commitments: drg_commits_ser,
+            drg_ciphertext: drg_ct_ser,
+            drg_y: drg_y_ser,
+            drg_proof: drg_proof_ser,
+            drg_shares: drg_shares_ser,
         };
 
         let payload_bytes = bincode::serde::encode_to_vec(&r1_payload, bincode::config::standard())
@@ -477,13 +512,25 @@ impl Jtx25RobustPresignMachine {
         }];
 
         // Store own Round 1 data.
+        let own_share = drg_out.vss_shares[my_idx].clone();
         let mut received = BTreeMap::new();
         received.insert(
             my_id,
             ReceivedR1 {
                 phi_bar_i,
-                pvss_c1: pvss_out.c1,
-                pvss_c2s: pvss_out.c2s,
+                drg_commitments: drg_out.commitments.clone(),
+                _drg_ciphertext: copy_ct(&setup, drg_out.ciphertext.inner())
+                    .map_err(|e| Jtx25Error::InvalidInput(format!("copy drg_ct: {e}")))?,
+                _drg_y: {
+                    let ctx = setup.ctx();
+                    let bytes = drg_out
+                        .y_element
+                        .to_bytes(ctx)
+                        .map_err(|e| Jtx25Error::ClError(e.into()))?;
+                    BicyclQfi::from_bytes(ctx, &bytes)
+                        .map_err(|e| Jtx25Error::ClError(e.into()))?
+                },
+                drg_my_share: own_share,
             },
         );
 
@@ -493,9 +540,8 @@ impl Jtx25RobustPresignMachine {
             phi_i,
             _phi_i_bytes: phi_i_bytes,
             _enc_randomness: enc_randomness,
-            own_pvss_share: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
-                &pvss_out.secret_share_bytes,
-            ),
+            _own_k_i: k_i,
+            own_drg_gen: drg_out,
             received,
             outgoing,
         };
@@ -526,29 +572,10 @@ impl Jtx25RobustPresignMachine {
         let _n = state.all_parties.len();
         let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0 + 1).collect();
 
-        // --- Step 1: Verify R_enc AND R_sh proofs ---
-        // Note: own data is stored but not verified (we produced it ourselves).
+        // --- Step 1: (proofs already verified in handle) ---
 
-        // --- Step 2: ShareComb for k_i ---
-        let mut k_i = state.own_pvss_share;
-        for (&party_j, r1) in &state.received {
-            if party_j == state.my_id {
-                continue;
-            }
-            let share_bytes = pvss_share_decrypt(
-                setup,
-                &key_mat.cl_sk_share,
-                &r1.pvss_c1,
-                &r1.pvss_c2s[my_idx],
-            )
-            .map_err(|e| TecdsaError::Other(format!("pvss_decrypt from {party_j}: {e}")))?;
-            let share_j = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&share_bytes);
-            k_i += share_j;
-        }
-
-        let r_point_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_i;
-
-        // Generate R_Dec_DL proof for k_i ShareComb.
+        // --- Step 2: DRG.Comb — combine received shares into k_i ---
+        let my_party_1based = (my_idx + 1) as u16;
         let my_pk_share_data = key_mat
             .cl_pk_share_bytes
             .get(&state.my_id.0)
@@ -558,43 +585,57 @@ impl Jtx25RobustPresignMachine {
             BicyclQfi::from_bytes(ctx, my_pk_share_data)
                 .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
         };
-        let my_pk_raw = setup
-            .pk_from_qfi(&my_pk_qfi)
-            .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
+        let my_cl_pk = ClPublicKey::from_raw(
+            setup
+                .pk_from_qfi(&my_pk_qfi)
+                .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?,
+        );
 
-        // Use first other party's PVSS c1 as representative for R_Dec_DL.
-        let mut dec_dl_data: Option<(RDecDlProof, BicyclQfi, BicyclQfi)> = None;
+        // Collect shares and commitments from all parties (including self).
+        let mut received_shares: Vec<(u16, PedersenVssShare)> = Vec::new();
+        let mut all_commitments: Vec<(u16, Vec<k256::ProjectivePoint>)> = Vec::new();
+
+        // Own share from own DRG.Gen output.
+        received_shares.push((
+            my_party_1based,
+            state.own_drg_gen.vss_shares[my_idx].clone(),
+        ));
+        all_commitments.push((my_party_1based, state.own_drg_gen.commitments.clone()));
+
+        // Other parties' shares (received in Round 1).
         for (&party_j, r1) in &state.received {
             if party_j == state.my_id {
                 continue;
             }
-            let c2_my = &r1.pvss_c2s[my_idx];
-            let ct_repr = setup
-                .ct_from_components(&r1.pvss_c1, c2_my)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-            let pd = setup
-                .exp_bytes(&r1.pvss_c1, &key_mat.cl_sk_share)
-                .map_err(|e| TecdsaError::Other(format!("pd: {e}")))?;
-
-            let proof = RDecDlProof::prove(setup, &my_pk_raw, &ct_repr, &pd, &key_mat.cl_sk_share)
-                .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove: {e}")))?;
-
-            let ctx = setup.ctx();
-            let c1_copy = {
-                let bytes = r1
-                    .pvss_c1
-                    .to_bytes(ctx)
-                    .map_err(|e| TecdsaError::Other(format!("c1 to_bytes: {e}")))?;
-                BicyclQfi::from_bytes(ctx, &bytes)
-                    .map_err(|e| TecdsaError::Other(format!("c1 from_bytes: {e}")))?
-            };
-
-            dec_dl_data = Some((proof, pd, c1_copy));
-            break;
+            let j_1based = (state
+                .all_parties
+                .iter()
+                .position(|p| *p == party_j)
+                .unwrap()
+                + 1) as u16;
+            received_shares.push((j_1based, r1.drg_my_share.clone()));
+            all_commitments.push((j_1based, r1.drg_commitments.clone()));
         }
 
-        let (dec_dl_proof, dec_dl_pd, dec_dl_c1) = dec_dl_data
-            .ok_or_else(|| TecdsaError::Other("no other party data for R_Dec_DL".into()))?;
+        let drg_comb_out = drg_comb(
+            setup,
+            &my_cl_pk,
+            my_party_1based,
+            &received_shares,
+            &all_commitments,
+        )
+        .map_err(|e| TecdsaError::Other(format!("drg_comb: {e}")))?;
+
+        let k_i = drg_comb_out.combined_share;
+        let r_point_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_i;
+
+        // --- Step 2b: DRG.RevealExp — prove R_i = g^{k_i} via R_PC-DL ---
+        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&k_i);
+        let y_k = setup
+            .power_of_f_bytes(&k_i_bytes)
+            .map_err(|e| TecdsaError::Other(format!("power_of_f: {e}")))?;
+        let pi_pc_dl = RPcDlProof::prove(setup, &y_k, &k_i_bytes)
+            .map_err(|e| TecdsaError::Other(format!("R_PC-DL prove: {e}")))?;
 
         // --- Step 3: Compute phi_bar = sum of all phi_bar_j ---
         let mut phi_bar: Option<BicyclCiphertext> = None;
@@ -655,12 +696,15 @@ impl Jtx25RobustPresignMachine {
             .map_err(|e| TecdsaError::Other(format!("ser phi_bar_k_i: {e}")))?;
         let pi_dl_cl_k_ser = SerRDlClProof::from_proof(setup, &pi_dl_cl_k)
             .map_err(|e| TecdsaError::Other(format!("ser pi_dl_cl_k: {e}")))?;
-        let pi_dec_dl_ser = SerRDecDlProof::from_proof(setup, &dec_dl_proof)
-            .map_err(|e| TecdsaError::Other(format!("ser pi_dec_dl: {e}")))?;
-        let pd_ser = SerializedQfi::from_qfi(setup, &dec_dl_pd)
-            .map_err(|e| TecdsaError::Other(format!("ser pd: {e}")))?;
-        let pd_c1_ser = SerializedQfi::from_qfi(setup, &dec_dl_c1)
-            .map_err(|e| TecdsaError::Other(format!("ser pd_c1: {e}")))?;
+        let drg_comb_ct_ser =
+            SerializedClCt::from_bicycl_ct(setup, drg_comb_out.ciphertext.inner())
+                .map_err(|e| TecdsaError::Other(format!("ser drg_comb_ct: {e}")))?;
+        let drg_comb_proof_ser = SerREncPcProof::from_proof(setup, &drg_comb_out.proof)
+            .map_err(|e| TecdsaError::Other(format!("ser drg_comb_proof: {e}")))?;
+        let drg_comb_y_ser = SerializedQfi::from_qfi(setup, &drg_comb_out.y_element)
+            .map_err(|e| TecdsaError::Other(format!("ser drg_comb_y: {e}")))?;
+        let pi_pc_dl_ser = SerRPcDlProof::from_proof(setup, &pi_pc_dl)
+            .map_err(|e| TecdsaError::Other(format!("ser pi_pc_dl: {e}")))?;
 
         let r2_payload = R2Payload {
             phi_bar_x_i: phi_bar_x_i_ser,
@@ -668,9 +712,10 @@ impl Jtx25RobustPresignMachine {
             phi_bar_k_i: phi_bar_k_i_ser,
             pi_dl_cl_k: pi_dl_cl_k_ser,
             r_point_bytes: r_point_i.to_bytes().to_vec(),
-            pi_dec_dl: pi_dec_dl_ser,
-            pd: pd_ser,
-            pd_c1: pd_c1_ser,
+            drg_comb_ct: drg_comb_ct_ser,
+            drg_comb_proof: drg_comb_proof_ser,
+            drg_comb_y: drg_comb_y_ser,
+            pi_pc_dl: pi_pc_dl_ser,
         };
 
         let payload_bytes = bincode::serde::encode_to_vec(&r2_payload, bincode::config::standard())
@@ -865,51 +910,85 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         .to_proof(&self.setup)
                         .map_err(|e| TecdsaError::Other(format!("r_enc from {from}: {e}")))?;
 
-                    let pvss_c1 = payload
-                        .pvss_c1
-                        .to_qfi(&self.setup)
-                        .map_err(|e| TecdsaError::Other(format!("pvss_c1 from {from}: {e}")))?;
-
-                    let pvss_c2s: Vec<BicyclQfi> = payload
-                        .pvss_c2s
+                    // DRG data reconstruction.
+                    let drg_commitments: Vec<k256::ProjectivePoint> = payload
+                        .drg_commitments
                         .iter()
-                        .map(|s| {
-                            s.to_qfi(&self.setup).map_err(|e| {
-                                TecdsaError::Other(format!("pvss_c2 from {from}: {e}"))
-                            })
+                        .map(|bytes| {
+                            point_from_bytes(bytes, "drg_commit")
+                                .map_err(|e| TecdsaError::Other(e))
                         })
                         .collect::<Result<_, _>>()?;
 
-                    let pvss_proof = RShProof {
-                        k: payload.pvss_proof.k,
-                        rho_response: payload.pvss_proof.rho_response,
+                    let drg_ct = payload
+                        .drg_ciphertext
+                        .to_bicycl_ct(&self.setup)
+                        .map_err(|e| TecdsaError::Other(format!("drg_ct from {from}: {e}")))?;
+
+                    let drg_y = payload
+                        .drg_y
+                        .to_qfi(&self.setup)
+                        .map_err(|e| TecdsaError::Other(format!("drg_y from {from}: {e}")))?;
+
+                    let drg_proof = payload
+                        .drg_proof
+                        .to_proof(&self.setup)
+                        .map_err(|e| TecdsaError::Other(format!("drg_proof from {from}: {e}")))?;
+
+                    // Reconstruct my share from the sender.
+                    let my_idx = state
+                        .all_parties
+                        .iter()
+                        .position(|p| *p == state.my_id)
+                        .ok_or_else(|| TecdsaError::Other("my_id not found".into()))?;
+                    let (ref val_bytes, ref rand_bytes) = payload.drg_shares[my_idx];
+                    let my_share = PedersenVssShare {
+                        index: (my_idx + 1) as u16,
+                        value: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(val_bytes),
+                        randomness: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(rand_bytes),
                     };
 
-                    // Verify R_enc proof AND R_sh proof (MUST use &&).
+                    // Verify R_enc proof for phi_bar_i.
                     let r_enc_ok = r_enc_proof
                         .verify(&self.setup, &self.key_mat.cl_pk, &phi_bar_i)
                         .map_err(|e| {
                             TecdsaError::Other(format!("R_enc verify from {from}: {e}"))
                         })?;
 
-                    let party_ids_1based: Vec<u16> =
-                        state.all_parties.iter().map(|p| p.0 + 1).collect();
-                    let r_sh_ok = pvss_share_verify(
+                    // Verify DRG.GenVf: Pedersen VSS + R_Enc-PC.
+                    let from_idx = state
+                        .all_parties
+                        .iter()
+                        .position(|p| *p == from)
+                        .ok_or_else(|| TecdsaError::Other(format!("unknown party {from}")))?;
+                    let from_cl_pk = ClPublicKey::from_raw(
+                        self.setup
+                            .pk_from_qfi(
+                                &self.setup
+                                    .pk_element(&self.individual_cl_pks[from_idx])
+                                    .map_err(|e| TecdsaError::Other(format!("pk_elt: {e}")))?,
+                            )
+                            .map_err(|e| TecdsaError::Other(format!("pk_from: {e}")))?,
+                    );
+                    let drg_ct_copy = copy_ct(&self.setup, &drg_ct)
+                        .map_err(|e| TecdsaError::Other(format!("copy drg_ct: {e}")))?;
+                    let drg_ct_wrapped =
+                        tecdsa_class_group::cl_enc::ClCiphertext::from_raw(drg_ct_copy);
+                    let drg_ok = drg_gen_verify(
                         &self.setup,
-                        &party_ids_1based,
-                        &self.individual_cl_pks,
-                        self.key_mat.threshold,
-                        &pvss_c1,
-                        &pvss_c2s,
-                        &pvss_proof,
+                        &from_cl_pk,
+                        &drg_commitments,
+                        &drg_ct_wrapped,
+                        &drg_proof,
+                        &drg_y,
+                        &my_share,
                     )
-                    .map_err(|e| TecdsaError::Other(format!("R_sh verify from {from}: {e}")))?;
+                    .map_err(|e| TecdsaError::Other(format!("DRG verify from {from}: {e}")))?;
 
-                    // CRITICAL: Both proofs must pass (AND, not OR).
-                    if !r_enc_ok || !r_sh_ok {
+                    if !r_enc_ok || !drg_ok {
                         self.round = PresignRobustRound::Round1(state);
                         return Err(TecdsaError::Other(format!(
-                            "proof verification failed for party {from}: r_enc={r_enc_ok}, r_sh={r_sh_ok}"
+                            "proof verification failed for party {from}: r_enc={r_enc_ok}, drg={drg_ok}"
                         )));
                     }
 
@@ -917,8 +996,10 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         from,
                         ReceivedR1 {
                             phi_bar_i,
-                            pvss_c1,
-                            pvss_c2s,
+                            drg_commitments,
+                            _drg_ciphertext: drg_ct,
+                            _drg_y: drg_y,
+                            drg_my_share: my_share,
                         },
                     );
 
@@ -970,7 +1051,7 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         point_from_bytes(&payload.r_point_bytes, &format!("R from {from}"))
                             .map_err(TecdsaError::Other)?;
 
-                    // Verify R_dl-cl proofs AND R_cl-dec-dl proof.
+                    // Verify R_dl-cl proofs AND R_PC-DL proof.
                     let pi_dl_cl_x = payload
                         .pi_dl_cl_x
                         .to_proof(&self.setup)
@@ -979,10 +1060,10 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         .pi_dl_cl_k
                         .to_proof(&self.setup)
                         .map_err(|e| TecdsaError::Other(format!("pi_dl_cl_k from {from}: {e}")))?;
-                    let pi_dec_dl = payload
-                        .pi_dec_dl
+                    let pi_pc_dl = payload
+                        .pi_pc_dl
                         .to_proof(&self.setup)
-                        .map_err(|e| TecdsaError::Other(format!("pi_dec_dl from {from}: {e}")))?;
+                        .map_err(|e| TecdsaError::Other(format!("pi_pc_dl from {from}: {e}")))?;
 
                     // Verify R_dl-cl for x: (X_lambda_i, phi_bar, phi_bar_x_i; lambda_i * x_i)
                     let from_idx = state
@@ -997,7 +1078,6 @@ impl StateMachine for Jtx25RobustPresignMachine {
                         tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
                     let lambda_j = lagrange_coeffs[from_idx];
 
-                    // Map signing-set index to DKG index for public_shares lookup.
                     let from_dkg_idx = from.0 as usize;
                     let x_j_lambda_point = self.key_mat.public_shares[from_dkg_idx] * lambda_j;
 
@@ -1014,50 +1094,21 @@ impl StateMachine for Jtx25RobustPresignMachine {
                             TecdsaError::Other(format!("R_dl-cl k verify from {from}: {e}"))
                         })?;
 
-                    // Verify R_Dec_DL proof.
-                    let pd = payload
-                        .pd
+                    // Verify R_PC-DL: proves R_i = g^{k_i} via F-subgroup.
+                    let drg_comb_y = payload
+                        .drg_comb_y
                         .to_qfi(&self.setup)
-                        .map_err(|e| TecdsaError::Other(format!("pd from {from}: {e}")))?;
-                    let pd_c1 = payload
-                        .pd_c1
-                        .to_qfi(&self.setup)
-                        .map_err(|e| TecdsaError::Other(format!("pd_c1 from {from}: {e}")))?;
-
-                    let from_pk_data =
-                        self.key_mat.cl_pk_share_bytes.get(&from.0).ok_or_else(|| {
-                            TecdsaError::Other(format!("missing CL pk share for {from}"))
-                        })?;
-                    let from_pk_qfi = {
-                        let ctx = self.setup.ctx();
-                        BicyclQfi::from_bytes(ctx, from_pk_data)
-                            .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
-                    };
-                    let from_pk_raw = self
-                        .setup
-                        .pk_from_qfi(&from_pk_qfi)
-                        .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
-
-                    let dummy_c2 = self
-                        .setup
-                        .identity()
-                        .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
-                    let ct_for_verify = self
-                        .setup
-                        .ct_from_components(&pd_c1, &dummy_c2)
-                        .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-                    let dec_dl_ok = pi_dec_dl
-                        .verify(&self.setup, &from_pk_raw, &ct_for_verify, &pd)
+                        .map_err(|e| TecdsaError::Other(format!("drg_comb_y from {from}: {e}")))?;
+                    let pc_dl_ok = pi_pc_dl
+                        .verify(&self.setup, &drg_comb_y)
                         .map_err(|e| {
-                            TecdsaError::Other(format!("R_Dec_DL verify from {from}: {e}"))
+                            TecdsaError::Other(format!("R_PC-DL verify from {from}: {e}"))
                         })?;
 
-                    // CRITICAL: All proofs must pass (AND).
-                    if !dl_cl_x_ok || !dl_cl_k_ok || !dec_dl_ok {
+                    if !dl_cl_x_ok || !dl_cl_k_ok || !pc_dl_ok {
                         self.round = PresignRobustRound::Round2(state);
                         return Err(TecdsaError::Other(format!(
-                            "proof verification failed for party {from}: dl_cl_x={dl_cl_x_ok}, dl_cl_k={dl_cl_k_ok}, dec_dl={dec_dl_ok}"
+                            "proof verification failed for party {from}: dl_cl_x={dl_cl_x_ok}, dl_cl_k={dl_cl_k_ok}, pc_dl={pc_dl_ok}"
                         )));
                     }
 

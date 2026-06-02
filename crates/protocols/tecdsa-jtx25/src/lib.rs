@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
-//! JTX25 Three-Round (Robust) Threshold ECDSA from Threshold CL Encryption.
+//! JTX25 Threshold ECDSA from Threshold CL Encryption.
 //!
 //! Implements the Jiang-Tang-Xue 2025 protocol:
+//! - **3-round keygen:** PVSS for ECDSA key + threshold CL DKG
 //! - **2-round presign (offline):** threshold CL homomorphic operations
 //! - **1-round sign (online):** threshold CL partial decryption + assembly
-//! - **DRG-based keygen:** PVSS for ECDSA key + threshold CL DKG
-//! - **Robustness:** DRG ensures t-threshold k_i shares
+//! - **Normal variant:** additive nonce sharing among signing set (no DRG)
+//! - **Robust variant** (`robust` feature): DRG for k_i, tolerates dropouts after presign
 //!
 //! # License
 //!

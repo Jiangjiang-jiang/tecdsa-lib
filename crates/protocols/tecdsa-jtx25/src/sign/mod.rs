@@ -46,7 +46,6 @@ pub mod robust;
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::PrimeField;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -101,14 +100,7 @@ struct ReceivedR3 {
 
 fn hash_message_to_scalar(message: &[u8]) -> k256::Scalar {
     let hash: [u8; 32] = Sha256::digest(message).into();
-    let mut repr = k256::FieldBytes::default();
-    repr.copy_from_slice(&hash);
-    if let Some(s) = Option::from(k256::Scalar::from_repr(repr)) {
-        return s;
-    }
-    repr[0] &= 0x7F;
-    Option::from(k256::Scalar::from_repr(repr))
-        .expect("scalar reduction must succeed after clearing top bit")
+    tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&hash)
 }
 
 // ---------------------------------------------------------------------------

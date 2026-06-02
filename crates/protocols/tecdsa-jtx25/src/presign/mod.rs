@@ -18,7 +18,8 @@
 //! JTX25 TECDSA-Normal presigning protocol (2 rounds, no DRG).
 //!
 //! Produces a message-independent [`Jtx25Presignature`] using threshold CL
-//! homomorphic encryption with n-out-of-n additive nonce sharing (k = sum(k_i)).
+//! homomorphic encryption with additive nonce sharing among the signing set
+//! (k = sum(k_i)). All presign participants must complete the sign phase.
 //!
 //! ## Protocol Rounds (JTX25 Section 3, Figure 4)
 //!
