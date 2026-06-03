@@ -490,9 +490,7 @@ impl ScaledDecryptMtA {
     /// # Errors
     ///
     /// Returns an error if parsing or QFI reconstruction fails.
-    pub fn decode_to_qfi(
-        decoded_bytes: &[u8],
-    ) -> Result<Qfi, ScaledDecryptError> {
+    pub fn decode_to_qfi(decoded_bytes: &[u8]) -> Result<Qfi, ScaledDecryptError> {
         let qfi = Qfi::from_bytes(decoded_bytes);
         Ok(qfi)
     }

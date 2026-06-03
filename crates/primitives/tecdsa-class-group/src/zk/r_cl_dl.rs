@@ -61,12 +61,7 @@ impl RClDlProof {
         let s = setup.power_of_f_bytes(&a2)?;
 
         let (c1, c2) = setup.ct_components(ct)?;
-        let e = challenge_from_qfi(
-            setup,
-            b"R_cl_dl",
-            &[pk_elt, &c1, &c2, y, &t1, &t2, &s],
-            &[],
-        )?;
+        let e = challenge_from_qfi(setup, b"R_cl_dl", &[pk_elt, &c1, &c2, y, &t1, &t2, &s], &[])?;
 
         let u1 = response_unbounded(&a1, &e, r_bytes)?;
         let q_bytes = setup.q_bytes()?;

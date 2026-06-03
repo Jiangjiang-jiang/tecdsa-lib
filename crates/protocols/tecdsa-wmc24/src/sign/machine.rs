@@ -152,8 +152,8 @@ impl Wmc24OnlineSignMachine {
         let pi = RPartDecProof::prove(&mut setup, &my_pk_raw, &c_sig, &pc, sk_share)
             .map_err(|e| TecdsaError::Other(format!("pi: {e}")))?;
 
-        let pc_ser = SerializedQfi::from_qfi(&pc)
-            .map_err(|e| TecdsaError::Other(format!("ser pc: {e}")))?;
+        let pc_ser =
+            SerializedQfi::from_qfi(&pc).map_err(|e| TecdsaError::Other(format!("ser pc: {e}")))?;
         let pi_ser = SerRPartDecProof::from_proof(&pi)
             .map_err(|e| TecdsaError::Other(format!("ser pi: {e}")))?;
 

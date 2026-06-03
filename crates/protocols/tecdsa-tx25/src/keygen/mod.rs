@@ -159,9 +159,7 @@ fn serialize_round1(
 }
 
 /// Deserializes a Round 1 message.
-fn deserialize_round1(
-    data: &[u8],
-) -> Result<((String, String, String), RKeyProof), Tx25Error> {
+fn deserialize_round1(data: &[u8]) -> Result<((String, String, String), RKeyProof), Tx25Error> {
     let (pk_abc, pos) = read_qfi_abc(data, 0)?;
     let (t_abc, pos) = read_qfi_abc(data, pos)?;
     let (z_bytes, pos) = read_field(data, pos)?;
@@ -202,9 +200,7 @@ fn serialize_round2(pvss: &PvssOutput) -> Result<Vec<u8>, Tx25Error> {
 }
 
 /// Deserializes a Round 2 message.
-fn deserialize_round2(
-    data: &[u8],
-) -> Result<(Qfi, Vec<Qfi>, RShProof), Tx25Error> {
+fn deserialize_round2(data: &[u8]) -> Result<(Qfi, Vec<Qfi>, RShProof), Tx25Error> {
     if data.len() < 4 {
         return Err(Tx25Error::InvalidInput("R2 data too short".into()));
     }
@@ -268,9 +264,7 @@ fn serialize_round3(
 }
 
 /// Deserializes a Round 3 message (includes pd for R_Dec_DL verification).
-fn deserialize_round3(
-    data: &[u8],
-) -> Result<(k256::ProjectivePoint, RDecDlProof, Qfi), Tx25Error> {
+fn deserialize_round3(data: &[u8]) -> Result<(k256::ProjectivePoint, RDecDlProof, Qfi), Tx25Error> {
     let (point_bytes, pos) = read_field(data, 0)?;
 
     // Parse EC point.

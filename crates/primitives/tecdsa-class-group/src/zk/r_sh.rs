@@ -74,11 +74,7 @@ fn c_from_hash(c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<BigUint> {
 /// Derives deterministic dual-code polynomial coefficients from a hash of the c2 values.
 ///
 /// Returns `degree + 1` coefficients in `[0, q)`.
-fn dual_code_coeffs(
-    c2s: &[&Qfi],
-    degree: usize,
-    q: &BigUint,
-) -> ClResult<Vec<BigUint>> {
+fn dual_code_coeffs(c2s: &[&Qfi], degree: usize, q: &BigUint) -> ClResult<Vec<BigUint>> {
     let mut coeffs = Vec::with_capacity(degree + 1);
 
     for d in 0..=degree {
@@ -205,12 +201,7 @@ fn aggregate_products(
 /// Computes the Fiat-Shamir challenge from (prod_U, prod_V, R0, V0).
 ///
 /// Returns `H(prod_U, prod_V, R0, V0) mod 2^SOUNDNESS_BITS`.
-fn schnorr_challenge(
-    prod_u: &Qfi,
-    prod_v: &Qfi,
-    r0: &Qfi,
-    v0: &Qfi,
-) -> ClResult<Vec<u8>> {
+fn schnorr_challenge(prod_u: &Qfi, prod_v: &Qfi, r0: &Qfi, v0: &Qfi) -> ClResult<Vec<u8>> {
     let mut hasher = Sha256::new();
 
     for qfi in [prod_u, prod_v, r0, v0] {

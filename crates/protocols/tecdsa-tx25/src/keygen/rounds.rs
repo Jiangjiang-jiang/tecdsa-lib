@@ -283,8 +283,7 @@ pub(crate) fn transition_r2_to_r3(
             .cl_pk_abcs
             .get(pid)
             .ok_or_else(|| TecdsaError::Other(format!("missing pk abc for party {pid}")))?;
-        let qfi =
-            abc_to_qfi(abc).map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
+        let qfi = abc_to_qfi(abc).map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
         let pk_raw = setup
             .pk_from_qfi(&qfi)
             .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
