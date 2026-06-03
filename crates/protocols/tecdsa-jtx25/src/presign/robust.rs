@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -394,7 +394,7 @@ impl Jtx25RobustPresignMachine {
             public_shares: key_share.public_shares.clone(),
             threshold,
             cl_sk_share: key_share.cl_sk_share.clone(),
-            cl_pk: setup.pk_from_qfi(&pk_elt)?,
+            cl_pk: setup.pk_from_qfi(pk_elt)?,
             cl_pk_bytes,
             cl_pk_share_bytes,
             cl_setup_seed: key_share.cl_setup_seed.clone(),

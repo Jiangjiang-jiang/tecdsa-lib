@@ -3,9 +3,9 @@ name = "tecdsa-class-group"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license = "GPL-3.0-or-later"
+license = "MIT OR Apache-2.0"
 repository.workspace = true
-description = "Class-group encryption and proofs for tecdsa (GPL-3.0)"
+description = "Class-group encryption and proofs for tecdsa"
 
 [dependencies]
 tecdsa-core = { workspace = true }

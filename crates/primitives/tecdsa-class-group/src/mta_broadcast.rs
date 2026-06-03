@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `MtABroadcast` implementations for NIM and scaled decryption.
 //!
 //! Two backends:
@@ -692,13 +692,14 @@ mod tests {
         let aggregated = ScaledDecryptMtA::aggregate(&setup, &enc_refs).expect("aggregate");
 
         // Each party decodes to get its F_i share
-        let mut f_shares = Vec::new();
-        for i in 0..n {
-            let f_bytes = ScaledDecryptMtA::decode(&setup, &aggregated, &states[i], &q_bytes)
-                .expect("decode");
-            let f_i = ScaledDecryptMtA::decode_to_qfi(&f_bytes).expect("decode_to_qfi");
-            f_shares.push(f_i);
-        }
+        let f_shares = states
+            .iter()
+            .map(|state| {
+                let f_bytes =
+                    ScaledDecryptMtA::decode(&setup, &aggregated, state, &q_bytes).expect("decode");
+                ScaledDecryptMtA::decode_to_qfi(&f_bytes).expect("decode_to_qfi")
+            })
+            .collect::<Vec<_>>();
 
         // Aggregate F-shares and extract the product
         let result_bytes =

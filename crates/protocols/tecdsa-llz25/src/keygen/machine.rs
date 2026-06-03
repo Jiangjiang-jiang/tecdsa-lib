@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -629,7 +629,7 @@ mod tests {
         // Create machines (Round 1 executes immediately in the constructor).
         let mut machines: Vec<Llz25KeygenMachine> = (0..n)
             .map(|i| {
-                let pk_i = setup.pk_from_qfi(&pk_qfi).expect("pk_from_qfi");
+                let pk_i = setup.pk_from_qfi(pk_qfi).expect("pk_from_qfi");
                 Llz25KeygenMachine::new(
                     all_parties[i as usize],
                     all_parties.clone(),

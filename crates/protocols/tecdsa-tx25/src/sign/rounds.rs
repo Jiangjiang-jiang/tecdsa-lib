@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TX25 online sign round logic (zero-sharing, Lagrange, assembly, cheater ID).
 
 use std::collections::BTreeMap;

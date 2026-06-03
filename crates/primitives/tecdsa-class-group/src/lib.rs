@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Class-group encryption and proofs for the `tecdsa` threshold ECDSA library.
 //!
 //! This crate wraps [`bicycl_glue`] to provide:
@@ -8,11 +8,6 @@
 //! - **NIM** ([`nim`]): Non-Interactive Multiplication protocol allowing two
 //!   parties to compute additive shares of a product `x * y mod q`.
 //! - **`DDLog`** ([`ddlog`]): Discrete-log labeling in the class group.
-//!
-//! # License
-//!
-//! This crate is **GPL-3.0-or-later** due to the `bicycl-rs` dependency.
-//! Do not depend on this crate from MIT/Apache-2.0 code.
 
 pub mod batch;
 pub mod cl;

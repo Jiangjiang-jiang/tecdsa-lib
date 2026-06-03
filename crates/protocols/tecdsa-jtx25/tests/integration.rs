@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -97,8 +97,8 @@ fn setup_threshold_cl_keys(shares: &mut [Jtx25KeyShare], seed: &str) {
     // Update each key share with the threshold CL material.
     for (i, share) in shares.iter_mut().enumerate() {
         share.cl_sk_share = sk_shares[i].clone();
-        share.cl_pk = setup.pk_from_qfi(&pk_raw.elt()).expect("pk_from_qfi");
-        share.cl_pk_shares = pk_share_qfis.iter().map(|qfi| qfi.clone()).collect();
+        share.cl_pk = setup.pk_from_qfi(pk_raw.elt()).expect("pk_from_qfi");
+        share.cl_pk_shares = pk_share_qfis.clone();
         share.n_parties_dkg = n;
     }
 }

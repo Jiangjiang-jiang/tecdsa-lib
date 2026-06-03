@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 online signing round functions (1-round protocol).
 //!
 //! Each party computes a partial signature $s_i = m \cdot k_i + r \cdot \sigma_i$

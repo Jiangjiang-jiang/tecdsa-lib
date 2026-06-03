@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 //! WMY23 Real Threshold ECDSA protocol.
 //!
@@ -21,11 +21,6 @@
 //! presignature without being detected. **Do not rely on this protocol's
 //! robustness property in production.** Use TX25 for robust threshold
 //! ECDSA instead. The keygen and non-robust signing phases are unaffected.
-//!
-//! # License
-//!
-//! This crate is **GPL-3.0-or-later** due to the `tecdsa-class-group`
-//! dependency (which wraps the BICYCL C library).
 
 pub mod key_share;
 pub mod keygen;

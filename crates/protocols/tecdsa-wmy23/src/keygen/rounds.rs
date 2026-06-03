@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 keygen round functions (simplified 2-round protocol).
 //!
 //! Instead of the full 4-round DRG-based TKeygen from the paper,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `DDLog` — discrete-log labeling in the class group.
 //!
 //! The `DDLog` (or "coset labeling") maps an element of `Cl(Delta)` to a

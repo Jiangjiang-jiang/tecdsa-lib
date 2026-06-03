@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 online signing protocol (Round 5, 1 round).
 //!
 //! Consumes a [`Wmy23Presignature`] and a message digest to produce a

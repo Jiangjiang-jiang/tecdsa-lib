@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Distributed Randomness Generation (DRG) primitive.
 //!
 //! Originally from WMY23 (Wang, Mei, Yu. "Real Threshold ECDSA." NDSS 2023).

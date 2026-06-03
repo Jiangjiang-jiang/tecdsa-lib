@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(clippy::module_name_repetitions)]
 
 //! Shared CL serialization types and helpers for JTX25 protocol messages.

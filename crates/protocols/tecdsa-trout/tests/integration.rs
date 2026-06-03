@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Trout integration tests.
 //!
 //! Paper: Dahari-Garbian, Nof, Parker. "Trout: Two-Round Threshold ECDSA
@@ -203,7 +203,7 @@ fn test_scaled_decrypt_standalone() {
         let beta_i = setup.sk_to_bytes(&sk_tmp2).expect("sk_bytes");
 
         let h_beta = setup.power_of_h_bytes(&beta_i).expect("power_of_h");
-        let pk_b = setup.exp_bytes(&pk_elt, &b_bytes).expect("exp");
+        let pk_b = setup.exp_bytes(pk_elt, &b_bytes).expect("exp");
         let com = setup.compose(&h_beta, &pk_b).expect("compose");
         com_qfis.push(com);
 

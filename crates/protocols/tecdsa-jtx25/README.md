@@ -6,6 +6,6 @@ Part of the [tecdsa](../../) threshold ECDSA workspace.
 
 ## License
 
-GPL-3.0-or-later
+MIT OR Apache-2.0
 
 See the [implementation details](../../docs/JTX25-Implementation-Details.md) for protocol specification and [audit report](../../docs/audit-reports/) for security review.

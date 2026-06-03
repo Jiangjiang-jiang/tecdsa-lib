@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 threshold key generation protocol.
 //!
 //! A 4-round protocol where $n$ parties produce shared ECDSA key material

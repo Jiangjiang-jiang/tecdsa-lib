@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! MtAwc -- Multiplicative-to-Additive conversion with Check.
 //!
 //! Implements Figure 1 of the WMY23 paper (Wang, Mei, Yu. "Real Threshold

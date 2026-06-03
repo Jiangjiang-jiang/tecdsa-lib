@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 //! TX25 Robust Threshold ECDSA protocol.
 //!
@@ -13,11 +13,6 @@
 //! - **3-round keygen:** PVSS + CL-HSM key distribution.
 //! - **Robustness + identifiable abort:** honest majority security
 //!   ($n \ge 2t - 1$), UC-secure under static corruption.
-//!
-//! # License
-//!
-//! This crate is **GPL-3.0-or-later** due to the `tecdsa-class-group`
-//! dependency (which wraps the BICYCL C library).
 
 pub mod error;
 pub mod key_share;

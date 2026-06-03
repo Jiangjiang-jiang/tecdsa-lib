@@ -17,7 +17,7 @@
 //!
 //! Four concrete backends are planned:
 //! - `PaillierMtA` in `tecdsa-paillier` (MIT) -- implements [`MtA`]
-//! - `ClMtA` in `tecdsa-class-group` (GPL-3.0) -- implements [`MtA`] + [`MtAWithCheck`]
+//! - `ClMtA` in `tecdsa-class-group` (MIT) -- implements [`MtA`] + [`MtAWithCheck`]
 //! - `OtMtA` in `tecdsa-ot` (MIT) -- implements [`MtAInteractive`]
 //! - `JlMtA` in `tecdsa-joye-libert` (MIT) -- implements [`MtA`]
 

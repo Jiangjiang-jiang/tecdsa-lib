@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 //! JTX25 Threshold ECDSA from Threshold CL Encryption.
 //!
@@ -8,10 +8,6 @@
 //! - **1-round sign (online):** threshold CL partial decryption + assembly
 //! - **Normal variant:** additive nonce sharing among signing set (no DRG)
 //! - **Robust variant** (`robust` feature): DRG for k_i, tolerates dropouts after presign
-//!
-//! # License
-//!
-//! GPL-3.0-or-later (tecdsa-class-group dependency).
 
 pub(crate) mod cl_wire;
 pub mod error;

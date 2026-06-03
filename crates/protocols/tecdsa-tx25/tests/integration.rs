@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TX25 end-to-end integration test.
 //!
 //! Covers the complete flow: KeyGen -> Presign -> Online Sign -> ECDSA Verify.

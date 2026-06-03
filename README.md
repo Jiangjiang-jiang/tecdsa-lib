@@ -40,6 +40,4 @@ cargo test --workspace --all-features
 
 ## License
 
-Most crates in the repository are licensed as `MIT OR Apache-2.0`.
-
-Class-group code depends on `bicycl-rs` and is affected by `GPL-3.0-or-later`. The default facade does not enable this part. Be careful with the license boundary when enabling class-group related features.
+All crates in the repository are licensed as `MIT OR Apache-2.0`.

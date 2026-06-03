@@ -6,6 +6,6 @@ Part of the [tecdsa](../../) threshold ECDSA workspace.
 
 ## License
 
-license.workspace = true
+MIT OR Apache-2.0
 
 See the [implementation details](../../docs/CGGMP20-Implementation-Details.md) for protocol specification and [audit report](../../docs/audit-reports/) for security review.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 //! LLZ25 Two-Round Threshold ECDSA protocol.
 //!
@@ -22,11 +22,6 @@
 //!
 //! DEUF (Doubly-Enhanced Existential Unforgeability) under the HSM
 //! assumption over class groups.
-//!
-//! # License
-//!
-//! This crate is **GPL-3.0-or-later** due to the `tecdsa-class-group`
-//! dependency (which wraps the BICYCL C library).
 
 pub mod error;
 pub mod key_share;

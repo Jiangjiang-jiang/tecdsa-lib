@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! CL-HSM encryption: key generation, encryption, decryption, and
 //! homomorphic operations.
 //!
@@ -10,6 +10,7 @@
 
 use std::str::FromStr;
 
+pub use self::{Ciphertext as ClCiphertext, PublicKey as ClPublicKey, SecretKey as ClSecretKey};
 pub use crate::class_group::{
     error::ClassGroupError,
     mpz::Mpz,
@@ -66,7 +67,6 @@ impl ClSetup {
     ///
     /// `seed_decimal` seeds the internal PRNG for deterministic testing.
     /// In production, pass a cryptographically random seed.
-
     pub fn new_secp256k1(seed_decimal: &str) -> ClResult<Self> {
         // For secp256k1, q ≡ 1 (mod 4), so we need p ≡ 3 (mod 4) and p prime,
         // with Legendre(q, p) = -1, to make Delta_K = -p*q fundamental.
@@ -98,7 +98,6 @@ impl ClSetup {
     /// - `k`: the power parameter (plaintext space is `Z/q^k`).
     /// - `p_decimal`: the class-group prime.
     /// - `seed_decimal`: PRNG seed (decimal string).
-
     pub fn new_custom(
         q_decimal: &str,
         k: u32,
@@ -134,7 +133,6 @@ impl ClSetup {
     // ── Key generation ─────────────────────────────────────────────────
 
     /// Generates a fresh CL-HSMqk key pair.
-
     pub fn keygen(&mut self) -> ClResult<(SecretKey, PublicKey)> {
         let sk = self.cl.keygen_secret(&mut self.rng);
         let pk = self.cl.keygen_public(&sk);
@@ -144,7 +142,6 @@ impl ClSetup {
     // ── Encryption / Decryption ────────────────────────────────────────
 
     /// Encrypts a plaintext given as a decimal string.
-
     pub fn encrypt(&mut self, pk: &PublicKey, message_decimal: &str) -> ClResult<Ciphertext> {
         Ok(self.cl.encrypt(
             pk,
@@ -154,7 +151,6 @@ impl ClSetup {
     }
 
     /// Encrypts with explicit randomness (deterministic encryption).
-
     pub fn encrypt_with_r(
         &self,
         pk: &PublicKey,
@@ -169,7 +165,6 @@ impl ClSetup {
     }
 
     /// Decrypts a ciphertext, returning the plaintext as a decimal string.
-
     pub fn decrypt(&self, sk: &SecretKey, ct: &Ciphertext) -> ClResult<String> {
         Ok(self.cl.decrypt(sk, ct).to_string())
     }
@@ -177,7 +172,6 @@ impl ClSetup {
     // ── Homomorphic operations ─────────────────────────────────────────
 
     /// Homomorphic addition: `Enc(a) + Enc(b) = Enc(a + b mod q^k)`.
-
     pub fn add_ciphertexts(
         &mut self,
         pk: &PublicKey,
@@ -188,7 +182,6 @@ impl ClSetup {
     }
 
     /// Homomorphic scalar multiplication: `s * Enc(m) = Enc(s * m mod q^k)`.
-
     pub fn scal_ciphertext(
         &mut self,
         pk: &PublicKey,
@@ -203,13 +196,11 @@ impl ClSetup {
     // ── Subgroup operations ────────────────────────────────────────────
 
     /// Computes `h^e` (power of the hidden-order generator).
-
     pub fn power_of_h(&self, e_decimal: &str) -> ClResult<Qfi> {
         Ok(self.cl.power_of_h(&Mpz::from_str(e_decimal)?))
     }
 
     /// Computes `f^m` in the cyclic subgroup `F` (the message subgroup).
-
     pub fn power_of_f(&self, m_decimal: &str) -> ClResult<Qfi> {
         Ok(self.cl.power_of_f(&Mpz::from_str(m_decimal)?))
     }
@@ -219,7 +210,6 @@ impl ClSetup {
     /// Encrypts a plaintext given as big-endian bytes.
     ///
     /// The bytes are interpreted as an unsigned big-endian integer.
-
     pub fn encrypt_bytes(
         &mut self,
         pk: &PublicKey,
@@ -310,28 +300,24 @@ impl ClSetup {
     // ── Class-group QFI utilities ──────────────────────────────────────
 
     /// Composes two QFI elements in `Cl(Delta)`: `f1 * f2`.
-
     pub fn compose(&self, f1: &Qfi, f2: &Qfi) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
         Ok(cl_delta.compose(f1, f2))
     }
 
     /// Exponentiates a QFI element: `f^n`.
-
     pub fn exp(&self, f: &Qfi, n_decimal: &str) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
         Ok(cl_delta.exp(f, &Mpz::from_str(n_decimal)?))
     }
 
     /// Returns the identity element of `Cl(Delta)`.
-
     pub fn identity(&self) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
         Ok(cl_delta.identity())
     }
 
     /// Returns the ciphertext components `(c1, c2)`.
-
     pub fn ct_components(&self, ct: &Ciphertext) -> ClResult<(Qfi, Qfi)> {
         let c1 = ct.c1().clone();
         let c2 = ct.c2().clone();
@@ -339,13 +325,11 @@ impl ClSetup {
     }
 
     /// Builds a ciphertext from QFI components `(c1, c2)`.
-
     pub fn ct_from_components(&self, c1: &Qfi, c2: &Qfi) -> ClResult<Ciphertext> {
         Ok(Ciphertext::new(c1.clone(), c2.clone()))
     }
 
     /// Constructs a public key from a QFI element.
-
     pub fn pk_from_qfi(&self, qfi: &Qfi) -> ClResult<PublicKey> {
         Ok(PublicKey::from_qfi(&self.cl, qfi.clone())?)
     }
@@ -1385,5 +1369,3 @@ mod tests {
         assert_eq!(c.decrypt(&sk, &ct).as_mpz(), &Mpz::from(14u64));
     }
 }
-
-pub use self::{Ciphertext as ClCiphertext, PublicKey as ClPublicKey, SecretKey as ClSecretKey};

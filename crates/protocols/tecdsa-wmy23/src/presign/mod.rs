@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 presigning protocol (Rounds 1-4).
 //!
 //! Produces a message-independent [`Wmy23Presignature`] using CL-based MtAwc

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -492,7 +492,7 @@ mod tests {
         let random_val = sample_random_mod_q(&mut setup).expect("rand");
         let f_bad = setup.power_of_f_bytes(&random_val).expect("f_bad");
         let pk0_elt = &pks[0].elt();
-        let pk0_rho = setup.exp_bytes(&pk0_elt, &rho).expect("pk0^rho");
+        let pk0_rho = setup.exp_bytes(pk0_elt, &rho).expect("pk0^rho");
         tampered_c2s[0] = setup.compose(&pk0_rho, &f_bad).expect("compose");
 
         let c2_refs: Vec<&Qfi> = tampered_c2s.iter().collect();

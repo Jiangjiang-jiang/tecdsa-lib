@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Zero-knowledge proofs over CL-HSM class groups.
 //!
 //! Each sub-module implements a Sigma-protocol relation following the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Non-Interactive Multiplication (NIM) protocol.
 //!
 //! Clean-room implementation from the LLZ25 paper description.

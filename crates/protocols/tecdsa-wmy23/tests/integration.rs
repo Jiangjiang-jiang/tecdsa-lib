@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 integration tests and benchmark.
 //!
 //! Paper: Wong, Ma, Yin, Chow. "Real Threshold ECDSA." NDSS 2023.
