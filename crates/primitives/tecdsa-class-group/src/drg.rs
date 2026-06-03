@@ -586,11 +586,10 @@ pub fn drg_full_run(
     let n_usize = n as usize;
 
     // Phase 1: DRG.Gen for each party
-    let mut gen_outputs: Vec<DrgGenOutput> = Vec::with_capacity(n_usize);
-    for i in 0..n_usize {
-        let gen = drg_gen(setup, &pks[i], threshold, n, rng)?;
-        gen_outputs.push(gen);
-    }
+    let gen_outputs = pks
+        .iter()
+        .map(|pk| drg_gen(setup, pk, threshold, n, rng))
+        .collect::<Result<Vec<_>, _>>()?;
 
     // Phase 2: DRG.GenVf -- each party verifies all other parties' outputs
     for j in 0..n_usize {
@@ -620,29 +619,31 @@ pub fn drg_full_run(
 
     // Phase 3: DRG.Comb for each party
     // In n-of-n, the qualified set Q = all parties
-    let mut comb_outputs: Vec<DrgCombOutput> = Vec::with_capacity(n_usize);
-    for j in 0..n_usize {
-        let my_index = (j + 1) as u16; // 1-based
+    let comb_outputs = pks
+        .iter()
+        .enumerate()
+        .map(|(j, pk)| {
+            let my_index = (j + 1) as u16; // 1-based
 
-        // Collect shares from all parties for party j
-        let received_shares: Vec<(u16, PedersenVssShare)> = (0..n_usize)
-            .map(|i| {
-                let sender_index = (i + 1) as u16;
-                (sender_index, gen_outputs[i].vss_shares[j].clone())
-            })
-            .collect();
+            // Collect shares from all parties for party j
+            let received_shares: Vec<(u16, PedersenVssShare)> = (0..n_usize)
+                .map(|i| {
+                    let sender_index = (i + 1) as u16;
+                    (sender_index, gen_outputs[i].vss_shares[j].clone())
+                })
+                .collect();
 
-        // Collect commitments from all parties
-        let all_commitments: Vec<(u16, Vec<k256::ProjectivePoint>)> = (0..n_usize)
-            .map(|i| {
-                let sender_index = (i + 1) as u16;
-                (sender_index, gen_outputs[i].commitments.clone())
-            })
-            .collect();
+            // Collect commitments from all parties
+            let all_commitments: Vec<(u16, Vec<k256::ProjectivePoint>)> = (0..n_usize)
+                .map(|i| {
+                    let sender_index = (i + 1) as u16;
+                    (sender_index, gen_outputs[i].commitments.clone())
+                })
+                .collect();
 
-        let comb = drg_comb(setup, &pks[j], my_index, &received_shares, &all_commitments)?;
-        comb_outputs.push(comb);
-    }
+            drg_comb(setup, pk, my_index, &received_shares, &all_commitments)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(comb_outputs)
 }
@@ -905,34 +906,29 @@ mod tests {
         let mut rng = rand::thread_rng();
 
         // Run DRG.Gen for each party, collecting their secrets
-        let mut gen_outputs: Vec<DrgGenOutput> = Vec::new();
-        for i in 0..n as usize {
-            let gen = drg_gen(&mut setup, &pks[i], threshold, n, &mut rng).expect("drg_gen");
-            gen_outputs.push(gen);
-        }
+        let gen_outputs = pks
+            .iter()
+            .map(|pk| drg_gen(&mut setup, pk, threshold, n, &mut rng).expect("drg_gen"))
+            .collect::<Vec<_>>();
 
         let expected_sum: k256::Scalar = gen_outputs.iter().map(|g| g.secret).sum();
 
         // Run DRG.Comb for each party
-        let mut comb_outputs: Vec<DrgCombOutput> = Vec::new();
-        for j in 0..n as usize {
-            let my_index = (j + 1) as u16;
-            let received_shares: Vec<(u16, PedersenVssShare)> = (0..n as usize)
-                .map(|i| ((i + 1) as u16, gen_outputs[i].vss_shares[j].clone()))
-                .collect();
-            let all_commitments: Vec<(u16, Vec<k256::ProjectivePoint>)> = (0..n as usize)
-                .map(|i| ((i + 1) as u16, gen_outputs[i].commitments.clone()))
-                .collect();
-            let comb = drg_comb(
-                &mut setup,
-                &pks[j],
-                my_index,
-                &received_shares,
-                &all_commitments,
-            )
-            .expect("drg_comb");
-            comb_outputs.push(comb);
-        }
+        let comb_outputs = pks
+            .iter()
+            .enumerate()
+            .map(|(j, pk)| {
+                let my_index = (j + 1) as u16;
+                let received_shares: Vec<(u16, PedersenVssShare)> = (0..n as usize)
+                    .map(|i| ((i + 1) as u16, gen_outputs[i].vss_shares[j].clone()))
+                    .collect();
+                let all_commitments: Vec<(u16, Vec<k256::ProjectivePoint>)> = (0..n as usize)
+                    .map(|i| ((i + 1) as u16, gen_outputs[i].commitments.clone()))
+                    .collect();
+                drg_comb(&mut setup, pk, my_index, &received_shares, &all_commitments)
+                    .expect("drg_comb")
+            })
+            .collect::<Vec<_>>();
 
         // Lagrange reconstruct combined shares
         let indices: Vec<u16> = (1..=n).collect();
