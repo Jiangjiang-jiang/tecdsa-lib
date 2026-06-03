@@ -44,12 +44,11 @@ pub mod machine;
 pub mod msg;
 pub mod rounds;
 
-pub use machine::Tx25PresignMachine;
-pub use msg::Tx25PresignMsg;
-
 use std::collections::BTreeMap;
 
-use tecdsa_class_group::bicycl_glue::BicyclPublicKey;
+pub use machine::Tx25PresignMachine;
+pub use msg::Tx25PresignMsg;
+use tecdsa_class_group::cl::ClPublicKey;
 use zeroize::Zeroize;
 
 // ---------------------------------------------------------------------------
@@ -136,7 +135,7 @@ pub(crate) struct KeyMaterial {
     /// This party's CL secret key as decimal string.
     pub(crate) sk_decimal: Vec<u8>,
     /// All parties' raw CL public keys (same order as all_parties).
-    pub(crate) raw_pks: Vec<BicyclPublicKey>,
+    pub(crate) raw_pks: Vec<ClPublicKey>,
     /// This party's signing key share x_i.
     pub(crate) x_i: k256::Scalar,
     /// Joint public key (used in future proof verification).

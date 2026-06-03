@@ -36,18 +36,14 @@
 
 pub mod machine;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::bicycl_glue::{
-    BicyclCiphertext as ClHsmqkCiphertext, BicyclPublicKey as ClHsmqkPublicKey, BicyclQfi as Qfi,
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use tecdsa_class_group::{
+    cl::{ClCiphertext as ClHsmqkCiphertext, ClPublicKey as ClHsmqkPublicKey, ClSetup, Qfi},
+    nim::{Nim, NimEncodeAOutput, NimEncodeBOutput},
+    zk::{r_cl_dl_ec::RClDlEcProof, r_ped_ec::RPedEcProof},
 };
-use tecdsa_class_group::nim::{Nim, NimEncodeAOutput, NimEncodeBOutput};
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
-use tecdsa_class_group::zk::r_ped_ec::RPedEcProof;
 use tecdsa_curve::TecdsaCurve;
+use zeroize::Zeroize;
 
 use crate::error::Llz25Error;
 

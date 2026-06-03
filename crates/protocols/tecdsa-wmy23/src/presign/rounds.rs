@@ -33,19 +33,18 @@
 
 #![allow(non_snake_case)]
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::cl_enc::ClCiphertext;
+use tecdsa_class_group::cl::{ClCiphertext, ClSetup};
 use tecdsa_curve::TecdsaCurve;
 
-use crate::key_share::Wmy23KeyShare;
-use crate::mtawc::{self, MtAwcAliceState, MtAwcBobOutput};
-use crate::presign::Wmy23Presignature;
+use crate::{
+    key_share::Wmy23KeyShare,
+    mtawc::{self, MtAwcAliceState, MtAwcBobOutput},
+    presign::Wmy23Presignature,
+};
 
 /// Per-party state after Round 1.
 pub struct PresignR1State {

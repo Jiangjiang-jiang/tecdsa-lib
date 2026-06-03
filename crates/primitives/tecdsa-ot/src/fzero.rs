@@ -190,10 +190,11 @@ fn compute_commitment(seed: &Seed, salt: &Salt) -> Commitment {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use elliptic_curve::CurveArithmetic;
     use k256::Secp256k1;
     use rand_core::OsRng;
+
+    use super::*;
 
     type TestCurve = Secp256k1;
     type Scalar = <TestCurve as CurveArithmetic>::Scalar;

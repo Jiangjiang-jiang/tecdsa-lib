@@ -26,8 +26,7 @@
 
 use std::marker::PhantomData;
 
-use fast_paillier::backend::Integer;
-use fast_paillier::{DecryptionKey, EncryptionKey};
+use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
 use sha2::Sha256;
 use tecdsa_protocol::MtA;
@@ -285,12 +284,11 @@ impl PaillierMtaProofs for Gg18Proofs {
 // Cggmp20Proofs: CGGMP20-specific proof system with pi_enc + pi_aff-g
 // ---------------------------------------------------------------------------
 
+use generic_ec::curves::Secp256k1 as GE;
 use paillier_zk::{
     paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
     IntegerExt,
 };
-
-use generic_ec::curves::Secp256k1 as GE;
 
 /// CGGMP20 proof setup: Ring-Pedersen auxiliary parameters, security
 /// parameters, and the prover's own Paillier key.
@@ -761,8 +759,9 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand_core::OsRng;
+
+    use super::*;
 
     /// Helper: generate a Paillier key pair and return (ek, dk).
     fn gen_paillier_keys(rng: &mut impl CryptoRngCore) -> (EncryptionKey, DecryptionKey) {
@@ -940,8 +939,7 @@ mod tests {
     #[test]
     #[ignore = "slow: redundant MtA/proof variant test"]
     fn mta_gg18_proofs_correctness() {
-        use crate::zk::mta_range::NTildeParams;
-        use crate::zk::pdl_slack::sample_below;
+        use crate::zk::{mta_range::NTildeParams, pdl_slack::sample_below};
 
         let mut rng = OsRng;
 

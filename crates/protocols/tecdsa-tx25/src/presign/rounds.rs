@@ -3,27 +3,27 @@
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
-use tecdsa_class_group::zk::r_enc::REncProof;
-use tecdsa_class_group::zk::r_m_aff_dl_ec::RMAffDlEcProof;
-use tecdsa_class_group::zk::r_sh::RShProof;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use tecdsa_class_group::{
+    cl::{ClCiphertext, ClSetup, Qfi},
+    zk::{r_dec_dl::RDecDlProof, r_enc::REncProof, r_m_aff_dl_ec::RMAffDlEcProof, r_sh::RShProof},
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, PartyId, Recipient};
+use zeroize::Zeroize;
 
-use crate::mpmta::{mpmta_round2, mpmta_verify_round2, MpmtaRound2Output};
-use crate::pvss::{pvss_decrypt_share_full, pvss_verify};
-
-use super::msg::{
-    R2Payload, R2PerPartyMtA, SerRDecDlProof, SerRMAffDlEcProof, SerializedClCt, SerializedQfi,
-    Tx25PresignMsg,
+use super::{
+    msg::{
+        R2Payload, R2PerPartyMtA, SerRDecDlProof, SerRMAffDlEcProof, SerializedClCt, SerializedQfi,
+        Tx25PresignMsg,
+    },
+    KeyMaterial, Tx25Presignature,
 };
-use super::{KeyMaterial, Tx25Presignature};
+use crate::{
+    mpmta::{mpmta_round2, mpmta_verify_round2, MpmtaRound2Output},
+    pvss::{pvss_decrypt_share_full, pvss_verify},
+};
 
 // ---------------------------------------------------------------------------
 // Received data (internal, reconstructed from messages)
@@ -32,13 +32,13 @@ use super::{KeyMaterial, Tx25Presignature};
 /// Received Round 1 data from a single party.
 pub(crate) struct ReceivedR1 {
     /// MPMtA Round 1 ciphertext (C_gamma_j).
-    pub(crate) c_gamma: BicyclCiphertext,
+    pub(crate) c_gamma: ClCiphertext,
     /// MPMtA Round 1 R_Enc proof.
     pub(crate) r_enc_proof: REncProof,
     /// PVSS c1 = h^rho.
-    pub(crate) pvss_c1: BicyclQfi,
+    pub(crate) pvss_c1: Qfi,
     /// PVSS c2_j for each party.
-    pub(crate) pvss_c2s: Vec<BicyclQfi>,
+    pub(crate) pvss_c2s: Vec<Qfi>,
     /// PVSS R_Sh proof.
     pub(crate) pvss_proof: RShProof,
 }
@@ -47,9 +47,9 @@ pub(crate) struct ReceivedR1 {
 #[allow(dead_code)]
 pub(crate) struct ReceivedR2 {
     /// Per-counterparty MtA output ciphertexts for k*gamma.
-    pub(crate) kg_c_alphas: Vec<BicyclCiphertext>,
+    pub(crate) kg_c_alphas: Vec<ClCiphertext>,
     /// Per-counterparty MtA output ciphertexts for x*gamma.
-    pub(crate) xg_c_alphas: Vec<BicyclCiphertext>,
+    pub(crate) xg_c_alphas: Vec<ClCiphertext>,
     /// Beta points B_{j,nu} for k*gamma.
     pub(crate) b_points: Vec<k256::ProjectivePoint>,
     /// Beta-hat points B_hat_{j,nu} for x*gamma.
@@ -57,9 +57,9 @@ pub(crate) struct ReceivedR2 {
     /// R_j = k_j * G.
     pub(crate) r_point: k256::ProjectivePoint,
     /// Partial decryption pd = c1^{sk} for R_Dec_DL verification.
-    pub(crate) pd: BicyclQfi,
+    pub(crate) pd: Qfi,
     /// The c1 used to compute pd.
-    pub(crate) pd_c1: BicyclQfi,
+    pub(crate) pd_c1: Qfi,
     /// R_Dec_DL proof.
     pub(crate) dec_dl_proof: RDecDlProof,
     /// R_m_AffDL_Ec proof for k*gamma.
@@ -91,7 +91,7 @@ pub(crate) struct Round2State {
     pub(crate) gamma_i: k256::Scalar,
     pub(crate) k_i: k256::Scalar,
     /// All parties' C_gamma ciphertexts from Round 1 (for MPMtA verification).
-    pub(crate) all_c_gammas: Vec<BicyclCiphertext>,
+    pub(crate) all_c_gammas: Vec<ClCiphertext>,
     /// Our MPMtA Round 2 output for k*gamma.
     pub(crate) kg_mta: MpmtaRound2Output,
     /// Our MPMtA Round 2 output for x*gamma.
@@ -223,7 +223,7 @@ pub(crate) fn transition_r1_to_r2(
     // We use the first non-self party's PVSS ciphertext as representative.
     // The pd and pd_c1 are included in the R2 message for verification.
     let my_pk_raw = &key_mat.raw_pks[my_idx_val];
-    let mut dec_dl_data: Option<(RDecDlProof, BicyclQfi, BicyclQfi)> = None;
+    let mut dec_dl_data: Option<(RDecDlProof, Qfi, Qfi)> = None;
 
     for (&party_j, r1) in &state.received {
         if party_j == state.my_id {
@@ -241,13 +241,8 @@ pub(crate) fn transition_r1_to_r2(
             .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove: {e}")))?;
 
         // Copy the c1 for inclusion in the message via binary round-trip.
-        let ctx = setup.ctx();
-        let c1_bytes = r1
-            .pvss_c1
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("c1 to_bytes: {e}")))?;
-        let c1_copy = BicyclQfi::from_bytes(ctx, &c1_bytes)
-            .map_err(|e| TecdsaError::Other(format!("c1 from_bytes: {e}")))?;
+        let c1_bytes = r1.pvss_c1.to_bytes();
+        let c1_copy = Qfi::from_bytes(&c1_bytes);
 
         dec_dl_data = Some((proof, pd, c1_copy));
         break; // One proof is sufficient as a representative.
@@ -272,14 +267,14 @@ pub(crate) fn transition_r1_to_r2(
 
     // --- Step 3: MPMtA Round 2 ---
     // Collect all C_gamma ciphertexts in party order.
-    let mut all_c_gammas: Vec<BicyclCiphertext> = Vec::with_capacity(n);
+    let mut all_c_gammas: Vec<ClCiphertext> = Vec::with_capacity(n);
     for &party_j in &state.all_parties {
         let r1 = state
             .received
             .get(&party_j)
             .ok_or_else(|| TecdsaError::Other(format!("missing R1 data from party {party_j}")))?;
         // Reconstruct the ciphertext from the received data.
-        // We need to serialize and re-deserialize because BicyclCiphertext
+        // We need to serialize and re-deserialize because ClCiphertext
         // doesn't implement Clone. We use the ct_components + ct_from_components
         // round-trip.
         let (c1, c2) = setup
@@ -320,9 +315,9 @@ pub(crate) fn transition_r1_to_r2(
     // --- Step 4: Build Round 2 message ---
     let mut mta_outputs = Vec::with_capacity(n);
     for j in 0..n {
-        let kg_c_alpha_ser = SerializedClCt::from_bicycl_ct(setup, &kg_mta.c_alphas[j])
+        let kg_c_alpha_ser = SerializedClCt::from_bicycl_ct(&kg_mta.c_alphas[j])
             .map_err(|e| TecdsaError::Other(format!("serialize kg c_alpha[{j}]: {e}")))?;
-        let xg_c_alpha_ser = SerializedClCt::from_bicycl_ct(setup, &xg_mta.c_alphas[j])
+        let xg_c_alpha_ser = SerializedClCt::from_bicycl_ct(&xg_mta.c_alphas[j])
             .map_err(|e| TecdsaError::Other(format!("serialize xg c_alpha[{j}]: {e}")))?;
 
         mta_outputs.push(R2PerPartyMtA {
@@ -333,19 +328,19 @@ pub(crate) fn transition_r1_to_r2(
         });
     }
 
-    let pd_ser = SerializedQfi::from_qfi(setup, &dec_dl_pd)
+    let pd_ser = SerializedQfi::from_qfi(&dec_dl_pd)
         .map_err(|e| TecdsaError::Other(format!("serialize pd: {e}")))?;
 
-    let pd_c1_ser = SerializedQfi::from_qfi(setup, &dec_dl_c1)
+    let pd_c1_ser = SerializedQfi::from_qfi(&dec_dl_c1)
         .map_err(|e| TecdsaError::Other(format!("serialize pd_c1: {e}")))?;
 
-    let dec_dl_proof_ser = SerRDecDlProof::from_proof(setup, &dec_dl_proof)
+    let dec_dl_proof_ser = SerRDecDlProof::from_proof(&dec_dl_proof)
         .map_err(|e| TecdsaError::Other(format!("serialize dec_dl_proof: {e}")))?;
 
-    let kg_proof_ser = SerRMAffDlEcProof::from_proof(setup, &kg_mta.proof)
+    let kg_proof_ser = SerRMAffDlEcProof::from_proof(&kg_mta.proof)
         .map_err(|e| TecdsaError::Other(format!("serialize kg_proof: {e}")))?;
 
-    let xg_proof_ser = SerRMAffDlEcProof::from_proof(setup, &xg_mta.proof)
+    let xg_proof_ser = SerRMAffDlEcProof::from_proof(&xg_mta.proof)
         .map_err(|e| TecdsaError::Other(format!("serialize xg_proof: {e}")))?;
 
     let r2_payload = R2Payload {
@@ -439,24 +434,12 @@ pub(crate) fn finalize(
                     .map_err(|e| TecdsaError::Other(format!("components: {e}")))?;
                 RMAffDlEcProof {
                     d_prime_1: {
-                        let ctx = setup.ctx();
-                        let bytes = r2
-                            .kg_proof
-                            .d_prime_1
-                            .to_bytes(ctx)
-                            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?;
-                        BicyclQfi::from_bytes(ctx, &bytes)
-                            .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
+                        let bytes = r2.kg_proof.d_prime_1.to_bytes();
+                        Qfi::from_bytes(&bytes)
                     },
                     d_prime_2: {
-                        let ctx = setup.ctx();
-                        let bytes = r2
-                            .kg_proof
-                            .d_prime_2
-                            .to_bytes(ctx)
-                            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?;
-                        BicyclQfi::from_bytes(ctx, &bytes)
-                            .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
+                        let bytes = r2.kg_proof.d_prime_2.to_bytes();
+                        Qfi::from_bytes(&bytes)
                     },
                     b0_bytes: r2.kg_proof.b0_bytes.clone(),
                     r0_bytes: r2.kg_proof.r0_bytes.clone(),
@@ -499,25 +482,14 @@ pub(crate) fn finalize(
             beta_points: r2.b_hat_points.clone(),
             k_star: Vec::new(),
             proof: {
-                let ctx = setup.ctx();
                 RMAffDlEcProof {
                     d_prime_1: {
-                        let bytes = r2
-                            .xg_proof
-                            .d_prime_1
-                            .to_bytes(ctx)
-                            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?;
-                        BicyclQfi::from_bytes(ctx, &bytes)
-                            .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
+                        let bytes = r2.xg_proof.d_prime_1.to_bytes();
+                        Qfi::from_bytes(&bytes)
                     },
                     d_prime_2: {
-                        let bytes = r2
-                            .xg_proof
-                            .d_prime_2
-                            .to_bytes(ctx)
-                            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?;
-                        BicyclQfi::from_bytes(ctx, &bytes)
-                            .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
+                        let bytes = r2.xg_proof.d_prime_2.to_bytes();
+                        Qfi::from_bytes(&bytes)
                     },
                     b0_bytes: r2.xg_proof.b0_bytes.clone(),
                     r0_bytes: r2.xg_proof.r0_bytes.clone(),
@@ -547,24 +519,15 @@ pub(crate) fn finalize(
         let dummy_c2 = setup
             .identity()
             .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
-        // Copy pd_c1 via binary round-trip since BicyclQfi doesn't implement Clone.
-        let ctx = setup.ctx();
-        let c1_bytes = r2
-            .pd_c1
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("pd_c1 to_bytes: {e}")))?;
-        let c1_copy = BicyclQfi::from_bytes(ctx, &c1_bytes)
-            .map_err(|e| TecdsaError::Other(format!("pd_c1 from_bytes: {e}")))?;
+        // Copy pd_c1 via binary round-trip since Qfi doesn't implement Clone.
+        let c1_bytes = r2.pd_c1.to_bytes();
+        let c1_copy = Qfi::from_bytes(&c1_bytes);
         let ct_for_verify = setup
             .ct_from_components(&c1_copy, &dummy_c2)
             .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
         // Copy pd via binary round-trip.
-        let pd_bytes = r2
-            .pd
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("pd to_bytes: {e}")))?;
-        let pd_copy = BicyclQfi::from_bytes(ctx, &pd_bytes)
-            .map_err(|e| TecdsaError::Other(format!("pd from_bytes: {e}")))?;
+        let pd_bytes = r2.pd.to_bytes();
+        let pd_copy = Qfi::from_bytes(&pd_bytes);
 
         let dec_dl_ok = r2
             .dec_dl_proof

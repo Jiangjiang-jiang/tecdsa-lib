@@ -4,8 +4,7 @@
 use k256::Secp256k1;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_lin17::keygen::trusted_dealer_keygen;
-use tecdsa_lin17::sign;
+use tecdsa_lin17::{keygen::trusted_dealer_keygen, sign};
 use tecdsa_protocol::{verify_ecdsa, DataToSign};
 
 /// Helper: hash a message to a scalar for ECDSA signing.

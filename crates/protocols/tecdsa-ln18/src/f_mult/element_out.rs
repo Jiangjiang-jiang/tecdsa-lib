@@ -223,8 +223,7 @@ mod tests {
     /// Verify that the result equals `sum(a_i) * G`.
     #[cfg(feature = "secp256k1")]
     fn run_element_out(n: usize) {
-        use crate::f_mult::init::InitState;
-        use crate::f_mult::input::InputState;
+        use crate::f_mult::{init::InitState, input::InputState};
 
         let mut rng = rand::thread_rng();
         let parties: Vec<PartyId> = (0..n).map(|i| PartyId(i as u16)).collect();

@@ -24,10 +24,10 @@ pub mod machine;
 pub mod msg;
 pub(crate) mod rounds;
 
+use std::collections::BTreeMap;
+
 pub use machine::Wmc24PresignMachine;
 pub use msg::Wmc24PresignMsg;
-
-use std::collections::BTreeMap;
 use zeroize::Zeroize;
 
 // ---------------------------------------------------------------------------

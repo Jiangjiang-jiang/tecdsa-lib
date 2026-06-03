@@ -2,12 +2,13 @@
 #[cfg(not(feature = "std"))]
 use alloc::{format, string::String, string::ToString, vec::Vec};
 
-use crate::TecdsaCurve;
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+
+use crate::TecdsaCurve;
 
 /// Schnorr-style discrete-log proof `DLOG{ w : P = w*G }`.
 ///
@@ -59,8 +60,8 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use core::fmt;
-        use core::marker::PhantomData;
+        use core::{fmt, marker::PhantomData};
+
         use serde::de::{self, MapAccess, SeqAccess, Visitor};
 
         #[derive(Deserialize)]
@@ -244,8 +245,9 @@ mod tests {
 
     #[cfg(feature = "secp256k1")]
     mod secp256k1_tests {
-        use super::*;
         use k256::Secp256k1;
+
+        use super::*;
 
         #[test]
         fn dlog_honest_verifies() {

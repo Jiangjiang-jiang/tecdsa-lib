@@ -13,10 +13,10 @@
 //! decryption of ciphertext `(c1, c2)` under secret key `sk`, where
 //! `pk = h^{sk}`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, Qfi};
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
+use crate::cl::{
+    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
+};
 
 /// Generalized decryption proof.
 pub struct RGdecClProof {
@@ -43,11 +43,11 @@ impl RGdecClProof {
         let (c1, _) = setup.ct_components(ct)?;
         let t2 = setup.exp_bytes(&c1, &a)?;
 
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let e = challenge_from_qfi(
             setup,
             b"R_gdec_cl",
-            &[&pk_elt, &c1, dec_result, &t1, &t2],
+            &[pk_elt, &c1, dec_result, &t1, &t2],
             &[],
         )?;
 
@@ -64,13 +64,13 @@ impl RGdecClProof {
         ct: &ClHsmqkCiphertext,
         dec_result: &Qfi,
     ) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let (c1, c2) = setup.ct_components(ct)?;
 
         let e_check = challenge_from_qfi(
             setup,
             b"R_gdec_cl",
-            &[&pk_elt, &c1, dec_result, &self.t1, &self.t2],
+            &[pk_elt, &c1, dec_result, &self.t1, &self.t2],
             &[],
         )?;
         if e_check != self.e {
@@ -79,20 +79,21 @@ impl RGdecClProof {
 
         // Check 1: h^z == t1 * pk^e
         let h_z = setup.power_of_h_bytes(&self.z)?;
-        let pk_e = setup.exp_bytes(&pk_elt, &self.e)?;
+        let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &pk_e)?;
-        if !h_z.equal(setup.ctx(), &rhs1)? {
+        if h_z != rhs1 {
             return Ok(false);
         }
 
         // Check 2: c1^z == t2 * (c2 * D^{-1})^e
         // Note: c1^{sk} = c2 * D^{-1}, so we check c1^z == t2 * (c2 * D^{-1})^e.
-        let d_inv = dec_result.neg(setup.ctx())?;
+        let mut d_inv = dec_result.clone();
+        d_inv.neg();
         let c2_d_inv = setup.compose(&c2, &d_inv)?;
         let lhs2 = setup.exp_bytes(&c1, &self.z)?;
         let rhs2_inner = setup.exp_bytes(&c2_d_inv, &self.e)?;
         let rhs2 = setup.compose(&self.t2, &rhs2_inner)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -103,20 +104,20 @@ impl RGdecClProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_gdec_cl_honest_verifies() {
         let mut setup = ClSetup::new_secp256k1("12001").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
-        let sk_dec = setup.sk_to_decimal(&sk_raw).expect("sk_dec");
+        let sk_dec = sk_raw.to_string();
 
         let ct = setup.encrypt(&pk_raw, "42").expect("encrypt");
         let (c1, c2) = setup.ct_components(&ct).expect("comp");
-        let c1_sk = setup.exp(&c1, &sk_dec).expect("c1^sk");
-        let c1_sk_inv = c1_sk.neg(setup.ctx()).expect("inv");
-        let dec_result = setup.compose(&c2, &c1_sk_inv).expect("dec");
+        let mut c1_sk = setup.exp(&c1, &sk_dec).expect("c1^sk");
+        c1_sk.neg();
+        let dec_result = setup.compose(&c2, &c1_sk).expect("dec");
 
         let proof =
             RGdecClProof::prove(&mut setup, &pk_raw, &ct, &dec_result, &sk_bytes).expect("prove");
@@ -130,13 +131,13 @@ mod tests {
     fn r_gdec_cl_rejects_wrong_sk() {
         let mut setup = ClSetup::new_secp256k1("12002").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-        let sk_dec = setup.sk_to_decimal(&sk_raw).expect("sk_dec");
+        let sk_dec = sk_raw.to_string();
 
         let ct = setup.encrypt(&pk_raw, "42").expect("encrypt");
         let (c1, c2) = setup.ct_components(&ct).expect("comp");
-        let c1_sk = setup.exp(&c1, &sk_dec).expect("c1^sk");
-        let c1_sk_inv = c1_sk.neg(setup.ctx()).expect("inv");
-        let dec_result = setup.compose(&c2, &c1_sk_inv).expect("dec");
+        let mut c1_sk = setup.exp(&c1, &sk_dec).expect("c1^sk");
+        c1_sk.neg();
+        let dec_result = setup.compose(&c2, &c1_sk).expect("dec");
 
         let (sk2, _) = setup.keygen().expect("kg2");
         let wrong_sk = setup.sk_to_bytes(&sk2).expect("bytes");

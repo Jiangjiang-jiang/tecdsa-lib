@@ -6,21 +6,17 @@ use std::collections::BTreeMap;
 use elliptic_curve::CurveArithmetic;
 use num_bigint::BigUint;
 use num_traits::Num as _;
-
-use tecdsa_class_group::bicycl_glue::{BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_enc::REncProof;
+use tecdsa_class_group::{
+    cl::{ClSetup, Qfi},
+    zk::r_enc::REncProof,
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::zk::ddh::DdhStatement;
+use tecdsa_elgamal::Ciphertext as ElGamalCiphertext;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
-use crate::curve_wire::point_from_bytes;
-use crate::error::Wmc24Error;
-use crate::key_share::Wmc24KeyShare;
-use tecdsa_elgamal::Ciphertext as ElGamalCiphertext;
-
-use super::msg::*;
-use super::rounds::*;
-use super::{QfiAbc, Wmc24Presignature};
+use super::{msg::*, rounds::*, QfiAbc, Wmc24Presignature};
+use crate::{curve_wire::point_from_bytes, error::Wmc24Error, key_share::Wmc24KeyShare};
 
 // ---------------------------------------------------------------------------
 // Presign state machine
@@ -45,22 +41,16 @@ impl Wmc24PresignMachine {
 
         let threshold = key_share.threshold;
 
-        let pk_elt = setup.pk_element(&key_share.cl_pk)?;
+        let pk_elt = &key_share.cl_pk.elt();
         let cl_pk_abc = {
-            let ctx = setup.ctx();
-            let data = pk_elt
-                .to_bytes(ctx)
-                .map_err(|e| Wmc24Error::ClError(e.into()))?;
+            let data = pk_elt.to_bytes();
             QfiAbc { data }
         };
 
         let mut cl_pk_share_abcs: BTreeMap<u16, QfiAbc> = BTreeMap::new();
         for (dkg_idx, qfi) in key_share.cl_pk_shares.iter().enumerate() {
             let pid = dkg_idx as u16;
-            let ctx = setup.ctx();
-            let data = qfi
-                .to_bytes(ctx)
-                .map_err(|e| Wmc24Error::ClError(e.into()))?;
+            let data = qfi.to_bytes();
             cl_pk_share_abcs.insert(pid, QfiAbc { data });
         }
 
@@ -69,7 +59,7 @@ impl Wmc24PresignMachine {
             public_shares: key_share.public_shares.clone(),
             threshold,
             cl_sk_share: key_share.cl_sk_share.clone(),
-            cl_pk: setup.pk_from_qfi(&pk_elt)?,
+            cl_pk: setup.pk_from_qfi(pk_elt)?,
             cl_pk_abc,
             cl_pk_share_abcs,
             cl_setup_seed: key_share.cl_setup_seed.clone(),
@@ -83,8 +73,8 @@ impl Wmc24PresignMachine {
         // --- Round 1: Sample k_i, encrypt under threshold CL ---
         let k_i = {
             let (sk, _) = setup.keygen()?;
-            let sk_dec = setup.sk_to_decimal(&sk)?;
-            let q_dec = setup.q_decimal()?;
+            let sk_dec = sk.to_string();
+            let q_dec = setup.cl().q().to_string();
             let q = BigUint::from_str_radix(&q_dec, 10)
                 .map_err(|e| Wmc24Error::ScalarConversion(format!("parse q: {e}")))?;
             let bu = BigUint::from_str_radix(&sk_dec, 10)
@@ -108,7 +98,7 @@ impl Wmc24PresignMachine {
 
         let k_bar_i_ser = SerializedClCt::from_bicycl_ct(&setup, &k_bar_i)
             .map_err(|e| Wmc24Error::InvalidInput(format!("serialize k_bar: {e}")))?;
-        let r_enc_proof_ser = SerREncProof::from_proof(&setup, &r_enc_proof)
+        let r_enc_proof_ser = SerREncProof::from_proof(&r_enc_proof)
             .map_err(|e| Wmc24Error::InvalidInput(format!("serialize r_enc: {e}")))?;
 
         let r1_payload = R1Payload {
@@ -192,7 +182,7 @@ impl StateMachine for Wmc24PresignMachine {
 
                     let r_enc_proof = payload
                         .r_enc_proof
-                        .to_proof(&self.setup)
+                        .to_proof()
                         .map_err(|e| TecdsaError::Other(format!("r_enc from {from}: {e}")))?;
 
                     let r_enc_ok = r_enc_proof
@@ -262,7 +252,7 @@ impl StateMachine for Wmc24PresignMachine {
                     // Verify R_dl-cl proof.
                     let pi_dl_cl_x = payload
                         .pi_dl_cl_x
-                        .to_proof(&self.setup)
+                        .to_proof()
                         .map_err(|e| TecdsaError::Other(format!("pi_dl_cl_x from {from}: {e}")))?;
 
                     let from_idx = state
@@ -289,7 +279,7 @@ impl StateMachine for Wmc24PresignMachine {
                     // Verify R_El-CL proof.
                     let pi_el_cl = payload
                         .pi_el_cl
-                        .to_proof(&self.setup)
+                        .to_proof()
                         .map_err(|e| TecdsaError::Other(format!("pi_el_cl from {from}: {e}")))?;
 
                     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
@@ -368,7 +358,7 @@ impl StateMachine for Wmc24PresignMachine {
                         .map_err(TecdsaError::Other)?;
                     let pd_cl = payload
                         .pd_cl
-                        .to_qfi(&self.setup)
+                        .to_qfi()
                         .map_err(|e| TecdsaError::Other(format!("pd_cl from {from}: {e}")))?;
 
                     // Verify DDH proof for ElGamal partial decryption.
@@ -397,18 +387,14 @@ impl StateMachine for Wmc24PresignMachine {
                     // Verify R_part_dec proof for CL.
                     let pi_part_dec_cl = payload
                         .pi_part_dec_cl
-                        .to_proof(&self.setup)
+                        .to_proof()
                         .map_err(|e| TecdsaError::Other(format!("pi_part_dec from {from}: {e}")))?;
 
                     let from_pk_abc =
                         self.key_mat.cl_pk_share_abcs.get(&from.0).ok_or_else(|| {
                             TecdsaError::Other(format!("missing CL pk share for {from}"))
                         })?;
-                    let from_pk_qfi = {
-                        let ctx = self.setup.ctx();
-                        BicyclQfi::from_bytes(ctx, &from_pk_abc.data)
-                            .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
-                    };
+                    let from_pk_qfi = { Qfi::from_bytes(&from_pk_abc.data) };
                     let from_pk_raw = self
                         .setup
                         .pk_from_qfi(&from_pk_qfi)

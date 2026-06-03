@@ -5,16 +5,15 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::PrimeField;
 use sha2::{Digest, Sha256};
-
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::ddh::DdhStatement;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
-use tecdsa_protocol::{AbortReason, IaReport, PartyId};
-
-use crate::presign::Tx25Presignature;
+use tecdsa_curve::{zk::ddh::DdhStatement, TecdsaCurve};
+use tecdsa_protocol::{
+    ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
+    AbortReason, IaReport, PartyId,
+};
 
 use super::msg::OnlineRoundMsg;
+use crate::presign::Tx25Presignature;
 
 // ---------------------------------------------------------------------------
 // Zero-sharing polynomial

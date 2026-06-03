@@ -18,22 +18,20 @@
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::PrimeField;
+use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
+use tecdsa_class_group::{cl::ClSetup, zk::r_cl_dl_ec::RClDlEcProof};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
 use tecdsa_protocol::PartyId;
+use zeroize::Zeroize;
 
-use crate::error::{qfi_from_abc, qfi_to_abc};
-use crate::key_share::TroutKeyShare;
+use crate::{
+    error::{qfi_from_abc, qfi_to_abc},
+    key_share::TroutKeyShare,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,14 +102,14 @@ pub(crate) struct SerRClDlEcProof {
 }
 
 impl SerRClDlEcProof {
-    pub fn from_proof(setup: &ClSetup, proof: &RClDlEcProof) -> Result<Self, String> {
+    pub fn from_proof(proof: &RClDlEcProof) -> Result<Self, String> {
         Ok(Self {
             t1: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t1).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t1).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             t2: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t2).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t2).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
@@ -121,12 +119,10 @@ impl SerRClDlEcProof {
         })
     }
 
-    pub fn to_proof(&self, setup: &ClSetup) -> Result<RClDlEcProof, String> {
+    pub fn to_proof(&self) -> Result<RClDlEcProof, String> {
         Ok(RClDlEcProof {
-            t1: qfi_from_abc(setup.ctx(), &self.t1.a, &self.t1.b, &self.t1.c)
-                .map_err(|e| format!("{e}"))?,
-            t2: qfi_from_abc(setup.ctx(), &self.t2.a, &self.t2.b, &self.t2.c)
-                .map_err(|e| format!("{e}"))?,
+            t1: qfi_from_abc(&self.t1.a, &self.t1.b, &self.t1.c).map_err(|e| format!("{e}"))?,
+            t2: qfi_from_abc(&self.t2.a, &self.t2.b, &self.t2.c).map_err(|e| format!("{e}"))?,
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             u1: self.u1.clone(),
             u2: self.u2.clone(),
@@ -324,11 +320,11 @@ pub(crate) fn transition_to_r3(
     let party_ids: Vec<PartyId> = all_parties.to_vec();
     let first_pid = party_ids[0];
     let first_abc = &r2_bcasts[&first_pid].cl_contribution_abc;
-    let mut y_cl = qfi_from_abc(setup.ctx(), &first_abc.0, &first_abc.1, &first_abc.2)
+    let mut y_cl = qfi_from_abc(&first_abc.0, &first_abc.1, &first_abc.2)
         .map_err(|e| TecdsaError::Other(format!("qfi_from_abc: {e}")))?;
     for &pid in &party_ids[1..] {
         let abc = &r2_bcasts[&pid].cl_contribution_abc;
-        let y_k = qfi_from_abc(setup.ctx(), &abc.0, &abc.1, &abc.2)
+        let y_k = qfi_from_abc(&abc.0, &abc.1, &abc.2)
             .map_err(|e| TecdsaError::Other(format!("qfi_from_abc: {e}")))?;
         y_cl = setup
             .compose(&y_cl, &y_k)
@@ -337,8 +333,7 @@ pub(crate) fn transition_to_r3(
     let cl_pk = setup
         .pk_from_qfi(&y_cl)
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
-    let cl_pk_abc =
-        qfi_to_abc(setup.ctx(), &y_cl).map_err(|e| TecdsaError::Other(format!("{e}")))?;
+    let cl_pk_abc = qfi_to_abc(&y_cl).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
     // 4. Verify all received VSS shares
     for (&pid, &share_val) in r2_shares {
@@ -406,14 +401,14 @@ pub(crate) fn transition_to_r3(
     let (c1, c2) = setup
         .ct_components(&ct)
         .map_err(|e| TecdsaError::Other(format!("ct_components: {e}")))?;
-    let ct_c1_abc = qfi_to_abc(setup.ctx(), &c1).map_err(|e| TecdsaError::Other(format!("{e}")))?;
-    let ct_c2_abc = qfi_to_abc(setup.ctx(), &c2).map_err(|e| TecdsaError::Other(format!("{e}")))?;
+    let ct_c1_abc = qfi_to_abc(&c1).map_err(|e| TecdsaError::Other(format!("{e}")))?;
+    let ct_c2_abc = qfi_to_abc(&c2).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
     // 9. Generate R_CL-EC proof
     let proof = RClDlEcProof::prove(setup, &cl_pk, &ct, &my_x_i_bytes, &x_i_bytes, &delta_i)
         .map_err(|e| TecdsaError::Other(format!("RClDlEcProof::prove: {e}")))?;
 
-    let ser_proof = SerRClDlEcProof::from_proof(setup, &proof)
+    let ser_proof = SerRClDlEcProof::from_proof(&proof)
         .map_err(|e| TecdsaError::Other(format!("serialize proof: {e}")))?;
 
     let r3_payload = R3Payload {
@@ -484,7 +479,7 @@ pub(crate) fn finalize(
 ) -> tecdsa_core::Result<TroutKeyShare> {
     let n = all_parties.len();
 
-    let y_cl = qfi_from_abc(setup.ctx(), &cl_pk_abc.0, &cl_pk_abc.1, &cl_pk_abc.2)
+    let y_cl = qfi_from_abc(&cl_pk_abc.0, &cl_pk_abc.1, &cl_pk_abc.2)
         .map_err(|e| TecdsaError::Other(format!("qfi_from_abc: {e}")))?;
     let cl_pk = setup
         .pk_from_qfi(&y_cl)
@@ -506,10 +501,10 @@ pub(crate) fn finalize(
             )));
         }
         let (c1_a, c1_b, c1_c, c2_a, c2_b, c2_c) = &r3.ct_components;
-        let c1 = qfi_from_abc(setup.ctx(), c1_a, c1_b, c1_c)
-            .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
-        let c2 = qfi_from_abc(setup.ctx(), c2_a, c2_b, c2_c)
-            .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
+        let c1 =
+            qfi_from_abc(c1_a, c1_b, c1_c).map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
+        let c2 =
+            qfi_from_abc(c2_a, c2_b, c2_c).map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
         let ct = setup
             .ct_from_components(&c1, &c2)
             .map_err(|e| TecdsaError::Other(format!("ct: {e}")))?;

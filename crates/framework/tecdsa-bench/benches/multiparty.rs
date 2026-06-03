@@ -10,8 +10,7 @@
 //! using `n=3, t=1` (corruption threshold) with per-party timing via the Orchestrator.
 //! Each phase benchmarks every participating party separately.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use elliptic_curve::ops::Reduce;
@@ -77,13 +76,16 @@ fn make_data_to_sign(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
 // ===========================================================================
 
 mod cggmp20_helpers {
+    use tecdsa_cggmp20::{
+        aux_info::AuxInfoMachine,
+        key_share::{AuxInfo, Cggmp20CoreKeyShare},
+        keygen::Cggmp20KeygenMachine,
+        presign::Cggmp20PresignMachine,
+        security_level::SecurityLevel128,
+        sign::types::{Presignature, PresignaturePublicData},
+    };
+
     use super::*;
-    use tecdsa_cggmp20::aux_info::AuxInfoMachine;
-    use tecdsa_cggmp20::key_share::{AuxInfo, Cggmp20CoreKeyShare};
-    use tecdsa_cggmp20::keygen::Cggmp20KeygenMachine;
-    use tecdsa_cggmp20::presign::Cggmp20PresignMachine;
-    use tecdsa_cggmp20::security_level::SecurityLevel128;
-    use tecdsa_cggmp20::sign::types::{Presignature, PresignaturePublicData};
 
     pub fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
         let configs = make_session_configs(n, corrupted_t);
@@ -173,10 +175,13 @@ mod cggmp20_helpers {
 // ===========================================================================
 
 mod dkls23_helpers {
+    use tecdsa_dkls23::{
+        key_share::Dkls23KeyShare,
+        keygen::Dkls23KeygenMachine,
+        presign::{Dkls23PresignMachine, Dkls23Presignature, PresignConfig},
+    };
+
     use super::*;
-    use tecdsa_dkls23::key_share::Dkls23KeyShare;
-    use tecdsa_dkls23::keygen::Dkls23KeygenMachine;
-    use tecdsa_dkls23::presign::{Dkls23PresignMachine, Dkls23Presignature, PresignConfig};
 
     pub fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Dkls23KeyShare<C>> {
         let mut rng = rand::thread_rng();
@@ -235,10 +240,13 @@ mod dkls23_helpers {
 // ===========================================================================
 
 mod gg18_helpers {
+    use tecdsa_gg18::{
+        key_share::Gg18KeyShare,
+        keygen::Gg18KeygenMachine,
+        presign::{Gg18PresignMachine, Gg18Presignature, PresignConfig},
+    };
+
     use super::*;
-    use tecdsa_gg18::key_share::Gg18KeyShare;
-    use tecdsa_gg18::keygen::Gg18KeygenMachine;
-    use tecdsa_gg18::presign::{Gg18PresignMachine, Gg18Presignature, PresignConfig};
 
     pub fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Gg18KeyShare<C>> {
         let configs = make_session_configs(n, corrupted_t);
@@ -297,11 +305,10 @@ mod gg18_helpers {
 // ===========================================================================
 
 fn cggmp20_benchmarks(c: &mut Criterion) {
-    use tecdsa_cggmp20::aux_info::AuxInfoMachine;
-    use tecdsa_cggmp20::keygen::Cggmp20KeygenMachine;
-    use tecdsa_cggmp20::presign::Cggmp20PresignMachine;
-    use tecdsa_cggmp20::security_level::SecurityLevel128;
-    use tecdsa_cggmp20::sign::types::PartialSignature;
+    use tecdsa_cggmp20::{
+        aux_info::AuxInfoMachine, keygen::Cggmp20KeygenMachine, presign::Cggmp20PresignMachine,
+        security_level::SecurityLevel128, sign::types::PartialSignature,
+    };
 
     let mut group = c.benchmark_group("cggmp20");
     group.sample_size(10);
@@ -438,9 +445,11 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 }
 
 fn dkls23_benchmarks(c: &mut Criterion) {
-    use tecdsa_dkls23::keygen::Dkls23KeygenMachine;
-    use tecdsa_dkls23::presign::{Dkls23PresignMachine, PresignConfig};
-    use tecdsa_dkls23::sign::{Dkls23OnlineSignMachine, OnlineSignConfig};
+    use tecdsa_dkls23::{
+        keygen::Dkls23KeygenMachine,
+        presign::{Dkls23PresignMachine, PresignConfig},
+        sign::{Dkls23OnlineSignMachine, OnlineSignConfig},
+    };
 
     let mut group = c.benchmark_group("dkls23");
     group.sample_size(10);
@@ -610,9 +619,11 @@ fn dkls23_benchmarks(c: &mut Criterion) {
 }
 
 fn gg18_benchmarks(c: &mut Criterion) {
-    use tecdsa_gg18::keygen::Gg18KeygenMachine;
-    use tecdsa_gg18::presign::{Gg18PresignMachine, PresignConfig};
-    use tecdsa_gg18::sign::{Gg18OnlineSignMachine, OnlineSignConfig};
+    use tecdsa_gg18::{
+        keygen::Gg18KeygenMachine,
+        presign::{Gg18PresignMachine, PresignConfig},
+        sign::{Gg18OnlineSignMachine, OnlineSignConfig},
+    };
 
     let mut group = c.benchmark_group("gg18");
     group.sample_size(10);

@@ -52,12 +52,11 @@ impl TroutKeyShare {
     /// Recreate a `ClSetup` from the stored seed.
     pub fn create_cl_setup(
         &self,
-    ) -> Result<tecdsa_class_group::bicycl_glue::ClSetup, tecdsa_class_group::bicycl_glue::ClError>
-    {
+    ) -> Result<tecdsa_class_group::cl::ClSetup, tecdsa_class_group::cl::ClError> {
         if self.use_128bit_security {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1_128bit(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&self.cl_setup_seed)
         } else {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1(&self.cl_setup_seed)
         }
     }
 }

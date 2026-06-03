@@ -3,46 +3,43 @@
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use num_bigint::BigUint;
 use num_traits::Num as _;
+use tecdsa_class_group::{
+    cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
+    t_cl::{self as threshold_cl, PartialDecryption as ClPartialDecryption},
+    zk::{r_dl_cl::RDlClProof, r_el_cl::RElClProof, r_part_dec::RPartDecProof},
+};
+use tecdsa_core::TecdsaError;
+use tecdsa_curve::{
+    zk::ddh::{DdhProof, DdhStatement, DdhWitness},
+    TecdsaCurve,
+};
+use tecdsa_elgamal::Ciphertext as ElGamalCiphertext;
+use tecdsa_protocol::{state_machine::Outgoing, PartyId, Recipient};
 use zeroize::Zeroize;
 
-use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclPublicKey, BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_dl_cl::RDlClProof;
-use tecdsa_class_group::zk::r_el_cl::RElClProof;
-use tecdsa_class_group::zk::r_part_dec::RPartDecProof;
-use tecdsa_core::TecdsaError;
-
-use tecdsa_class_group::t_cl::{self as threshold_cl, PartialDecryption as ClPartialDecryption};
-use tecdsa_curve::zk::ddh::{DdhProof, DdhStatement, DdhWitness};
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_protocol::{state_machine::Outgoing, PartyId, Recipient};
-
+use super::{msg::*, QfiAbc, Wmc24Presignature};
 use crate::error::Wmc24Error;
-use tecdsa_elgamal::Ciphertext as ElGamalCiphertext;
-
-use super::msg::*;
-use super::{QfiAbc, Wmc24Presignature};
 
 // ---------------------------------------------------------------------------
 // Received data
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ReceivedR1 {
-    pub(crate) k_bar_i: BicyclCiphertext,
+    pub(crate) k_bar_i: ClCiphertext,
 }
 
 pub(crate) struct ReceivedR2 {
-    pub(crate) xk_bar_i: BicyclCiphertext,
+    pub(crate) xk_bar_i: ClCiphertext,
     pub(crate) d_gamma_i: ElGamalCiphertext,
-    pub(crate) gk_bar_i: BicyclCiphertext,
+    pub(crate) gk_bar_i: ClCiphertext,
 }
 
 pub(crate) struct ReceivedR3 {
     pub(crate) pd_elg: k256::ProjectivePoint,
-    pub(crate) pd_cl: BicyclQfi,
+    pub(crate) pd_cl: Qfi,
     pub(crate) party_index: usize,
     #[allow(dead_code)]
     pub(crate) party_dkg_index: usize,
@@ -65,7 +62,7 @@ pub(crate) struct Round2State {
     pub(crate) all_parties: Vec<PartyId>,
     pub(crate) k_i: k256::Scalar,
     pub(crate) _gamma_i: k256::Scalar,
-    pub(crate) k_bar: BicyclCiphertext,
+    pub(crate) k_bar: ClCiphertext,
     pub(crate) received: BTreeMap<PartyId, ReceivedR2>,
     pub(crate) outgoing: Vec<Outgoing<Wmc24PresignMsg>>,
 }
@@ -74,10 +71,10 @@ pub(crate) struct Round3State {
     pub(crate) my_id: PartyId,
     pub(crate) all_parties: Vec<PartyId>,
     pub(crate) k_i: k256::Scalar,
-    pub(crate) k_bar: BicyclCiphertext,
-    pub(crate) xk_bar: BicyclCiphertext,
+    pub(crate) k_bar: ClCiphertext,
+    pub(crate) xk_bar: ClCiphertext,
     pub(crate) d_gamma: ElGamalCiphertext,
-    pub(crate) gk_bar: BicyclCiphertext,
+    pub(crate) gk_bar: ClCiphertext,
     pub(crate) received: BTreeMap<PartyId, ReceivedR3>,
     pub(crate) outgoing: Vec<Outgoing<Wmc24PresignMsg>>,
 }
@@ -95,7 +92,7 @@ pub(crate) struct KeyMaterial {
     pub(crate) public_shares: Vec<k256::ProjectivePoint>,
     pub(crate) threshold: u16,
     pub(crate) cl_sk_share: Vec<u8>,
-    pub(crate) cl_pk: BicyclPublicKey,
+    pub(crate) cl_pk: ClPublicKey,
     pub(crate) cl_pk_abc: QfiAbc,
     pub(crate) cl_pk_share_abcs: BTreeMap<u16, QfiAbc>,
     pub(crate) cl_setup_seed: String,
@@ -127,9 +124,9 @@ impl Drop for KeyMaterial {
 
 pub(crate) fn scalar_mul_ct(
     setup: &ClSetup,
-    ct: &BicyclCiphertext,
+    ct: &ClCiphertext,
     x_bytes: &[u8],
-) -> Result<BicyclCiphertext, Wmc24Error> {
+) -> Result<ClCiphertext, Wmc24Error> {
     let (c1, c2) = setup.ct_components(ct)?;
     let c1_x = setup.exp_bytes(&c1, x_bytes)?;
     let c2_x = setup.exp_bytes(&c2, x_bytes)?;
@@ -139,9 +136,9 @@ pub(crate) fn scalar_mul_ct(
 
 pub(crate) fn add_ct_components(
     setup: &ClSetup,
-    ct_a: &BicyclCiphertext,
-    ct_b: &BicyclCiphertext,
-) -> Result<BicyclCiphertext, Wmc24Error> {
+    ct_a: &ClCiphertext,
+    ct_b: &ClCiphertext,
+) -> Result<ClCiphertext, Wmc24Error> {
     let (a1, a2) = setup.ct_components(ct_a)?;
     let (b1, b2) = setup.ct_components(ct_b)?;
     let c1 = setup.compose(&a1, &b1)?;
@@ -149,10 +146,7 @@ pub(crate) fn add_ct_components(
     Ok(setup.ct_from_components(&c1, &c2)?)
 }
 
-pub(crate) fn copy_ct(
-    setup: &ClSetup,
-    ct: &BicyclCiphertext,
-) -> Result<BicyclCiphertext, Wmc24Error> {
+pub(crate) fn copy_ct(setup: &ClSetup, ct: &ClCiphertext) -> Result<ClCiphertext, Wmc24Error> {
     let (c1, c2) = setup.ct_components(ct)?;
     Ok(setup.ct_from_components(&c1, &c2)?)
 }
@@ -169,7 +163,7 @@ pub(crate) fn transition_r1_to_r2(
     let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0 + 1).collect();
 
     // Compute k_bar = sum of all k_bar_j (homomorphic sum).
-    let mut k_bar: Option<BicyclCiphertext> = None;
+    let mut k_bar: Option<ClCiphertext> = None;
     for r1 in state.received.values() {
         match k_bar.take() {
             None => {
@@ -219,12 +213,8 @@ pub(crate) fn transition_r1_to_r2(
         let (sk, _) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("keygen: {e}")))?;
-        let sk_dec = setup
-            .sk_to_decimal(&sk)
-            .map_err(|e| TecdsaError::Other(format!("sk_dec: {e}")))?;
-        let q_dec = setup
-            .q_decimal()
-            .map_err(|e| TecdsaError::Other(format!("q_dec: {e}")))?;
+        let sk_dec = sk.to_string();
+        let q_dec = setup.cl().q().to_string();
         let q = BigUint::from_str_radix(&q_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse q: {e}")))?;
         let bu = BigUint::from_str_radix(&sk_dec, 10)
@@ -243,12 +233,8 @@ pub(crate) fn transition_r1_to_r2(
         let (sk, _) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("keygen: {e}")))?;
-        let sk_dec = setup
-            .sk_to_decimal(&sk)
-            .map_err(|e| TecdsaError::Other(format!("sk_dec: {e}")))?;
-        let q_dec = setup
-            .q_decimal()
-            .map_err(|e| TecdsaError::Other(format!("q_dec: {e}")))?;
+        let sk_dec = sk.to_string();
+        let q_dec = setup.cl().q().to_string();
         let q = BigUint::from_str_radix(&q_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse q: {e}")))?;
         let bu = BigUint::from_str_radix(&sk_dec, 10)
@@ -288,11 +274,11 @@ pub(crate) fn transition_r1_to_r2(
     // Build Round 2 payload.
     let xk_bar_i_ser = SerializedClCt::from_bicycl_ct(setup, &xk_bar_i)
         .map_err(|e| TecdsaError::Other(format!("ser xk_bar_i: {e}")))?;
-    let pi_dl_cl_x_ser = SerRDlClProof::from_proof(setup, &pi_dl_cl_x)
+    let pi_dl_cl_x_ser = SerRDlClProof::from_proof(&pi_dl_cl_x)
         .map_err(|e| TecdsaError::Other(format!("ser pi_dl_cl_x: {e}")))?;
     let gk_bar_i_ser = SerializedClCt::from_bicycl_ct(setup, &gk_bar_i)
         .map_err(|e| TecdsaError::Other(format!("ser gk_bar_i: {e}")))?;
-    let pi_el_cl_ser = SerRElClProof::from_proof(setup, &pi_el_cl)
+    let pi_el_cl_ser = SerRElClProof::from_proof(&pi_el_cl)
         .map_err(|e| TecdsaError::Other(format!("ser pi_el_cl: {e}")))?;
 
     let r2_payload = R2Payload {
@@ -339,7 +325,7 @@ pub(crate) fn transition_r2_to_r3(
     key_mat: &KeyMaterial,
 ) -> tecdsa_core::Result<Round3State> {
     // Compute xk_bar = sum(xk_bar_j) -- Lagrange already baked in during Round 2.
-    let mut xk_bar: Option<BicyclCiphertext> = None;
+    let mut xk_bar: Option<ClCiphertext> = None;
     for r2 in state.received.values() {
         match xk_bar.take() {
             None => {
@@ -372,7 +358,7 @@ pub(crate) fn transition_r2_to_r3(
     let d_gamma = d_gamma.ok_or_else(|| TecdsaError::Other("no d_gamma data".into()))?;
 
     // Compute gk_bar = sum(gk_bar_j).
-    let mut gk_bar: Option<BicyclCiphertext> = None;
+    let mut gk_bar: Option<ClCiphertext> = None;
     for r2 in state.received.values() {
         match gk_bar.take() {
             None => {
@@ -422,11 +408,7 @@ pub(crate) fn transition_r2_to_r3(
         .cl_pk_share_abcs
         .get(&state.my_id.0)
         .ok_or_else(|| TecdsaError::Other("missing own CL pk share abc".into()))?;
-    let my_pk_qfi = {
-        let ctx = setup.ctx();
-        BicyclQfi::from_bytes(ctx, &my_pk_abc.data)
-            .map_err(|e| TecdsaError::Other(format!("from_bytes: {e}")))?
-    };
+    let my_pk_qfi = { Qfi::from_bytes(&my_pk_abc.data) };
     let my_pk_raw = setup
         .pk_from_qfi(&my_pk_qfi)
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
@@ -436,9 +418,9 @@ pub(crate) fn transition_r2_to_r3(
             .map_err(|e| TecdsaError::Other(format!("R_part_dec_cl prove: {e}")))?;
 
     // Serialize and broadcast.
-    let pd_cl_ser = SerializedQfi::from_qfi(setup, &pd_cl_i)
+    let pd_cl_ser = SerializedQfi::from_qfi(&pd_cl_i)
         .map_err(|e| TecdsaError::Other(format!("ser pd_cl: {e}")))?;
-    let pi_ser = SerRPartDecProof::from_proof(setup, &pi_part_dec_cl)
+    let pi_ser = SerRPartDecProof::from_proof(&pi_part_dec_cl)
         .map_err(|e| TecdsaError::Other(format!("ser pi_part_dec: {e}")))?;
 
     let r3_payload = R3Payload {
@@ -508,13 +490,8 @@ pub(crate) fn finalize(
     // 2. gamma*k = t-CL final decrypt of gk_bar.
     let mut pd_cls: Vec<ClPartialDecryption> = Vec::new();
     for r3 in state.received.values() {
-        let ctx = setup.ctx();
-        let bytes = r3
-            .pd_cl
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("pd_cl to_bytes: {e}")))?;
-        let copy = BicyclQfi::from_bytes(ctx, &bytes)
-            .map_err(|e| TecdsaError::Other(format!("pd_cl from_bytes: {e}")))?;
+        let bytes = r3.pd_cl.to_bytes();
+        let copy = Qfi::from_bytes(&bytes);
         pd_cls.push(ClPartialDecryption {
             party_index: r3.party_index,
             dec_share: copy,
@@ -543,30 +520,21 @@ pub(crate) fn finalize(
     let (kb_c1, kb_c2) = setup
         .ct_components(&state.k_bar)
         .map_err(|e| TecdsaError::Other(format!("k_bar comp: {e}")))?;
-    let ctx = setup.ctx();
     let k_bar_c1_abc = QfiAbc {
-        data: kb_c1
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
+        data: kb_c1.to_bytes(),
     };
     let k_bar_c2_abc = QfiAbc {
-        data: kb_c2
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
+        data: kb_c2.to_bytes(),
     };
 
     let (xk_c1, xk_c2) = setup
         .ct_components(&state.xk_bar)
         .map_err(|e| TecdsaError::Other(format!("xk_bar comp: {e}")))?;
     let xk_bar_c1_abc = QfiAbc {
-        data: xk_c1
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
+        data: xk_c1.to_bytes(),
     };
     let xk_bar_c2_abc = QfiAbc {
-        data: xk_c2
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
+        data: xk_c2.to_bytes(),
     };
 
     Ok(Wmc24Presignature {

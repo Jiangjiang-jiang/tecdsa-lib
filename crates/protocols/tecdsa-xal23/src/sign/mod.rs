@@ -17,13 +17,13 @@
 pub mod machine;
 pub mod msg;
 
+use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize, PrimeField};
 pub use machine::Xal23SignMachine;
 pub use msg::Xal23SignMsg;
-
-use crate::presign::Xal23Presignature;
-use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize, PrimeField};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{low_s_normalize, DataToSign, Signature};
+
+use crate::presign::Xal23Presignature;
 
 /// A partial signature from a single party.
 #[derive(Clone, Debug)]

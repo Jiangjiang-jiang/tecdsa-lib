@@ -8,11 +8,12 @@
 //!
 //! Proves that the same plaintext `m` is committed in two different JL instances.
 
-use crate::kgen::JlPublicKey;
 use num_bigint::{BigUint, RandBigInt};
 use num_traits::One;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::kgen::JlPublicKey;
 
 /// Non-interactive proof of plaintext equality across two JL instances.
 ///
@@ -183,8 +184,7 @@ fn fiat_shamir_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kgen::generate_keypair_with_params;
-    use crate::zk::zkjl_com::jl_commit;
+    use crate::{kgen::generate_keypair_with_params, zk::zkjl_com::jl_commit};
 
     #[test]
     fn zkjl_equ_prove_and_verify() {

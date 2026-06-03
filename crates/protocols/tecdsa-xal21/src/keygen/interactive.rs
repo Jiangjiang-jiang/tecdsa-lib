@@ -29,12 +29,13 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
-
-use crate::error::Xal21Error;
-use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
+
+use crate::{
+    error::Xal21Error,
+    key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare},
+};
 
 // ---------------------------------------------------------------------------
 // Round 1: P1 -> P2 (commitment to Q1 + DLog proof)
@@ -360,9 +361,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
     use tecdsa_protocol::{verify_ecdsa, DataToSign};
+
+    use super::*;
 
     #[test]
     fn interactive_keygen_produces_consistent_shares() {
@@ -397,9 +399,9 @@ mod tests {
     #[test]
     #[ignore = "redundant keygen variant"]
     fn interactive_keygen_signing_compatibility() {
-        use crate::offline_sign;
-        use crate::online_sign;
         use sha2::{Digest, Sha256};
+
+        use crate::{offline_sign, online_sign};
 
         let mut rng = rand_core::OsRng;
 

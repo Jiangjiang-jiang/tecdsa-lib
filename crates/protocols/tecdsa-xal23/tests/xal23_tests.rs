@@ -8,9 +8,11 @@
 //! Production would use s=t=40.
 
 use sha2::{Digest, Sha256};
-use tecdsa_xal23::key_share::trusted_dealer_keygen;
-use tecdsa_xal23::presign::presign_all_with_sec;
-use tecdsa_xal23::sign::{combine_signatures, partial_sign};
+use tecdsa_xal23::{
+    key_share::trusted_dealer_keygen,
+    presign::presign_all_with_sec,
+    sign::{combine_signatures, partial_sign},
+};
 
 type C = k256::Secp256k1;
 
@@ -35,10 +37,11 @@ fn hash_message(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
 /// Test the JL MtA correctness in isolation with secp256k1 scalars.
 #[test]
 fn xal23_mta_correctness_secp256k1() {
-    use tecdsa_curve::conv::{curve_order, scalar_to_biguint};
-    use tecdsa_curve::TecdsaCurve;
-    use tecdsa_joye_libert::kgen::generate_keypair_with_params;
-    use tecdsa_joye_libert::mta::*;
+    use tecdsa_curve::{
+        conv::{curve_order, scalar_to_biguint},
+        TecdsaCurve,
+    };
+    use tecdsa_joye_libert::{kgen::generate_keypair_with_params, mta::*};
 
     let mut rng = rand::thread_rng();
     let (pk, sk) = generate_keypair_with_params(TEST_JL_P_BITS, TEST_JL_K, &mut rng);

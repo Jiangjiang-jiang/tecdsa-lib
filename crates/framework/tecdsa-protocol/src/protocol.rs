@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::state_machine::StateMachine;
 use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
+
+use crate::state_machine::StateMachine;
 
 /// Describes how a protocol phase is implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

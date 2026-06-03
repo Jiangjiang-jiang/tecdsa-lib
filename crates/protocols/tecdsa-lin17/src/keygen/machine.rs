@@ -28,24 +28,28 @@ use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::zk::pdl::{
+    prover_step1, prover_step2, verifier_finalize, verifier_step1, verifier_step2, PdlProverMsg1,
+    PdlProverMsg2, PdlProverState, PdlVerifierMsg1, PdlVerifierState,
+};
 use tecdsa_protocol::{
     state_machine::Outgoing, AbortReason, IaReport, PartyId, Recipient, StateMachine,
 };
 use zeroize::Zeroize;
 
-use crate::key_share::{Lin17Party1KeyShare, Lin17Party2KeyShare};
-use crate::keygen::interactive::{
-    party1_finalize_keygen, party1_keygen_round1, party1_keygen_round3_with_dk,
-    party2_finalize_keygen, party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg,
-    KeyGenP1Round3Msg, KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
-};
-use crate::keygen::wire::{
-    decode_r1, decode_r2, decode_r3, decode_r4, decode_r5, decode_r6, decode_r7, encode_r1,
-    encode_r2, encode_r3, encode_r4, encode_r5, encode_r6, encode_r7,
-};
-use tecdsa_paillier::zk::pdl::{
-    prover_step1, prover_step2, verifier_finalize, verifier_step1, verifier_step2, PdlProverMsg1,
-    PdlProverMsg2, PdlProverState, PdlVerifierMsg1, PdlVerifierState,
+use crate::{
+    key_share::{Lin17Party1KeyShare, Lin17Party2KeyShare},
+    keygen::{
+        interactive::{
+            party1_finalize_keygen, party1_keygen_round1, party1_keygen_round3_with_dk,
+            party2_finalize_keygen, party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg,
+            KeyGenP1Round3Msg, KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
+        },
+        wire::{
+            decode_r1, decode_r2, decode_r3, decode_r4, decode_r5, decode_r6, decode_r7, encode_r1,
+            encode_r2, encode_r3, encode_r4, encode_r5, encode_r6, encode_r7,
+        },
+    },
 };
 
 // ---------------------------------------------------------------------------

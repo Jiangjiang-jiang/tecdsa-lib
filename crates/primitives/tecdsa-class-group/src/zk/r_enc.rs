@@ -15,12 +15,12 @@
 //!
 //! Follows the `CL_HSMqk_ZKAoKProof` pattern from BICYCL.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, Qfi};
-
 use super::{
     challenge_from_qfi, challenge_from_qfi_with_prefix, response_mod_q, response_unbounded,
     sample_random, sample_random_mod_q,
+};
+use crate::cl::{
+    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
 /// Proof of correct CL-HSM encryption.
@@ -58,14 +58,14 @@ impl REncProof {
 
         // 2. Compute commitment: t = Enc(pk, a2; a1) => (h^a1, pk^a1 * f^a2).
         let t1 = setup.power_of_h_bytes(&a1)?;
-        let pk_elt = setup.pk_element(pk)?;
-        let pk_a1 = setup.exp_bytes(&pk_elt, &a1)?;
+        let pk_elt = pk.elt();
+        let pk_a1 = setup.exp_bytes(pk_elt, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
 
         // 3. Compute challenge.
         let (c1, c2) = setup.ct_components(ct)?;
-        let e = challenge_from_qfi(setup, b"R_enc", &[&pk_elt, &c1, &c2, &t1, &t2], &[])?;
+        let e = challenge_from_qfi(setup, b"R_enc", &[pk_elt, &c1, &c2, &t1, &t2], &[])?;
 
         // 4. Compute responses.
         let u1 = response_unbounded(&a1, &e, r_bytes)?;
@@ -83,13 +83,13 @@ impl REncProof {
         ct: &ClHsmqkCiphertext,
     ) -> ClResult<bool> {
         let (c1, c2) = setup.ct_components(ct)?;
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
 
         // Recompute challenge from stored commitment.
         let e_check = challenge_from_qfi(
             setup,
             b"R_enc",
-            &[&pk_elt, &c1, &c2, &self.t1, &self.t2],
+            &[pk_elt, &c1, &c2, &self.t1, &self.t2],
             &[],
         )?;
         if e_check != self.e {
@@ -100,17 +100,17 @@ impl REncProof {
         let lhs1 = setup.power_of_h_bytes(&self.u1)?;
         let c1_e = setup.exp_bytes(&c1, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
-        if !lhs1.equal(setup.ctx(), &rhs1)? {
+        if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: pk^u1 * f^u2 == t2 * c2^e
-        let pk_u1 = setup.exp_bytes(&pk_elt, &self.u1)?;
+        let pk_u1 = setup.exp_bytes(pk_elt, &self.u1)?;
         let f_u2 = setup.power_of_f_bytes(&self.u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
         let c2_e = setup.exp_bytes(&c2, &self.e)?;
         let rhs2 = setup.compose(&self.t2, &c2_e)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -133,8 +133,8 @@ impl REncProof {
 
         // 2. Compute commitment: t = Enc(pk, a2; a1) => (h^a1, pk^a1 * f^a2).
         let t1 = setup.power_of_h_bytes(&a1)?;
-        let pk_elt = setup.pk_element(pk)?;
-        let pk_a1 = setup.exp_bytes(&pk_elt, &a1)?;
+        let pk_elt = pk.elt();
+        let pk_a1 = setup.exp_bytes(pk_elt, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
 
@@ -144,7 +144,7 @@ impl REncProof {
             setup,
             prefix,
             b"R_enc",
-            &[&pk_elt, &c1, &c2, &t1, &t2],
+            &[pk_elt, &c1, &c2, &t1, &t2],
             &[],
         )?;
 
@@ -166,14 +166,14 @@ impl REncProof {
         ct: &ClHsmqkCiphertext,
     ) -> ClResult<bool> {
         let (c1, c2) = setup.ct_components(ct)?;
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
 
         // Recompute challenge from stored commitment with prefix.
         let e_check = challenge_from_qfi_with_prefix(
             setup,
             prefix,
             b"R_enc",
-            &[&pk_elt, &c1, &c2, &self.t1, &self.t2],
+            &[pk_elt, &c1, &c2, &self.t1, &self.t2],
             &[],
         )?;
         if e_check != self.e {
@@ -184,17 +184,17 @@ impl REncProof {
         let lhs1 = setup.power_of_h_bytes(&self.u1)?;
         let c1_e = setup.exp_bytes(&c1, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
-        if !lhs1.equal(setup.ctx(), &rhs1)? {
+        if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: pk^u1 * f^u2 == t2 * c2^e
-        let pk_u1 = setup.exp_bytes(&pk_elt, &self.u1)?;
+        let pk_u1 = setup.exp_bytes(pk_elt, &self.u1)?;
         let f_u2 = setup.power_of_f_bytes(&self.u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
         let c2_e = setup.exp_bytes(&c2, &self.e)?;
         let rhs2 = setup.compose(&self.t2, &c2_e)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -205,7 +205,7 @@ impl REncProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_enc_honest_verifies() {

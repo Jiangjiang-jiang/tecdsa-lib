@@ -7,15 +7,16 @@
 #![allow(non_snake_case)]
 
 use sha2::{Digest, Sha256};
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
-use tecdsa_wmy23::key_share::Wmy23KeyShare;
-use tecdsa_wmy23::keygen::rounds::{keygen_finalize, keygen_round1, keygen_round2_bcast};
-use tecdsa_wmy23::presign::rounds::{
-    drg_presign_round1, drg_presign_round2, drg_presign_round3_bob, drg_presign_round4_finalize,
+use tecdsa_wmy23::{
+    key_share::Wmy23KeyShare,
+    keygen::rounds::{keygen_finalize, keygen_round1, keygen_round2_bcast},
+    presign::rounds::{
+        drg_presign_round1, drg_presign_round2, drg_presign_round3_bob, drg_presign_round4_finalize,
+    },
+    sign::rounds::{combine_signatures, compute_partial_signature},
 };
-use tecdsa_wmy23::sign::rounds::{combine_signatures, compute_partial_signature};
 
 fn hash_message(msg: &[u8]) -> k256::Scalar {
     use elliptic_curve::PrimeField;
@@ -27,8 +28,7 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
         .unwrap_or_else(|| {
             use num_bigint::BigUint;
             use num_traits::Num;
-            let q = BigUint::from_str_radix(tecdsa_class_group::bicycl_glue::SECP256K1_ORDER, 10)
-                .unwrap();
+            let q = BigUint::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
             let val = BigUint::from_bytes_be(&bytes) % &q;
             let mut padded = [0u8; 32];
             let offset = 32 - val.to_bytes_be().len();
@@ -117,9 +117,7 @@ fn run_drg_presign(
                 continue;
             }
             let bob = r3[j].gamma_bob_outputs[i].as_ref().unwrap();
-            let a_bytes =
-                tecdsa_class_group::cl_enc::decrypt_bytes(setup, &shares[i].cl_sk, &bob.c_alpha)
-                    .unwrap();
+            let a_bytes = setup.decrypt_bytes(&shares[i].cl_sk, &bob.c_alpha).unwrap();
             asum += tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&a_bytes);
             bsum += r3[i].gamma_bob_outputs[j].as_ref().unwrap().beta;
         }

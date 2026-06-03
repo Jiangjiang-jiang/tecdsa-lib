@@ -10,11 +10,12 @@
 //! C_aff = C^a * y^alpha * h^r is a vector commitment with bases (C, y)
 //! and messages (a, alpha).
 
-use crate::kgen::JlPublicKey;
 use num_bigint::{BigUint, RandBigInt};
 use num_traits::One;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::kgen::JlPublicKey;
 
 /// Non-interactive proof of JL affine relation.
 ///
@@ -140,8 +141,7 @@ fn fiat_shamir_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enc_dec::encrypt;
-    use crate::kgen::generate_keypair_with_params;
+    use crate::{enc_dec::encrypt, kgen::generate_keypair_with_params};
 
     #[test]
     fn zkjl_aff_prove_and_verify() {

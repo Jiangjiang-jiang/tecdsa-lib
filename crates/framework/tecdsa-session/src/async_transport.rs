@@ -5,6 +5,7 @@
 //! (gRPC, WebSocket, MQ, etc.) and plug it into [`AsyncSession`](crate::AsyncSession).
 
 use std::time::Duration;
+
 use tecdsa_protocol::PartyId;
 
 /// Async transport trait for production network backends.

@@ -9,11 +9,12 @@
 //!
 //! This is essentially the range proof with slack from the reference.
 
-use crate::kgen::JlPublicKey;
 use num_bigint::{BigUint, RandBigInt};
 use num_traits::One;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::kgen::JlPublicKey;
 
 /// Non-interactive proof of correct JL vector commitment.
 ///

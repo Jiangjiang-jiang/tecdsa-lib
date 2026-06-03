@@ -5,11 +5,12 @@
 //! This is a Sigma-protocol-style proof made non-interactive via
 //! the Fiat-Shamir heuristic (using SHA-256).
 
-use crate::kgen::JlPublicKey;
 use num_bigint::{BigUint, RandBigInt};
 use num_traits::One;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::kgen::JlPublicKey;
 
 /// Non-interactive proof of correct JL encryption.
 ///
@@ -198,8 +199,7 @@ impl ZkJlEncProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enc_dec::encrypt;
-    use crate::kgen::generate_keypair_with_params;
+    use crate::{enc_dec::encrypt, kgen::generate_keypair_with_params};
 
     #[test]
     fn zkjl_enc_prove_and_verify() {

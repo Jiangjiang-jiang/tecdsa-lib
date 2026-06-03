@@ -56,25 +56,26 @@ pub mod robust;
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclPublicKey, ClSetup};
-use tecdsa_class_group::zk::r_dl_cl::RDlClProof;
-use tecdsa_class_group::zk::r_enc::REncProof;
+use tecdsa_class_group::{
+    cl::{ClCiphertext, ClPublicKey, ClSetup},
+    zk::{r_dl_cl::RDlClProof, r_enc::REncProof},
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+use zeroize::Zeroize;
 
-use crate::cl_wire::{
-    add_ct_components, copy_ct, point_from_bytes, scalar_mul_ct, SerRDlClProof, SerREncProof,
-    SerializedClCt,
+use crate::{
+    cl_wire::{
+        add_ct_components, copy_ct, point_from_bytes, scalar_mul_ct, SerRDlClProof, SerREncProof,
+        SerializedClCt,
+    },
+    error::Jtx25Error,
+    key_share::Jtx25KeyShare,
 };
-use crate::error::Jtx25Error;
-use crate::key_share::Jtx25KeyShare;
 
 // ---------------------------------------------------------------------------
 // Presignature output
@@ -236,13 +237,13 @@ struct R2Payload {
 // ---------------------------------------------------------------------------
 
 struct ReceivedR1 {
-    phi_bar_i: BicyclCiphertext,
+    phi_bar_i: ClCiphertext,
     r_commitment: [u8; 32],
 }
 
 struct ReceivedR2 {
-    phi_bar_x_i: BicyclCiphertext,
-    phi_bar_k_i: BicyclCiphertext,
+    phi_bar_x_i: ClCiphertext,
+    phi_bar_k_i: ClCiphertext,
     r_point: k256::ProjectivePoint,
 }
 
@@ -266,7 +267,7 @@ struct Round2State {
     all_parties: Vec<PartyId>,
     phi_i: k256::Scalar,
     k_i: k256::Scalar,
-    phi_bar: BicyclCiphertext,
+    phi_bar: ClCiphertext,
     /// Commitments from Round 1 (for verifying decommitments in Round 2).
     r1_commitments: BTreeMap<PartyId, [u8; 32]>,
     received: BTreeMap<PartyId, ReceivedR2>,
@@ -291,7 +292,7 @@ struct KeyMaterial {
     public_shares: Vec<k256::ProjectivePoint>,
     threshold: u16,
     cl_sk_share: Vec<u8>,
-    cl_pk: BicyclPublicKey,
+    cl_pk: ClPublicKey,
     cl_pk_bytes: Vec<u8>,
     cl_pk_share_bytes: BTreeMap<u16, Vec<u8>>,
     cl_setup_seed: String,
@@ -344,21 +345,13 @@ impl Jtx25PresignMachine {
         let threshold = key_share.threshold;
 
         // Extract key material.
-        let pk_elt = setup.pk_element(&key_share.cl_pk)?;
-        let cl_pk_bytes = {
-            let ctx = setup.ctx();
-            pk_elt
-                .to_bytes(ctx)
-                .map_err(|e| Jtx25Error::ClError(e.into()))?
-        };
+        let pk_elt = &key_share.cl_pk.elt();
+        let cl_pk_bytes = { pk_elt.to_bytes() };
 
         let mut cl_pk_share_bytes: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
         for (dkg_idx, qfi) in key_share.cl_pk_shares.iter().enumerate() {
             let pid = dkg_idx as u16;
-            let ctx = setup.ctx();
-            let data = qfi
-                .to_bytes(ctx)
-                .map_err(|e| Jtx25Error::ClError(e.into()))?;
+            let data = qfi.to_bytes();
             cl_pk_share_bytes.insert(pid, data);
         }
 
@@ -372,7 +365,7 @@ impl Jtx25PresignMachine {
             public_shares: key_share.public_shares.clone(),
             threshold,
             cl_sk_share: key_share.cl_sk_share.clone(),
-            cl_pk: setup.pk_from_qfi(&pk_elt)?,
+            cl_pk: setup.pk_from_qfi(pk_elt)?,
             cl_pk_bytes,
             cl_pk_share_bytes,
             cl_setup_seed: key_share.cl_setup_seed.clone(),
@@ -431,9 +424,9 @@ impl Jtx25PresignMachine {
         let r_commitment = compute_commitment(&r_point_bytes, my_id.0, &commit_nonce);
 
         // --- Step 5: Build Round 1 payload ---
-        let phi_bar_i_ser = SerializedClCt::from_bicycl_ct(&setup, &phi_bar_i)
+        let phi_bar_i_ser = SerializedClCt::from_bicycl_ct(&phi_bar_i)
             .map_err(|e| Jtx25Error::InvalidInput(format!("serialize phi_bar: {e}")))?;
-        let r_enc_proof_ser = SerREncProof::from_proof(&setup, &r_enc_proof)
+        let r_enc_proof_ser = SerREncProof::from_proof(&r_enc_proof)
             .map_err(|e| Jtx25Error::InvalidInput(format!("serialize r_enc_proof: {e}")))?;
 
         let r1_payload = R1Payload {
@@ -503,7 +496,7 @@ impl Jtx25PresignMachine {
             .collect();
 
         // --- Step 1: Compute phi_bar = sum of all phi_bar_j ---
-        let mut phi_bar: Option<BicyclCiphertext> = None;
+        let mut phi_bar: Option<ClCiphertext> = None;
         for (&party_j, r1) in &state.received {
             match phi_bar.take() {
                 None => {
@@ -553,13 +546,13 @@ impl Jtx25PresignMachine {
                 .map_err(|e| TecdsaError::Other(format!("R_dl-cl k prove: {e}")))?;
 
         // --- Step 4: Build Round 2 payload (decommit + proofs) ---
-        let phi_bar_x_i_ser = SerializedClCt::from_bicycl_ct(setup, &phi_bar_x_i)
+        let phi_bar_x_i_ser = SerializedClCt::from_bicycl_ct(&phi_bar_x_i)
             .map_err(|e| TecdsaError::Other(format!("ser phi_bar_x_i: {e}")))?;
-        let pi_dl_cl_x_ser = SerRDlClProof::from_proof(setup, &pi_dl_cl_x)
+        let pi_dl_cl_x_ser = SerRDlClProof::from_proof(&pi_dl_cl_x)
             .map_err(|e| TecdsaError::Other(format!("ser pi_dl_cl_x: {e}")))?;
-        let phi_bar_k_i_ser = SerializedClCt::from_bicycl_ct(setup, &phi_bar_k_i)
+        let phi_bar_k_i_ser = SerializedClCt::from_bicycl_ct(&phi_bar_k_i)
             .map_err(|e| TecdsaError::Other(format!("ser phi_bar_k_i: {e}")))?;
-        let pi_dl_cl_k_ser = SerRDlClProof::from_proof(setup, &pi_dl_cl_k)
+        let pi_dl_cl_k_ser = SerRDlClProof::from_proof(&pi_dl_cl_k)
             .map_err(|e| TecdsaError::Other(format!("ser pi_dl_cl_k: {e}")))?;
 
         let r2_payload = R2Payload {
@@ -628,13 +621,8 @@ impl Jtx25PresignMachine {
         let (pb_c1, pb_c2) = setup
             .ct_components(&state.phi_bar)
             .map_err(|e| TecdsaError::Other(format!("phi_bar components: {e}")))?;
-        let ctx = setup.ctx();
-        let phi_bar_c1_bytes = pb_c1
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?;
-        let phi_bar_c2_bytes = pb_c2
-            .to_bytes(ctx)
-            .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?;
+        let phi_bar_c1_bytes = pb_c1.to_bytes();
+        let phi_bar_c2_bytes = pb_c2.to_bytes();
 
         // Serialize per-party ciphertexts.
         let mut phi_bar_x_c1_bytes_map = BTreeMap::new();
@@ -648,30 +636,14 @@ impl Jtx25PresignMachine {
             let (xc1, xc2) = setup.ct_components(&r2.phi_bar_x_i).map_err(|e| {
                 TecdsaError::Other(format!("phi_bar_x components from {party_j}: {e}"))
             })?;
-            phi_bar_x_c1_bytes_map.insert(
-                j_pid,
-                xc1.to_bytes(ctx)
-                    .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
-            );
-            phi_bar_x_c2_bytes_map.insert(
-                j_pid,
-                xc2.to_bytes(ctx)
-                    .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
-            );
+            phi_bar_x_c1_bytes_map.insert(j_pid, xc1.to_bytes());
+            phi_bar_x_c2_bytes_map.insert(j_pid, xc2.to_bytes());
 
             let (kc1, kc2) = setup.ct_components(&r2.phi_bar_k_i).map_err(|e| {
                 TecdsaError::Other(format!("phi_bar_k components from {party_j}: {e}"))
             })?;
-            phi_bar_k_c1_bytes_map.insert(
-                j_pid,
-                kc1.to_bytes(ctx)
-                    .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
-            );
-            phi_bar_k_c2_bytes_map.insert(
-                j_pid,
-                kc2.to_bytes(ctx)
-                    .map_err(|e| TecdsaError::Other(format!("to_bytes: {e}")))?,
-            );
+            phi_bar_k_c1_bytes_map.insert(j_pid, kc1.to_bytes());
+            phi_bar_k_c2_bytes_map.insert(j_pid, kc2.to_bytes());
         }
 
         Ok(Jtx25Presignature {
@@ -741,12 +713,12 @@ impl StateMachine for Jtx25PresignMachine {
 
                     let phi_bar_i = payload
                         .phi_bar_i
-                        .to_bicycl_ct(&self.setup)
+                        .to_bicycl_ct()
                         .map_err(|e| TecdsaError::Other(format!("phi_bar from {from}: {e}")))?;
 
                     let r_enc_proof = payload
                         .r_enc_proof
-                        .to_proof(&self.setup)
+                        .to_proof()
                         .map_err(|e| TecdsaError::Other(format!("r_enc from {from}: {e}")))?;
 
                     // Verify R_enc proof.
@@ -822,21 +794,21 @@ impl StateMachine for Jtx25PresignMachine {
                     // Reconstruct CL objects.
                     let phi_bar_x_i = payload
                         .phi_bar_x_i
-                        .to_bicycl_ct(&self.setup)
+                        .to_bicycl_ct()
                         .map_err(|e| TecdsaError::Other(format!("phi_bar_x from {from}: {e}")))?;
                     let phi_bar_k_i = payload
                         .phi_bar_k_i
-                        .to_bicycl_ct(&self.setup)
+                        .to_bicycl_ct()
                         .map_err(|e| TecdsaError::Other(format!("phi_bar_k from {from}: {e}")))?;
 
                     // Verify R_dl-cl proofs.
                     let pi_dl_cl_x = payload
                         .pi_dl_cl_x
-                        .to_proof(&self.setup)
+                        .to_proof()
                         .map_err(|e| TecdsaError::Other(format!("pi_dl_cl_x from {from}: {e}")))?;
                     let pi_dl_cl_k = payload
                         .pi_dl_cl_k
-                        .to_proof(&self.setup)
+                        .to_proof()
                         .map_err(|e| TecdsaError::Other(format!("pi_dl_cl_k from {from}: {e}")))?;
 
                     let from_idx = state

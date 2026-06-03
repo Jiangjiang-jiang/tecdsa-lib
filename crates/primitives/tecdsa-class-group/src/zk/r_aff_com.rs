@@ -14,11 +14,11 @@
 //!   `ct_out = x * ct_in + Enc(pk, y; r1)`  (homomorphic)
 //!   `C = h^{r2} * f^x`  (commitment to x).
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, Qfi};
-
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
+};
+use crate::cl::{
+    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
 /// Affine-commitment relation proof.
@@ -59,7 +59,7 @@ impl RAffComProof {
         let a3 = sample_random_mod_q(setup)?;
         let a4 = sample_random(setup)?;
 
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let (ci1, ci2) = setup.ct_components(ct_in)?;
 
         // t1 = ci1^a3 * h^a1
@@ -67,7 +67,7 @@ impl RAffComProof {
         let h_a1 = setup.power_of_h_bytes(&a1)?;
         let t1 = setup.compose(&ci1_a3, &h_a1)?;
         // t2 = pk^a1 * f^a2 * ci2^a3
-        let pk_a1 = setup.exp_bytes(&pk_elt, &a1)?;
+        let pk_a1 = setup.exp_bytes(pk_elt, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let tmp = setup.compose(&pk_a1, &f_a2)?;
         let ci2_a3 = setup.exp_bytes(&ci2, &a3)?;
@@ -81,7 +81,7 @@ impl RAffComProof {
         let e = challenge_from_qfi(
             setup,
             b"R_aff_com",
-            &[&pk_elt, &ci1, &ci2, &co1, &co2, commitment, &t1, &t2, &t3],
+            &[pk_elt, &ci1, &ci2, &co1, &co2, commitment, &t1, &t2, &t3],
             &[],
         )?;
 
@@ -114,7 +114,7 @@ impl RAffComProof {
         ct_out: &ClHsmqkCiphertext,
         commitment: &Qfi,
     ) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let (co1, co2) = setup.ct_components(ct_out)?;
         let (ci1, ci2) = setup.ct_components(ct_in)?;
 
@@ -122,7 +122,7 @@ impl RAffComProof {
             setup,
             b"R_aff_com",
             &[
-                &pk_elt, &ci1, &ci2, &co1, &co2, commitment, &self.t1, &self.t2, &self.t3,
+                pk_elt, &ci1, &ci2, &co1, &co2, commitment, &self.t1, &self.t2, &self.t3,
             ],
             &[],
         )?;
@@ -136,19 +136,19 @@ impl RAffComProof {
         let lhs1 = setup.compose(&ci1_z3, &h_z1)?;
         let co1_e = setup.exp_bytes(&co1, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &co1_e)?;
-        if !lhs1.equal(setup.ctx(), &rhs1)? {
+        if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: pk^z1 * f^z2 * ci2^z3 == t2 * co2^e
-        let pk_z1 = setup.exp_bytes(&pk_elt, &self.z1)?;
+        let pk_z1 = setup.exp_bytes(pk_elt, &self.z1)?;
         let f_z2 = setup.power_of_f_bytes(&self.z2)?;
         let ci2_z3 = setup.exp_bytes(&ci2, &self.z3)?;
         let tmp1 = setup.compose(&pk_z1, &f_z2)?;
         let lhs2 = setup.compose(&tmp1, &ci2_z3)?;
         let co2_e = setup.exp_bytes(&co2, &self.e)?;
         let rhs2 = setup.compose(&self.t2, &co2_e)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -158,7 +158,7 @@ impl RAffComProof {
         let lhs3 = setup.compose(&h_z4, &f_z3)?;
         let c_e = setup.exp_bytes(commitment, &self.e)?;
         let rhs3 = setup.compose(&self.t3, &c_e)?;
-        if !lhs3.equal(setup.ctx(), &rhs3)? {
+        if lhs3 != rhs3 {
             return Ok(false);
         }
 
@@ -168,10 +168,11 @@ impl RAffComProof {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::{ClSetup, SECP256K1_ORDER};
     use num_bigint::BigUint;
     use num_traits::Num;
+
+    use super::*;
+    use crate::cl::{ClSetup, SECP256K1_ORDER};
 
     #[test]
     fn r_aff_com_honest_verifies() {

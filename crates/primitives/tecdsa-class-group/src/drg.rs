@@ -32,14 +32,12 @@
 
 use elliptic_curve::CurveArithmetic;
 use rand_core::CryptoRngCore;
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 
-use crate::bicycl_glue::{BicyclQfi, ClSetup};
-use crate::cl_enc::{ClCiphertext, ClPublicKey};
-use crate::zk::r_enc_pc::REncPcProof;
-use crate::zk::r_pc_dl::RPcDlProof;
-use tecdsa_curve::TecdsaCurve;
-
-use tecdsa_curve::conv::scalar_to_bytes;
+use crate::{
+    cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
+    zk::{r_enc_pc::REncPcProof, r_pc_dl::RPcDlProof},
+};
 
 // ---------------------------------------------------------------------------
 // Pedersen VSS (dual-polynomial)
@@ -198,7 +196,7 @@ pub struct DrgGenOutput {
     pub enc_randomness: Vec<u8>,
     /// F-subgroup element `Y = f^{chi_i}`, broadcast alongside the proof
     /// for verifiers to check R_Enc-PC.
-    pub y_element: BicyclQfi,
+    pub y_element: Qfi,
     /// R_Enc-PC proof: proves `c_{chi_i}` encrypts `chi_i` and `f^{chi_i} = Y`.
     pub proof: REncPcProof,
 }
@@ -219,7 +217,7 @@ pub struct DrgCombOutput {
     /// Encryption randomness for the combined ciphertext.
     pub enc_randomness: Vec<u8>,
     /// F-subgroup element `Y = f^{x_i}`, broadcast alongside the proof.
-    pub y_element: BicyclQfi,
+    pub y_element: Qfi,
     /// R_Enc-PC proof linking `c_{x_i}` to `f^{x_i}`.
     pub proof: REncPcProof,
 }
@@ -231,7 +229,7 @@ pub struct DrgRevealExpOutput {
     /// The EC point `X_i = g^{x_i}`.
     pub point: k256::ProjectivePoint,
     /// F-subgroup element `Y = f^{x_i}`, broadcast alongside the proof.
-    pub y_element: BicyclQfi,
+    pub y_element: Qfi,
     /// R_PC-DL proof: proves `X_i = g^{x_i}` where `x_i` maps to `f^{x_i}`.
     pub proof: RPcDlProof,
 }
@@ -298,20 +296,12 @@ pub fn drg_gen_with_secret(
     let (r_sk, _r_pk) = setup.keygen()?;
     let r_bytes = setup.sk_to_bytes(&r_sk)?;
 
-    let ct_raw = setup.encrypt_with_r_bytes(pk.inner(), &chi_bytes, &r_bytes)?;
-    let ciphertext = ClCiphertext::from_raw(ct_raw);
+    let ciphertext = setup.encrypt_with_r_bytes(pk, &chi_bytes, &r_bytes)?;
 
     // Step 4: Prove R_Enc-PC: ct encrypts chi_i and f^{chi_i} = Y
     // The F-subgroup element Y = f^{chi_i} serves as the public check value.
     let y = setup.power_of_f_bytes(&chi_bytes)?;
-    let proof = REncPcProof::prove(
-        setup,
-        pk.inner(),
-        ciphertext.inner(),
-        &y,
-        &chi_bytes,
-        &r_bytes,
-    )?;
+    let proof = REncPcProof::prove(setup, pk, &ciphertext, &y, &chi_bytes, &r_bytes)?;
 
     Ok(DrgGenOutput {
         secret: vss_output.secret,
@@ -347,7 +337,7 @@ pub fn drg_gen_verify(
     commitments: &[k256::ProjectivePoint],
     ciphertext: &ClCiphertext,
     proof: &REncPcProof,
-    y: &BicyclQfi,
+    y: &Qfi,
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // Step 1: Verify Pedersen VSS share
@@ -359,7 +349,7 @@ pub fn drg_gen_verify(
     // WMY23 Figure 2, GenVf, Step 2: the verifier receives
     // (c_{chi_i}, F_{chi_i}, Y_{chi_i}, pi_{chi_i}) and checks that
     // the ciphertext encrypts a value whose F-subgroup image is Y.
-    let proof_ok = proof.verify(setup, pk_i.inner(), ciphertext.inner(), y)?;
+    let proof_ok = proof.verify(setup, pk_i, ciphertext, y)?;
     Ok(proof_ok)
 }
 
@@ -387,7 +377,7 @@ pub fn drg_gen_verify_full(
     commitments: &[k256::ProjectivePoint],
     ciphertext: &ClCiphertext,
     proof: &REncPcProof,
-    y: &BicyclQfi,
+    y: &Qfi,
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // Step 1: Verify Pedersen VSS share
@@ -396,7 +386,7 @@ pub fn drg_gen_verify_full(
     }
 
     // Step 2: Verify R_Enc-PC proof
-    let proof_ok = proof.verify(setup, pk_i.inner(), ciphertext.inner(), y)?;
+    let proof_ok = proof.verify(setup, pk_i, ciphertext, y)?;
     Ok(proof_ok)
 }
 
@@ -460,19 +450,11 @@ pub fn drg_comb(
     let x_i_bytes = scalar_to_bytes::<k256::Secp256k1>(&combined_share);
     let (r_sk, _r_pk) = setup.keygen()?;
     let r_bytes = setup.sk_to_bytes(&r_sk)?;
-    let ct_raw = setup.encrypt_with_r_bytes(pk.inner(), &x_i_bytes, &r_bytes)?;
-    let ciphertext = ClCiphertext::from_raw(ct_raw);
+    let ciphertext = setup.encrypt_with_r_bytes(pk, &x_i_bytes, &r_bytes)?;
 
     // Step 5: Prove R_Enc-PC
     let y = setup.power_of_f_bytes(&x_i_bytes)?;
-    let proof = REncPcProof::prove(
-        setup,
-        pk.inner(),
-        ciphertext.inner(),
-        &y,
-        &x_i_bytes,
-        &r_bytes,
-    )?;
+    let proof = REncPcProof::prove(setup, pk, &ciphertext, &y, &x_i_bytes, &r_bytes)?;
 
     Ok(DrgCombOutput {
         combined_share,
@@ -554,7 +536,7 @@ pub fn drg_reveal_exp_verify(
 pub fn drg_reveal_exp_verify_full(
     setup: &ClSetup,
     proof: &RPcDlProof,
-    y: &BicyclQfi,
+    y: &Qfi,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     Ok(proof.verify(setup, y)?)
 }
@@ -668,36 +650,27 @@ pub fn drg_full_run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::{BicyclPublicKey, BicyclQfi, ClSetup};
-    use crate::cl_enc::ClPublicKey;
+    use crate::cl::{ClPublicKey, ClSetup, Mpz, Qfi};
 
     /// Helper: create CL public keys for all parties.
     #[allow(clippy::type_complexity)]
-    fn make_cl_keys(
-        setup: &mut ClSetup,
-        n: usize,
-    ) -> Vec<(Vec<u8>, ClPublicKey, (String, String, String))> {
+    fn make_cl_keys(setup: &mut ClSetup, n: usize) -> Vec<(Vec<u8>, ClPublicKey, (Mpz, Mpz, Mpz))> {
         (0..n)
             .map(|_| {
-                let (sk_raw, pk_raw) = setup.keygen().expect("CL keygen");
+                let (sk_raw, pk) = setup.keygen().expect("CL keygen");
                 let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk to bytes");
-                let pk = ClPublicKey::from_raw(pk_raw);
-                let pk_qfi = pk.element(setup).expect("pk element");
-                let abc = (
-                    pk_qfi.a_decimal(setup.ctx()).expect("a"),
-                    pk_qfi.b_decimal(setup.ctx()).expect("b"),
-                    pk_qfi.c_decimal(setup.ctx()).expect("c"),
-                );
+                let pk_qfi = pk.elt();
+                let abc = (pk_qfi.a().clone(), pk_qfi.b().clone(), pk_qfi.c().clone());
                 (sk_bytes, pk, abc)
             })
             .collect()
     }
 
     /// Helper: reconstruct CL public key from ABC.
-    fn reconstruct_pk(setup: &ClSetup, abc: &(String, String, String)) -> ClPublicKey {
-        let qfi = BicyclQfi::from_abc_decimal(setup.ctx(), &abc.0, &abc.1, &abc.2).expect("qfi");
-        let pk_raw = BicyclPublicKey::from_qfi(setup.ctx(), setup.cl(), &qfi).expect("pk from qfi");
-        ClPublicKey::from_raw(pk_raw)
+    fn reconstruct_pk(setup: &ClSetup, abc: &(Mpz, Mpz, Mpz)) -> ClPublicKey {
+        let qfi = Qfi::from_abc(abc.0.clone(), abc.1.clone(), abc.2.clone());
+        let pk_raw = ClPublicKey::from_qfi(setup.cl(), qfi).expect("pk from qfi");
+        pk_raw
     }
 
     #[test]
@@ -988,12 +961,7 @@ mod tests {
         // Proof is always generated; verify using the stored Y element.
         let ok = gen
             .proof
-            .verify(
-                &setup,
-                keys[0].1.inner(),
-                gen.ciphertext.inner(),
-                &gen.y_element,
-            )
+            .verify(&setup, &keys[0].1, &gen.ciphertext, &gen.y_element)
             .expect("verify");
         assert!(ok, "R_Enc-PC proof should verify for honest generation");
     }

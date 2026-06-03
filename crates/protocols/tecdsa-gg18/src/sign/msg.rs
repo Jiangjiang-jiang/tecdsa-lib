@@ -15,10 +15,11 @@
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::zk::homo_elgamal::HomoElGamalProof;
-use tecdsa_paillier::zk::mta_range::{AliceProof, BobProofExt};
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::zk::{
+    homo_elgamal::HomoElGamalProof,
+    mta_range::{AliceProof, BobProofExt},
+};
 
 use crate::keygen::msg::SerInteger;
 

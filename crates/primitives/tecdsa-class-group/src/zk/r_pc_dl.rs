@@ -15,11 +15,10 @@
 //! `Cl(Delta)` operations, verification uses `dlog_in_F` to work
 //! in scalar arithmetic modulo `q`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
 use num_bigint::BigUint;
 
 use super::{challenge_from_qfi, sample_random_mod_q};
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// Public-checked DL proof.
 pub struct RPcDlProof {
@@ -80,7 +79,7 @@ impl RPcDlProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_pc_dl_honest_verifies() {

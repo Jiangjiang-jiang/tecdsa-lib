@@ -20,14 +20,14 @@ pub mod msg;
 mod rounds;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use msg::{msg_round, Ln18KeygenMsg};
 use rand_core::CryptoRngCore;
+use rounds::{InitRound1State, KeygenRound};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig, StateMachine};
 
 use crate::key_share::Ln18KeyShare;
-use msg::{msg_round, Ln18KeygenMsg};
-use rounds::{InitRound1State, KeygenRound};
 
 /// LN18 threshold key generation state machine.
 pub struct Ln18KeygenMachine<C: TecdsaCurve>

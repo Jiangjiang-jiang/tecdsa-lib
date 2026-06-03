@@ -135,8 +135,7 @@ mod tests {
     #[test]
     #[cfg(feature = "secp256k1")]
     fn affine_basic() {
-        use crate::f_mult::init::InitState;
-        use crate::f_mult::input::InputState;
+        use crate::f_mult::{init::InitState, input::InputState};
 
         let mut rng = rand::thread_rng();
         let n: usize = 3;
@@ -298,9 +297,9 @@ mod tests {
     #[test]
     #[cfg(feature = "secp256k1")]
     fn affine_identity() {
-        use crate::f_mult::init::InitState;
-        use crate::f_mult::input::InputState;
         use elliptic_curve::Field;
+
+        use crate::f_mult::{init::InitState, input::InputState};
 
         let mut rng = rand::thread_rng();
         let n: usize = 2;

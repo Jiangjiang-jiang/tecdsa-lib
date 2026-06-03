@@ -23,14 +23,13 @@
 
 #![allow(non_snake_case)]
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
+use std::str::FromStr;
+
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-
-use tecdsa_class_group::bicycl_glue::{BicyclPublicKey, BicyclQfi, ClSetup};
-use tecdsa_class_group::cl_enc::{ClPublicKey, ClSecretKey};
+use tecdsa_class_group::cl::{ClPublicKey, ClSecretKey, ClSetup, Mpz, Qfi};
 use tecdsa_curve::TecdsaCurve;
 
 use crate::key_share::Wmy23KeyShare;
@@ -108,11 +107,11 @@ fn commitment_message(big_x_i_bytes: &[u8], cl_pk_abc: &(String, String, String)
 /// Reconstruct a `ClPublicKey` from its serialised (a,b,c) decimal form.
 fn reconstruct_cl_pk(
     setup: &ClSetup,
-    abc: &(String, String, String),
+    (a, b, c): &(String, String, String),
 ) -> Result<ClPublicKey, Box<dyn std::error::Error>> {
-    let qfi = BicyclQfi::from_abc_decimal(setup.ctx(), &abc.0, &abc.1, &abc.2)?;
-    let pk_raw = BicyclPublicKey::from_qfi(setup.ctx(), setup.cl(), &qfi)?;
-    Ok(ClPublicKey::from_raw(pk_raw))
+    let qfi = Qfi::from_abc(Mpz::from_str(a)?, Mpz::from_str(b)?, Mpz::from_str(c)?);
+    let pk_raw = ClPublicKey::from_qfi(setup.cl(), qfi)?;
+    Ok(pk_raw)
 }
 
 /// Round 1: Each party generates keys and broadcasts a commitment.
@@ -143,16 +142,14 @@ pub fn keygen_round1(
     rng: &mut impl CryptoRngCore,
 ) -> Result<(KeygenR1State, KeygenR1Bcast), Box<dyn std::error::Error>> {
     // Generate CL keypair
-    let (sk_raw, pk_raw) = setup.keygen()?;
-    let cl_sk = ClSecretKey::from_raw(sk_raw);
-    let cl_pk = ClPublicKey::from_raw(pk_raw);
+    let (cl_sk, cl_pk) = setup.keygen()?;
 
     // Serialize CL public key for broadcast messages
-    let pk_qfi = cl_pk.element(setup)?;
+    let pk_qfi = cl_pk.elt();
     let cl_pk_abc = (
-        pk_qfi.a_decimal(setup.ctx())?,
-        pk_qfi.b_decimal(setup.ctx())?,
-        pk_qfi.c_decimal(setup.ctx())?,
+        pk_qfi.a().to_string(),
+        pk_qfi.b().to_string(),
+        pk_qfi.c().to_string(),
     );
 
     // Generate ECDSA key share

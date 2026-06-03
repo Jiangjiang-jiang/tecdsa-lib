@@ -16,16 +16,17 @@
 //! so the message space parameter k must be sufficiently larger than the curve
 //! order bit-length.
 
-use crate::enc_dec::{decrypt, encrypt, JlCiphertext};
-use crate::kgen::{JlPublicKey, JlSecretKey};
-use crate::zk::zkjl_aff::ZkJlAffProof;
-use crate::zk::zkjl_com::jl_commit;
-use crate::zk::zkjl_equ::ZkJlEquProof;
 use num_bigint::{BigUint, RandBigInt};
 use num_traits::Zero;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
+
+use crate::{
+    enc_dec::{decrypt, encrypt, JlCiphertext},
+    kgen::{JlPublicKey, JlSecretKey},
+    zk::{zkjl_aff::ZkJlAffProof, zkjl_com::jl_commit, zkjl_equ::ZkJlEquProof},
+};
 
 /// Sender state for the JL-based `MtA` protocol.
 ///
@@ -561,9 +562,10 @@ impl MtA for JlMtA {
 
 #[cfg(test)]
 mod tests {
+    use num_traits::One;
+
     use super::*;
     use crate::kgen::generate_keypair_with_params;
-    use num_traits::One;
 
     #[test]
     fn mta_correctness_small() {

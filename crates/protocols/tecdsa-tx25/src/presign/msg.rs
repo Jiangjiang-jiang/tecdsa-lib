@@ -2,12 +2,10 @@
 //! TX25 presign message types and serialization helpers.
 
 use serde::{Deserialize, Serialize};
-
-use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
-use tecdsa_class_group::zk::r_enc::REncProof;
-use tecdsa_class_group::zk::r_m_aff_dl_ec::RMAffDlEcProof;
-use tecdsa_class_group::zk::r_sh::RShProof;
+use tecdsa_class_group::{
+    cl::{ClCiphertext, Qfi},
+    zk::{r_dec_dl::RDecDlProof, r_enc::REncProof, r_m_aff_dl_ec::RMAffDlEcProof, r_sh::RShProof},
+};
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -35,24 +33,17 @@ pub(crate) struct SerializedClCt {
 }
 
 impl SerializedClCt {
-    pub(crate) fn from_bicycl_ct(setup: &ClSetup, ct: &BicyclCiphertext) -> Result<Self, String> {
-        let (c1, c2) = setup
-            .ct_components(ct)
-            .map_err(|e| format!("ct_components: {e}"))?;
-        let ctx = setup.ctx();
+    pub(crate) fn from_bicycl_ct(ct: &ClCiphertext) -> Result<Self, String> {
         Ok(Self {
-            c1: c1.to_bytes(ctx).map_err(|e| format!("c1 to_bytes: {e}"))?,
-            c2: c2.to_bytes(ctx).map_err(|e| format!("c2 to_bytes: {e}"))?,
+            c1: ct.c1().to_bytes(),
+            c2: ct.c2().to_bytes(),
         })
     }
 
-    pub(crate) fn to_bicycl_ct(&self, setup: &ClSetup) -> Result<BicyclCiphertext, String> {
-        let ctx = setup.ctx();
-        let c1 = BicyclQfi::from_bytes(ctx, &self.c1).map_err(|e| format!("c1 from_bytes: {e}"))?;
-        let c2 = BicyclQfi::from_bytes(ctx, &self.c2).map_err(|e| format!("c2 from_bytes: {e}"))?;
-        setup
-            .ct_from_components(&c1, &c2)
-            .map_err(|e| format!("ct_from_components: {e}"))
+    pub(crate) fn to_bicycl_ct(&self) -> Result<ClCiphertext, String> {
+        let c1 = Qfi::from_bytes(&self.c1);
+        let c2 = Qfi::from_bytes(&self.c2);
+        Ok(ClCiphertext::new(c1, c2))
     }
 }
 
@@ -63,15 +54,13 @@ pub(crate) struct SerializedQfi {
 }
 
 impl SerializedQfi {
-    pub(crate) fn from_qfi(setup: &ClSetup, qfi: &BicyclQfi) -> Result<Self, String> {
-        let ctx = setup.ctx();
-        let data = qfi.to_bytes(ctx).map_err(|e| format!("to_bytes: {e}"))?;
+    pub(crate) fn from_qfi(qfi: &Qfi) -> Result<Self, String> {
+        let data = qfi.to_bytes();
         Ok(Self { data })
     }
 
-    pub(crate) fn to_qfi(&self, setup: &ClSetup) -> Result<BicyclQfi, String> {
-        let ctx = setup.ctx();
-        BicyclQfi::from_bytes(ctx, &self.data).map_err(|e| format!("from_bytes: {e}"))
+    pub(crate) fn to_qfi(&self) -> Result<Qfi, String> {
+        Ok(Qfi::from_bytes(&self.data))
     }
 }
 
@@ -90,20 +79,20 @@ pub(crate) struct SerREncProof {
 }
 
 impl SerREncProof {
-    pub(crate) fn from_proof(setup: &ClSetup, proof: &REncProof) -> Result<Self, String> {
+    pub(crate) fn from_proof(proof: &REncProof) -> Result<Self, String> {
         Ok(Self {
-            t1: SerializedQfi::from_qfi(setup, &proof.t1)?,
-            t2: SerializedQfi::from_qfi(setup, &proof.t2)?,
+            t1: SerializedQfi::from_qfi(&proof.t1)?,
+            t2: SerializedQfi::from_qfi(&proof.t2)?,
             u1: proof.u1.clone(),
             u2: proof.u2.clone(),
             e: proof.e.clone(),
         })
     }
 
-    pub(crate) fn to_proof(&self, setup: &ClSetup) -> Result<REncProof, String> {
+    pub(crate) fn to_proof(&self) -> Result<REncProof, String> {
         Ok(REncProof {
-            t1: self.t1.to_qfi(setup)?,
-            t2: self.t2.to_qfi(setup)?,
+            t1: self.t1.to_qfi()?,
+            t2: self.t2.to_qfi()?,
             u1: self.u1.clone(),
             u2: self.u2.clone(),
             e: self.e.clone(),
@@ -144,19 +133,19 @@ pub(crate) struct SerRDecDlProof {
 }
 
 impl SerRDecDlProof {
-    pub(crate) fn from_proof(setup: &ClSetup, proof: &RDecDlProof) -> Result<Self, String> {
+    pub(crate) fn from_proof(proof: &RDecDlProof) -> Result<Self, String> {
         Ok(Self {
-            t1: SerializedQfi::from_qfi(setup, &proof.t1)?,
-            t2: SerializedQfi::from_qfi(setup, &proof.t2)?,
+            t1: SerializedQfi::from_qfi(&proof.t1)?,
+            t2: SerializedQfi::from_qfi(&proof.t2)?,
             z: proof.z.clone(),
             e: proof.e.clone(),
         })
     }
 
-    pub(crate) fn to_proof(&self, setup: &ClSetup) -> Result<RDecDlProof, String> {
+    pub(crate) fn to_proof(&self) -> Result<RDecDlProof, String> {
         Ok(RDecDlProof {
-            t1: self.t1.to_qfi(setup)?,
-            t2: self.t2.to_qfi(setup)?,
+            t1: self.t1.to_qfi()?,
+            t2: self.t2.to_qfi()?,
             z: self.z.clone(),
             e: self.e.clone(),
         })
@@ -176,10 +165,10 @@ pub(crate) struct SerRMAffDlEcProof {
 }
 
 impl SerRMAffDlEcProof {
-    pub(crate) fn from_proof(setup: &ClSetup, proof: &RMAffDlEcProof) -> Result<Self, String> {
+    pub(crate) fn from_proof(proof: &RMAffDlEcProof) -> Result<Self, String> {
         Ok(Self {
-            d_prime_1: SerializedQfi::from_qfi(setup, &proof.d_prime_1)?,
-            d_prime_2: SerializedQfi::from_qfi(setup, &proof.d_prime_2)?,
+            d_prime_1: SerializedQfi::from_qfi(&proof.d_prime_1)?,
+            d_prime_2: SerializedQfi::from_qfi(&proof.d_prime_2)?,
             b0_bytes: proof.b0_bytes.clone(),
             r0_bytes: proof.r0_bytes.clone(),
             k_hat: proof.k_hat.clone(),
@@ -188,10 +177,10 @@ impl SerRMAffDlEcProof {
         })
     }
 
-    pub(crate) fn to_proof(&self, setup: &ClSetup) -> Result<RMAffDlEcProof, String> {
+    pub(crate) fn to_proof(&self) -> Result<RMAffDlEcProof, String> {
         Ok(RMAffDlEcProof {
-            d_prime_1: self.d_prime_1.to_qfi(setup)?,
-            d_prime_2: self.d_prime_2.to_qfi(setup)?,
+            d_prime_1: self.d_prime_1.to_qfi()?,
+            d_prime_2: self.d_prime_2.to_qfi()?,
             b0_bytes: self.b0_bytes.clone(),
             r0_bytes: self.r0_bytes.clone(),
             k_hat: self.k_hat.clone(),

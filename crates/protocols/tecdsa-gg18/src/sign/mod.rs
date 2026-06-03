@@ -18,14 +18,12 @@ pub mod sign_keys;
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use msg::Gg18SignMsg;
+pub use rounds::OnlineSignConfig;
+use rounds::{OnlineSignRound, Round4State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Signature, StateMachine};
-
-use msg::Gg18SignMsg;
-use rounds::{OnlineSignRound, Round4State};
-
-pub use rounds::OnlineSignConfig;
 
 /// GG18 online signing state machine (Phase 5, 5 message rounds).
 pub struct Gg18OnlineSignMachine<C: TecdsaCurve>

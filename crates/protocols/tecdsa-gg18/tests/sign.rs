@@ -8,12 +8,13 @@
 use elliptic_curve::PrimeField;
 use sha2::{Digest, Sha256};
 use tecdsa_core::Csprng;
-use tecdsa_gg18::key_share::Gg18KeyShare;
-use tecdsa_gg18::keygen::{generate_n_tilde, Gg18KeygenMachine, PaillierPrecomputed};
-use tecdsa_gg18::presign::{Gg18PresignMachine, Gg18Presignature, PresignConfig};
-use tecdsa_gg18::sign::{Gg18OnlineSignMachine, OnlineSignConfig};
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::DecryptionKey;
+use tecdsa_gg18::{
+    key_share::Gg18KeyShare,
+    keygen::{generate_n_tilde, Gg18KeygenMachine, PaillierPrecomputed},
+    presign::{Gg18PresignMachine, Gg18Presignature, PresignConfig},
+    sign::{Gg18OnlineSignMachine, OnlineSignConfig},
+};
+use tecdsa_paillier::{backend::Integer, DecryptionKey};
 use tecdsa_protocol::{
     verify_ecdsa, DataToSign, PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine,
 };

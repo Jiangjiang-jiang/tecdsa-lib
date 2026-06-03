@@ -9,12 +9,14 @@
 
 use std::time::Instant;
 
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, StateMachine};
-use tecdsa_tx25::keygen::Tx25KeygenMachine;
-use tecdsa_tx25::presign::{Tx25PresignMachine, Tx25Presignature};
-use tecdsa_tx25::sign::{Tx25OnlineSignMachine, Tx25OnlineSignMsg};
-use tecdsa_tx25::Tx25KeyShare;
+use tecdsa_tx25::{
+    keygen::Tx25KeygenMachine,
+    presign::{Tx25PresignMachine, Tx25Presignature},
+    sign::{Tx25OnlineSignMachine, Tx25OnlineSignMsg},
+    Tx25KeyShare,
+};
 
 fn run_protocol<M>(machines: Vec<(PartyId, M)>, max_rounds: u16) -> Vec<M::Output>
 where

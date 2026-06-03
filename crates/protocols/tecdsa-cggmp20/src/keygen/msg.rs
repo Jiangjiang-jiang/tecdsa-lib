@@ -4,8 +4,7 @@
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 
 /// Round 1 broadcast: hash commitment to Feldman polynomial + Schnorr nonce.
 #[derive(Clone, Debug, Serialize, Deserialize)]

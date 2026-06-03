@@ -10,6 +10,8 @@ pub mod rounds;
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use msg::Ggn16SignMsg;
+use rounds::{OnlineSignConfig, OnlineSignRound, Round6State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{
@@ -17,8 +19,6 @@ use tecdsa_protocol::{
 };
 
 use crate::presign::Ggn16Presignature;
-use msg::Ggn16SignMsg;
-use rounds::{OnlineSignConfig, OnlineSignRound, Round6State};
 
 /// GGN16 online signing state machine (Round 6).
 ///

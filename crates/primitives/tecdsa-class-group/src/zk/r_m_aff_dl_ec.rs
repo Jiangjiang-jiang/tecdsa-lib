@@ -19,9 +19,6 @@
 //! generators instead of the CL F-subgroup generator `f`.  There is NO
 //! rerandomisation parameter `rho`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
-
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
 use num_bigint::BigUint;
@@ -30,6 +27,7 @@ use tecdsa_curve::conv;
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
 };
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// Aggregated MtA affine DL proof with EC point checks (R\_m-AffDL-Ec).
 pub struct RMAffDlEcProof {
@@ -60,7 +58,7 @@ fn test_scalar(val: u64) -> Scalar {
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
     if bytes.len() != 33 {
-        return Err(crate::bicycl_glue::ClError::InvalidParam(format!(
+        return Err(crate::cl::ClError::InvalidParam(format!(
             "expected 33-byte compressed point, got {} bytes",
             bytes.len()
         )));
@@ -69,7 +67,7 @@ fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
     AsMut::<[u8]>::as_mut(&mut repr).copy_from_slice(bytes);
     let opt = ProjectivePoint::from_bytes(&repr);
     if bool::from(opt.is_none()) {
-        return Err(crate::bicycl_glue::ClError::InvalidParam(
+        return Err(crate::cl::ClError::InvalidParam(
             "invalid EC point encoding".into(),
         ));
     }
@@ -191,7 +189,7 @@ impl RMAffDlEcProof {
         let c1_khat = setup.exp_bytes(c1, &self.k_hat)?;
         let d1_e = setup.exp_bytes(d1, &self.e)?;
         let rhs1 = setup.compose(&self.d_prime_1, &d1_e)?;
-        if !c1_khat.equal(setup.ctx(), &rhs1)? {
+        if c1_khat != rhs1 {
             return Ok(false);
         }
 
@@ -202,7 +200,7 @@ impl RMAffDlEcProof {
         let lhs2 = setup.compose(&c2_khat, &f_neg_bhat)?;
         let d2_e = setup.exp_bytes(d2, &self.e)?;
         let rhs2 = setup.compose(&self.d_prime_2, &d2_e)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -230,7 +228,7 @@ impl RMAffDlEcProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_m_aff_dl_ec_honest_verifies() {

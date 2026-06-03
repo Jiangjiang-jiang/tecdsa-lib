@@ -15,8 +15,7 @@ use tecdsa_curve::TecdsaCurve;
 
 use crate::f_mult::{
     element_out::ElementOutMsg,
-    init::InitRound1Msg,
-    init::InitRound2Msg,
+    init::{InitRound1Msg, InitRound2Msg},
     input::{InputRound1Msg, InputRound2Msg},
 };
 

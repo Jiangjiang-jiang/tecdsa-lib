@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use tecdsa_cggmp20::Cggmp20;
-use tecdsa_protocol::Protocol;
-
 use elliptic_curve::ops::{LinearCombination, Reduce};
 use sha2::{Digest, Sha256};
-use tecdsa_cggmp20::aux_info::AuxInfoMachine;
-use tecdsa_cggmp20::key_share::{AuxInfo, Cggmp20CoreKeyShare};
-use tecdsa_cggmp20::keygen::Cggmp20KeygenMachine;
-use tecdsa_cggmp20::presign::Cggmp20PresignMachine;
-use tecdsa_cggmp20::security_level::Cggmp20SecurityParams;
-use tecdsa_cggmp20::sign::types::{
-    DataToSign, PartialSignature, Presignature, PresignaturePublicData,
+use tecdsa_cggmp20::{
+    aux_info::AuxInfoMachine,
+    key_share::{AuxInfo, Cggmp20CoreKeyShare},
+    keygen::Cggmp20KeygenMachine,
+    presign::Cggmp20PresignMachine,
+    security_level::Cggmp20SecurityParams,
+    sign::types::{DataToSign, PartialSignature, Presignature, PresignaturePublicData},
+    Cggmp20,
 };
 use tecdsa_core::Csprng;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine};
+use tecdsa_protocol::{
+    PartyId, PartyInfo, Protocol, Recipient, SessionConfig, SessionId, StateMachine,
+};
 
 type C = k256::Secp256k1;
 

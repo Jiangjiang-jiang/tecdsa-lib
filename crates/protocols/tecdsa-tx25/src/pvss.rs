@@ -38,11 +38,12 @@
 
 use elliptic_curve::CurveArithmetic;
 use rand_core::CryptoRngCore;
+use tecdsa_class_group::{
+    cl::{ClPublicKey, ClSecretKey, ClSetup, Qfi},
+    pvss_share,
+    zk::r_sh::RShProof,
+};
 use tecdsa_curve::TecdsaCurve;
-
-use tecdsa_class_group::bicycl_glue::{BicyclPublicKey, BicyclQfi, BicyclSecretKey, ClSetup};
-use tecdsa_class_group::pvss_share;
-use tecdsa_class_group::zk::r_sh::RShProof;
 
 use crate::error::Tx25Error;
 
@@ -57,9 +58,9 @@ use crate::error::Tx25Error;
 /// coefficients for later use.
 pub struct PvssOutput {
     /// `c1 = h^rho` -- shared across all parties.
-    pub c1: BicyclQfi,
+    pub c1: Qfi,
     /// `c2_j = pk_j^rho * f^{f(j)}` for each party `j`.
-    pub c2s: Vec<BicyclQfi>,
+    pub c2s: Vec<Qfi>,
     /// `R_Sh` proof (PolyVerify) linking encrypted shares to the polynomial.
     pub proof: RShProof,
     /// `f(my_index)` -- the distributor's own plaintext share.
@@ -105,7 +106,7 @@ impl std::fmt::Debug for ShareCombOutput {
 pub fn pvss_distribute(
     setup: &mut ClSetup,
     party_ids: &[u16],
-    pks: &[BicyclPublicKey],
+    pks: &[ClPublicKey],
     threshold: u16,
     my_index_in_list: usize,
     rng: &mut impl CryptoRngCore,
@@ -121,7 +122,7 @@ pub fn pvss_distribute(
 pub fn pvss_distribute_with_secret(
     setup: &mut ClSetup,
     party_ids: &[u16],
-    pks: &[BicyclPublicKey],
+    pks: &[ClPublicKey],
     threshold: u16,
     my_index_in_list: usize,
     secret: k256::Scalar,
@@ -186,10 +187,10 @@ pub fn pvss_distribute_with_secret(
 pub fn pvss_verify(
     setup: &ClSetup,
     party_ids: &[u16],
-    pks: &[BicyclPublicKey],
+    pks: &[ClPublicKey],
     threshold: u16,
-    c1: &BicyclQfi,
-    c2s: &[BicyclQfi],
+    c1: &Qfi,
+    c2s: &[Qfi],
     proof: &RShProof,
 ) -> Result<bool, Tx25Error> {
     let ok = pvss_share::pvss_share_verify(setup, party_ids, pks, threshold, c1, c2s, proof)?;
@@ -211,9 +212,9 @@ pub fn pvss_verify(
 /// Returns the decrypted share as a scalar.
 pub fn pvss_decrypt_share(
     setup: &ClSetup,
-    sk: &BicyclSecretKey,
-    c1: &BicyclQfi,
-    c2_my: &BicyclQfi,
+    sk: &ClSecretKey,
+    c1: &Qfi,
+    c2_my: &Qfi,
 ) -> Result<k256::Scalar, Tx25Error> {
     let sk_bytes = setup.sk_to_bytes(sk)?;
     let share_bytes = pvss_share::pvss_share_decrypt(setup, &sk_bytes, c1, c2_my)?;
@@ -226,9 +227,9 @@ pub fn pvss_decrypt_share(
 /// including the share point `share * G`.
 pub fn pvss_decrypt_share_full(
     setup: &ClSetup,
-    sk: &BicyclSecretKey,
-    c1: &BicyclQfi,
-    c2_my: &BicyclQfi,
+    sk: &ClSecretKey,
+    c1: &Qfi,
+    c2_my: &Qfi,
 ) -> Result<ShareCombOutput, Tx25Error> {
     let share = pvss_decrypt_share(setup, sk, c1, c2_my)?;
     let share_point = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * share;

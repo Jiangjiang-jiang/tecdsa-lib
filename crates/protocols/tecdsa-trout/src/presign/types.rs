@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Types for the Trout presigning protocol.
 
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
-use tecdsa_class_group::zk::r_com_kwlg::RComKwlgProof;
+use tecdsa_class_group::zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof};
 use tecdsa_evrf::{EvrfOutput, EvrfProof};
 use zeroize::Zeroize;
 

@@ -4,21 +4,15 @@
 use std::collections::BTreeMap;
 
 use rand_core::CryptoRngCore;
+use tecdsa_bigint::DynInt;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_paillier::{DecryptionKey, EncryptionKey};
-use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
+use tecdsa_paillier::{zk::paillier_zk::no_small_factor as pi_fac, DecryptionKey, EncryptionKey};
+use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 
-use tecdsa_bigint::DynInt;
-use tecdsa_paillier::zk::paillier_zk::no_small_factor as pi_fac;
-use tecdsa_pedersen_mod::PiMod;
-
-use crate::bridge::pedersen_to_aux;
-use crate::key_share::AuxInfo;
-use crate::security_level::Cggmp20SecurityParams;
-
 use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3};
+use crate::{bridge::pedersen_to_aux, key_share::AuxInfo, security_level::Cggmp20SecurityParams};
 
 /// Fiat-Shamir domain separation tag for aux-info ZK proofs.
 #[derive(udigest::Digestable)]

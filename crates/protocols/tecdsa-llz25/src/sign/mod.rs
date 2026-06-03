@@ -47,20 +47,20 @@
 
 pub mod machine;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
-use elliptic_curve::PrimeField;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic, PrimeField};
 use sha2::{Digest, Sha256};
-
-use tecdsa_class_group::bicycl_glue::BicyclCiphertext as ClHsmqkCiphertext;
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::nim::{Nim, NimStateA, NimStateB};
+use tecdsa_class_group::{
+    cl::{ClCiphertext as ClHsmqkCiphertext, ClSetup},
+    nim::{Nim, NimStateA, NimStateB},
+};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
-use crate::error::Llz25Error;
-use crate::key_share::Llz25KeyShare;
-use crate::presign::{PresignMessage, PresignState};
+use crate::{
+    error::Llz25Error,
+    key_share::Llz25KeyShare,
+    presign::{PresignMessage, PresignState},
+};
 
 /// Partial signature from one party: $(w_i, u_i)$.
 #[derive(Debug, Clone)]
@@ -80,7 +80,7 @@ fn hash_with_prefix(prefix: &[u8], data: &[u8]) -> k256::Scalar {
     use num_bigint::BigUint;
     use num_traits::Num;
     let val = BigUint::from_bytes_be(&bytes);
-    let q = BigUint::from_str_radix(tecdsa_class_group::bicycl_glue::SECP256K1_ORDER, 10).unwrap();
+    let q = BigUint::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
     let reduced = val % &q;
     tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&reduced)
 }

@@ -28,9 +28,8 @@ pub mod presign;
 pub mod pvss;
 pub mod sign;
 
-use tecdsa_protocol::{NoOpMachine, Protocol};
-
 pub use key_share::Tx25KeyShare;
+use tecdsa_protocol::{NoOpMachine, Protocol};
 
 /// TX25 robust threshold ECDSA protocol descriptor.
 ///

@@ -26,12 +26,13 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
-use crate::error::Lin17Error;
-use crate::key_share::{Lin17Party1KeyShare, Lin17Party2KeyShare};
+use crate::{
+    error::Lin17Error,
+    key_share::{Lin17Party1KeyShare, Lin17Party2KeyShare},
+};
 
 // ---------------------------------------------------------------------------
 // Message types

@@ -34,19 +34,20 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_ot::rvole::{MulDataToKeep, MulReceiver, MulSender};
-use tecdsa_ot::seed_state::OtSeedState;
+use tecdsa_ot::{
+    rvole::{MulDataToKeep, MulReceiver, MulSender},
+    seed_state::OtSeedState,
+};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 use tecdsa_vss::lagrange;
 use zeroize::Zeroize;
 
-use crate::key_share::Dkls23KeyShare;
-use crate::sign::msg::{
-    Dkls23SignMsg, SignR1Broadcast, SignR1P2p, SignR2Broadcast, SignR2P2p, SignR3P2p,
-};
-use crate::utils::{deserialize_point, deserialize_scalar, scalar_to_bytes, validate_sender};
-
 use super::types::{Dkls23Presignature, PartyRvoleData};
+use crate::{
+    key_share::Dkls23KeyShare,
+    sign::msg::{Dkls23SignMsg, SignR1Broadcast, SignR1P2p, SignR2Broadcast, SignR2P2p, SignR3P2p},
+    utils::{deserialize_point, deserialize_scalar, scalar_to_bytes, validate_sender},
+};
 
 // ---------------------------------------------------------------------------
 // Configuration

@@ -7,9 +7,8 @@
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
-use zeroize::Zeroize;
-
 pub use tecdsa_protocol::{DataToSign, Signature};
+use zeroize::Zeroize;
 
 /// Output of the presigning protocol.
 #[derive(Clone)]

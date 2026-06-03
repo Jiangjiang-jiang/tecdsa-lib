@@ -47,15 +47,19 @@
 
 pub mod machine;
 
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::{
+    cl::ClSetup,
+    scaled_decrypt::{
+        aggregate_and_solve, aggregate_ciphertext_components, aggregate_commitments,
+        compute_f_share, ScaledDecryptPartyInput, ScaledDecryptPublic,
+    },
+};
 use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
-use crate::error::{qfi_from_abc, TroutError, TroutResult};
-use crate::key_share::TroutKeyShare;
-use crate::presign::types::TroutPresignOutput;
-use tecdsa_class_group::scaled_decrypt::{
-    aggregate_and_solve, aggregate_ciphertext_components, aggregate_commitments, compute_f_share,
-    ScaledDecryptPartyInput, ScaledDecryptPublic,
+use crate::{
+    error::{qfi_from_abc, TroutError, TroutResult},
+    key_share::TroutKeyShare,
+    presign::types::TroutPresignOutput,
 };
 
 /// Execute the signing protocol (Round 2) given a message and presign output.
@@ -78,7 +82,7 @@ pub fn sign_round2(
     message: &DataToSign<k256::Secp256k1>,
     share: &TroutKeyShare,
     setup: &ClSetup,
-    cl_pk: &tecdsa_class_group::bicycl_glue::BicyclPublicKey,
+    cl_pk: &tecdsa_class_group::cl::ClPublicKey,
 ) -> TroutResult<Signature<k256::Secp256k1>> {
     let _n = all_presigns.len();
     let r_scalar = all_presigns[0].r_scalar;
@@ -96,8 +100,8 @@ pub fn sign_round2(
     for bcast in broadcasts {
         let (c1_a, c1_b, c1_c) = &bcast.kt_c1_abc;
         let (c2_a, c2_b, c2_c) = &bcast.kt_c2_abc;
-        let c1 = qfi_from_abc(setup.ctx(), c1_a, c1_b, c1_c)?;
-        let c2 = qfi_from_abc(setup.ctx(), c2_a, c2_b, c2_c)?;
+        let c1 = qfi_from_abc(c1_a, c1_b, c1_c)?;
+        let c2 = qfi_from_abc(c2_a, c2_b, c2_c)?;
         let kt_ct = setup.ct_from_components(&c1, &c2)?;
 
         let cl_ec_ok = bcast
@@ -115,12 +119,12 @@ pub fn sign_round2(
     // Verify R_{ComKwlg} proofs: knowledge of (u_i, beta_i) in U_i
     // U_i = h^beta_i * pk^u_i, so verify with pk as the second base.
     // ---------------------------------------------------------------
-    let pk_elt = setup.pk_element(cl_pk)?;
+    let pk_elt = cl_pk.elt();
     for bcast in broadcasts {
         let (a, b, c) = &bcast.u_com_abc;
-        let u_com = qfi_from_abc(setup.ctx(), a, b, c)?;
+        let u_com = qfi_from_abc(a, b, c)?;
 
-        let com_kwlg_ok = bcast.pi_com_kwlg.verify_with_base(setup, &u_com, &pk_elt)?;
+        let com_kwlg_ok = bcast.pi_com_kwlg.verify_with_base(setup, &u_com, pk_elt)?;
         if !com_kwlg_ok {
             return Err(TroutError::ProofFailed(format!(
                 "R_ComKwlg proof failed for party {}",
@@ -138,8 +142,8 @@ pub fn sign_round2(
     for bcast in broadcasts {
         let (c1_a, c1_b, c1_c) = &bcast.kt_c1_abc;
         let (c2_a, c2_b, c2_c) = &bcast.kt_c2_abc;
-        let c1 = qfi_from_abc(setup.ctx(), c1_a, c1_b, c1_c)?;
-        let c2 = qfi_from_abc(setup.ctx(), c2_a, c2_b, c2_c)?;
+        let c1 = qfi_from_abc(c1_a, c1_b, c1_c)?;
+        let c2 = qfi_from_abc(c2_a, c2_b, c2_c)?;
         kt_components.push((c1, c2));
     }
 
@@ -147,7 +151,7 @@ pub fn sign_round2(
     let mut u_coms = Vec::new();
     for bcast in broadcasts {
         let (a, b, c) = &bcast.u_com_abc;
-        let u = qfi_from_abc(setup.ctx(), a, b, c)?;
+        let u = qfi_from_abc(a, b, c)?;
         u_coms.push(u);
     }
 
@@ -156,8 +160,8 @@ pub fn sign_round2(
     for bcast in broadcasts {
         let (c1_a, c1_b, c1_c) = &bcast.ct_scaled_c1_abc;
         let (c2_a, c2_b, c2_c) = &bcast.ct_scaled_c2_abc;
-        let c1 = qfi_from_abc(setup.ctx(), c1_a, c1_b, c1_c)?;
-        let c2 = qfi_from_abc(setup.ctx(), c2_a, c2_b, c2_c)?;
+        let c1 = qfi_from_abc(c1_a, c1_b, c1_c)?;
+        let c2 = qfi_from_abc(c2_a, c2_b, c2_c)?;
         ct_scaled_components.push((c1, c2));
     }
 
@@ -294,9 +298,9 @@ pub fn sign_round2(
 pub fn identify_cheater(
     f_shares: &[tecdsa_class_group::scaled_decrypt::ScaledDecryptShare],
     setup: &ClSetup,
-    cl_pk: &tecdsa_class_group::bicycl_glue::BicyclPublicKey,
-    ct_in: &tecdsa_class_group::bicycl_glue::BicyclCiphertext,
-    u_coms: &[tecdsa_class_group::bicycl_glue::BicyclQfi],
+    cl_pk: &tecdsa_class_group::cl::ClPublicKey,
+    ct_in: &tecdsa_class_group::cl::ClCiphertext,
+    u_coms: &[tecdsa_class_group::cl::Qfi],
 ) -> Option<usize> {
     for (i, share) in f_shares.iter().enumerate() {
         if let Some(ref proof) = share.pi_aff_com {

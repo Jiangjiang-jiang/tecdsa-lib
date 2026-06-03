@@ -20,20 +20,19 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand::RngCore;
-
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_joye_libert::kgen::JlPublicKey;
-use tecdsa_joye_libert::zk::zkjlmod::ZkJlModProof;
+use tecdsa_joye_libert::{kgen::JlPublicKey, zk::zkjlmod::ZkJlModProof};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
-use crate::key_share::Xal23KeyShare;
-
-use super::msg::Xal23KeygenMsg;
-use super::rounds::{
-    compute_commitment, proj_from_bytes, proj_to_bytes, scalar_from_bytes, scalar_to_bytes,
-    R1LocalState, R2BcastPayload, R2ReceivedBcast, SerDlogProof,
+use super::{
+    msg::Xal23KeygenMsg,
+    rounds::{
+        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_from_bytes, scalar_to_bytes,
+        R1LocalState, R2BcastPayload, R2ReceivedBcast, SerDlogProof,
+    },
 };
+use crate::key_share::Xal23KeyShare;
 
 // ---------------------------------------------------------------------------
 // Xal23KeygenMachine
@@ -482,8 +481,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tecdsa_protocol::state_machine::Outgoing;
+
+    use super::*;
 
     type C = k256::Secp256k1;
 

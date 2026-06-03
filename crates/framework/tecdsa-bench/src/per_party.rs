@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Per-party timing helpers for Criterion benchmarks.
 
-use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 
 use tecdsa_protocol::PartyId;
 use tecdsa_testkit::{Orchestrator, PartyTiming};

@@ -13,11 +13,12 @@
 //! - **Response:** `z = r - e*w`
 //! - **Verify:** `z*G + e*B == R_G` and `z*A + e*C == R_A`
 
-use crate::TecdsaCurve;
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use sha2::{Digest, Sha256};
+
+use crate::TecdsaCurve;
 
 /// Statement for a DDH-tuple proof: four group elements `(G, A, B, C)`.
 pub struct DdhStatement<C: TecdsaCurve>
@@ -132,8 +133,9 @@ mod tests {
 
     #[cfg(feature = "secp256k1")]
     mod secp256k1_tests {
-        use super::*;
         use k256::Secp256k1;
+
+        use super::*;
 
         #[test]
         fn ddh_honest_verifies() {

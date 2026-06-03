@@ -21,11 +21,12 @@
 
 use elliptic_curve::PrimeField;
 use sha2::{Digest as _, Sha256};
-
-use tecdsa_dkls23::key_share::Dkls23KeyShare;
-use tecdsa_dkls23::keygen::Dkls23KeygenMachine;
-use tecdsa_dkls23::presign::{Dkls23PresignMachine, PresignConfig};
-use tecdsa_dkls23::sign::{Dkls23OnlineSignMachine, OnlineSignConfig};
+use tecdsa_dkls23::{
+    key_share::Dkls23KeyShare,
+    keygen::Dkls23KeygenMachine,
+    presign::{Dkls23PresignMachine, PresignConfig},
+    sign::{Dkls23OnlineSignMachine, OnlineSignConfig},
+};
 use tecdsa_protocol::{verify_ecdsa, DataToSign, PartyId};
 use tecdsa_testkit::Orchestrator;
 

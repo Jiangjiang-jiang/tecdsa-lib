@@ -21,9 +21,9 @@ pub struct Wmc24KeyShare {
     /// This party's threshold CL secret key share sk_i (decimal string).
     pub cl_sk_share: Vec<u8>,
     /// Aggregate threshold CL public key pk.
-    pub cl_pk: tecdsa_class_group::bicycl_glue::BicyclPublicKey,
+    pub cl_pk: tecdsa_class_group::cl::ClPublicKey,
     /// Per-party CL public key shares pk_i = h^{sk_i}.
-    pub cl_pk_shares: Vec<tecdsa_class_group::bicycl_glue::BicyclQfi>,
+    pub cl_pk_shares: Vec<tecdsa_class_group::cl::Qfi>,
     /// Seed for recreating ClSetup.
     pub cl_setup_seed: String,
     /// Whether to use 128-bit security CL parameters.
@@ -45,12 +45,11 @@ pub struct Wmc24KeyShare {
 impl Wmc24KeyShare {
     pub fn create_cl_setup(
         &self,
-    ) -> Result<tecdsa_class_group::bicycl_glue::ClSetup, tecdsa_class_group::bicycl_glue::ClError>
-    {
+    ) -> Result<tecdsa_class_group::cl::ClSetup, tecdsa_class_group::cl::ClError> {
         if self.use_128bit_security {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1_128bit(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&self.cl_setup_seed)
         } else {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1(&self.cl_setup_seed)
         }
     }
 }

@@ -6,11 +6,12 @@
 //! This is a Sigma-protocol-style proof made non-interactive via
 //! the Fiat-Shamir heuristic (using SHA-256).
 
-use crate::kgen::JlPublicKey;
 use num_bigint::BigUint;
 use num_traits::One;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::kgen::JlPublicKey;
 
 /// Non-interactive proof of correct JL commitment opening.
 ///

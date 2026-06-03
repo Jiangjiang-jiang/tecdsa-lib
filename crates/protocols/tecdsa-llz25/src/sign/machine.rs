@@ -30,14 +30,13 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-
 use tecdsa_core::TecdsaError;
-use tecdsa_protocol::ecdsa::Signature;
-use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+use tecdsa_protocol::{
+    ecdsa::Signature, state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine,
+};
 
 use super::{combine_signatures, compute_partial_signature, PartialSignature};
-use crate::error::Llz25Error;
-use crate::presign::machine::Llz25Presignature;
+use crate::{error::Llz25Error, presign::machine::Llz25Presignature};
 
 // ---------------------------------------------------------------------------
 // Wire message types
@@ -127,9 +126,9 @@ impl Llz25SignMachine {
             .pe_x_components
             .iter()
             .map(|(c1a, c1b, c1c, c2a, c2b, c2c)| {
-                let c1 = crate::error::qfi_from_abc(setup.ctx(), c1a, c1b, c1c)
+                let c1 = crate::error::qfi_from_abc(c1a, c1b, c1c)
                     .map_err(|e| Llz25Error::ClassGroup(format!("pe_x c1: {e}")))?;
-                let c2 = crate::error::qfi_from_abc(setup.ctx(), c2a, c2b, c2c)
+                let c2 = crate::error::qfi_from_abc(c2a, c2b, c2c)
                     .map_err(|e| Llz25Error::ClassGroup(format!("pe_x c2: {e}")))?;
                 setup
                     .ct_from_components(&c1, &c2)

@@ -12,10 +12,7 @@
 use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
-use tecdsa_protocol::{
-    abort::IaReport,
-    {Outgoing, PartyId, Recipient, StateMachine},
-};
+use tecdsa_protocol::{abort::IaReport, Outgoing, PartyId, Recipient, StateMachine};
 
 /// Protocol message for the toy DKG.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -19,12 +19,13 @@ use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{
     low_s_normalize, verify_ecdsa, DataToSign, Outgoing, PartyId, Recipient, Signature,
 };
-
 use zeroize::Zeroize;
 
-use crate::presign::Dkls23Presignature;
-use crate::sign::msg::{Dkls23SignMsg, SignR4Broadcast};
-use crate::utils::validate_sender;
+use crate::{
+    presign::Dkls23Presignature,
+    sign::msg::{Dkls23SignMsg, SignR4Broadcast},
+    utils::validate_sender,
+};
 
 // ---------------------------------------------------------------------------
 // Round enum

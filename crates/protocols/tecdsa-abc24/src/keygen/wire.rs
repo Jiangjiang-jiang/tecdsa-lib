@@ -10,13 +10,12 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use serde::{Deserialize, Serialize};
+use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
 
 use crate::keygen::interactive::{ClientStep2Msg, ServerStep1Msg, ServerStep3Msg};
-use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
 
 // ---------------------------------------------------------------------------
 // Wire-safe serializable message types

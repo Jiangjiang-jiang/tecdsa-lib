@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use msg::{FullSignMsg, MsgRound4};
 use rand_core::CryptoRngCore;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
@@ -19,11 +20,12 @@ use tecdsa_protocol::{
     state_machine::Outgoing, IaReport, PartyId, Recipient, SessionConfig, StateMachine,
 };
 
-use crate::key_share::{AuxInfo, Cggmp20CoreKeyShare};
-use crate::presign::Cggmp20PresignMachine;
-use crate::security_level::{Cggmp20SecurityParams, SecurityLevel128};
-use crate::sign::types::{DataToSign, PartialSignature, PresignaturePublicData, Signature};
-use msg::{FullSignMsg, MsgRound4};
+use crate::{
+    key_share::{AuxInfo, Cggmp20CoreKeyShare},
+    presign::Cggmp20PresignMachine,
+    security_level::{Cggmp20SecurityParams, SecurityLevel128},
+    sign::types::{DataToSign, PartialSignature, PresignaturePublicData, Signature},
+};
 
 // ---------------------------------------------------------------------------
 // Round 4 state

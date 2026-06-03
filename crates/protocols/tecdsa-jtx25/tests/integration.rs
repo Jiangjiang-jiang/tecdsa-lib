@@ -18,10 +18,8 @@
 //! Robust tests require `--features robust`.
 
 use elliptic_curve::CurveArithmetic;
-
-use tecdsa_class_group::bicycl_glue::{BicyclQfi, ClSetup};
-use tecdsa_jtx25::key_share::Jtx25KeyShare;
-use tecdsa_jtx25::keygen::Jtx25KeygenMachine;
+use tecdsa_class_group::cl::{ClSetup, Qfi};
+use tecdsa_jtx25::{key_share::Jtx25KeyShare, keygen::Jtx25KeygenMachine};
 use tecdsa_protocol::PartyId;
 
 // ---------------------------------------------------------------------------
@@ -85,7 +83,7 @@ fn setup_threshold_cl_keys(shares: &mut [Jtx25KeyShare], seed: &str) {
         .expect("shamir_share_delta");
 
     // Compute per-party public key shares: pk_i = h^{sk_i}.
-    let mut pk_share_qfis: Vec<BicyclQfi> = Vec::with_capacity(n);
+    let mut pk_share_qfis: Vec<Qfi> = Vec::with_capacity(n);
     for share in &sk_shares {
         // For negative shares (which can happen with random coefficients),
         // we need to handle the sign properly.
@@ -99,19 +97,8 @@ fn setup_threshold_cl_keys(shares: &mut [Jtx25KeyShare], seed: &str) {
     // Update each key share with the threshold CL material.
     for (i, share) in shares.iter_mut().enumerate() {
         share.cl_sk_share = sk_shares[i].clone();
-        share.cl_pk = setup
-            .pk_from_qfi(&setup.pk_element(&pk_raw).expect("pk_element"))
-            .expect("pk_from_qfi");
-        share.cl_pk_shares = pk_share_qfis
-            .iter()
-            .map(|qfi| {
-                let ctx = setup.ctx();
-                let a = qfi.a_decimal(ctx).expect("a");
-                let b = qfi.b_decimal(ctx).expect("b");
-                let c = qfi.c_decimal(ctx).expect("c");
-                BicyclQfi::from_abc_decimal(ctx, &a, &b, &c).expect("from_abc")
-            })
-            .collect();
+        share.cl_pk = setup.pk_from_qfi(&pk_raw.elt()).expect("pk_from_qfi");
+        share.cl_pk_shares = pk_share_qfis.iter().map(|qfi| qfi.clone()).collect();
         share.n_parties_dkg = n;
     }
 }
@@ -394,8 +381,10 @@ fn test_robust_threshold_subset_signing() {
 // Default (Normal) tests
 // ===========================================================================
 
-use tecdsa_jtx25::presign::{Jtx25PresignMachine, Jtx25Presignature};
-use tecdsa_jtx25::sign::Jtx25OnlineSignMachine;
+use tecdsa_jtx25::{
+    presign::{Jtx25PresignMachine, Jtx25Presignature},
+    sign::Jtx25OnlineSignMachine,
+};
 
 fn run_presign(key_shares: &[Jtx25KeyShare], signer_indices: &[usize]) -> Vec<Jtx25Presignature> {
     let seed = &key_shares[0].cl_setup_seed;
@@ -579,8 +568,7 @@ fn test_threshold_subset_signing() {
 #[test]
 fn test_cl_homomorphic_math() {
     use num_bigint::BigUint;
-    use tecdsa_class_group::bicycl_glue::ClSetup;
-    use tecdsa_class_group::t_cl;
+    use tecdsa_class_group::{cl::ClSetup, t_cl};
 
     let seed = "70001";
     let mut setup = ClSetup::new_secp256k1(seed).unwrap();

@@ -20,8 +20,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::zk::homo_elgamal::{
     HomoElGamalProof, HomoElGamalStatement, HomoElGamalWitness,
 };
@@ -30,10 +29,8 @@ use tecdsa_protocol::{
 };
 use zeroize::Zeroize;
 
-use crate::presign::types::Gg18Presignature;
-use crate::sign::sign_keys::SignKeys;
-
 use super::msg::*;
+use crate::{presign::types::Gg18Presignature, sign::sign_keys::SignKeys};
 
 // ---------------------------------------------------------------------------
 // Round enum

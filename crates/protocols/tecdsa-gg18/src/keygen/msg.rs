@@ -11,8 +11,7 @@
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 
 /// Security parameter for the Paillier-Blum modulus proof (Pi_mod).
 /// The paper requires M = 80 rounds of N-th roots for soundness 2^{-80}.

@@ -14,13 +14,13 @@
 
 #![allow(non_snake_case)]
 
+use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize, PrimeField};
 use fast_paillier::backend::Integer;
 use sha2::{Digest, Sha256};
+use tecdsa_curve::TecdsaCurve;
 
 use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
 use crate::conv::group_order_integer;
-use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize, PrimeField};
-use tecdsa_curve::TecdsaCurve;
 
 /// Verification error for the homomorphic multiplication proof.
 #[derive(Debug, thiserror::Error)]
@@ -328,8 +328,9 @@ impl HomoMultProof {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use fast_paillier::DecryptionKey;
+
+    use super::*;
 
     type TestCurve = k256::Secp256k1;
 

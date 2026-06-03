@@ -13,11 +13,12 @@
 //! - **Response:** `z1 = sigma + e*r`, `z2 = rho + e*x`
 //! - **Verify:** `z1*G == X + e*A` and `z1*P + z2*G == Y + e*B`
 
-use crate::TecdsaCurve;
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use sha2::{Digest, Sha256};
+
+use crate::TecdsaCurve;
 
 /// Statement for the `EGexpEnc` knowledge proof: `(P, A, B)`.
 pub struct EgexpStatement<C: TecdsaCurve>

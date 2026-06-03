@@ -30,15 +30,17 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::{
+    backend::Integer,
+    zk::{correct_key_ni::NICorrectKeyProof, pdl},
+};
 
-use crate::error::Abc24Error;
-use crate::key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare};
-use crate::setup::SetupData;
-use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
-use tecdsa_paillier::zk::pdl;
+use crate::{
+    error::Abc24Error,
+    key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare},
+    setup::SetupData,
+};
 
 // ---------------------------------------------------------------------------
 // Step 1: S -> C  (hash commitment to X_2)
@@ -403,9 +405,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
     use tecdsa_protocol::{verify_ecdsa, DataToSign};
+
+    use super::*;
 
     #[test]
     fn interactive_keygen_produces_consistent_shares() {
@@ -456,8 +459,9 @@ mod tests {
 
     #[test]
     fn interactive_keygen_signing_compatibility() {
-        use crate::sign;
         use sha2::{Digest, Sha256};
+
+        use crate::sign;
 
         let mut rng = rand_core::OsRng;
 

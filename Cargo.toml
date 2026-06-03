@@ -26,6 +26,8 @@ crypto-bigint = { version = "0.6", features = ["serde"] }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
 num-integer = "0.1"
+gmp-mpfr-sys = "1.7"
+rug = "1"
 
 # Hashing
 sha2 = "0.10"
@@ -108,14 +110,6 @@ tecdsa-abc24 = { path = "crates/protocols/tecdsa-abc24" }
 # Vendored: crates.io 0.3.2 broken (glass_pumpkin 1.10 rand_core 0.10 mismatch, upstream issue #23)
 fast-paillier = { version = "0.3", default-features = true }
 paillier-zk = { version = "0.7.0-alpha", default-features = true, features = ["serde"] }
-
-# Class-group (GPL-3.0-or-later via BICYCL)
-# v0.2.2: all types impl Send (Context, RandGen, schemes, keys, ciphertexts)
-# v0.2.3: Qfi::to_bytes/from_bytes for compact binary serialization
-# v0.2.4: bytes-based encrypt/decrypt/scal/power_of_f/dlog_in_F (no more decimal)
-# v0.2.5: Qfi::dup for deep copy (NIM H-label extraction)
-bicycl-rs = { version = "0.2.5" }
-bicycl-rs-sys = { version = "0.2.3" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

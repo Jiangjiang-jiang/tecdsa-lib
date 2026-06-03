@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! WMC24 online sign round state types.
 
-use tecdsa_class_group::bicycl_glue::BicyclQfi;
+use tecdsa_class_group::cl::Qfi;
 
 // ---------------------------------------------------------------------------
 // Received data
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ReceivedR4 {
-    pub(crate) pc: BicyclQfi,
+    pub(crate) pc: Qfi,
     pub(crate) party_index: usize,
 }
 

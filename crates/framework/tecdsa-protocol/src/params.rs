@@ -4,8 +4,9 @@
 //! `t` always means the corruption threshold (maximum number of corrupted parties).
 //! The reconstruction/signing quorum is `t + 1`.
 
-use crate::party::PartyId;
 use std::fmt;
+
+use crate::party::PartyId;
 
 // ---------------------------------------------------------------------------
 // Errors

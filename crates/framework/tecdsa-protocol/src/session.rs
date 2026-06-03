@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::params::{ParamError, PartySet, Threshold};
-use crate::party::{PartyId, PartyInfo};
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    params::{ParamError, PartySet, Threshold},
+    party::{PartyId, PartyInfo},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionId(pub [u8; 32]);

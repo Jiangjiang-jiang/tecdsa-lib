@@ -6,8 +6,7 @@
 use tecdsa_core::{Result as TecdsaResult, TecdsaError};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, StateMachine};
 use tecdsa_session::{run_multi_party_sync, SessionRunConfig};
-use tecdsa_testkit::toy_dkg::ToyDkgMachine;
-use tecdsa_testkit::Orchestrator;
+use tecdsa_testkit::{toy_dkg::ToyDkgMachine, Orchestrator};
 use tecdsa_transport::InMemoryNetwork;
 
 /// Build the standard set of `(PartyId, ToyDkgMachine)` pairs.

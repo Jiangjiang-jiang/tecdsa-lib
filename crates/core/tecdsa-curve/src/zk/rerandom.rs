@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::TecdsaCurve;
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use sha2::{Digest, Sha256};
+
+use crate::TecdsaCurve;
 
 /// Statement for the rerandomization ZK proof $R_{RE}$.
 ///
@@ -146,8 +147,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand::rngs::OsRng;
+
+    use super::*;
 
     type C = k256::Secp256k1;
 

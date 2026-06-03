@@ -30,8 +30,9 @@
 //!
 //! Finally, `dlog_F(alpha) + dlog_F(beta) = x * y mod q`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, Qfi};
+use crate::cl::{
+    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
+};
 
 /// State retained by Party A after encoding.
 #[derive(Debug)]
@@ -110,8 +111,8 @@ impl<'a> Nim<'a> {
 
         // Compute pe_A = h^r * pk^x
         let h_r = self.setup.power_of_h_bytes(&r_bytes)?;
-        let pk_elt = self.setup.pk_element(pk)?;
-        let pk_x = self.setup.exp_bytes(&pk_elt, x_bytes)?;
+        let pk_elt = pk.elt();
+        let pk_x = self.setup.exp_bytes(pk_elt, x_bytes)?;
         let pe_a = self.setup.compose(&h_r, &pk_x)?;
 
         Ok(NimEncodeAOutput {
@@ -199,23 +200,16 @@ impl<'a> Nim<'a> {
 /// Uses `Qfi::dup` to produce an independent copy.
 #[allow(non_snake_case)]
 fn extract_f_component(setup: &ClSetup, z: &Qfi, negate: bool) -> ClResult<Vec<u8>> {
-    let ctx = setup.ctx();
-
-    let mut h_label = z.dup().map_err(crate::bicycl_glue::ClError::Bicycl)?;
-
-    // Use decimal API because DeltaK is negative and the bytes API
-    // (which exports absolute value) loses the sign.
-    let q_dec = setup.q_decimal()?;
-    let dk_dec = setup.DeltaK_decimal()?;
-    h_label.to_maximal_order_decimal(ctx, &q_dec, &dk_dec, true)?;
-    h_label.lift_decimal(ctx, &q_dec)?;
+    let mut h_label = setup.cl().to_cl_delta_k(z); // reduced π(z)
+    setup.cl().from_cl_delta_k_to_cl_delta(&mut h_label); // reduced lift back
 
     let f_component = if negate {
-        let z_inv = z.neg(ctx)?;
+        let mut z_inv = z.clone();
+        z_inv.neg();
         setup.compose(&h_label, &z_inv)?
     } else {
-        let h_inv = h_label.neg(ctx)?;
-        setup.compose(z, &h_inv)?
+        h_label.neg();
+        setup.compose(z, &h_label)?
     };
 
     #[allow(non_snake_case)]
@@ -235,8 +229,9 @@ fn sample_randomness(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use num_bigint::BigUint;
+
+    use super::*;
 
     #[test]
     #[allow(clippy::similar_names)]

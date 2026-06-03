@@ -26,15 +26,16 @@
 //! proofs for identifiable abort.
 
 use serde::{Deserialize, Serialize};
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_core::TecdsaError;
-use tecdsa_protocol::ecdsa::{DataToSign, Signature};
-use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
+use tecdsa_protocol::{
+    ecdsa::{DataToSign, Signature},
+    state_machine::Outgoing,
+    IaReport, PartyId, StateMachine,
+};
 
 use super::sign_round2;
-use crate::key_share::TroutKeyShare;
-use crate::presign::types::TroutPresignOutput;
+use crate::{key_share::TroutKeyShare, presign::types::TroutPresignOutput};
 
 // ---------------------------------------------------------------------------
 // Wire message types
@@ -81,7 +82,7 @@ impl TroutSignMachine {
         message: &DataToSign<k256::Secp256k1>,
         share: &TroutKeyShare,
         setup: &ClSetup,
-        cl_pk: &tecdsa_class_group::bicycl_glue::BicyclPublicKey,
+        cl_pk: &tecdsa_class_group::cl::ClPublicKey,
     ) -> tecdsa_core::Result<Self> {
         match sign_round2(all_presigns, message, share, setup, cl_pk) {
             Ok(sig) => Ok(Self {

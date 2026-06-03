@@ -10,10 +10,11 @@ description = "Class-group encryption and proofs for tecdsa (GPL-3.0)"
 [dependencies]
 tecdsa-core = { workspace = true }
 tecdsa-bigint = { workspace = true }
-bicycl-rs = { workspace = true }
 thiserror = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
+gmp-mpfr-sys = { workspace = true }
+rug = { workspace = true }
 rand_core = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
@@ -29,5 +30,5 @@ tecdsa-protocol = { workspace = true }
 rand = { workspace = true }
 tecdsa-vss = { workspace = true }
 
-[lints]
-workspace = true
+[features]
+gmp-hgcd = []

@@ -33,12 +33,13 @@ use elliptic_curve::{CurveArithmetic, FieldBytes, PrimeField};
 use k256::Secp256k1;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
-
 use tecdsa_protocol::MtAInteractive;
 
-use crate::base_ot::OtError;
-use crate::rvole::{MulDataToKeep, MulDataToReceiver, MulReceiver, MulSender, L};
-use crate::soft_spoken::{random_scalar, scalar_to_bytes, OteDataToSender, OteInitSenderMsg};
+use crate::{
+    base_ot::OtError,
+    rvole::{MulDataToKeep, MulDataToReceiver, MulReceiver, MulSender, L},
+    soft_spoken::{random_scalar, scalar_to_bytes, OteDataToSender, OteInitSenderMsg},
+};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -337,8 +338,9 @@ impl MtAInteractive for RvoleMtA {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand_core::OsRng;
+
+    use super::*;
 
     /// secp256k1 curve order as big-endian bytes (32 bytes).
     ///

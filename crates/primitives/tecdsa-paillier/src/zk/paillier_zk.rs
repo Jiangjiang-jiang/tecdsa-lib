@@ -10,12 +10,9 @@
 //! | [`dlog_with_el_gamal_commitment`] | `Pi_elog` | Discrete-log with El-Gamal commitment |
 //! | [`paillier_encryption_in_range_with_el_gamal`] | `Pi_enc_elg` | Enc-in-range with El-Gamal |
 
-pub use paillier_zk::dlog_with_el_gamal_commitment;
-pub use paillier_zk::no_small_factor;
-pub use paillier_zk::paillier_affine_operation_in_range;
-pub use paillier_zk::paillier_blum_modulus;
-pub use paillier_zk::paillier_encryption_in_range;
-pub use paillier_zk::paillier_encryption_in_range_with_el_gamal;
-
-pub use paillier_zk::backend;
-pub use paillier_zk::{BadExponent, IntegerExt, InvalidProof, PaillierError};
+pub use paillier_zk::{
+    backend, dlog_with_el_gamal_commitment, no_small_factor, paillier_affine_operation_in_range,
+    paillier_blum_modulus, paillier_encryption_in_range,
+    paillier_encryption_in_range_with_el_gamal, BadExponent, IntegerExt, InvalidProof,
+    PaillierError,
+};

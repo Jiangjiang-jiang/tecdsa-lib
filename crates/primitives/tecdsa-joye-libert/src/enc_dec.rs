@@ -11,11 +11,12 @@
 //! Decryption recovers the plaintext by computing the 2-adic valuation
 //! of a certain power residue symbol, bit by bit.
 
-use crate::kgen::{JlPublicKey, JlSecretKey};
 use num_bigint::{BigUint, RandBigInt};
 use num_traits::{One, Zero};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
+
+use crate::kgen::{JlPublicKey, JlSecretKey};
 
 /// A ciphertext in the Joye-Libert scheme.
 #[derive(Clone, Debug, Serialize, Deserialize)]

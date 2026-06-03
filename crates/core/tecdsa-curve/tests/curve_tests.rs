@@ -3,9 +3,10 @@ use tecdsa_curve::TecdsaCurve;
 
 #[cfg(feature = "secp256k1")]
 mod secp256k1_tests {
-    use super::*;
     use elliptic_curve::group::Group;
     use k256::Secp256k1;
+
+    use super::*;
 
     #[test]
     fn generator_is_not_identity() {

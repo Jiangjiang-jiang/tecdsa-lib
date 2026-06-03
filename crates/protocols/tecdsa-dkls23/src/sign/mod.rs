@@ -19,17 +19,15 @@
 pub mod msg;
 mod rounds;
 
-pub use rounds::OnlineSignConfig;
-
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use msg::Dkls23SignMsg;
+pub use rounds::OnlineSignConfig;
+use rounds::{OnlineSignRound, Round4State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Signature, StateMachine};
-
-use msg::Dkls23SignMsg;
-use rounds::{OnlineSignRound, Round4State};
 
 /// DKLs23 online signing state machine (1 round).
 ///

@@ -25,14 +25,14 @@ pub mod msg;
 pub mod rounds;
 
 use elliptic_curve::PrimeField;
+use msg::Wmy23SignMsg;
+use rounds::{combine_signatures, compute_partial_signature, PartialSignature};
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{
     state_machine::Outgoing, DataToSign, IaReport, PartyId, Signature, StateMachine,
 };
 
 use crate::presign::Wmy23Presignature;
-use msg::Wmy23SignMsg;
-use rounds::{combine_signatures, compute_partial_signature, PartialSignature};
 
 /// WMY23 online signing state machine (1 round).
 ///
@@ -227,9 +227,10 @@ impl StateMachine for Wmy23OnlineSignMachine {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use elliptic_curve::CurveArithmetic;
     use tecdsa_curve::TecdsaCurve;
+
+    use super::*;
 
     /// Create a minimal WMY23 sign machine for validation tests.
     ///

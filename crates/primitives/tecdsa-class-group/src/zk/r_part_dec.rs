@@ -20,7 +20,7 @@ pub use super::r_dec_dl::RDecDlProof as RPartDecProof;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_part_dec_honest_verifies() {

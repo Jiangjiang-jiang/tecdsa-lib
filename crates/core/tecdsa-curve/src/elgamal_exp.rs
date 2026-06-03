@@ -7,8 +7,9 @@
 //!
 //! Supports homomorphic addition, scalar multiplication, and rerandomization.
 
-use crate::TecdsaCurve;
 use elliptic_curve::{group::Group, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+
+use crate::TecdsaCurve;
 
 /// ElGamal-in-the-exponent ciphertext `(A, B) = (r*G, r*P + m*G)`.
 #[derive(Clone, Debug)]

@@ -2,13 +2,11 @@
 //! LN18 StateMachine wrappers for presign, online sign, legacy sign, and full-sign.
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
-
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{ecdsa::Signature, PartyId};
 
-use crate::key_share::Ln18Presignature;
-
 use super::msg::{Ln18FullSignMsg, Ln18OnlineSignMsg, Ln18PresignMsg, Ln18SignMsg};
+use crate::key_share::Ln18Presignature;
 
 // ---------------------------------------------------------------------------
 // Ln18PresignMachine -- minimal StateMachine wrapper for presigning

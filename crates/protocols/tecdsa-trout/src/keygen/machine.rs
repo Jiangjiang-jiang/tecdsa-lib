@@ -20,22 +20,21 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::PrimeField;
 use rand::RngCore;
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+use zeroize::Zeroize;
 
-use crate::error::qfi_to_abc;
-use crate::key_share::TroutKeyShare;
-
-use super::msg::TroutKeygenMsg;
-use super::rounds::{
-    compute_commitment, proj_from_bytes, proj_to_bytes, scalar_to_bytes, R1LocalState,
-    R2BcastPayload, R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof, SerQfi,
+use super::{
+    msg::TroutKeygenMsg,
+    rounds::{
+        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_to_bytes, R1LocalState,
+        R2BcastPayload, R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof, SerQfi,
+    },
 };
+use crate::{error::qfi_to_abc, key_share::TroutKeyShare};
 
 // ---------------------------------------------------------------------------
 // TroutKeygenMachine
@@ -131,11 +130,9 @@ impl TroutKeygenMachine {
         let (_cl_sk_i, cl_pk_i) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
-        let y_i = setup
-            .pk_element(&cl_pk_i)
-            .map_err(|e| TecdsaError::Other(format!("pk_element failed: {e}")))?;
+        let y_i = cl_pk_i.elt();
         let cl_contribution_abc =
-            qfi_to_abc(setup.ctx(), &y_i).map_err(|e| TecdsaError::Other(format!("{e}")))?;
+            qfi_to_abc(y_i).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
         // 3. Feldman VSS
         let x_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rng);
@@ -542,7 +539,7 @@ impl StateMachine for TroutKeygenMachine {
 
                 let proof = payload
                     .proof
-                    .to_proof(&self.setup)
+                    .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("proof deser: {e}")))?;
 
                 self.r3_data.insert(
@@ -595,8 +592,9 @@ impl StateMachine for TroutKeygenMachine {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tecdsa_protocol::PartyId;
+
+    use super::*;
 
     /// Helper: route all outgoing messages from all machines to their recipients.
     /// Returns true if all machines are done.

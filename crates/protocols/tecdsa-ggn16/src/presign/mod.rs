@@ -7,17 +7,15 @@
 pub mod rounds;
 pub mod types;
 
-pub use types::Ggn16Presignature;
-
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
+use rounds::{PresignConfig, PresignRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
+pub use types::Ggn16Presignature;
 
-use crate::key_share::Ggn16KeyShare;
-use crate::sign::msg::Ggn16SignMsg;
-use rounds::{PresignConfig, PresignRound, Round1State};
+use crate::{key_share::Ggn16KeyShare, sign::msg::Ggn16SignMsg};
 
 /// GGN16 presigning state machine (Rounds 1-5).
 ///

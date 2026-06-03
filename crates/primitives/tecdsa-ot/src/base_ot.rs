@@ -24,9 +24,8 @@
 use elliptic_curve::{CurveArithmetic, FieldBytes, PrimeField};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, ZeroizeOnDrop};
-
 use tecdsa_curve::TecdsaCurve;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Fixed message length for base OT payloads (bytes).
 pub const MSG_LEN: usize = 32;
@@ -267,8 +266,9 @@ impl std::error::Error for OtError {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand_core::{OsRng, RngCore};
+
+    use super::*;
 
     #[test]
     fn sender_receiver_choice_zero() {

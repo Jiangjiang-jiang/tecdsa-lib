@@ -29,12 +29,13 @@
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof};
 
-use crate::error::Kgg24Error;
-use crate::key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare};
-use crate::keygen::curve_order;
-use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
-use tecdsa_paillier::zk::pi_eq::PiEqProof;
+use crate::{
+    error::Kgg24Error,
+    key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
+    keygen::curve_order,
+};
 
 /// Security parameter tau.
 const TAU: u32 = 256;
@@ -216,9 +217,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use k256::Secp256k1;
+
     use super::*;
     use crate::keygen::trusted_dealer_keygen;
-    use k256::Secp256k1;
 
     #[test]
     fn refresh_preserves_public_key() {

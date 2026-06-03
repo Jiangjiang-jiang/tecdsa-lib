@@ -41,13 +41,10 @@
 
 #![allow(non_snake_case)]
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use rand_core::CryptoRngCore;
 use subtle::ConstantTimeEq;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::cl_enc::{ClCiphertext, ClPublicKey, ClSecretKey};
+use tecdsa_class_group::cl::{ClCiphertext, ClPublicKey, ClSecretKey, ClSetup};
 use tecdsa_curve::TecdsaCurve;
 
 /// Error type for MtAwc operations.
@@ -55,7 +52,7 @@ use tecdsa_curve::TecdsaCurve;
 pub enum MtAwcError {
     /// CL encryption/decryption or homomorphic operation failed.
     #[error("CL operation failed: {0}")]
-    ClError(#[from] tecdsa_class_group::bicycl_glue::ClError),
+    ClError(#[from] tecdsa_class_group::cl::ClError),
 
     /// Alice's consistency check failed: $g^\alpha \cdot g^\beta \ne (g^b)^a$.
     #[error("MtAwc check failed: g^alpha * g^beta != (g^b)^a")]
@@ -159,7 +156,7 @@ pub fn mtawc_alice_step1(
     a: &k256::Scalar,
 ) -> MtAwcResult<(MtAwcAliceState, ClCiphertext)> {
     let a_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(a);
-    let ct = tecdsa_class_group::cl_enc::encrypt_bytes(setup, pk_alice, &a_bytes)?;
+    let ct = setup.encrypt_bytes(pk_alice, &a_bytes)?;
     Ok((MtAwcAliceState { a: *a }, ct))
 }
 
@@ -186,15 +183,15 @@ pub fn mtawc_bob(
 
     // Compute homomorphic scalar mul: b * c_a = Enc(a*b)
     let b_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(b);
-    let c_ab = tecdsa_class_group::cl_enc::hscmul_bytes(setup, pk_alice, &b_bytes, c_a)?;
+    let c_ab = setup.scal_ciphertext_bytes(pk_alice, c_a, &b_bytes)?;
 
     // Compute Enc(-beta)
     let neg_beta = -beta;
     let neg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&neg_beta);
-    let c_neg_beta = tecdsa_class_group::cl_enc::encrypt_bytes(setup, pk_alice, &neg_beta_bytes)?;
+    let c_neg_beta = setup.encrypt_bytes(pk_alice, &neg_beta_bytes)?;
 
     // Homomorphic add: c_alpha = Enc(a*b) + Enc(-beta) = Enc(a*b - beta)
-    let c_alpha = tecdsa_class_group::cl_enc::hadd(setup, pk_alice, &c_ab, &c_neg_beta)?;
+    let c_alpha = setup.add_ciphertexts(pk_alice, &c_ab, &c_neg_beta)?;
 
     // Compute g^beta
     let g_beta = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * beta;
@@ -233,7 +230,7 @@ pub fn mtawc_alice_step2(
     g_b: &k256::ProjectivePoint,
 ) -> MtAwcResult<MtAwcAliceOutput> {
     // Decrypt: alpha = Dec(sk, c_alpha)
-    let alpha_bytes = tecdsa_class_group::cl_enc::decrypt_bytes(setup, sk_alice, c_alpha)?;
+    let alpha_bytes = setup.decrypt_bytes(sk_alice, c_alpha)?;
     let alpha = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_bytes);
 
     // Check: g^alpha * g^beta == (g^b)^a
@@ -276,7 +273,7 @@ pub fn mtawc_alice_step2_no_gb_check(
     _state: &MtAwcAliceState,
 ) -> MtAwcResult<MtAwcAliceOutput> {
     // Decrypt: alpha = Dec(sk, c_alpha)
-    let alpha_bytes = tecdsa_class_group::cl_enc::decrypt_bytes(setup, sk_alice, c_alpha)?;
+    let alpha_bytes = setup.decrypt_bytes(sk_alice, c_alpha)?;
     let alpha = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_bytes);
 
     // WMY23 Figure 1, Step 3: Generate R_Dec-DL proof.
@@ -287,16 +284,12 @@ pub fn mtawc_alice_step2_no_gb_check(
     //
     // This replaces the algebraic check (g^alpha * g^beta == (g^b)^a)
     // which requires g^b = g^{k_j}, unavailable during presigning.
-    let sk_bytes = setup.sk_to_bytes(sk_alice.inner())?;
-    let (c1, _c2) = setup.ct_components(c_alpha.inner())?;
+    let sk_bytes = setup.sk_to_bytes(sk_alice)?;
+    let (c1, _c2) = setup.ct_components(c_alpha)?;
     let pd = setup.exp_bytes(&c1, &sk_bytes)?;
 
     let _r_dec_dl_proof = tecdsa_class_group::zk::r_dec_dl::RDecDlProof::prove(
-        setup,
-        pk_alice.inner(),
-        c_alpha.inner(),
-        &pd,
-        &sk_bytes,
+        setup, pk_alice, c_alpha, &pd, &sk_bytes,
     )?;
 
     // In the full protocol, `_r_dec_dl_proof` would be sent to the verifier
@@ -310,8 +303,9 @@ pub fn mtawc_alice_step2_no_gb_check(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use elliptic_curve::CurveArithmetic;
+
+    use super::*;
 
     #[test]
     fn test_scalar_roundtrip() {
@@ -334,9 +328,7 @@ mod tests {
     #[test]
     fn test_mtawc_correct() {
         let mut setup = ClSetup::new_secp256k1("42").expect("CL setup");
-        let (sk_raw, pk_raw) = setup.keygen().expect("CL keygen");
-        let sk = ClSecretKey::from_raw(sk_raw);
-        let pk = ClPublicKey::from_raw(pk_raw);
+        let (sk, pk) = setup.keygen().expect("CL keygen");
 
         let mut rng = rand::thread_rng();
         let a = k256::Secp256k1::random_scalar(&mut rng);
@@ -370,9 +362,7 @@ mod tests {
     fn test_mtawc_with_known_values() {
         // Test with small known values to catch conversion bugs.
         let mut setup = ClSetup::new_secp256k1("99").expect("CL setup");
-        let (sk_raw, pk_raw) = setup.keygen().expect("CL keygen");
-        let sk = ClSecretKey::from_raw(sk_raw);
-        let pk = ClPublicKey::from_raw(pk_raw);
+        let (sk, pk) = setup.keygen().expect("CL keygen");
         let mut rng = rand::thread_rng();
 
         let a = test_scalar(7);
@@ -400,9 +390,7 @@ mod tests {
     #[test]
     fn test_mtawc_zero_inputs() {
         let mut setup = ClSetup::new_secp256k1("123").expect("CL setup");
-        let (sk_raw, pk_raw) = setup.keygen().expect("CL keygen");
-        let sk = ClSecretKey::from_raw(sk_raw);
-        let pk = ClPublicKey::from_raw(pk_raw);
+        let (sk, pk) = setup.keygen().expect("CL keygen");
         let mut rng = rand::thread_rng();
 
         // Test with a = 0: alpha + beta should be 0
@@ -430,9 +418,7 @@ mod tests {
     fn test_mtawc_multiple_runs() {
         // Run MtAwc several times to exercise different random beta values.
         let mut setup = ClSetup::new_secp256k1("77").expect("CL setup");
-        let (sk_raw, pk_raw) = setup.keygen().expect("CL keygen");
-        let sk = ClSecretKey::from_raw(sk_raw);
-        let pk = ClPublicKey::from_raw(pk_raw);
+        let (sk, pk) = setup.keygen().expect("CL keygen");
 
         let mut rng = rand::thread_rng();
 

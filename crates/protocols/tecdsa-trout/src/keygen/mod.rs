@@ -16,15 +16,15 @@ pub mod rounds;
 
 pub use machine::TroutKeygenMachine;
 pub use msg::TroutKeygenMsg;
-
 use rand_core::CryptoRngCore;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_evrf::EvrfSecretKey;
 
-use crate::error::{qfi_to_abc, TroutResult};
-use crate::key_share::TroutKeyShare;
+use crate::{
+    error::{qfi_to_abc, TroutResult},
+    key_share::TroutKeyShare,
+};
 
 /// Run trusted-dealer key generation for the Trout protocol.
 ///
@@ -74,8 +74,8 @@ pub fn trusted_dealer_keygen(
 
     // 3. Generate joint CL public key Y_cl
     let (_cl_sk, cl_pk) = setup.keygen()?;
-    let cl_pk_elt = setup.pk_element(&cl_pk)?;
-    let cl_pk_abc = qfi_to_abc(setup.ctx(), &cl_pk_elt)?;
+    let cl_pk_elt = &cl_pk.elt();
+    let cl_pk_abc = qfi_to_abc(cl_pk_elt)?;
 
     // 4. Encrypt each share under Y_cl with random delta_i
     let mut ct_components = Vec::new();
@@ -92,8 +92,8 @@ pub fn trusted_dealer_keygen(
         let (c1, c2) = setup.ct_components(&ct)?;
 
         // Serialise QFI components
-        let (c1_a, c1_b, c1_c) = qfi_to_abc(setup.ctx(), &c1)?;
-        let (c2_a, c2_b, c2_c) = qfi_to_abc(setup.ctx(), &c2)?;
+        let (c1_a, c1_b, c1_c) = qfi_to_abc(&c1)?;
+        let (c2_a, c2_b, c2_c) = qfi_to_abc(&c2)?;
         ct_components.push((c1_a, c1_b, c1_c, c2_a, c2_b, c2_c));
         deltas.push(delta_i);
     }

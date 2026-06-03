@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::DynInt;
 use num_integer::Integer;
 use num_traits::{One, Zero};
+
+use crate::DynInt;
 
 /// Computes the greatest common divisor of `a` and `b`.
 #[must_use]

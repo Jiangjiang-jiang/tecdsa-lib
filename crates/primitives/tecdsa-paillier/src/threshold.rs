@@ -18,8 +18,7 @@
 
 #![allow(non_snake_case)]
 
-use fast_paillier::backend::Integer;
-use fast_paillier::{DecryptionKey, EncryptionKey};
+use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;

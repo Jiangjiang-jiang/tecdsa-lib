@@ -24,17 +24,16 @@
 mod rounds;
 pub mod types;
 
-pub use rounds::PresignConfig;
-pub use types::{ideal_rvole, Dkls23Presignature, PartyRvoleData, RvoleCorrelation};
-
 use elliptic_curve::{ops::Reduce, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
+pub use rounds::PresignConfig;
+use rounds::{PresignRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
+pub use types::{ideal_rvole, Dkls23Presignature, PartyRvoleData, RvoleCorrelation};
 
 use crate::sign::msg::Dkls23SignMsg;
-use rounds::{PresignRound, Round1State};
 
 /// DKLs23 presigning state machine (3 rounds).
 ///

@@ -47,8 +47,9 @@ pub fn check_wire_eligible(meta: &ProtocolMetadata, phase: Phase) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tecdsa_protocol::PhaseModes;
+
+    use super::*;
 
     fn make_meta(modes: PhaseModes) -> ProtocolMetadata {
         ProtocolMetadata {

@@ -2,7 +2,7 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Wmc24Error {
     #[error("CL operation failed: {0}")]
-    ClError(#[from] tecdsa_class_group::bicycl_glue::ClError),
+    ClError(#[from] tecdsa_class_group::cl::ClError),
     #[error("verification failed")]
     VerificationFailed,
     #[error("invalid input: {0}")]

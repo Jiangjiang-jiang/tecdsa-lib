@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::TranscriptProtocol;
 use rand_core::CryptoRngCore;
+
+use crate::TranscriptProtocol;
 
 /// A Sigma (three-move) protocol relation.
 ///

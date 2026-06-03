@@ -21,9 +21,8 @@ pub mod metadata;
 pub mod presign;
 pub mod sign;
 
-use tecdsa_protocol::{NoOpMachine, Protocol};
-
 pub use key_share::Jtx25KeyShare;
+use tecdsa_protocol::{NoOpMachine, Protocol};
 
 /// JTX25 robust threshold ECDSA protocol descriptor.
 ///

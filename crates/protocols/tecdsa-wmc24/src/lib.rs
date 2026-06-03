@@ -24,9 +24,8 @@ pub mod metadata;
 pub mod presign;
 pub mod sign;
 
-use tecdsa_protocol::{NoOpMachine, Protocol};
-
 pub use key_share::Wmc24KeyShare;
+use tecdsa_protocol::{NoOpMachine, Protocol};
 
 pub struct Wmc24;
 

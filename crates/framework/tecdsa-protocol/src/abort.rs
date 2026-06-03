@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::party::PartyId;
 use serde::{Deserialize, Serialize};
+
+use crate::party::PartyId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IaReport {

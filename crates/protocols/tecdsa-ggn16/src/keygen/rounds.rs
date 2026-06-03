@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, marker::PhantomData};
 
 use elliptic_curve::{
     group::{Group, GroupEncoding},
@@ -22,18 +22,18 @@ use elliptic_curve::{
     FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
-use std::marker::PhantomData;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
-use tecdsa_paillier::zk::pdl_slack::{PdlSlackProof, PdlSlackStatement, PdlSlackWitness};
+use tecdsa_paillier::{
+    backend::Integer,
+    threshold::{DecryptionShare, ThresholdSetup},
+    zk::pdl_slack::{PdlSlackProof, PdlSlackStatement, PdlSlackWitness},
+};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 
-use crate::key_share::Ggn16KeyShare;
-
 use super::msg::{Ggn16KeygenMsg, KeygenRound1Msg, KeygenRound2Msg};
+use crate::key_share::Ggn16KeyShare;
 
 // ---------------------------------------------------------------------------
 // Configuration

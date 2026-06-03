@@ -25,12 +25,13 @@
 //!   2. `z1*B + z2*P == Y + e*F`
 //!   3. Nested DDH proof verifies
 
-use super::ddh::{DdhProof, DdhStatement, DdhWitness};
-use crate::TecdsaCurve;
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use sha2::{Digest, Sha256};
+
+use super::ddh::{DdhProof, DdhStatement, DdhWitness};
+use crate::TecdsaCurve;
 
 /// Statement for the scalar-product proof `R_prod`.
 pub struct ProdStatement<C: TecdsaCurve>
@@ -236,8 +237,9 @@ mod tests {
 
     #[cfg(feature = "secp256k1")]
     mod secp256k1_tests {
-        use super::*;
         use k256::Secp256k1;
+
+        use super::*;
 
         type C = Secp256k1;
 

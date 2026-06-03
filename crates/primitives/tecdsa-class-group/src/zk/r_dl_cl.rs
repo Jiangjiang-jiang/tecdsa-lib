@@ -18,14 +18,12 @@
 //! deterministic scalar multiplication of input ciphertext `c_0 = (c_{01}, c_{02})`
 //! by the same secret `x` that is committed on the elliptic curve as `X = x * G`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, Qfi};
-
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
 use tecdsa_curve::conv;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random};
+use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
 
 /// CL ciphertext scalar multiply + EC discrete log proof (R\_dl-cl).
 pub struct RDlClProof {
@@ -52,7 +50,7 @@ fn test_scalar(val: u64) -> Scalar {
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
     if bytes.len() != 33 {
-        return Err(crate::bicycl_glue::ClError::InvalidParam(format!(
+        return Err(crate::cl::ClError::InvalidParam(format!(
             "expected 33-byte compressed point, got {} bytes",
             bytes.len()
         )));
@@ -61,7 +59,7 @@ fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
     AsMut::<[u8]>::as_mut(&mut repr).copy_from_slice(bytes);
     let opt = ProjectivePoint::from_bytes(&repr);
     if bool::from(opt.is_none()) {
-        return Err(crate::bicycl_glue::ClError::InvalidParam(
+        return Err(crate::cl::ClError::InvalidParam(
             "invalid EC point encoding".into(),
         ));
     }
@@ -146,7 +144,7 @@ impl RDlClProof {
         let c01_z = setup.exp_bytes(&c01, &self.z)?;
         let c11_e = setup.exp_bytes(&c11, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &c11_e)?;
-        if !c01_z.equal(setup.ctx(), &rhs1)? {
+        if c01_z != rhs1 {
             return Ok(false);
         }
 
@@ -154,7 +152,7 @@ impl RDlClProof {
         let c02_z = setup.exp_bytes(&c02, &self.z)?;
         let c12_e = setup.exp_bytes(&c12, &self.e)?;
         let rhs2 = setup.compose(&self.t2, &c12_e)?;
-        if !c02_z.equal(setup.ctx(), &rhs2)? {
+        if c02_z != rhs2 {
             return Ok(false);
         }
 
@@ -173,9 +171,10 @@ impl RDlClProof {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::ClSetup;
     use num_bigint::BigUint;
+
+    use super::*;
+    use crate::cl::ClSetup;
 
     fn scalar_mul_components(
         setup: &ClSetup,

@@ -27,16 +27,12 @@ pub mod threshold;
 pub mod zk;
 
 // Re-export core types from fast-paillier.
-pub use fast_paillier::{
-    AnyEncryptionKey, AnyEncryptionKeyExt, Ciphertext, DecryptionKey, EncryptionKey, Nonce,
-    Plaintext,
-};
-
 // Re-export the backend Integer for callers that need to construct
 // plaintexts / nonces directly.
-pub use fast_paillier::backend;
-pub use fast_paillier::Error as PaillierError;
-
+pub use fast_paillier::{
+    backend, AnyEncryptionKey, AnyEncryptionKeyExt, Ciphertext, DecryptionKey, EncryptionKey,
+    Error as PaillierError, Nonce, Plaintext,
+};
 use rand_core::{CryptoRng, RngCore};
 
 /// Generate a fresh Paillier key pair.

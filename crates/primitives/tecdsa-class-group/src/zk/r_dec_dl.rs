@@ -13,11 +13,11 @@
 //! to the public key `pk = h^{sk}`, where `sk` is the secret key.
 //! This is identical to the `CL_HSMqk_Part_Dec_ZKProof` pattern from BICYCL.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, Qfi};
-
 use super::{
     challenge_from_qfi, challenge_from_qfi_with_prefix, response_unbounded, sample_random,
+};
+use crate::cl::{
+    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
 /// Proof of correct partial decryption (decryption + DL).
@@ -48,8 +48,8 @@ impl RDecDlProof {
         let (c1, _c2) = setup.ct_components(ct)?;
         let t2 = setup.exp_bytes(&c1, &a)?;
 
-        let pk_elt = setup.pk_element(pk)?;
-        let e = challenge_from_qfi(setup, b"R_dec_dl", &[&pk_elt, &c1, pd, &t1, &t2], &[])?;
+        let pk_elt = pk.elt();
+        let e = challenge_from_qfi(setup, b"R_dec_dl", &[pk_elt, &c1, pd, &t1, &t2], &[])?;
 
         let z = response_unbounded(&a, &e, sk_bytes)?;
 
@@ -64,13 +64,13 @@ impl RDecDlProof {
         ct: &ClHsmqkCiphertext,
         pd: &Qfi,
     ) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let (c1, _c2) = setup.ct_components(ct)?;
 
         let e_check = challenge_from_qfi(
             setup,
             b"R_dec_dl",
-            &[&pk_elt, &c1, pd, &self.t1, &self.t2],
+            &[pk_elt, &c1, pd, &self.t1, &self.t2],
             &[],
         )?;
         if e_check != self.e {
@@ -79,9 +79,9 @@ impl RDecDlProof {
 
         // Check 1: h^z == pk^e * t1
         let lhs1 = setup.power_of_h_bytes(&self.z)?;
-        let pk_e = setup.exp_bytes(&pk_elt, &self.e)?;
+        let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs1 = setup.compose(&pk_e, &self.t1)?;
-        if !lhs1.equal(setup.ctx(), &rhs1)? {
+        if lhs1 != rhs1 {
             return Ok(false);
         }
 
@@ -89,7 +89,7 @@ impl RDecDlProof {
         let lhs2 = setup.exp_bytes(&c1, &self.z)?;
         let pd_e = setup.exp_bytes(pd, &self.e)?;
         let rhs2 = setup.compose(&pd_e, &self.t2)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -112,12 +112,12 @@ impl RDecDlProof {
         let (c1, _c2) = setup.ct_components(ct)?;
         let t2 = setup.exp_bytes(&c1, &a)?;
 
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let e = challenge_from_qfi_with_prefix(
             setup,
             prefix,
             b"R_dec_dl",
-            &[&pk_elt, &c1, pd, &t1, &t2],
+            &[pk_elt, &c1, pd, &t1, &t2],
             &[],
         )?;
 
@@ -136,14 +136,14 @@ impl RDecDlProof {
         ct: &ClHsmqkCiphertext,
         pd: &Qfi,
     ) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let (c1, _c2) = setup.ct_components(ct)?;
 
         let e_check = challenge_from_qfi_with_prefix(
             setup,
             prefix,
             b"R_dec_dl",
-            &[&pk_elt, &c1, pd, &self.t1, &self.t2],
+            &[pk_elt, &c1, pd, &self.t1, &self.t2],
             &[],
         )?;
         if e_check != self.e {
@@ -151,16 +151,16 @@ impl RDecDlProof {
         }
 
         let lhs1 = setup.power_of_h_bytes(&self.z)?;
-        let pk_e = setup.exp_bytes(&pk_elt, &self.e)?;
+        let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs1 = setup.compose(&pk_e, &self.t1)?;
-        if !lhs1.equal(setup.ctx(), &rhs1)? {
+        if lhs1 != rhs1 {
             return Ok(false);
         }
 
         let lhs2 = setup.exp_bytes(&c1, &self.z)?;
         let pd_e = setup.exp_bytes(pd, &self.e)?;
         let rhs2 = setup.compose(&pd_e, &self.t2)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -171,14 +171,14 @@ impl RDecDlProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_dec_dl_honest_verifies() {
         let mut setup = ClSetup::new_secp256k1("2001").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
-        let sk_dec = setup.sk_to_decimal(&sk_raw).expect("sk_dec");
+        let sk_dec = sk_raw.to_string();
 
         let ct = setup.encrypt(&pk_raw, "123").expect("encrypt");
         let (c1, _) = setup.ct_components(&ct).expect("components");
@@ -193,7 +193,7 @@ mod tests {
     fn r_dec_dl_rejects_wrong_sk() {
         let mut setup = ClSetup::new_secp256k1("2002").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-        let sk_dec = setup.sk_to_decimal(&sk_raw).expect("sk_dec");
+        let sk_dec = sk_raw.to_string();
         let (sk_raw2, _) = setup.keygen().expect("keygen2");
         let sk_bytes2 = setup.sk_to_bytes(&sk_raw2).expect("sk_bytes2");
 
@@ -211,7 +211,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("2003").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
-        let sk_dec = setup.sk_to_decimal(&sk_raw).expect("sk_dec");
+        let sk_dec = sk_raw.to_string();
 
         let ct = setup.encrypt(&pk_raw, "123").expect("encrypt");
         let (c1, _) = setup.ct_components(&ct).expect("components");
@@ -232,7 +232,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("2004").expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
-        let sk_dec = setup.sk_to_decimal(&sk_raw).expect("sk_dec");
+        let sk_dec = sk_raw.to_string();
 
         let ct = setup.encrypt(&pk_raw, "123").expect("encrypt");
         let (c1, _) = setup.ct_components(&ct).expect("components");
