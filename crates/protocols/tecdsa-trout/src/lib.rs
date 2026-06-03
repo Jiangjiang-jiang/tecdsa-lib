@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 //! Trout: Two-Round Threshold ECDSA from Class Groups.
 //!
@@ -18,11 +18,6 @@
 //!    CL-commit blinding factors, prove consistency.
 //! 3. **Round 2 (Sign)**: verify proofs, two scaled decryptions to get
 //!    u*k and u*(H(m)+r*x), compute s = (u*k)^{-1} * u*(H(m)+r*x).
-//!
-//! # License
-//!
-//! This crate is **GPL-3.0-or-later** due to the `tecdsa-class-group`
-//! dependency (which wraps the BICYCL C library).
 
 pub mod error;
 pub mod key_share;

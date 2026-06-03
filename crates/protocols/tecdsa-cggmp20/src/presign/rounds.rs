@@ -11,23 +11,26 @@ use rand_core::CryptoRngCore;
 use sha2::Sha256;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::zk::paillier_zk::{
-    dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
-    paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
+use tecdsa_paillier::{
+    backend::Integer,
+    conv::scalar_to_integer,
+    zk::paillier_zk::{
+        dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
+        paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
+    },
+    Ciphertext, DecryptionKey, EncryptionKey,
 };
-use tecdsa_paillier::{Ciphertext, DecryptionKey, EncryptionKey};
 use tecdsa_pedersen_mod::PedersenModParams;
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 use tecdsa_vss::lagrange;
 use zeroize::Zeroize;
 
-use crate::bridge::pedersen_to_aux;
-use crate::key_share::{AuxInfo, Cggmp20CoreKeyShare};
-use crate::sign::types::{Presignature, PresignaturePublicData};
-use tecdsa_paillier::conv::scalar_to_integer;
-
 use super::msg::{MsgRound1, MsgRound2, MsgRound3, PresignMsg};
+use crate::{
+    bridge::pedersen_to_aux,
+    key_share::{AuxInfo, Cggmp20CoreKeyShare},
+    sign::types::{Presignature, PresignaturePublicData},
+};
 
 // ---------------------------------------------------------------------------
 // Generic conversion helpers (C: TecdsaCurve → generic_ec via bytes)

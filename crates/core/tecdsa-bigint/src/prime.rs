@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::DynInt;
 use num_bigint::{BigUint, RandBigInt};
 use num_integer::Integer;
 use num_traits::One;
 use rand_core::CryptoRngCore;
+
+use crate::DynInt;
 
 /// Miller-Rabin primality test with `rounds` witness iterations.
 ///

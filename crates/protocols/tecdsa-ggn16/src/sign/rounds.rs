@@ -16,15 +16,19 @@ use elliptic_curve::{
 };
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::threshold::{combine_partials, partial_decrypt, PartialDecryption};
+use tecdsa_paillier::{
+    backend::Integer,
+    conv::{integer_to_scalar, scalar_to_integer},
+    threshold::{combine_partials, partial_decrypt, PartialDecryption},
+};
 use tecdsa_protocol::{
     low_s_normalize, verify_ecdsa, DataToSign, Outgoing, PartyId, Recipient, Signature,
 };
 
-use crate::presign::Ggn16Presignature;
-use crate::sign::msg::{Ggn16SignMsg, SignRound6Msg};
-use tecdsa_paillier::conv::{integer_to_scalar, scalar_to_integer};
+use crate::{
+    presign::Ggn16Presignature,
+    sign::msg::{Ggn16SignMsg, SignRound6Msg},
+};
 
 // ---------------------------------------------------------------------------
 // Configuration

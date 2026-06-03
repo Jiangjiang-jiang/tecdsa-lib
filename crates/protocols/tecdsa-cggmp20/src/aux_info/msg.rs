@@ -3,11 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_paillier::EncryptionKey;
-use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
-
-use tecdsa_paillier::zk::paillier_zk::no_small_factor as pi_fac;
-use tecdsa_pedersen_mod::PiMod;
+use tecdsa_paillier::{zk::paillier_zk::no_small_factor as pi_fac, EncryptionKey};
+use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
 
 /// Round 1 broadcast: hash commitment to the party's auxiliary material.
 #[derive(Clone, Debug, Serialize, Deserialize)]

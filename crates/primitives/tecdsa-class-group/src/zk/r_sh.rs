@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -26,12 +26,11 @@
 //!
 //! Follows the PolyVerify pattern from BICYCL C++ reference (TX25).
 
-use crate::bicycl_glue::{ClError, ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkPublicKey, Qfi};
 use num_bigint::BigUint;
 use sha2::{Digest, Sha256};
 
 use super::sample_random;
+use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
 /// Security parameter for hash challenges (bit-width of c_j).
 const SOUNDNESS_BITS: u32 = 40;
@@ -48,23 +47,18 @@ pub struct RShProof {
 }
 
 /// Computes per-party hash challenge: `c_j = H(sum_c2_repr, pk_j_repr, j) mod 2^SOUNDNESS_BITS`.
-fn c_from_hash(setup: &ClSetup, c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<BigUint> {
-    let ctx = setup.ctx();
+fn c_from_hash(c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<BigUint> {
     let mut hasher = Sha256::new();
 
     // Hash all c2 elements to form a binding context.
     for c2 in c2s {
-        let bytes = c2
-            .to_bytes(ctx)
-            .map_err(|e| ClError::InvalidParam(format!("to_bytes: {e}")))?;
+        let bytes = c2.to_bytes();
         hasher.update(&bytes);
         hasher.update(b"||");
     }
 
     // Hash pk_j.
-    let pk_bytes = pk_j
-        .to_bytes(ctx)
-        .map_err(|e| ClError::InvalidParam(format!("to_bytes: {e}")))?;
+    let pk_bytes = pk_j.to_bytes();
     hasher.update(&pk_bytes);
     hasher.update(b"||");
 
@@ -80,13 +74,7 @@ fn c_from_hash(setup: &ClSetup, c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<Bi
 /// Derives deterministic dual-code polynomial coefficients from a hash of the c2 values.
 ///
 /// Returns `degree + 1` coefficients in `[0, q)`.
-fn dual_code_coeffs(
-    setup: &ClSetup,
-    c2s: &[&Qfi],
-    degree: usize,
-    q: &BigUint,
-) -> ClResult<Vec<BigUint>> {
-    let ctx = setup.ctx();
+fn dual_code_coeffs(c2s: &[&Qfi], degree: usize, q: &BigUint) -> ClResult<Vec<BigUint>> {
     let mut coeffs = Vec::with_capacity(degree + 1);
 
     for d in 0..=degree {
@@ -96,9 +84,7 @@ fn dual_code_coeffs(
         hasher.update(b"|");
 
         for c2 in c2s {
-            let bytes = c2
-                .to_bytes(ctx)
-                .map_err(|e| ClError::InvalidParam(format!("to_bytes: {e}")))?;
+            let bytes = c2.to_bytes();
             hasher.update(&bytes);
             hasher.update(b"||");
         }
@@ -139,28 +125,25 @@ fn aggregate_products(
 ) -> ClResult<(Qfi, Qfi)> {
     let n = party_ids.len();
     let q = BigUint::from_bytes_be(&setup.q_bytes()?);
-    let M = BigUint::from_bytes_be(&setup.M_bytes()?);
+    let M = BigUint::from_bytes_be(&setup.cl().m().to_bytes_be());
 
     // degree = n - t - 2  (the dual code degree).
     // When n <= t + 1, degree < 0 and there is no dual code check.
     let degree_signed = n as i64 - threshold as i64 - 2;
 
     // Retrieve pk elements.
-    let pk_elts: Vec<Qfi> = pks
-        .iter()
-        .map(|pk| setup.pk_element(pk))
-        .collect::<ClResult<Vec<_>>>()?;
+    let pk_elts: Vec<Qfi> = pks.iter().map(|pk| pk.elt().clone()).collect::<Vec<_>>();
 
     // Compute per-party challenges c_j.
     let challenges: Vec<BigUint> = party_ids
         .iter()
         .enumerate()
-        .map(|(idx, &j)| c_from_hash(setup, c2s, &pk_elts[idx], j))
+        .map(|(idx, &j)| c_from_hash(c2s, &pk_elts[idx], j))
         .collect::<ClResult<Vec<_>>>()?;
 
     // Compute dual-code coefficients if degree >= 0.
     let check_coeffs = if degree_signed >= 0 {
-        dual_code_coeffs(setup, c2s, degree_signed as usize, &q)?
+        dual_code_coeffs(c2s, degree_signed as usize, &q)?
     } else {
         vec![]
     };
@@ -218,20 +201,11 @@ fn aggregate_products(
 /// Computes the Fiat-Shamir challenge from (prod_U, prod_V, R0, V0).
 ///
 /// Returns `H(prod_U, prod_V, R0, V0) mod 2^SOUNDNESS_BITS`.
-fn schnorr_challenge(
-    setup: &ClSetup,
-    prod_u: &Qfi,
-    prod_v: &Qfi,
-    r0: &Qfi,
-    v0: &Qfi,
-) -> ClResult<Vec<u8>> {
-    let ctx = setup.ctx();
+fn schnorr_challenge(prod_u: &Qfi, prod_v: &Qfi, r0: &Qfi, v0: &Qfi) -> ClResult<Vec<u8>> {
     let mut hasher = Sha256::new();
 
     for qfi in [prod_u, prod_v, r0, v0] {
-        let bytes = qfi
-            .to_bytes(ctx)
-            .map_err(|e| ClError::InvalidParam(format!("to_bytes: {e}")))?;
+        let bytes = qfi.to_bytes();
         hasher.update(&bytes);
         hasher.update(b"||");
     }
@@ -298,7 +272,7 @@ impl RShProof {
         let V0 = setup.exp_bytes(&prod_U, &rho0_bytes)?;
 
         // 5. Fiat-Shamir challenge: k = H(prod_U, prod_V, R0, V0).
-        let k_bytes = schnorr_challenge(setup, &prod_U, &prod_V, &R0, &V0)?;
+        let k_bytes = schnorr_challenge(&prod_U, &prod_V, &R0, &V0)?;
 
         // 6. Response: rho_response = k * rho + rho0.
         let k_uint = BigUint::from_bytes_be(&k_bytes);
@@ -350,18 +324,18 @@ impl RShProof {
         // 3. Reconstruct R0: R = h^{rho_response}, R_tmp = R / c1^k.
         let rho_resp_bytes = rho_resp.to_bytes_be();
         let R = setup.power_of_h_bytes(&rho_resp_bytes)?;
-        let c1_k = setup.exp_bytes(c1, &self.k)?;
-        let c1_k_inv = c1_k.neg(setup.ctx())?;
-        let R_tmp = setup.compose(&R, &c1_k_inv)?;
+        let mut c1_k = setup.exp_bytes(c1, &self.k)?;
+        c1_k.neg();
+        let R_tmp = setup.compose(&R, &c1_k)?;
 
         // 4. Reconstruct V0: V = prod_U^{rho_response}, V_tmp = V / prod_V^k.
         let V = setup.exp_bytes(&prod_U, &rho_resp_bytes)?;
-        let prod_V_k = setup.exp_bytes(&prod_V, &self.k)?;
-        let prod_V_k_inv = prod_V_k.neg(setup.ctx())?;
-        let V_tmp = setup.compose(&V, &prod_V_k_inv)?;
+        let mut prod_V_k = setup.exp_bytes(&prod_V, &self.k)?;
+        prod_V_k.neg();
+        let V_tmp = setup.compose(&V, &prod_V_k)?;
 
         // 5. Check: k == H(prod_U, prod_V, R_tmp, V_tmp).
-        let k_check = schnorr_challenge(setup, &prod_U, &prod_V, &R_tmp, &V_tmp)?;
+        let k_check = schnorr_challenge(&prod_U, &prod_V, &R_tmp, &V_tmp)?;
         Ok(k_check == self.k)
     }
 }
@@ -369,8 +343,7 @@ impl RShProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
-    use crate::zk::sample_random_mod_q;
+    use crate::{cl::ClSetup, zk::sample_random_mod_q};
 
     /// Creates a PVSS dealing with shared randomness rho.
     ///
@@ -418,8 +391,8 @@ mod tests {
         // c2_j = pk_j^rho * f^{v_j}.
         let mut c2s = Vec::with_capacity(n);
         for (idx, share) in shares.iter().enumerate() {
-            let pk_elt = setup.pk_element(pks[idx])?;
-            let pk_rho = setup.exp_bytes(&pk_elt, &rho_bytes)?;
+            let pk_elt = pks[idx].elt();
+            let pk_rho = setup.exp_bytes(pk_elt, &rho_bytes)?;
             let f_v = setup.power_of_f_bytes(share)?;
             let c2 = setup.compose(&pk_rho, &f_v)?;
             c2s.push(c2);
@@ -518,8 +491,8 @@ mod tests {
         let mut tampered_c2s = c2s;
         let random_val = sample_random_mod_q(&mut setup).expect("rand");
         let f_bad = setup.power_of_f_bytes(&random_val).expect("f_bad");
-        let pk0_elt = setup.pk_element(&pks[0]).expect("pk0");
-        let pk0_rho = setup.exp_bytes(&pk0_elt, &rho).expect("pk0^rho");
+        let pk0_elt = &pks[0].elt();
+        let pk0_rho = setup.exp_bytes(pk0_elt, &rho).expect("pk0^rho");
         tampered_c2s[0] = setup.compose(&pk0_rho, &f_bad).expect("compose");
 
         let c2_refs: Vec<&Qfi> = tampered_c2s.iter().collect();

@@ -22,15 +22,13 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::backend::Integer;
-use fast_paillier::{DecryptionKey, EncryptionKey};
+use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::conv::scalar_to_bytes;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use thiserror::Error;
 
 use crate::conv::integer_to_scalar;
-use thiserror::Error;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -383,8 +381,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
+
+    use super::*;
 
     #[test]
     fn pdl_proof_valid() {

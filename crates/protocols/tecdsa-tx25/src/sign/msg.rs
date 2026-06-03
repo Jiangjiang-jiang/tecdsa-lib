@@ -1,12 +1,10 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TX25 online sign message types and serialization.
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::PrimeField;
+use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
-
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::zk::ddh::DdhProof;
 

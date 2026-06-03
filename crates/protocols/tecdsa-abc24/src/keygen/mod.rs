@@ -13,23 +13,23 @@ pub mod interactive;
 pub(crate) mod machine;
 pub(crate) mod wire;
 
+// ---------------------------------------------------------------------------
+// Trusted dealer key generation (formerly keygen.rs content)
+// ---------------------------------------------------------------------------
+use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     client_finalize_keygen, client_keygen_step2, client_verify_step3, interactive_keygen,
     server_finalize_keygen, server_keygen_step1, server_keygen_step3, ClientStep2Msg,
     ClientStep2State, ServerStep1Msg, ServerStep1State, ServerStep3Msg, ServerStep3State,
 };
 pub use machine::{Abc24KeyShare, Abc24KeygenMachine, Abc24KeygenMsg, TwoPartyRole};
-
-// ---------------------------------------------------------------------------
-// Trusted dealer key generation (formerly keygen.rs content)
-// ---------------------------------------------------------------------------
-
-use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
 
-use crate::key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare};
-use crate::setup::SetupData;
+use crate::{
+    key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare},
+    setup::SetupData,
+};
 
 /// Generate key shares for the ABC+24 two-party ECDSA protocol via a trusted dealer.
 ///
@@ -86,8 +86,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
+
+    use super::*;
 
     #[test]
     fn trusted_dealer_produces_consistent_shares() {

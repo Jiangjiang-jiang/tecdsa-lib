@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use rand_core::RngCore;
 use sha2::{Digest, Sha256};
-use tecdsa_cggmp20::aux_info::AuxInfoMachine;
-use tecdsa_cggmp20::key_share::{AuxInfo, Cggmp20CoreKeyShare};
-use tecdsa_cggmp20::keygen::msg::KeygenMsg;
-use tecdsa_cggmp20::keygen::Cggmp20KeygenMachine;
-use tecdsa_cggmp20::presign::msg::PresignMsg;
-use tecdsa_cggmp20::presign::Cggmp20PresignMachine;
-use tecdsa_cggmp20::security_level::Cggmp20SecurityParams;
+use tecdsa_cggmp20::{
+    aux_info::AuxInfoMachine,
+    key_share::{AuxInfo, Cggmp20CoreKeyShare},
+    keygen::{msg::KeygenMsg, Cggmp20KeygenMachine},
+    presign::{msg::PresignMsg, Cggmp20PresignMachine},
+    security_level::Cggmp20SecurityParams,
+};
 use tecdsa_core::Csprng;
 use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine};
 

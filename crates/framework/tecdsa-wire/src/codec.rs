@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::envelope::{Header, PREAMBLE, WIRE_VERSION};
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
+
+use crate::envelope::{Header, PREAMBLE, WIRE_VERSION};
 
 fn bincode_config() -> impl bincode::config::Config {
     bincode::config::standard()

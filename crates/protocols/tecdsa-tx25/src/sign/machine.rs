@@ -1,22 +1,25 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TX25 online sign state machine implementation.
 
 use std::collections::BTreeMap;
 
 use elliptic_curve::ops::LinearCombination;
-
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::ddh::{DdhProof, DdhStatement, DdhWitness};
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
-use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
-
-use crate::presign::Tx25Presignature;
-
-use super::msg::{deserialize_online_msg, serialize_online_msg, OnlineRoundMsg, Tx25OnlineSignMsg};
-use super::rounds::{
-    assemble_signature, hash_message_to_scalar, identify_cheaters, zero_poly_eval,
+use tecdsa_curve::{
+    zk::ddh::{DdhProof, DdhStatement, DdhWitness},
+    TecdsaCurve,
 };
+use tecdsa_protocol::{
+    ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
+    state_machine::Outgoing,
+    IaReport, PartyId, Recipient, StateMachine,
+};
+
+use super::{
+    msg::{deserialize_online_msg, serialize_online_msg, OnlineRoundMsg, Tx25OnlineSignMsg},
+    rounds::{assemble_signature, hash_message_to_scalar, identify_cheaters, zero_poly_eval},
+};
+use crate::presign::Tx25Presignature;
 
 // ---------------------------------------------------------------------------
 // State machine

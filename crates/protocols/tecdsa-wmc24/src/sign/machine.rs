@@ -1,20 +1,22 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMC24 online sign state machine.
 
 use std::collections::BTreeMap;
 
-use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclPublicKey, BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_part_dec::RPartDecProof;
+use tecdsa_class_group::{
+    cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
+    t_cl::{self as threshold_cl, PartialDecryption as ClPartialDecryption},
+    zk::r_part_dec::RPartDecProof,
+};
 use tecdsa_core::TecdsaError;
+use tecdsa_protocol::{
+    ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
+    state_machine::Outgoing,
+    IaReport, PartyId, Recipient, StateMachine,
+};
 
-use tecdsa_class_group::t_cl::{self as threshold_cl, PartialDecryption as ClPartialDecryption};
-use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
-use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
-
+use super::{msg::*, rounds::*};
 use crate::presign::Wmc24Presignature;
-
-use super::msg::*;
-use super::rounds::*;
 
 // ---------------------------------------------------------------------------
 // State machine
@@ -28,10 +30,10 @@ pub struct Wmc24OnlineSignMachine {
     message: DataToSign<k256::Secp256k1>,
     public_key: k256::ProjectivePoint,
     /// The combined ciphertext Enc(km + rkx).
-    c_sig: BicyclCiphertext,
+    c_sig: ClCiphertext,
     setup: ClSetup,
-    _cl_pk: BicyclPublicKey,
-    cl_pk_shares: BTreeMap<u16, BicyclPublicKey>,
+    _cl_pk: ClPublicKey,
+    cl_pk_shares: BTreeMap<u16, ClPublicKey>,
     received: BTreeMap<u16, ReceivedR4>,
     outgoing: Vec<Outgoing<Wmc24OnlineSignMsg>>,
     output: Option<Signature<k256::Secp256k1>>,
@@ -64,38 +66,30 @@ impl Wmc24OnlineSignMachine {
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup: {e}")))?;
 
-        let ctx = setup.ctx();
-
         // Reconstruct k_bar ciphertext.
-        let kb_c1 = BicyclQfi::from_bytes(ctx, &presignature.k_bar_c1_abc.data)
-            .map_err(|e| TecdsaError::Other(format!("k_bar c1: {e}")))?;
-        let kb_c2 = BicyclQfi::from_bytes(ctx, &presignature.k_bar_c2_abc.data)
-            .map_err(|e| TecdsaError::Other(format!("k_bar c2: {e}")))?;
+        let kb_c1 = Qfi::from_bytes(&presignature.k_bar_c1_abc.data);
+        let kb_c2 = Qfi::from_bytes(&presignature.k_bar_c2_abc.data);
         let k_bar = setup
             .ct_from_components(&kb_c1, &kb_c2)
             .map_err(|e| TecdsaError::Other(format!("k_bar ct: {e}")))?;
 
         // Reconstruct xk_bar ciphertext.
-        let xk_c1 = BicyclQfi::from_bytes(ctx, &presignature.xk_bar_c1_abc.data)
-            .map_err(|e| TecdsaError::Other(format!("xk_bar c1: {e}")))?;
-        let xk_c2 = BicyclQfi::from_bytes(ctx, &presignature.xk_bar_c2_abc.data)
-            .map_err(|e| TecdsaError::Other(format!("xk_bar c2: {e}")))?;
+        let xk_c1 = Qfi::from_bytes(&presignature.xk_bar_c1_abc.data);
+        let xk_c2 = Qfi::from_bytes(&presignature.xk_bar_c2_abc.data);
         let xk_bar = setup
             .ct_from_components(&xk_c1, &xk_c2)
             .map_err(|e| TecdsaError::Other(format!("xk_bar ct: {e}")))?;
 
         // Reconstruct aggregate CL PK.
-        let cl_pk_qfi = BicyclQfi::from_bytes(ctx, &presignature.cl_pk_abc.data)
-            .map_err(|e| TecdsaError::Other(format!("cl_pk: {e}")))?;
+        let cl_pk_qfi = Qfi::from_bytes(&presignature.cl_pk_abc.data);
         let cl_pk = setup
             .pk_from_qfi(&cl_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("cl_pk from_qfi: {e}")))?;
 
         // Reconstruct per-party CL PK shares.
-        let mut cl_pk_shares: BTreeMap<u16, BicyclPublicKey> = BTreeMap::new();
+        let mut cl_pk_shares: BTreeMap<u16, ClPublicKey> = BTreeMap::new();
         for (&pid, abc) in &presignature.cl_pk_share_abcs {
-            let qfi = BicyclQfi::from_bytes(ctx, &abc.data)
-                .map_err(|e| TecdsaError::Other(format!("cl_pk_share {pid}: {e}")))?;
+            let qfi = Qfi::from_bytes(&abc.data);
             let pk = setup
                 .pk_from_qfi(&qfi)
                 .map_err(|e| TecdsaError::Other(format!("pk_from_qfi {pid}: {e}")))?;
@@ -144,8 +138,7 @@ impl Wmc24OnlineSignMachine {
             .cl_pk_share_abcs
             .get(&presignature.party_index)
             .ok_or_else(|| TecdsaError::Other("missing own CL pk share".into()))?;
-        let my_pk_qfi = BicyclQfi::from_bytes(ctx, &my_pk_abc.data)
-            .map_err(|e| TecdsaError::Other(format!("my_pk: {e}")))?;
+        let my_pk_qfi = Qfi::from_bytes(&my_pk_abc.data);
         let my_pk_raw = setup
             .pk_from_qfi(&my_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
@@ -159,9 +152,9 @@ impl Wmc24OnlineSignMachine {
         let pi = RPartDecProof::prove(&mut setup, &my_pk_raw, &c_sig, &pc, sk_share)
             .map_err(|e| TecdsaError::Other(format!("pi: {e}")))?;
 
-        let pc_ser = SerializedQfi::from_qfi(&setup, &pc)
-            .map_err(|e| TecdsaError::Other(format!("ser pc: {e}")))?;
-        let pi_ser = SerRPartDecProof::from_proof(&setup, &pi)
+        let pc_ser =
+            SerializedQfi::from_qfi(&pc).map_err(|e| TecdsaError::Other(format!("ser pc: {e}")))?;
+        let pi_ser = SerRPartDecProof::from_proof(&pi)
             .map_err(|e| TecdsaError::Other(format!("ser pi: {e}")))?;
 
         let r4_payload = R4Payload {
@@ -216,13 +209,8 @@ impl Wmc24OnlineSignMachine {
 
         let mut pd_s: Vec<ClPartialDecryption> = Vec::new();
         for r4 in self.received.values() {
-            let ctx = self.setup.ctx();
-            let bytes = r4
-                .pc
-                .to_bytes(ctx)
-                .map_err(|e| TecdsaError::Other(format!("pc to_bytes: {e}")))?;
-            let copy = BicyclQfi::from_bytes(ctx, &bytes)
-                .map_err(|e| TecdsaError::Other(format!("pc from_bytes: {e}")))?;
+            let bytes = r4.pc.to_bytes();
+            let copy = Qfi::from_bytes(&bytes);
             pd_s.push(ClPartialDecryption {
                 party_index: r4.party_index,
                 dec_share: copy,
@@ -293,11 +281,11 @@ impl StateMachine for Wmc24OnlineSignMachine {
 
                 let pc = payload
                     .pc
-                    .to_qfi(&self.setup)
+                    .to_qfi()
                     .map_err(|e| TecdsaError::Other(format!("pc from {from}: {e}")))?;
                 let pi = payload
                     .pi
-                    .to_proof(&self.setup)
+                    .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("pi from {from}: {e}")))?;
 
                 let from_pk = self

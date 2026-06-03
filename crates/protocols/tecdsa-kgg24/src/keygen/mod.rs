@@ -13,18 +13,16 @@ pub mod interactive;
 pub(crate) mod machine;
 pub(crate) mod wire;
 
+// ---------------------------------------------------------------------------
+// Trusted dealer key generation (formerly keygen.rs content)
+// ---------------------------------------------------------------------------
+use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     interactive_keygen, party1_finalize_keygen, party1_keygen_round2, party1_verify_round3,
     party2_finalize_keygen, party2_keygen_round1, party2_keygen_round3, KeyGenP1Round2Msg,
     KeyGenP1State, KeyGenP2Round1Msg, KeyGenP2Round3Msg, KeyGenP2State,
 };
 pub use machine::{Kgg24KeyShare, Kgg24KeygenMachine, Kgg24KeygenMsg, TwoPartyRole};
-
-// ---------------------------------------------------------------------------
-// Trusted dealer key generation (formerly keygen.rs content)
-// ---------------------------------------------------------------------------
-
-use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
 
@@ -114,8 +112,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
+
+    use super::*;
 
     #[test]
     fn trusted_dealer_produces_consistent_shares() {

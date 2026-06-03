@@ -5,13 +5,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use tecdsa_protocol::state_machine::{Outgoing, Recipient};
-use tecdsa_protocol::{PartyId, StateMachine};
+use tecdsa_protocol::{
+    state_machine::{Outgoing, Recipient},
+    PartyId, StateMachine,
+};
 use tecdsa_wire::Header;
 
-use crate::config::SessionRunConfig;
-use crate::error::SessionError;
-use crate::metrics::SessionMetrics;
+use crate::{config::SessionRunConfig, error::SessionError, metrics::SessionMetrics};
 
 /// Core protocol loop driver.
 ///

@@ -5,9 +5,7 @@ use k256::Secp256k1;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{verify_ecdsa, DataToSign};
-use tecdsa_xal21::keygen::trusted_dealer_keygen;
-use tecdsa_xal21::offline_sign;
-use tecdsa_xal21::online_sign;
+use tecdsa_xal21::{keygen::trusted_dealer_keygen, offline_sign, online_sign};
 
 /// Helper: hash a message to a scalar for ECDSA signing.
 fn hash_message<C: TecdsaCurve>(msg: &[u8]) -> DataToSign<C>

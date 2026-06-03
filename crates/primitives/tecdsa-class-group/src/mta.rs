@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! CL-based MtA (Multiplicative-to-Additive) sub-protocol.
 //!
 //! Implements `tecdsa_protocol::MtA` using CL-HSM class-group encryption
@@ -23,10 +23,7 @@
 
 use std::cell::RefCell;
 
-use crate::bicycl_glue::{ClError, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, ClHsmqkSecretKey};
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use k256::Secp256k1;
 use num_bigint::BigUint;
 use num_traits::Zero;
@@ -34,6 +31,11 @@ use rand_core::CryptoRngCore;
 use subtle::ConstantTimeEq;
 use tecdsa_curve::conv;
 use tecdsa_protocol::{MtA, MtAWithCheck};
+
+use crate::cl::{
+    Ciphertext as ClHsmqkCiphertext, ClError, ClSetup, PublicKey as ClHsmqkPublicKey,
+    SecretKey as ClHsmqkSecretKey,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,13 +155,12 @@ impl MtA for ClMtA {
         let c_scaled =
             cl_setup.scal_ciphertext_bytes(&setup.pk, &sender_msg.ciphertext, a_bytes)?;
 
-        // 2. Sample alpha' from [0, q^2) for masking
-        let q_squared = &q * &q;
+        // 2. Sample alpha' from [0, q) for masking
         // Use the CL setup's own keygen to generate randomness, then reduce
         let (sk_tmp, _pk_tmp) = cl_setup.keygen()?;
         let r_bytes = cl_setup.sk_to_bytes(&sk_tmp)?;
         let r_big = BigUint::from_bytes_be(&r_bytes);
-        let alpha_prime = &r_big % &q_squared;
+        let alpha_prime = &r_big % &q;
         let alpha_prime_bytes = alpha_prime.to_bytes_be();
 
         // 3. Encrypt alpha': c_alpha = Enc(pk, alpha')
@@ -333,8 +334,9 @@ impl MtAWithCheck for ClMtA {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use num_traits::Num;
+
+    use super::*;
 
     /// Helper: create a ClMtaSetup for testing with secp256k1 parameters.
     fn test_setup(seed: &str) -> ClMtaSetup {

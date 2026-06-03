@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -20,21 +20,20 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::PrimeField;
 use rand::RngCore;
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::BicyclPublicKey as ClHsmqkPublicKey;
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+use zeroize::Zeroize;
 
-use crate::key_share::Llz25KeyShare;
-
-use super::msg::Llz25KeygenMsg;
-use super::rounds::{
-    compute_commitment, proj_from_bytes, scalar_to_bytes, R1LocalState, R2BcastPayload,
-    R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof,
+use super::{
+    msg::Llz25KeygenMsg,
+    rounds::{
+        compute_commitment, proj_from_bytes, scalar_to_bytes, R1LocalState, R2BcastPayload,
+        R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof,
+    },
 };
+use crate::key_share::Llz25KeyShare;
 
 // ---------------------------------------------------------------------------
 // Llz25KeygenMachine
@@ -507,7 +506,7 @@ impl StateMachine for Llz25KeygenMachine {
 
                 let proof = payload
                     .proof
-                    .to_proof(&self.setup)
+                    .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("proof deser: {e}")))?;
 
                 self.r3_data.insert(
@@ -554,8 +553,9 @@ impl StateMachine for Llz25KeygenMachine {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tecdsa_protocol::PartyId;
+
+    use super::*;
 
     /// Helper: route all outgoing messages from all machines to their recipients.
     /// Returns true if all machines are done.
@@ -624,12 +624,12 @@ mod tests {
 
         // ClHsmqkPublicKey does not implement Clone, so we duplicate it for
         // each machine via pk_element -> pk_from_qfi round-trip.
-        let pk_qfi = setup.pk_element(&pk_crs).expect("pk_element");
+        let pk_qfi = &pk_crs.elt();
 
         // Create machines (Round 1 executes immediately in the constructor).
         let mut machines: Vec<Llz25KeygenMachine> = (0..n)
             .map(|i| {
-                let pk_i = setup.pk_from_qfi(&pk_qfi).expect("pk_from_qfi");
+                let pk_i = setup.pk_from_qfi(pk_qfi).expect("pk_from_qfi");
                 Llz25KeygenMachine::new(
                     all_parties[i as usize],
                     all_parties.clone(),

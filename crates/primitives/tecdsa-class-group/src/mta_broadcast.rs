@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `MtABroadcast` implementations for NIM and scaled decryption.
 //!
 //! Two backends:
@@ -20,12 +20,13 @@
 
 use std::cell::RefCell;
 
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, Qfi};
 use num_bigint::BigUint;
 use rand_core::CryptoRngCore;
 
-use crate::bicycl_glue::{ClError, ClSetup};
-use crate::nim::{Nim, NimStateA, NimStateB};
+use crate::{
+    cl::{Ciphertext as ClHsmqkCiphertext, ClError, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
+    nim::{Nim, NimStateA, NimStateB},
+};
 
 // ============================================================================
 // NimMtA
@@ -426,9 +427,9 @@ impl tecdsa_protocol::MtABroadcast for ScaledDecryptMtA {
         let beta_i = cl.sk_to_bytes(&sk_tmp2)?;
 
         // Compute commitment U_i = h^{beta_i} * pk_elt^{b_i}
-        let pk_elt = cl.pk_element(&setup.pk)?;
+        let pk_elt = setup.pk.elt();
         let h_beta = cl.power_of_h_bytes(&beta_i)?;
-        let pk_b = cl.exp_bytes(&pk_elt, b_i_bytes)?;
+        let pk_b = cl.exp_bytes(pk_elt, b_i_bytes)?;
         let u_com = cl.compose(&h_beta, &pk_b)?;
 
         let encoding = ScaledDecryptEncoding { c1, c2, u_com };
@@ -469,19 +470,14 @@ impl tecdsa_protocol::MtABroadcast for ScaledDecryptMtA {
         // F_i = A_2^{b_i} * A_1^{beta_i} * B^{-alpha_i}
         let a2_bi = cl.exp_bytes(&other_encoding.c2, &my_state.b_i)?;
         let a1_betai = cl.exp_bytes(&other_encoding.c1, &my_state.beta_i)?;
-        let b_alphai = cl.exp_bytes(&other_encoding.u_com, &my_state.alpha_i)?;
-        let b_alphai_inv = b_alphai
-            .neg(cl.ctx())
-            .map_err(|e| ScaledDecryptError::InvalidParam(format!("neg failed: {e}")))?;
+        let mut b_alphai = cl.exp_bytes(&other_encoding.u_com, &my_state.alpha_i)?;
+        b_alphai.neg();
 
         let tmp = cl.compose(&a2_bi, &a1_betai)?;
-        let f_i = cl.compose(&tmp, &b_alphai_inv)?;
+        let f_i = cl.compose(&tmp, &b_alphai)?;
 
         // Serialise F_i using binary Qfi::to_bytes for reconstruction.
-        let ctx = cl.ctx();
-        let serialised = f_i
-            .to_bytes(ctx)
-            .map_err(|e| ScaledDecryptError::InvalidParam(format!("to_bytes: {e}")))?;
+        let serialised = f_i.to_bytes();
         Ok(serialised)
     }
 }
@@ -494,13 +490,8 @@ impl ScaledDecryptMtA {
     /// # Errors
     ///
     /// Returns an error if parsing or QFI reconstruction fails.
-    pub fn decode_to_qfi(
-        setup: &ScaledDecryptSetup,
-        decoded_bytes: &[u8],
-    ) -> Result<Qfi, ScaledDecryptError> {
-        let cl = setup.setup.borrow();
-        let qfi = Qfi::from_bytes(cl.ctx(), decoded_bytes)
-            .map_err(|e| ScaledDecryptError::InvalidParam(format!("qfi reconstruction: {e}")))?;
+    pub fn decode_to_qfi(decoded_bytes: &[u8]) -> Result<Qfi, ScaledDecryptError> {
+        let qfi = Qfi::from_bytes(decoded_bytes);
         Ok(qfi)
     }
 }
@@ -511,9 +502,10 @@ impl ScaledDecryptMtA {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use num_traits::Num;
     use tecdsa_protocol::MtABroadcast;
+
+    use super::*;
 
     // ---- NimMtA tests ----
 
@@ -700,13 +692,14 @@ mod tests {
         let aggregated = ScaledDecryptMtA::aggregate(&setup, &enc_refs).expect("aggregate");
 
         // Each party decodes to get its F_i share
-        let mut f_shares = Vec::new();
-        for i in 0..n {
-            let f_bytes = ScaledDecryptMtA::decode(&setup, &aggregated, &states[i], &q_bytes)
-                .expect("decode");
-            let f_i = ScaledDecryptMtA::decode_to_qfi(&setup, &f_bytes).expect("decode_to_qfi");
-            f_shares.push(f_i);
-        }
+        let f_shares = states
+            .iter()
+            .map(|state| {
+                let f_bytes =
+                    ScaledDecryptMtA::decode(&setup, &aggregated, state, &q_bytes).expect("decode");
+                ScaledDecryptMtA::decode_to_qfi(&f_bytes).expect("decode_to_qfi")
+            })
+            .collect::<Vec<_>>();
 
         // Aggregate F-shares and extract the product
         let result_bytes =

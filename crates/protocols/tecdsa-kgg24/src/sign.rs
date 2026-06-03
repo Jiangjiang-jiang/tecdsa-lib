@@ -45,13 +45,14 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
-use crate::error::Kgg24Error;
-use crate::key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare};
-use crate::keygen::curve_order;
+use crate::{
+    error::Kgg24Error,
+    key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
+    keygen::curve_order,
+};
 
 /// Security parameter tau (bit-length of the noise exponent base).
 const TAU: u32 = 256;

@@ -5,9 +5,9 @@
 //! - `Enc(a) * Enc(b) mod N = Enc(a + b mod 2^k)`
 //! - `Enc(a)^s mod N = Enc(a * s mod 2^k)`
 
-use crate::enc_dec::JlCiphertext;
-use crate::kgen::JlPublicKey;
 use num_bigint::BigUint;
+
+use crate::{enc_dec::JlCiphertext, kgen::JlPublicKey};
 
 /// Homomorphic addition: computes `Enc(a + b mod 2^k)` from `Enc(a)` and `Enc(b)`.
 ///

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -19,9 +19,10 @@
 //! The engine generates and verifies Sigma-protocol proofs for such
 //! matrix relations.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use crate::zk::{challenge_from_qfi, response_unbounded, sample_random};
-use bicycl_rs::Qfi;
+use crate::{
+    cl::{ClResult, ClSetup, Qfi},
+    zk::{challenge_from_qfi, response_unbounded, sample_random},
+};
 
 /// A single row in the matrix relation: `product(bases[j]^witnesses[j]) = target`.
 pub struct MatrixRow {
@@ -62,7 +63,7 @@ pub fn prove_matrix(
     let mut commitments = Vec::with_capacity(rows.len());
     for row in rows {
         if row.bases.len() != num_witnesses {
-            return Err(crate::bicycl_glue::ClError::InvalidParam(format!(
+            return Err(crate::cl::ClError::InvalidParam(format!(
                 "row bases length {} != witnesses length {}",
                 row.bases.len(),
                 num_witnesses
@@ -134,7 +135,7 @@ pub fn verify_matrix(
         let target_e = setup.exp_bytes(&row.target, &proof.e)?;
         let rhs = setup.compose(&proof.commitments[i], &target_e)?;
 
-        if !lhs.equal(setup.ctx(), &rhs)? {
+        if lhs != rhs {
             return Ok(false);
         }
     }
@@ -144,9 +145,10 @@ pub fn verify_matrix(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::ClSetup;
     use num_bigint::BigUint;
+
+    use super::*;
+    use crate::cl::ClSetup;
 
     #[test]
     fn matrix_relation_single_row() {
@@ -154,7 +156,7 @@ mod tests {
 
         // Single row: h^w = target, where w = 42.
         let w = BigUint::from(42u32).to_bytes_be();
-        let h = setup.h().expect("h");
+        let h = setup.cl().h().clone();
         let target = setup.exp(&h, "42").expect("h^w");
 
         let rows = vec![MatrixRow {
@@ -172,13 +174,13 @@ mod tests {
 
         let w1 = BigUint::from(7u32).to_bytes_be();
         let w2 = BigUint::from(13u32).to_bytes_be();
-        let h = setup.h().expect("h");
+        let h = setup.cl().h().clone();
 
         let target1 = setup.exp(&h, "7").expect("h^w1");
         let target2 = setup.exp(&h, "13").expect("h^w2");
 
         let id = setup.identity().expect("id");
-        let h2 = setup.h().expect("h");
+        let h2 = setup.cl().h().clone();
         let id2 = setup.identity().expect("id");
 
         let rows = vec![

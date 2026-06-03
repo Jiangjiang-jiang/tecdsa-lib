@@ -427,8 +427,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use fast_paillier::DecryptionKey;
+
+    use super::*;
 
     type TestCurve = k256::Secp256k1;
     type Point = <TestCurve as CurveArithmetic>::ProjectivePoint;

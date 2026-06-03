@@ -2,14 +2,12 @@
 //! Blocking session that owns both a `SessionRunner` and a [`Transport`],
 //! driving the protocol to completion in a single `run()` call.
 
-use tecdsa_protocol::state_machine::Recipient;
-use tecdsa_protocol::{PartyId, StateMachine};
+use tecdsa_protocol::{state_machine::Recipient, PartyId, StateMachine};
 use tecdsa_transport::Transport;
 
-use crate::config::SessionRunConfig;
-use crate::error::SessionError;
-use crate::metrics::SessionMetrics;
-use crate::runner::SessionRunner;
+use crate::{
+    config::SessionRunConfig, error::SessionError, metrics::SessionMetrics, runner::SessionRunner,
+};
 
 /// A synchronous, blocking session that runs a protocol to completion.
 ///

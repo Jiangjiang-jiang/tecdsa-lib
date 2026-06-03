@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,10 +13,8 @@
 //! `pk = h^sk`. Domain-separated from R_ClKwlg for use in the
 //! key-generation context of TX25/JTX25 protocols.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkPublicKey, Qfi};
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
+use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
 /// Key proof (Sigma protocol).
 pub struct RKeyProof {
@@ -34,8 +32,8 @@ impl RKeyProof {
         let a = sample_random(setup)?;
         let t = setup.power_of_h_bytes(&a)?;
 
-        let pk_elt = setup.pk_element(pk)?;
-        let e = challenge_from_qfi(setup, b"R_key", &[&pk_elt, &t], &[b"r_key"])?;
+        let pk_elt = pk.elt();
+        let e = challenge_from_qfi(setup, b"R_key", &[pk_elt, &t], &[b"r_key"])?;
 
         let z = response_unbounded(&a, &e, sk_bytes)?;
 
@@ -44,18 +42,18 @@ impl RKeyProof {
 
     /// Verifies the key proof.
     pub fn verify(&self, setup: &ClSetup, pk: &ClHsmqkPublicKey) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
 
-        let e_check = challenge_from_qfi(setup, b"R_key", &[&pk_elt, &self.t], &[b"r_key"])?;
+        let e_check = challenge_from_qfi(setup, b"R_key", &[pk_elt, &self.t], &[b"r_key"])?;
         if e_check != self.e {
             return Ok(false);
         }
 
         // Check: h^z == t * pk^e
         let h_z = setup.power_of_h_bytes(&self.z)?;
-        let pk_e = setup.exp_bytes(&pk_elt, &self.e)?;
+        let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs = setup.compose(&self.t, &pk_e)?;
-        if !h_z.equal(setup.ctx(), &rhs)? {
+        if h_z != rhs {
             return Ok(false);
         }
 
@@ -66,7 +64,7 @@ impl RKeyProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_key_honest_verifies() {

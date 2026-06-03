@@ -1,28 +1,28 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TX25 presign state machine implementation.
 
 use std::collections::BTreeMap;
 
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::{BicyclPublicKey, BicyclQfi, ClSetup};
+use tecdsa_class_group::cl::{ClPublicKey, ClSetup, Qfi};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+use zeroize::Zeroize;
 
-use crate::error::Tx25Error;
-use crate::key_share::Tx25KeyShare;
-use crate::mpmta::mpmta_round1;
-use crate::pvss::pvss_distribute;
-
-use super::msg::{
-    R1Payload, R2Payload, SerREncProof, SerRShProof, SerializedClCt, SerializedQfi, Tx25PresignMsg,
+use super::{
+    msg::{
+        R1Payload, R2Payload, SerREncProof, SerRShProof, SerializedClCt, SerializedQfi,
+        Tx25PresignMsg,
+    },
+    rounds::{
+        finalize, my_idx, n_others, point_from_bytes, transition_r1_to_r2, PresignRound,
+        ReceivedR1, ReceivedR2, Round1State,
+    },
+    KeyMaterial, Tx25Presignature,
 };
-use super::rounds::{
-    finalize, my_idx, n_others, point_from_bytes, transition_r1_to_r2, PresignRound, ReceivedR1,
-    ReceivedR2, Round1State,
+use crate::{
+    error::Tx25Error, key_share::Tx25KeyShare, mpmta::mpmta_round1, pvss::pvss_distribute,
 };
-use super::{KeyMaterial, Tx25Presignature};
 
 // ---------------------------------------------------------------------------
 // TX25 presigning state machine
@@ -88,14 +88,14 @@ impl Tx25PresignMachine {
 
         // Extract key material (ClSecretKey -> decimal, ClPublicKey -> inner).
         let sk_decimal = setup
-            .sk_to_bytes(key_share.cl_sk.inner())
+            .sk_to_bytes(&key_share.cl_sk)
             .map_err(|e| Tx25Error::InvalidInput(format!("sk_to_bytes: {e}")))?;
-        let raw_pks: Vec<BicyclPublicKey> = key_share
+        let raw_pks: Vec<ClPublicKey> = key_share
             .cl_pks
             .iter()
             .map(|pk| {
-                let qfi = setup.pk_element(pk.inner())?;
-                setup.pk_from_qfi(&qfi)
+                let qfi = pk.elt();
+                setup.pk_from_qfi(qfi)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -131,20 +131,20 @@ impl Tx25PresignMachine {
         )?;
 
         // --- Step 4: Build Round 1 message ---
-        let c_gamma_ser = SerializedClCt::from_bicycl_ct(&setup, &mpmta_r1.ciphertext)
+        let c_gamma_ser = SerializedClCt::from_bicycl_ct(&mpmta_r1.ciphertext)
             .map_err(|e| Tx25Error::InvalidInput(format!("serialize c_gamma: {e}")))?;
 
-        let r_enc_proof_ser = SerREncProof::from_proof(&setup, &mpmta_r1.proof)
+        let r_enc_proof_ser = SerREncProof::from_proof(&mpmta_r1.proof)
             .map_err(|e| Tx25Error::InvalidInput(format!("serialize r_enc_proof: {e}")))?;
 
-        let pvss_c1_ser = SerializedQfi::from_qfi(&setup, &pvss_out.c1)
+        let pvss_c1_ser = SerializedQfi::from_qfi(&pvss_out.c1)
             .map_err(|e| Tx25Error::InvalidInput(format!("serialize pvss_c1: {e}")))?;
 
         let pvss_c2s_ser: Vec<SerializedQfi> = pvss_out
             .c2s
             .iter()
             .map(|c2| {
-                SerializedQfi::from_qfi(&setup, c2)
+                SerializedQfi::from_qfi(c2)
                     .map_err(|e| Tx25Error::InvalidInput(format!("serialize pvss_c2: {e}")))
             })
             .collect::<Result<_, _>>()?;
@@ -250,25 +250,25 @@ impl StateMachine for Tx25PresignMachine {
                             })?;
 
                     // Reconstruct CL objects.
-                    let c_gamma = payload.c_gamma.to_bicycl_ct(&self.setup).map_err(|e| {
+                    let c_gamma = payload.c_gamma.to_bicycl_ct().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct c_gamma from party {from}: {e}"))
                     })?;
 
-                    let r_enc_proof = payload.r_enc_proof.to_proof(&self.setup).map_err(|e| {
+                    let r_enc_proof = payload.r_enc_proof.to_proof().map_err(|e| {
                         TecdsaError::Other(format!(
                             "reconstruct r_enc_proof from party {from}: {e}"
                         ))
                     })?;
 
-                    let pvss_c1 = payload.pvss_c1.to_qfi(&self.setup).map_err(|e| {
+                    let pvss_c1 = payload.pvss_c1.to_qfi().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct pvss_c1 from party {from}: {e}"))
                     })?;
 
-                    let pvss_c2s: Vec<BicyclQfi> = payload
+                    let pvss_c2s: Vec<Qfi> = payload
                         .pvss_c2s
                         .iter()
                         .map(|s| {
-                            s.to_qfi(&self.setup).map_err(|e| {
+                            s.to_qfi().map_err(|e| {
                                 TecdsaError::Other(format!(
                                     "reconstruct pvss_c2 from party {from}: {e}"
                                 ))
@@ -341,12 +341,12 @@ impl StateMachine for Tx25PresignMachine {
                     let mut b_hat_pts = Vec::with_capacity(n);
 
                     for (j, mta) in payload.mta_outputs.iter().enumerate() {
-                        let kg_ca = mta.c_alpha.to_bicycl_ct(&self.setup).map_err(|e| {
+                        let kg_ca = mta.c_alpha.to_bicycl_ct().map_err(|e| {
                             TecdsaError::Other(format!(
                                 "reconstruct kg c_alpha[{j}] from party {from}: {e}"
                             ))
                         })?;
-                        let xg_ca = mta.c_alpha_hat.to_bicycl_ct(&self.setup).map_err(|e| {
+                        let xg_ca = mta.c_alpha_hat.to_bicycl_ct().map_err(|e| {
                             TecdsaError::Other(format!(
                                 "reconstruct xg c_alpha[{j}] from party {from}: {e}"
                             ))
@@ -370,25 +370,25 @@ impl StateMachine for Tx25PresignMachine {
                         point_from_bytes(&payload.r_point_bytes, &format!("R from {from}"))
                             .map_err(TecdsaError::Other)?;
 
-                    let pd = payload.pd.to_qfi(&self.setup).map_err(|e| {
+                    let pd = payload.pd.to_qfi().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct pd from party {from}: {e}"))
                     })?;
 
-                    let pd_c1 = payload.pd_c1.to_qfi(&self.setup).map_err(|e| {
+                    let pd_c1 = payload.pd_c1.to_qfi().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct pd_c1 from party {from}: {e}"))
                     })?;
 
-                    let dec_dl_proof = payload.dec_dl_proof.to_proof(&self.setup).map_err(|e| {
+                    let dec_dl_proof = payload.dec_dl_proof.to_proof().map_err(|e| {
                         TecdsaError::Other(format!(
                             "reconstruct dec_dl_proof from party {from}: {e}"
                         ))
                     })?;
 
-                    let kg_proof = payload.kg_proof.to_proof(&self.setup).map_err(|e| {
+                    let kg_proof = payload.kg_proof.to_proof().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct kg_proof from party {from}: {e}"))
                     })?;
 
-                    let xg_proof = payload.xg_proof.to_proof(&self.setup).map_err(|e| {
+                    let xg_proof = payload.xg_proof.to_proof().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct xg_proof from party {from}: {e}"))
                     })?;
 

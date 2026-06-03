@@ -18,15 +18,16 @@ use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 use zeroize::Zeroize;
 
-use crate::f_mult::{
-    element_out::{ElementOutMsg, ElementOutState},
-    init::{InitOutput, InitRound1Msg, InitRound2Msg, InitState},
-    input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
-};
-use crate::key_share::Ln18KeyShare;
-
 use super::msg::{
     Ln18KeygenMsg, SerElementOut, SerInitRound1, SerInitRound2, SerInputRound1, SerInputRound2,
+};
+use crate::{
+    f_mult::{
+        element_out::{ElementOutMsg, ElementOutState},
+        init::{InitOutput, InitRound1Msg, InitRound2Msg, InitState},
+        input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
+    },
+    key_share::Ln18KeyShare,
 };
 
 // ---------------------------------------------------------------------------

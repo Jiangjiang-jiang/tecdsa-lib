@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,11 +13,10 @@
 //! specified range `[0, B)`.  Uses a statistical zero-knowledge technique
 //! where the commitment randomness is sampled from a larger range.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
 use num_bigint::BigUint;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random};
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// Bounded integer proof.
 pub struct RBintProof {
@@ -56,7 +55,7 @@ impl RBintProof {
         let h_z = setup.power_of_h_bytes(&self.z)?;
         let y_e = setup.exp_bytes(y, &self.e)?;
         let rhs = setup.compose(&self.t, &y_e)?;
-        if !h_z.equal(setup.ctx(), &rhs)? {
+        if h_z != rhs {
             return Ok(false);
         }
 
@@ -78,7 +77,7 @@ impl RBintProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_bint_honest_verifies() {

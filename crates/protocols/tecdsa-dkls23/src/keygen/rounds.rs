@@ -26,10 +26,11 @@ use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 use zeroize::Zeroize;
 
-use crate::key_share::Dkls23KeyShare;
-use crate::utils::{deserialize_point, deserialize_scalar, validate_sender};
-
 use super::msg::{Dkls23KeygenMsg, KeygenR1Broadcast, KeygenR2Broadcast, KeygenR2P2p};
+use crate::{
+    key_share::Dkls23KeyShare,
+    utils::{deserialize_point, deserialize_scalar, validate_sender},
+};
 
 // ---------------------------------------------------------------------------
 // Configuration

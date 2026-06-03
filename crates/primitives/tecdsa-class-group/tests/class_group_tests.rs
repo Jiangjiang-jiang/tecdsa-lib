@@ -1,12 +1,9 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for `tecdsa-class-group`.
 
 use num_bigint::BigUint;
 use num_traits::Num;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::cl_enc;
-use tecdsa_class_group::nim::Nim;
+use tecdsa_class_group::{cl::ClSetup, nim::Nim};
 
 /// The secp256k1 curve order.
 fn q() -> BigUint {
@@ -20,40 +17,58 @@ fn q() -> BigUint {
 #[test]
 fn cl_enc_dec_roundtrip() {
     let mut setup = ClSetup::new_secp256k1("100").expect("setup failed");
-    let (pk, sk) = cl_enc::keygen(&mut setup).expect("keygen failed");
+    let (sk, pk) = setup.keygen().expect("keygen failed");
 
     // Encrypt and decrypt a small value.
     let plaintext = BigUint::from(42u32);
-    let ct = cl_enc::encrypt(&mut setup, &pk, &plaintext).expect("encrypt failed");
-    let decrypted = cl_enc::decrypt(&setup, &sk, &ct).expect("decrypt failed");
+    let ct = setup
+        .encrypt_bytes(&pk, &plaintext.to_bytes_be())
+        .expect("encrypt failed");
+    let decrypted = BigUint::from_bytes_be(&setup.decrypt_bytes(&sk, &ct).expect("decrypt failed"));
     assert_eq!(decrypted, plaintext, "roundtrip failed for plaintext=42");
 
     // Encrypt and decrypt zero.
     let zero = BigUint::from(0u32);
-    let ct_zero = cl_enc::encrypt(&mut setup, &pk, &zero).expect("encrypt zero failed");
-    let dec_zero = cl_enc::decrypt(&setup, &sk, &ct_zero).expect("decrypt zero failed");
+    let ct_zero = setup
+        .encrypt_bytes(&pk, &zero.to_bytes_be())
+        .expect("encrypt zero failed");
+    let dec_zero = BigUint::from_bytes_be(
+        &setup
+            .decrypt_bytes(&sk, &ct_zero)
+            .expect("decrypt zero failed"),
+    );
     assert_eq!(dec_zero, zero, "roundtrip failed for plaintext=0");
 
     // Encrypt and decrypt a larger value.
     let large = BigUint::from(123_456_789u64);
-    let ct_large = cl_enc::encrypt(&mut setup, &pk, &large).expect("encrypt large failed");
-    let dec_large = cl_enc::decrypt(&setup, &sk, &ct_large).expect("decrypt large failed");
+    let ct_large = setup
+        .encrypt_bytes(&pk, &large.to_bytes_be())
+        .expect("encrypt large failed");
+    let dec_large = BigUint::from_bytes_be(
+        &setup
+            .decrypt_bytes(&sk, &ct_large)
+            .expect("decrypt large failed"),
+    );
     assert_eq!(dec_large, large, "roundtrip failed for large plaintext");
 }
 
 #[test]
 fn cl_homomorphic_add() {
     let mut setup = ClSetup::new_secp256k1("200").expect("setup failed");
-    let (pk, sk) = cl_enc::keygen(&mut setup).expect("keygen failed");
+    let (sk, pk) = setup.keygen().expect("keygen failed");
 
     let a = BigUint::from(100u32);
     let b = BigUint::from(200u32);
 
-    let ct_a = cl_enc::encrypt(&mut setup, &pk, &a).expect("encrypt a");
-    let ct_b = cl_enc::encrypt(&mut setup, &pk, &b).expect("encrypt b");
+    let ct_a = setup
+        .encrypt_bytes(&pk, &a.to_bytes_be())
+        .expect("encrypt a");
+    let ct_b = setup
+        .encrypt_bytes(&pk, &b.to_bytes_be())
+        .expect("encrypt b");
 
-    let ct_sum = cl_enc::hadd(&mut setup, &pk, &ct_a, &ct_b).expect("hadd");
-    let sum = cl_enc::decrypt(&setup, &sk, &ct_sum).expect("decrypt sum");
+    let ct_sum = setup.add_ciphertexts(&pk, &ct_a, &ct_b).expect("hadd");
+    let sum = BigUint::from_bytes_be(&setup.decrypt_bytes(&sk, &ct_sum).expect("decrypt sum"));
 
     let expected = (&a + &b) % q();
     assert_eq!(sum, expected, "homomorphic add failed: {sum} != {expected}");
@@ -62,14 +77,22 @@ fn cl_homomorphic_add() {
 #[test]
 fn cl_homomorphic_scalar_mul() {
     let mut setup = ClSetup::new_secp256k1("300").expect("setup failed");
-    let (pk, sk) = cl_enc::keygen(&mut setup).expect("keygen failed");
+    let (sk, pk) = setup.keygen().expect("keygen failed");
 
     let m = BigUint::from(7u32);
     let s = BigUint::from(6u32);
 
-    let ct_m = cl_enc::encrypt(&mut setup, &pk, &m).expect("encrypt m");
-    let ct_scaled = cl_enc::hscmul(&mut setup, &pk, &s, &ct_m).expect("hscmul");
-    let result = cl_enc::decrypt(&setup, &sk, &ct_scaled).expect("decrypt scaled");
+    let ct_m = setup
+        .encrypt_bytes(&pk, &m.to_bytes_be())
+        .expect("encrypt m");
+    let ct_scaled = setup
+        .scal_ciphertext_bytes(&pk, &ct_m, &s.to_bytes_be())
+        .expect("hscmul");
+    let result = BigUint::from_bytes_be(
+        &setup
+            .decrypt_bytes(&sk, &ct_scaled)
+            .expect("decrypt scaled"),
+    );
 
     let expected = (&m * &s) % q();
     assert_eq!(

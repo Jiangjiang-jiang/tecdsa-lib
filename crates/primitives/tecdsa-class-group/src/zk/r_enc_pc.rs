@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -12,11 +12,11 @@
 //! Proves knowledge of `(m, r)` such that `ct = Enc(pk, m; r)` and
 //! `Y = f^m` (links encryption to an F-subgroup element).
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey, Qfi};
-
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
+};
+use crate::cl::{
+    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
 /// Encryption public-check proof.
@@ -43,8 +43,8 @@ impl REncPcProof {
         let a2 = sample_random_mod_q(setup)?;
 
         let t1 = setup.power_of_h_bytes(&a1)?;
-        let pk_elt = setup.pk_element(pk)?;
-        let pk_a1 = setup.exp_bytes(&pk_elt, &a1)?;
+        let pk_elt = pk.elt();
+        let pk_a1 = setup.exp_bytes(pk_elt, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
         let s = setup.power_of_f_bytes(&a2)?;
@@ -53,7 +53,7 @@ impl REncPcProof {
         let e = challenge_from_qfi(
             setup,
             b"R_enc_pc",
-            &[&pk_elt, &c1, &c2, y, &t1, &t2, &s],
+            &[pk_elt, &c1, &c2, y, &t1, &t2, &s],
             &[],
         )?;
 
@@ -79,13 +79,13 @@ impl REncPcProof {
         ct: &ClHsmqkCiphertext,
         y: &Qfi,
     ) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
         let (c1, c2) = setup.ct_components(ct)?;
 
         let e_check = challenge_from_qfi(
             setup,
             b"R_enc_pc",
-            &[&pk_elt, &c1, &c2, y, &self.t1, &self.t2, &self.s],
+            &[pk_elt, &c1, &c2, y, &self.t1, &self.t2, &self.s],
             &[],
         )?;
         if e_check != self.e {
@@ -96,17 +96,17 @@ impl REncPcProof {
         let lhs1 = setup.power_of_h_bytes(&self.u1)?;
         let c1_e = setup.exp_bytes(&c1, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
-        if !lhs1.equal(setup.ctx(), &rhs1)? {
+        if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: pk^u1 * f^u2 == t2 * c2^e
-        let pk_u1 = setup.exp_bytes(&pk_elt, &self.u1)?;
+        let pk_u1 = setup.exp_bytes(pk_elt, &self.u1)?;
         let f_u2 = setup.power_of_f_bytes(&self.u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
         let c2_e = setup.exp_bytes(&c2, &self.e)?;
         let rhs2 = setup.compose(&self.t2, &c2_e)?;
-        if !lhs2.equal(setup.ctx(), &rhs2)? {
+        if lhs2 != rhs2 {
             return Ok(false);
         }
 
@@ -121,9 +121,10 @@ impl REncPcProof {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::ClSetup;
     use num_bigint::BigUint;
+
+    use super::*;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_enc_pc_honest_verifies() {

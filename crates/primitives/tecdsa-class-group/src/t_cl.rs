@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -21,8 +21,7 @@
 //!   Lagrange in the exponent: `combined = product(pd_i^{lambda_i})`,
 //!   then extract plaintext from `c2 * combined^{-1}`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkCiphertext, Qfi};
+use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
 
 /// A partial decryption share from party `i`.
 pub struct PartialDecryption {
@@ -154,7 +153,7 @@ pub fn final_decrypt(
 
         let mut pd_lambda = setup.exp_bytes(&pd.dec_share, &exp_bytes)?;
         if should_invert {
-            pd_lambda = pd_lambda.neg(setup.ctx())?;
+            pd_lambda.neg();
         }
         combined = setup.compose(&combined, &pd_lambda)?;
     }
@@ -170,8 +169,8 @@ pub fn final_decrypt(
     let delta2_bytes = delta2.to_bytes_be();
     let (_c1, c2) = setup.ct_components(ct)?;
     let c2_delta2 = setup.exp_bytes(&c2, &delta2_bytes)?;
-    let combined_inv = combined.neg(setup.ctx())?;
-    let plaintext_elt = setup.compose(&c2_delta2, &combined_inv)?;
+    combined.neg();
+    let plaintext_elt = setup.compose(&c2_delta2, &combined)?;
 
     // Extract m * delta^2 mod q, then divide by delta^2 mod q.
     let m_scaled_bytes = setup.dlog_in_F_bytes(&plaintext_elt)?;
@@ -187,9 +186,10 @@ pub fn final_decrypt(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::ClSetup;
     use num_bigint::BigUint;
+
+    use super::*;
+    use crate::cl::ClSetup;
 
     /// Generates threshold key shares using the delta-scaled Shamir
     /// scheme matching the BICYCL threshold CL protocol.
@@ -271,7 +271,8 @@ mod tests {
 
         // Verify: pd = c1^sk, so c2 * pd^{-1} should give f^m.
         let (_c1, c2) = setup.ct_components(&ct).expect("comp");
-        let pd_inv = pd.dec_share.neg(setup.ctx()).expect("neg");
+        let mut pd_inv = pd.dec_share.clone();
+        pd_inv.neg();
         let f_m = setup.compose(&c2, &pd_inv).expect("compose");
         #[allow(non_snake_case)]
         let m_bytes = setup.dlog_in_F_bytes(&f_m).expect("dlog");

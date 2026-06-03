@@ -24,16 +24,18 @@ pub mod msg;
 mod rounds;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use msg::Ggn16KeygenMsg;
 use rand_core::CryptoRngCore;
+use rounds::{KeygenConfig, KeygenRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
+use tecdsa_paillier::{
+    backend::Integer,
+    threshold::{DecryptionShare, ThresholdSetup},
+};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
 use crate::key_share::Ggn16KeyShare;
-use msg::Ggn16KeygenMsg;
-use rounds::{KeygenConfig, KeygenRound, Round1State};
 
 /// GGN16 threshold key generation state machine.
 ///
@@ -199,12 +201,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use elliptic_curve::group::GroupEncoding;
     use tecdsa_paillier::threshold::{
         combine_partials, partial_decrypt, DecryptionShare, ThresholdSetup,
     };
     use tecdsa_testkit::Orchestrator;
+
+    use super::*;
 
     type TestCurve = k256::Secp256k1;
 

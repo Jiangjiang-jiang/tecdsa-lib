@@ -18,16 +18,19 @@
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::{Group, GroupEncoding};
-use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
+use elliptic_curve::{
+    group::{Group, GroupEncoding},
+    sec1::ModulusSize,
+    Field, FieldBytes, FieldBytesSize, PrimeField,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_joye_libert::kgen::{JlPublicKey, JlSecretKey};
-use tecdsa_joye_libert::zk::zkjlmod::ZkJlModProof;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_joye_libert::{
+    kgen::{JlPublicKey, JlSecretKey},
+    zk::zkjlmod::ZkJlModProof,
+};
 use tecdsa_protocol::PartyId;
 
 use crate::key_share::{VssSetup, Xal23KeyShare};

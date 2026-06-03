@@ -16,8 +16,6 @@
 
 pub mod zk;
 
-pub use zk::EvrfProof;
-
 use elliptic_curve::{
     group::Curve as _, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -26,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
+pub use zk::EvrfProof;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Hash-to-curve (try-and-increment via SHA-256)
@@ -188,9 +187,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
     use rand::rngs::OsRng;
+
+    use super::*;
 
     type Sk = EvrfSecretKey<Secp256k1>;
 

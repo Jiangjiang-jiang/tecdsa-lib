@@ -5,8 +5,10 @@
 //! rounds without any network layer — messages are delivered by directly
 //! calling [`StateMachine::handle`] on each recipient machine.
 
-use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, StateMachine};
 

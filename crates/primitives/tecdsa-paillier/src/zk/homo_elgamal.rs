@@ -105,9 +105,9 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use std::{fmt, marker::PhantomData};
+
         use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
-        use std::marker::PhantomData;
 
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]

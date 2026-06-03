@@ -18,20 +18,19 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::zk::mta_range::NTildeParams;
-use tecdsa_paillier::zk::paillier_zk::paillier_blum_modulus;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::{
+    backend::Integer,
+    zk::{mta_range::NTildeParams, paillier_zk::paillier_blum_modulus},
+};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 use tecdsa_vss::feldman;
 use zeroize::Zeroize;
 
-use super::msg::PI_MOD_SECURITY;
-
+use super::msg::{
+    Gg18KeygenMsg, MsgRound1, MsgRound2Broad, MsgRound2Uni, MsgRound3, SerInteger, PI_MOD_SECURITY,
+};
 use crate::key_share::{Gg18KeyShare, VssSetup};
-
-use super::msg::{Gg18KeygenMsg, MsgRound1, MsgRound2Broad, MsgRound2Uni, MsgRound3, SerInteger};
 
 // ---------------------------------------------------------------------------
 // Round enum

@@ -45,13 +45,14 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_protocol::MtA;
 
-use crate::error::Xal21Error;
-use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
-use crate::keygen::{curve_order, int_to_scalar};
+use crate::{
+    error::Xal21Error,
+    key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare},
+    keygen::{curve_order, int_to_scalar},
+};
 
 /// Default MtA backend: Paillier-based MtA from `tecdsa_paillier`.
 pub type DefaultMtA = tecdsa_paillier::mta::PaillierMtA;

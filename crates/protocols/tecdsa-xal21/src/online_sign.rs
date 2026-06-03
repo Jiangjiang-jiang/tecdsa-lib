@@ -30,9 +30,11 @@ use elliptic_curve::{
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
-use crate::error::Xal21Error;
-use crate::key_share::Xal21Party1KeyShare;
-use crate::offline_sign::{Party1Presignature, Party2Presignature};
+use crate::{
+    error::Xal21Error,
+    key_share::Xal21Party1KeyShare,
+    offline_sign::{Party1Presignature, Party2Presignature},
+};
 
 // ---------------------------------------------------------------------------
 // Message types

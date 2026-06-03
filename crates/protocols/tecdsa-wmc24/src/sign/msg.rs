@@ -1,10 +1,8 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMC24 online sign message types and serialization helpers.
 
 use serde::{Deserialize, Serialize};
-
-use tecdsa_class_group::bicycl_glue::{BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_part_dec::RPartDecProof;
+use tecdsa_class_group::{cl::Qfi, zk::r_part_dec::RPartDecProof};
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -25,14 +23,12 @@ pub(crate) struct SerializedQfi {
 }
 
 impl SerializedQfi {
-    pub(crate) fn from_qfi(setup: &ClSetup, qfi: &BicyclQfi) -> Result<Self, String> {
-        let ctx = setup.ctx();
-        let data = qfi.to_bytes(ctx).map_err(|e| format!("to_bytes: {e}"))?;
+    pub(crate) fn from_qfi(qfi: &Qfi) -> Result<Self, String> {
+        let data = qfi.to_bytes();
         Ok(Self { data })
     }
-    pub(crate) fn to_qfi(&self, setup: &ClSetup) -> Result<BicyclQfi, String> {
-        let ctx = setup.ctx();
-        BicyclQfi::from_bytes(ctx, &self.data).map_err(|e| format!("from_bytes: {e}"))
+    pub(crate) fn to_qfi(&self) -> Result<Qfi, String> {
+        Ok(Qfi::from_bytes(&self.data))
     }
 }
 
@@ -45,18 +41,18 @@ pub(crate) struct SerRPartDecProof {
 }
 
 impl SerRPartDecProof {
-    pub(crate) fn from_proof(setup: &ClSetup, proof: &RPartDecProof) -> Result<Self, String> {
+    pub(crate) fn from_proof(proof: &RPartDecProof) -> Result<Self, String> {
         Ok(Self {
-            t1: SerializedQfi::from_qfi(setup, &proof.t1)?,
-            t2: SerializedQfi::from_qfi(setup, &proof.t2)?,
+            t1: SerializedQfi::from_qfi(&proof.t1)?,
+            t2: SerializedQfi::from_qfi(&proof.t2)?,
             z: proof.z.clone(),
             e: proof.e.clone(),
         })
     }
-    pub(crate) fn to_proof(&self, setup: &ClSetup) -> Result<RPartDecProof, String> {
+    pub(crate) fn to_proof(&self) -> Result<RPartDecProof, String> {
         Ok(RPartDecProof {
-            t1: self.t1.to_qfi(setup)?,
-            t2: self.t2.to_qfi(setup)?,
+            t1: self.t1.to_qfi()?,
+            t2: self.t2.to_qfi()?,
             z: self.z.clone(),
             e: self.e.clone(),
         })

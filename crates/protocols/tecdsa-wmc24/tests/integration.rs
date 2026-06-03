@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -18,13 +18,14 @@
 
 use elliptic_curve::CurveArithmetic;
 use num_bigint::{BigInt, BigUint};
-
-use tecdsa_class_group::bicycl_glue::{BicyclQfi, ClSetup};
+use tecdsa_class_group::cl::{ClSetup, Qfi};
 use tecdsa_protocol::PartyId;
-use tecdsa_wmc24::key_share::Wmc24KeyShare;
-use tecdsa_wmc24::keygen::Wmc24KeygenMachine;
-use tecdsa_wmc24::presign::{Wmc24PresignMachine, Wmc24Presignature};
-use tecdsa_wmc24::sign::Wmc24OnlineSignMachine;
+use tecdsa_wmc24::{
+    key_share::Wmc24KeyShare,
+    keygen::Wmc24KeygenMachine,
+    presign::{Wmc24PresignMachine, Wmc24Presignature},
+    sign::Wmc24OnlineSignMachine,
+};
 
 // ---------------------------------------------------------------------------
 // Helper: run keygen state machine
@@ -79,7 +80,7 @@ fn setup_threshold_cl_keys(shares: &mut [Wmc24KeyShare], seed: &str) {
     let sk_shares = tecdsa_wmc24::keygen::shamir_share_delta(&mut setup, &sk_bytes, n, t)
         .expect("shamir_share_delta");
 
-    let mut pk_share_qfis: Vec<BicyclQfi> = Vec::with_capacity(n);
+    let mut pk_share_qfis: Vec<Qfi> = Vec::with_capacity(n);
     for share in &sk_shares {
         let share_bi = BigInt::from(BigUint::from_bytes_be(share));
         let (sign, abs_str) = if share_bi < BigInt::from(0) {
@@ -89,9 +90,10 @@ fn setup_threshold_cl_keys(shares: &mut [Wmc24KeyShare], seed: &str) {
             (false, share_bi.to_string())
         };
 
-        let h_share = setup.power_of_h(&abs_str).expect("power_of_h");
+        let mut h_share = setup.power_of_h(&abs_str).expect("power_of_h");
         let pk_share = if sign {
-            h_share.neg(setup.ctx()).expect("neg")
+            h_share.neg();
+            h_share
         } else {
             h_share
         };
@@ -140,19 +142,8 @@ fn setup_threshold_cl_keys(shares: &mut [Wmc24KeyShare], seed: &str) {
 
     for (i, share) in shares.iter_mut().enumerate() {
         share.cl_sk_share = sk_shares[i].clone();
-        share.cl_pk = setup
-            .pk_from_qfi(&setup.pk_element(&pk_raw).expect("pk_element"))
-            .expect("pk_from_qfi");
-        share.cl_pk_shares = pk_share_qfis
-            .iter()
-            .map(|qfi| {
-                let ctx = setup.ctx();
-                let a = qfi.a_decimal(ctx).expect("a");
-                let b = qfi.b_decimal(ctx).expect("b");
-                let c = qfi.c_decimal(ctx).expect("c");
-                BicyclQfi::from_abc_decimal(ctx, &a, &b, &c).expect("from_abc")
-            })
-            .collect();
+        share.cl_pk = setup.pk_from_qfi(pk_raw.elt()).expect("pk_from_qfi");
+        share.cl_pk_shares = pk_share_qfis.clone();
         share.n_parties_dkg = n;
         // Set threshold ElGamal keys.
         share.eldk_i = elg_shares[i];

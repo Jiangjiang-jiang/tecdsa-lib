@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 //! WMC24 Four-Round Threshold ECDSA from Threshold CL + Threshold ElGamal.
 //!
@@ -11,10 +11,6 @@
 //!
 //! Uses R = g^{1/k} computed as (g^gamma)^{1/(gamma*k)}.
 //! s = k(m + rx) = km + rkx (decrypted via threshold CL).
-//!
-//! # License
-//!
-//! GPL-3.0-or-later (tecdsa-class-group dependency).
 
 pub(crate) mod curve_wire;
 pub mod error;
@@ -24,9 +20,8 @@ pub mod metadata;
 pub mod presign;
 pub mod sign;
 
-use tecdsa_protocol::{NoOpMachine, Protocol};
-
 pub use key_share::Wmc24KeyShare;
+use tecdsa_protocol::{NoOpMachine, Protocol};
 
 pub struct Wmc24;
 

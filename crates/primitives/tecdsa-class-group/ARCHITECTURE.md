@@ -57,8 +57,7 @@ tecdsa-class-group
 
 ## License
 
-GPL-3.0-or-later (inherited from bicycl-rs). Any crate depending on
-tecdsa-class-group becomes GPL-3.0.
+MIT OR Apache-2.0
 
 ## Future Consideration
 

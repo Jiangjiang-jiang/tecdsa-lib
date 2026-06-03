@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Feldman VSS: Shamir sharing with EC commitments to polynomial coefficients.
 
-use crate::shamir::Share;
 use elliptic_curve::{
     group::Group, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
+
+use crate::shamir::Share;
 
 /// Split `secret` into `n` Feldman VSS shares with threshold `threshold`.
 ///

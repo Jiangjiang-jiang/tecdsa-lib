@@ -12,11 +12,12 @@
 //!   c'_i = y0^{2^k * m_i} * h0^{2^k * r0_i} mod N0  for all i
 //!   m_i in [0, B_i]}
 
-use crate::kgen::JlPublicKey;
 use num_bigint::{BigUint, RandBigInt};
 use num_traits::One;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::kgen::JlPublicKey;
 
 /// Non-interactive proof of vector plaintext equality.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -236,9 +237,10 @@ fn fiat_shamir_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kgen::generate_keypair_with_qnr;
-    use crate::zk::zkjl_com::jl_commit;
-    use crate::zk::zkjlv_com::jl_vec_commit;
+    use crate::{
+        kgen::generate_keypair_with_qnr,
+        zk::{zkjl_com::jl_commit, zkjlv_com::jl_vec_commit},
+    };
 
     #[test]
     fn zkjlv_equ_prove_and_verify() {

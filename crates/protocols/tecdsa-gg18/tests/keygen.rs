@@ -2,8 +2,7 @@
 use tecdsa_core::Csprng;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_gg18::keygen::{generate_n_tilde, Gg18KeygenMachine, PaillierPrecomputed};
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::DecryptionKey;
+use tecdsa_paillier::{backend::Integer, DecryptionKey};
 use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine};
 use tecdsa_vss::shamir::{self, Share};
 

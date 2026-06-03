@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 presigning protocol (Rounds 1-4).
 //!
 //! Produces a message-independent [`Wmy23Presignature`] using CL-based MtAwc
@@ -34,25 +34,23 @@
 pub mod rounds;
 pub mod types;
 
-pub use types::Wmy23Presignature;
-
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::{CurveArithmetic, PrimeField};
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic, PrimeField};
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-
-use tecdsa_class_group::bicycl_glue::{BicyclQfi, ClSetup};
-use tecdsa_class_group::cl_enc::ClCiphertext;
+use tecdsa_class_group::cl::{ClCiphertext, ClSetup, Qfi};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+pub use types::Wmy23Presignature;
 
-use crate::key_share::Wmy23KeyShare;
-use crate::mtawc::{self, MtAwcAliceState};
+use crate::{
+    key_share::Wmy23KeyShare,
+    mtawc::{self, MtAwcAliceState},
+};
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -84,26 +82,18 @@ struct SerializedClCt {
 
 impl SerializedClCt {
     /// Serialise a `ClCiphertext` using the given `ClSetup` context.
-    fn from_ct(setup: &ClSetup, ct: &ClCiphertext) -> Result<Self, String> {
-        let (c1, c2) = ct
-            .components(setup)
-            .map_err(|e| format!("ct_components: {e}"))?;
-        let ctx = setup.ctx();
+    fn from_ct(ct: &ClCiphertext) -> Result<Self, String> {
         Ok(Self {
-            c1: c1.to_bytes(ctx).map_err(|e| format!("c1 to_bytes: {e}"))?,
-            c2: c2.to_bytes(ctx).map_err(|e| format!("c2 to_bytes: {e}"))?,
+            c1: ct.c1().to_bytes(),
+            c2: ct.c2().to_bytes(),
         })
     }
 
     /// Reconstruct a `ClCiphertext` from serialised form.
-    fn to_ct(&self, setup: &ClSetup) -> Result<ClCiphertext, String> {
-        let ctx = setup.ctx();
-        let c1 = BicyclQfi::from_bytes(ctx, &self.c1).map_err(|e| format!("c1 from_bytes: {e}"))?;
-        let c2 = BicyclQfi::from_bytes(ctx, &self.c2).map_err(|e| format!("c2 from_bytes: {e}"))?;
-        let raw = setup
-            .ct_from_components(&c1, &c2)
-            .map_err(|e| format!("ct_from_components: {e}"))?;
-        Ok(ClCiphertext::from_raw(raw))
+    fn to_ct(&self) -> Result<ClCiphertext, String> {
+        let c1 = Qfi::from_bytes(&self.c1);
+        let c2 = Qfi::from_bytes(&self.c2);
+        Ok(ClCiphertext::new(c1, c2))
     }
 }
 
@@ -405,9 +395,9 @@ impl Wmy23PresignMachine {
                 .map_err(|e| TecdsaError::Other(format!("mtawc_alice_step1 x: {e}")))?;
 
         // Serialise ciphertexts for the message
-        let ct_gamma_ser = SerializedClCt::from_ct(setup, &ct_gamma)
+        let ct_gamma_ser = SerializedClCt::from_ct(&ct_gamma)
             .map_err(|e| TecdsaError::Other(format!("serialize ct_gamma: {e}")))?;
-        let ct_x_ser = SerializedClCt::from_ct(setup, &ct_x)
+        let ct_x_ser = SerializedClCt::from_ct(&ct_x)
             .map_err(|e| TecdsaError::Other(format!("serialize ct_x: {e}")))?;
 
         let r2_payload = R2Payload {
@@ -523,9 +513,9 @@ impl Wmy23PresignMachine {
                 .map_err(|e| TecdsaError::Other(format!("mtawc_bob x for party {party_j}: {e}")))?;
 
             // Serialise Bob outputs for the message to party j
-            let gamma_c_alpha_ser = SerializedClCt::from_ct(setup, &gamma_bob.c_alpha)
+            let gamma_c_alpha_ser = SerializedClCt::from_ct(&gamma_bob.c_alpha)
                 .map_err(|e| TecdsaError::Other(format!("serialize gamma_c_alpha: {e}")))?;
-            let x_c_alpha_ser = SerializedClCt::from_ct(setup, &x_bob.c_alpha)
+            let x_c_alpha_ser = SerializedClCt::from_ct(&x_bob.c_alpha)
                 .map_err(|e| TecdsaError::Other(format!("serialize x_c_alpha: {e}")))?;
 
             let r3_payload = R3Payload {
@@ -785,10 +775,10 @@ impl StateMachine for Wmy23PresignMachine {
                                 TecdsaError::Other(format!("deserialize R2 payload: {e}"))
                             })?;
 
-                    let ct_gamma = payload.ct_gamma.to_ct(&self.setup).map_err(|e| {
+                    let ct_gamma = payload.ct_gamma.to_ct().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct ct_gamma from party {from}: {e}"))
                     })?;
-                    let ct_x = payload.ct_x.to_ct(&self.setup).map_err(|e| {
+                    let ct_x = payload.ct_x.to_ct().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct ct_x from party {from}: {e}"))
                     })?;
 
@@ -837,7 +827,7 @@ impl StateMachine for Wmy23PresignMachine {
                                 TecdsaError::Other(format!("deserialize R3 payload: {e}"))
                             })?;
 
-                    let gamma_c_alpha = payload.gamma_c_alpha.to_ct(&self.setup).map_err(|e| {
+                    let gamma_c_alpha = payload.gamma_c_alpha.to_ct().map_err(|e| {
                         TecdsaError::Other(format!(
                             "reconstruct gamma_c_alpha from party {from}: {e}"
                         ))
@@ -848,7 +838,7 @@ impl StateMachine for Wmy23PresignMachine {
                     )
                     .map_err(TecdsaError::Other)?;
 
-                    let x_c_alpha = payload.x_c_alpha.to_ct(&self.setup).map_err(|e| {
+                    let x_c_alpha = payload.x_c_alpha.to_ct().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct x_c_alpha from party {from}: {e}"))
                     })?;
                     let x_g_beta =

@@ -29,11 +29,10 @@
 
 use elliptic_curve::{ops::Reduce, CurveArithmetic, FieldBytes, PrimeField};
 use rand_core::CryptoRngCore;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
-
-use serde::{Deserialize, Serialize};
 
 use crate::base_ot::OtError;
 
@@ -881,10 +880,11 @@ pub fn field_mul(left: &[u8], right: &[u8]) -> Result<FieldElement, OtError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use elliptic_curve::{CurveArithmetic, Field};
     use k256::Secp256k1;
     use rand_core::{OsRng, RngCore};
+
+    use super::*;
 
     type Scalar = <Secp256k1 as CurveArithmetic>::Scalar;
 

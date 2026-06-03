@@ -36,12 +36,13 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::zk::mta_range::{AliceProof, BobProofExt, NTildeParams};
-use tecdsa_paillier::{DecryptionKey, EncryptionKey};
+use tecdsa_paillier::{
+    backend::Integer,
+    conv::{integer_to_scalar, scalar_to_integer},
+    zk::mta_range::{AliceProof, BobProofExt, NTildeParams},
+    DecryptionKey, EncryptionKey,
+};
 use tecdsa_protocol::PartyId;
-
-use tecdsa_paillier::conv::{integer_to_scalar, scalar_to_integer};
 
 // ---------------------------------------------------------------------------
 // Messages
@@ -439,8 +440,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tecdsa_paillier::zk::mta_range::NTildeParams;
+
+    use super::*;
 
     #[cfg(feature = "secp256k1")]
     type C = k256::Secp256k1;

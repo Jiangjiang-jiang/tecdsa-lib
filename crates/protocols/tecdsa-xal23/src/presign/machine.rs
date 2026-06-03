@@ -31,10 +31,8 @@ use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
-use crate::key_share::Xal23KeyShare;
-use crate::presign::Xal23Presignature;
-
 use super::msg::Xal23PresignMsg;
+use crate::{key_share::Xal23KeyShare, presign::Xal23Presignature};
 
 /// Simulation-mode presign `StateMachine` for XAL23.
 ///

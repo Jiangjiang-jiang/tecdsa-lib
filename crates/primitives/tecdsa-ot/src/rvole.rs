@@ -29,16 +29,17 @@
 
 use elliptic_curve::{ops::Reduce, CurveArithmetic, Field, FieldBytes, PrimeField};
 use rand_core::CryptoRngCore;
+use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use serde::{Deserialize, Serialize};
-
-use crate::base_ot::OtError;
-use crate::soft_spoken::{
-    random_scalar, scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput,
-    OtExtensionReceiver, OtExtensionSender, OteDataToSender, OteInitSenderMsg, PrgOutput,
-    BATCH_SIZE,
+use crate::{
+    base_ot::OtError,
+    soft_spoken::{
+        random_scalar, scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput,
+        OtExtensionReceiver, OtExtensionSender, OteDataToSender, OteInitSenderMsg, PrgOutput,
+        BATCH_SIZE,
+    },
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -607,9 +608,10 @@ fn build_transcript(data: &OteDataToSender) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
     use rand_core::OsRng;
+
+    use super::*;
 
     /// Full multiplication round-trip: verify sender_output + receiver_output = a * b.
     #[test]

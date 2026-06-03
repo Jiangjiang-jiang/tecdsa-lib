@@ -2,14 +2,12 @@
 //! Async session that owns both a `SessionRunner` and an [`AsyncTransport`],
 //! driving the protocol to completion with `tokio`-based timeouts and retries.
 
-use tecdsa_protocol::state_machine::Recipient;
-use tecdsa_protocol::{PartyId, StateMachine};
+use tecdsa_protocol::{state_machine::Recipient, PartyId, StateMachine};
 
-use crate::async_transport::AsyncTransport;
-use crate::config::SessionRunConfig;
-use crate::error::SessionError;
-use crate::metrics::SessionMetrics;
-use crate::runner::SessionRunner;
+use crate::{
+    async_transport::AsyncTransport, config::SessionRunConfig, error::SessionError,
+    metrics::SessionMetrics, runner::SessionRunner,
+};
 
 /// An async session that runs a protocol to completion.
 ///
@@ -153,11 +151,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::convert::Infallible;
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::{
+        convert::Infallible,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
     use tecdsa_protocol::{IaReport, PartyId};
+
+    use super::*;
 
     // --- Mock transport that never returns (for timeout test) ---
 

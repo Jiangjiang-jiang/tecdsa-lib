@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -24,10 +24,10 @@ pub mod machine;
 pub mod msg;
 pub(crate) mod rounds;
 
+use std::collections::BTreeMap;
+
 pub use machine::Wmc24PresignMachine;
 pub use msg::Wmc24PresignMsg;
-
-use std::collections::BTreeMap;
 use zeroize::Zeroize;
 
 // ---------------------------------------------------------------------------

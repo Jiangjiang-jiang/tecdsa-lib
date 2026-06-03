@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,12 +13,10 @@
 //! commitment in the CL group), where `g` is either the message-subgroup
 //! generator `f` or an arbitrary element like the CL public key `pk`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
-
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
 };
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// Commitment-knowledge proof.
 pub struct RComKwlgProof {
@@ -101,7 +99,7 @@ impl RComKwlgProof {
         let c_e = setup.exp_bytes(commitment, &self.e)?;
         let rhs = setup.compose(&self.t, &c_e)?;
 
-        if !lhs.equal(setup.ctx(), &rhs)? {
+        if lhs != rhs {
             return Ok(false);
         }
 
@@ -127,7 +125,7 @@ impl RComKwlgProof {
         let c_e = setup.exp_bytes(commitment, &self.e)?;
         let rhs = setup.compose(&self.t, &c_e)?;
 
-        if !lhs.equal(setup.ctx(), &rhs)? {
+        if lhs != rhs {
             return Ok(false);
         }
 
@@ -137,9 +135,10 @@ impl RComKwlgProof {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::ClSetup;
     use num_bigint::BigUint;
+
+    use super::*;
+    use crate::cl::ClSetup;
 
     fn make_commitment(setup: &ClSetup, m: &str, r: &str) -> ClResult<Qfi> {
         let h_r = setup.power_of_h(r)?;
@@ -182,7 +181,7 @@ mod tests {
     fn r_com_kwlg_with_pk_base_honest_verifies() {
         let mut setup = ClSetup::new_secp256k1("5003").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
-        let pk_elt = setup.pk_element(&pk).expect("pk_elt");
+        let pk_elt = &pk.elt();
 
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
@@ -193,12 +192,12 @@ mod tests {
 
         // Com(r, m) = h^r * pk^m
         let h_r = setup.power_of_h(&r_dec).expect("h_r");
-        let pk_m = setup.exp(&pk_elt, "42").expect("pk_m");
+        let pk_m = setup.exp(pk_elt, "42").expect("pk_m");
         let c = setup.compose(&h_r, &pk_m).expect("compose");
 
-        let proof = RComKwlgProof::prove_with_base(&mut setup, &c, &pk_elt, &m_bytes, &r)
+        let proof = RComKwlgProof::prove_with_base(&mut setup, &c, pk_elt, &m_bytes, &r)
             .expect("prove_with_base");
-        assert!(proof.verify_with_base(&setup, &c, &pk_elt).expect("verify"));
+        assert!(proof.verify_with_base(&setup, &c, pk_elt).expect("verify"));
     }
 
     #[ignore = "redundant ZK negative test"]
@@ -206,7 +205,7 @@ mod tests {
     fn r_com_kwlg_with_pk_base_rejects_wrong_message() {
         let mut setup = ClSetup::new_secp256k1("5004").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
-        let pk_elt = setup.pk_element(&pk).expect("pk_elt");
+        let pk_elt = &pk.elt();
 
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
@@ -215,13 +214,13 @@ mod tests {
         let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
 
         let h_r = setup.power_of_h(&r_dec).expect("h_r");
-        let pk_m = setup.exp(&pk_elt, "42").expect("pk_m");
+        let pk_m = setup.exp(pk_elt, "42").expect("pk_m");
         let c = setup.compose(&h_r, &pk_m).expect("compose");
 
         // Prove with wrong message
         let wrong_m_bytes = BigUint::from(99u32).to_bytes_be();
-        let proof = RComKwlgProof::prove_with_base(&mut setup, &c, &pk_elt, &wrong_m_bytes, &r)
+        let proof = RComKwlgProof::prove_with_base(&mut setup, &c, pk_elt, &wrong_m_bytes, &r)
             .expect("prove_with_base");
-        assert!(!proof.verify_with_base(&setup, &c, &pk_elt).expect("verify"));
+        assert!(!proof.verify_with_base(&setup, &c, pk_elt).expect("verify"));
     }
 }

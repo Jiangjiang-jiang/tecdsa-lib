@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Trout presigning protocol (Round 1 -- offline, message-independent).
 //!
 //! Each party P_i:
@@ -45,16 +45,17 @@ pub mod machine;
 pub mod types;
 
 use rand_core::CryptoRngCore;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
-use tecdsa_class_group::zk::r_com_kwlg::RComKwlgProof;
+use tecdsa_class_group::{
+    cl::ClSetup,
+    zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof},
+};
 use tecdsa_curve::TecdsaCurve;
-
-use crate::error::{qfi_from_abc, qfi_to_abc, TroutError, TroutResult};
-use crate::key_share::TroutKeyShare;
-
 pub use types::{TroutPresignOutput, TroutRound1Broadcast, TroutRound1State};
+
+use crate::{
+    error::{qfi_from_abc, qfi_to_abc, TroutError, TroutResult},
+    key_share::TroutKeyShare,
+};
 
 /// Execute Round 1 (presign) for a single party.
 ///
@@ -74,7 +75,7 @@ pub fn presign_round1(
     signing_parties: &[u16],
     session_nonce: &[u8],
     setup: &mut ClSetup,
-    cl_pk: &tecdsa_class_group::bicycl_glue::BicyclPublicKey,
+    cl_pk: &tecdsa_class_group::cl::ClPublicKey,
     rng: &mut impl CryptoRngCore,
 ) -> TroutResult<(TroutRound1State, TroutRound1Broadcast)> {
     let my_idx = share.party_index;
@@ -109,9 +110,9 @@ pub fn presign_round1(
 
     // 4. Compute U_i = Com(beta_i, u_i) = h^beta_i * pk^u_i
     //    Uses (h, pk) as bases so the scaled decryption cross-terms cancel.
-    let pk_elt = setup.pk_element(cl_pk)?;
+    let pk_elt = cl_pk.elt();
     let h_beta = setup.power_of_h_bytes(&beta_i)?;
-    let pk_u = setup.exp_bytes(&pk_elt, &u_i_bytes)?;
+    let pk_u = setup.exp_bytes(pk_elt, &u_i_bytes)?;
     let u_com = setup.compose(&h_beta, &pk_u)?;
 
     // 5. Compute Lagrange-scaled C_tilde_i
@@ -125,8 +126,8 @@ pub fn presign_round1(
 
     // Rebuild C_tilde_i from stored components
     let (c1_a, c1_b, c1_c, c2_a, c2_b, c2_c) = &share.ct_share_components;
-    let ct_c1 = qfi_from_abc(setup.ctx(), c1_a, c1_b, c1_c)?;
-    let ct_c2 = qfi_from_abc(setup.ctx(), c2_a, c2_b, c2_c)?;
+    let ct_c1 = qfi_from_abc(c1_a, c1_b, c1_c)?;
+    let ct_c2 = qfi_from_abc(c2_a, c2_b, c2_c)?;
 
     // L_i * C_tilde_i: scale both components by l_i
     let ct_scaled_c1 = setup.exp_bytes(&ct_c1, &l_i_bytes)?;
@@ -145,14 +146,14 @@ pub fn presign_round1(
 
     // 7. Prove R_{ComKwlg}: knowledge of (u_i, beta_i) in U_i = Com(beta_i, u_i)
     //    U_i = h^beta_i * pk^u_i, so we use prove_with_base with pk as the second base.
-    let pi_com_kwlg = RComKwlgProof::prove_with_base(setup, &u_com, &pk_elt, &u_i_bytes, &beta_i)?;
+    let pi_com_kwlg = RComKwlgProof::prove_with_base(setup, &u_com, pk_elt, &u_i_bytes, &beta_i)?;
 
     // Serialise QFI components
-    let kt_c1_abc = qfi_to_abc(setup.ctx(), &kt_c1)?;
-    let kt_c2_abc = qfi_to_abc(setup.ctx(), &kt_c2)?;
-    let u_com_abc = qfi_to_abc(setup.ctx(), &u_com)?;
-    let ct_scaled_c1_abc = qfi_to_abc(setup.ctx(), &ct_scaled_c1)?;
-    let ct_scaled_c2_abc = qfi_to_abc(setup.ctx(), &ct_scaled_c2)?;
+    let kt_c1_abc = qfi_to_abc(&kt_c1)?;
+    let kt_c2_abc = qfi_to_abc(&kt_c2)?;
+    let u_com_abc = qfi_to_abc(&u_com)?;
+    let ct_scaled_c1_abc = qfi_to_abc(&ct_scaled_c1)?;
+    let ct_scaled_c2_abc = qfi_to_abc(&ct_scaled_c2)?;
 
     let state = TroutRound1State {
         party_index: my_idx,

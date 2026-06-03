@@ -6,15 +6,13 @@
 use elliptic_curve::{group::GroupEncoding, PrimeField};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::threshold::trusted_dealer_setup;
+use tecdsa_ggn16::{
+    key_share::Ggn16KeyShare, keygen::Ggn16KeygenMachine, presign::Ggn16PresignMachine,
+    sign::Ggn16OnlineSignMachine,
+};
+use tecdsa_paillier::{backend::Integer, threshold::trusted_dealer_setup};
 use tecdsa_protocol::{verify_ecdsa, DataToSign, PartyId};
 use tecdsa_testkit::Orchestrator;
-
-use tecdsa_ggn16::key_share::Ggn16KeyShare;
-use tecdsa_ggn16::keygen::Ggn16KeygenMachine;
-use tecdsa_ggn16::presign::Ggn16PresignMachine;
-use tecdsa_ggn16::sign::Ggn16OnlineSignMachine;
 
 type TestCurve = k256::Secp256k1;
 

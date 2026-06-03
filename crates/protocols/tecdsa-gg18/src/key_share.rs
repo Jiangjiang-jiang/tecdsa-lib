@@ -4,8 +4,7 @@
 use elliptic_curve::{group::Group, sec1::ModulusSize, FieldBytesSize};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::zk::mta_range::NTildeParams;
-use tecdsa_paillier::{DecryptionKey, EncryptionKey};
+use tecdsa_paillier::{zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey};
 use tecdsa_protocol::KeyShareValidation;
 use zeroize::Zeroize;
 

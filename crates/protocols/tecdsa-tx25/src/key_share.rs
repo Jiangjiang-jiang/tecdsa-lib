@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TX25 key share type.
 //!
 //! After key generation, each party holds an additive share $x_i$ of the
@@ -16,7 +16,7 @@
 //! serialized key share), but protocol state machines now store `ClSetup`
 //! directly instead of recreating it per round.
 
-use tecdsa_class_group::cl_enc::{ClPublicKey, ClSecretKey};
+use tecdsa_class_group::cl::{ClPublicKey, ClSecretKey};
 use zeroize::Zeroize;
 
 /// A single party's key share produced by TX25 key generation.
@@ -62,12 +62,11 @@ impl Tx25KeyShare {
     /// security parameters (128-bit or insecure/test).
     pub fn create_cl_setup(
         &self,
-    ) -> Result<tecdsa_class_group::bicycl_glue::ClSetup, tecdsa_class_group::bicycl_glue::ClError>
-    {
+    ) -> Result<tecdsa_class_group::cl::ClSetup, tecdsa_class_group::cl::ClError> {
         if self.use_128bit_security {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1_128bit(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&self.cl_setup_seed)
         } else {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1(&self.cl_setup_seed)
         }
     }
 }

@@ -934,16 +934,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeMap;
 
-    use tecdsa_paillier::backend::Integer;
-    use tecdsa_paillier::zk::mta_range::NTildeParams;
-    use tecdsa_paillier::{DecryptionKey, EncryptionKey};
+    use tecdsa_paillier::{
+        backend::Integer, zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey,
+    };
 
-    use crate::f_mult::init::InitState;
-    use crate::f_mult::input::InputState;
-    use crate::mta::paillier::{MtaRound1Msg, MtaRound2Msg, PaillierMtaState};
+    use super::*;
+    use crate::{
+        f_mult::{init::InitState, input::InputState},
+        mta::paillier::{MtaRound1Msg, MtaRound2Msg, PaillierMtaState},
+    };
 
     #[cfg(feature = "secp256k1")]
     type C = k256::Secp256k1;

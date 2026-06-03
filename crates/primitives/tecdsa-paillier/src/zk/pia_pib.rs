@@ -14,8 +14,7 @@
 //! - `kappa = 80` (statistical security parameter)
 //! - `K = q^2 * 2^{tau + 2*kappa}` (range for alpha')
 
-use fast_paillier::backend::Integer;
-use fast_paillier::EncryptionKey;
+use fast_paillier::{backend::Integer, EncryptionKey};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 

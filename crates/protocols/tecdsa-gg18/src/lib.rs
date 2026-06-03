@@ -13,8 +13,9 @@ pub mod sign;
 
 use std::marker::PhantomData;
 
-use elliptic_curve::ops::LinearCombination;
-use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use elliptic_curve::{
+    ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
+};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{NoOpMachine, Protocol, ProtocolMetadata};
 

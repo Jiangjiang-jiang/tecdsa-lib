@@ -3,7 +3,7 @@ name = "tecdsa-tx25"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license = "GPL-3.0-or-later"
+license = "MIT OR Apache-2.0"
 repository.workspace = true
 description = "TX25 Robust Threshold ECDSA (CL-based MtA with public checking, S&P 2025)"
 

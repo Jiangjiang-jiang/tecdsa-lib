@@ -245,10 +245,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::key_share::trusted_dealer_keygen;
-    use crate::presign::presign_all_with_sec;
     use sha2::{Digest, Sha256};
+
+    use super::*;
+    use crate::{key_share::trusted_dealer_keygen, presign::presign_all_with_sec};
 
     type Curve = k256::Secp256k1;
 

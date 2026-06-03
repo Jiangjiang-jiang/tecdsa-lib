@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! LLZ25 integration tests.
 //!
 //! Paper: Lyu, Li, Zhou, Deng. "Threshold ECDSA in Two Rounds." CCS 2025.
@@ -7,10 +7,12 @@
 
 #![allow(non_snake_case)]
 
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_llz25::keygen::keygen_with_dealer;
-use tecdsa_llz25::presign::{presign_round1, verify_presign_message};
-use tecdsa_llz25::sign::{combine_signatures, compute_partial_signature};
+use tecdsa_class_group::cl::ClSetup;
+use tecdsa_llz25::{
+    keygen::keygen_with_dealer,
+    presign::{presign_round1, verify_presign_message},
+    sign::{combine_signatures, compute_partial_signature},
+};
 
 const SEED: &str = "12345";
 const MSG: &[u8] = b"Hello, LLZ25 threshold ECDSA!";

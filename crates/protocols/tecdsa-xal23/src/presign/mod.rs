@@ -18,22 +18,24 @@ pub mod machine;
 pub mod msg;
 mod types;
 
-pub use machine::Xal23PresignMachine;
-pub use msg::Xal23PresignMsg;
-pub use types::Xal23Presignature;
-
-use crate::key_share::Xal23KeyShare;
 use elliptic_curve::{
     group::{Curve as CurveGroup, Group},
     sec1::ModulusSize,
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
+pub use machine::Xal23PresignMachine;
+pub use msg::Xal23PresignMsg;
 use num_bigint::BigUint;
 use num_traits::Zero;
-use tecdsa_curve::conv::{biguint_to_scalar, curve_order, scalar_to_biguint};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{
+    conv::{biguint_to_scalar, curve_order, scalar_to_biguint},
+    TecdsaCurve,
+};
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSetup};
 use tecdsa_protocol::{MtA, PartyId};
+pub use types::Xal23Presignature;
+
+use crate::key_share::Xal23KeyShare;
 
 /// Runs the complete presigning protocol for all parties (orchestrated locally).
 ///

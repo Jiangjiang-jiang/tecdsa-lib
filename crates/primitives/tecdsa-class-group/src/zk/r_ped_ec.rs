@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -18,13 +18,12 @@
 //!
 //! Reference: LLZ25 (Lyu-Li-Zhou-Deng, CCS 2025), Section 4.3.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkPublicKey, Qfi};
 use num_bigint::BigUint;
 use num_traits::Num;
 use tecdsa_curve::conv;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
+use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
 /// Proof of Pedersen CL commitment + EC discrete-log consistency.
 pub struct RPedEcProof {
@@ -55,8 +54,8 @@ impl RPedEcProof {
 
         // CL Pedersen commitment: c_tilde = h^{a1} * pk^{a2}.
         let h_a1 = setup.power_of_h_bytes(&a1)?;
-        let pk_elt = setup.pk_element(pk)?;
-        let pk_a2 = setup.exp_bytes(&pk_elt, &a2)?;
+        let pk_elt = pk.elt();
+        let pk_a2 = setup.exp_bytes(pk_elt, &a2)?;
         let c_tilde = setup.compose(&h_a1, &pk_a2)?;
 
         // EC commitment: V_tilde = a2 * G.
@@ -66,7 +65,7 @@ impl RPedEcProof {
         let e = challenge_from_qfi(
             setup,
             b"R_ped_ec",
-            &[&pk_elt, c, &c_tilde],
+            &[pk_elt, c, &c_tilde],
             &[big_v_bytes, &v_tilde_bytes],
         )?;
 
@@ -91,13 +90,13 @@ impl RPedEcProof {
         c: &Qfi,
         big_v_bytes: &[u8],
     ) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
 
         // Re-derive challenge.
         let e_check = challenge_from_qfi(
             setup,
             b"R_ped_ec",
-            &[&pk_elt, c, &self.c_tilde],
+            &[pk_elt, c, &self.c_tilde],
             &[big_v_bytes, &self.v_tilde_bytes],
         )?;
         if e_check != self.e {
@@ -106,11 +105,11 @@ impl RPedEcProof {
 
         // Check 1: h^{s_r} * pk^{s_v} == c_tilde * c^e.
         let h_sr = setup.power_of_h_bytes(&self.s_r)?;
-        let pk_sv = setup.exp_bytes(&pk_elt, &self.s_v)?;
+        let pk_sv = setup.exp_bytes(pk_elt, &self.s_v)?;
         let lhs = setup.compose(&h_sr, &pk_sv)?;
         let c_e = setup.exp_bytes(c, &self.e)?;
         let rhs = setup.compose(&self.c_tilde, &c_e)?;
-        if !lhs.equal(setup.ctx(), &rhs)? {
+        if lhs != rhs {
             return Ok(false);
         }
 
@@ -142,7 +141,7 @@ fn ec_scalar_base_mul_bytes(scalar_bytes: &[u8]) -> Vec<u8> {
     use elliptic_curve::group::GroupEncoding;
 
     let val = BigUint::from_bytes_be(scalar_bytes);
-    let q = BigUint::from_str_radix(crate::bicycl_glue::SECP256K1_ORDER, 10).expect("valid order");
+    let q = BigUint::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
     let reduced = val % &q;
     let scalar = biguint_to_scalar(&reduced);
     let point = k256::ProjectivePoint::GENERATOR * scalar;
@@ -155,7 +154,7 @@ fn ec_schnorr_check_bytes(
     e_bytes: &[u8],
     big_v_bytes: &[u8],
 ) -> bool {
-    let q = BigUint::from_str_radix(crate::bicycl_glue::SECP256K1_ORDER, 10).expect("valid order");
+    let q = BigUint::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
     let u2_val = BigUint::from_bytes_be(u2_bytes) % &q;
     let e_val = BigUint::from_bytes_be(e_bytes) % &q;
 
@@ -196,10 +195,10 @@ fn point_from_compressed(bytes: &[u8]) -> Option<k256::ProjectivePoint> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::ClSetup;
-    use crate::nim::Nim;
     use elliptic_curve::group::GroupEncoding;
+
+    use super::*;
+    use crate::{cl::ClSetup, nim::Nim};
 
     #[test]
     fn r_ped_ec_honest_verifies() {

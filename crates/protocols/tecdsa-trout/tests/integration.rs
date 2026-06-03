@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Trout integration tests.
 //!
 //! Paper: Dahari-Garbian, Nof, Parker. "Trout: Two-Round Threshold ECDSA
@@ -13,14 +13,13 @@
 
 use elliptic_curve::PrimeField;
 use sha2::{Digest, Sha256};
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
-use tecdsa_trout::key_share::TroutKeyShare;
-use tecdsa_trout::keygen::trusted_dealer_keygen;
-use tecdsa_trout::presign::presign_round1;
-use tecdsa_trout::sign::sign_round2;
+use tecdsa_trout::{
+    key_share::TroutKeyShare, keygen::trusted_dealer_keygen, presign::presign_round1,
+    sign::sign_round2,
+};
 
 fn hash_message(msg: &[u8]) -> k256::Scalar {
     let hash = Sha256::digest(msg);
@@ -31,8 +30,7 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
         .unwrap_or_else(|| {
             use num_bigint::BigUint;
             use num_traits::Num;
-            let q = BigUint::from_str_radix(tecdsa_class_group::bicycl_glue::SECP256K1_ORDER, 10)
-                .unwrap();
+            let q = BigUint::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
             let val = BigUint::from_bytes_be(&bytes) % &q;
             let mut padded = [0u8; 32];
             let be = val.to_bytes_be();
@@ -73,8 +71,8 @@ fn test_trout_full_sign_3_of_5() {
     // All shares have the same cl_pk_abc.
     let mut setup2 = ClSetup::new_secp256k1(seed).expect("CL setup");
     let (pk_a, pk_b, pk_c) = &shares[0].cl_pk_abc;
-    let cl_pk_qfi = tecdsa_trout::error::qfi_from_abc(setup2.ctx(), pk_a, pk_b, pk_c)
-        .expect("reconstruct CL pk QFI");
+    let cl_pk_qfi =
+        tecdsa_trout::error::qfi_from_abc(pk_a, pk_b, pk_c).expect("reconstruct CL pk QFI");
     let cl_pk = setup2.pk_from_qfi(&cl_pk_qfi).expect("pk_from_qfi");
 
     // ---- Round 1 (Presign) ----
@@ -170,7 +168,7 @@ fn test_scaled_decrypt_standalone() {
     let mut setup = ClSetup::new_secp256k1("8001").expect("setup");
     let mut rng = rand::rngs::OsRng;
     let (_cl_sk, cl_pk) = setup.keygen().expect("keygen");
-    let pk_elt = setup.pk_element(&cl_pk).expect("pk_elt");
+    let pk_elt = &cl_pk.elt();
 
     let n = 4;
     let a: Vec<k256::Scalar> = (0..n)
@@ -205,7 +203,7 @@ fn test_scaled_decrypt_standalone() {
         let beta_i = setup.sk_to_bytes(&sk_tmp2).expect("sk_bytes");
 
         let h_beta = setup.power_of_h_bytes(&beta_i).expect("power_of_h");
-        let pk_b = setup.exp_bytes(&pk_elt, &b_bytes).expect("exp");
+        let pk_b = setup.exp_bytes(pk_elt, &b_bytes).expect("exp");
         let com = setup.compose(&h_beta, &pk_b).expect("compose");
         com_qfis.push(com);
 

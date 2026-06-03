@@ -25,13 +25,17 @@ use tecdsa_protocol::{
 };
 use zeroize::Zeroize;
 
-use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
-use crate::keygen::interactive::{
-    party1_finalize, party1_keygen_round1, party1_keygen_round3, party2_finalize,
-    party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg, KeyGenP1Round3Msg,
-    KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
+use crate::{
+    key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare},
+    keygen::{
+        interactive::{
+            party1_finalize, party1_keygen_round1, party1_keygen_round3, party2_finalize,
+            party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg, KeyGenP1Round3Msg,
+            KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
+        },
+        wire::{decode_r1, decode_r2, decode_r3, encode_r1, encode_r2, encode_r3},
+    },
 };
-use crate::keygen::wire::{decode_r1, decode_r2, decode_r3, encode_r1, encode_r2, encode_r3};
 
 // ---------------------------------------------------------------------------
 // Two-party role

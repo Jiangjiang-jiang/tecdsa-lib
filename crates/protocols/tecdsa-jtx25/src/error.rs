@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #[derive(Debug, thiserror::Error)]
 pub enum Jtx25Error {
     #[error("CL operation failed: {0}")]
-    ClError(#[from] tecdsa_class_group::bicycl_glue::ClError),
+    ClError(#[from] tecdsa_class_group::cl::ClError),
     #[error("verification failed")]
     VerificationFailed,
     #[error("invalid input: {0}")]

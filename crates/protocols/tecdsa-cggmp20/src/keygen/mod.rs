@@ -8,14 +8,14 @@ pub mod msg;
 mod rounds;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use msg::KeygenMsg;
 use rand_core::CryptoRngCore;
+use rounds::{KeygenRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig, StateMachine};
 
 use crate::key_share::Cggmp20CoreKeyShare;
-use msg::KeygenMsg;
-use rounds::{KeygenRound, Round1State};
 
 /// Threshold key generation state machine implementing the CGGMP20 DKG protocol.
 pub struct Cggmp20KeygenMachine<C: TecdsaCurve>

@@ -24,14 +24,18 @@ use tecdsa_protocol::{
 };
 use zeroize::Zeroize;
 
-use crate::key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare};
-use crate::keygen::interactive::{
-    client_finalize_keygen, client_keygen_step2, client_verify_step3, server_finalize_keygen,
-    server_keygen_step1, server_keygen_step3, ClientStep2Msg, ClientStep2State, ServerStep1State,
-    ServerStep3Msg,
-};
-use crate::keygen::wire::{
-    decode_step1, decode_step2, decode_step3, encode_step1, encode_step2, encode_step3,
+use crate::{
+    key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare},
+    keygen::{
+        interactive::{
+            client_finalize_keygen, client_keygen_step2, client_verify_step3,
+            server_finalize_keygen, server_keygen_step1, server_keygen_step3, ClientStep2Msg,
+            ClientStep2State, ServerStep1State, ServerStep3Msg,
+        },
+        wire::{
+            decode_step1, decode_step2, decode_step3, encode_step1, encode_step2, encode_step3,
+        },
+    },
 };
 
 // ---------------------------------------------------------------------------

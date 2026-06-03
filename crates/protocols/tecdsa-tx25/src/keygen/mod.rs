@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -49,43 +49,37 @@ pub mod machine;
 pub mod msg;
 pub mod rounds;
 
-pub use machine::Tx25KeygenMachine;
-pub use msg::Tx25KeygenMsg;
+use std::str::FromStr;
 
 use elliptic_curve::group::GroupEncoding;
+pub use machine::Tx25KeygenMachine;
+pub use msg::Tx25KeygenMsg;
+use tecdsa_class_group::{
+    cl::{Mpz, Qfi},
+    zk::{r_dec_dl::RDecDlProof, r_key::RKeyProof, r_sh::RShProof},
+};
 
-use tecdsa_class_group::bicycl_glue::{BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
-use tecdsa_class_group::zk::r_key::RKeyProof;
-use tecdsa_class_group::zk::r_sh::RShProof;
-
-use crate::error::Tx25Error;
-use crate::pvss::PvssOutput;
+use crate::{error::Tx25Error, pvss::PvssOutput};
 
 // ---------------------------------------------------------------------------
 // QFI serialization helpers
 // ---------------------------------------------------------------------------
 
 /// Extracts (a, b, c) decimal strings from a QFI element.
-fn qfi_to_abc(setup: &ClSetup, qfi: &BicyclQfi) -> Result<(String, String, String), Tx25Error> {
-    let ctx = setup.ctx();
-    let a = qfi
-        .a_decimal(ctx)
-        .map_err(|e| Tx25Error::ClError(e.into()))?;
-    let b = qfi
-        .b_decimal(ctx)
-        .map_err(|e| Tx25Error::ClError(e.into()))?;
-    let c = qfi
-        .c_decimal(ctx)
-        .map_err(|e| Tx25Error::ClError(e.into()))?;
+fn qfi_to_abc(qfi: &Qfi) -> Result<(String, String, String), Tx25Error> {
+    let a = qfi.a().to_string();
+    let b = qfi.b().to_string();
+    let c = qfi.c().to_string();
     Ok((a, b, c))
 }
 
 /// Reconstructs a QFI element from (a, b, c) decimal strings.
-fn abc_to_qfi(setup: &ClSetup, abc: &(String, String, String)) -> Result<BicyclQfi, Tx25Error> {
-    let ctx = setup.ctx();
-    BicyclQfi::from_abc_decimal(ctx, &abc.0, &abc.1, &abc.2)
-        .map_err(|e| Tx25Error::ClError(e.into()))
+fn abc_to_qfi((a, b, c): &(String, String, String)) -> Result<Qfi, Tx25Error> {
+    Ok(Qfi::from_abc(
+        Mpz::from_str(a).map_err(|e| Tx25Error::ClError(e.into()))?,
+        Mpz::from_str(b).map_err(|e| Tx25Error::ClError(e.into()))?,
+        Mpz::from_str(c).map_err(|e| Tx25Error::ClError(e.into()))?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +141,6 @@ fn read_qfi_abc(data: &[u8], pos: usize) -> Result<((String, String, String), us
 
 /// Serializes a Round 1 message: pk_abc + R_key proof (t_abc, z, e).
 fn serialize_round1(
-    setup: &ClSetup,
     pk_abc: &(String, String, String),
     proof: &RKeyProof,
 ) -> Result<Vec<u8>, Tx25Error> {
@@ -157,7 +150,7 @@ fn serialize_round1(
     write_qfi_abc(&mut buf, pk_abc);
 
     // R_key proof: t (QFI abc), z (string), e (string).
-    let t_abc = qfi_to_abc(setup, &proof.t)?;
+    let t_abc = qfi_to_abc(&proof.t)?;
     write_qfi_abc(&mut buf, &t_abc);
     write_field(&mut buf, &proof.z);
     write_field(&mut buf, &proof.e);
@@ -166,16 +159,13 @@ fn serialize_round1(
 }
 
 /// Deserializes a Round 1 message.
-fn deserialize_round1(
-    data: &[u8],
-    setup: &ClSetup,
-) -> Result<((String, String, String), RKeyProof), Tx25Error> {
+fn deserialize_round1(data: &[u8]) -> Result<((String, String, String), RKeyProof), Tx25Error> {
     let (pk_abc, pos) = read_qfi_abc(data, 0)?;
     let (t_abc, pos) = read_qfi_abc(data, pos)?;
     let (z_bytes, pos) = read_field(data, pos)?;
     let (e_bytes, _pos) = read_field(data, pos)?;
 
-    let t = abc_to_qfi(setup, &t_abc)?;
+    let t = abc_to_qfi(&t_abc)?;
     let proof = RKeyProof {
         t,
         z: z_bytes.to_vec(),
@@ -186,19 +176,19 @@ fn deserialize_round1(
 }
 
 /// Serializes a Round 2 message: c1_abc + n * c2_abc + R_Sh proof (k, rho_response).
-fn serialize_round2(setup: &ClSetup, pvss: &PvssOutput) -> Result<Vec<u8>, Tx25Error> {
+fn serialize_round2(pvss: &PvssOutput) -> Result<Vec<u8>, Tx25Error> {
     let mut buf = Vec::new();
 
     // Number of c2 elements.
     buf.extend_from_slice(&(pvss.c2s.len() as u32).to_le_bytes());
 
     // c1 (QFI abc).
-    let c1_abc = qfi_to_abc(setup, &pvss.c1)?;
+    let c1_abc = qfi_to_abc(&pvss.c1)?;
     write_qfi_abc(&mut buf, &c1_abc);
 
     // c2s (each as QFI abc).
     for c2 in &pvss.c2s {
-        let c2_abc = qfi_to_abc(setup, c2)?;
+        let c2_abc = qfi_to_abc(c2)?;
         write_qfi_abc(&mut buf, &c2_abc);
     }
 
@@ -210,10 +200,7 @@ fn serialize_round2(setup: &ClSetup, pvss: &PvssOutput) -> Result<Vec<u8>, Tx25E
 }
 
 /// Deserializes a Round 2 message.
-fn deserialize_round2(
-    data: &[u8],
-    setup: &ClSetup,
-) -> Result<(BicyclQfi, Vec<BicyclQfi>, RShProof), Tx25Error> {
+fn deserialize_round2(data: &[u8]) -> Result<(Qfi, Vec<Qfi>, RShProof), Tx25Error> {
     if data.len() < 4 {
         return Err(Tx25Error::InvalidInput("R2 data too short".into()));
     }
@@ -227,14 +214,14 @@ fn deserialize_round2(
     // c1.
     let (c1_abc, new_pos) = read_qfi_abc(data, pos)?;
     pos = new_pos;
-    let c1 = abc_to_qfi(setup, &c1_abc)?;
+    let c1 = abc_to_qfi(&c1_abc)?;
 
     // c2s.
     let mut c2s = Vec::with_capacity(n);
     for _ in 0..n {
         let (c2_abc, new_pos) = read_qfi_abc(data, pos)?;
         pos = new_pos;
-        c2s.push(abc_to_qfi(setup, &c2_abc)?);
+        c2s.push(abc_to_qfi(&c2_abc)?);
     }
 
     // R_Sh proof.
@@ -252,9 +239,8 @@ fn deserialize_round2(
 
 /// Serializes a Round 3 message: X_i bytes + pd (QFI abc) + R_Dec_DL proof.
 fn serialize_round3(
-    setup: &ClSetup,
     public_share_bytes: &[u8],
-    pd: &BicyclQfi,
+    pd: &Qfi,
     proof: &RDecDlProof,
 ) -> Result<Vec<u8>, Tx25Error> {
     let mut buf = Vec::new();
@@ -263,12 +249,12 @@ fn serialize_round3(
     write_field(&mut buf, public_share_bytes);
 
     // Partial decryption pd = c1^{sk} (QFI abc).
-    let pd_abc = qfi_to_abc(setup, pd)?;
+    let pd_abc = qfi_to_abc(pd)?;
     write_qfi_abc(&mut buf, &pd_abc);
 
     // R_Dec_DL proof: t1 (QFI abc), t2 (QFI abc), z (string), e (string).
-    let t1_abc = qfi_to_abc(setup, &proof.t1)?;
-    let t2_abc = qfi_to_abc(setup, &proof.t2)?;
+    let t1_abc = qfi_to_abc(&proof.t1)?;
+    let t2_abc = qfi_to_abc(&proof.t2)?;
     write_qfi_abc(&mut buf, &t1_abc);
     write_qfi_abc(&mut buf, &t2_abc);
     write_field(&mut buf, &proof.z);
@@ -278,10 +264,7 @@ fn serialize_round3(
 }
 
 /// Deserializes a Round 3 message (includes pd for R_Dec_DL verification).
-fn deserialize_round3(
-    data: &[u8],
-    setup: &ClSetup,
-) -> Result<(k256::ProjectivePoint, RDecDlProof, BicyclQfi), Tx25Error> {
+fn deserialize_round3(data: &[u8]) -> Result<(k256::ProjectivePoint, RDecDlProof, Qfi), Tx25Error> {
     let (point_bytes, pos) = read_field(data, 0)?;
 
     // Parse EC point.
@@ -292,7 +275,7 @@ fn deserialize_round3(
 
     // Partial decryption pd (QFI abc).
     let (pd_abc, pos) = read_qfi_abc(data, pos)?;
-    let pd = abc_to_qfi(setup, &pd_abc)?;
+    let pd = abc_to_qfi(&pd_abc)?;
 
     // R_Dec_DL proof.
     let (t1_abc, pos) = read_qfi_abc(data, pos)?;
@@ -300,8 +283,8 @@ fn deserialize_round3(
     let (z_bytes, pos) = read_field(data, pos)?;
     let (e_bytes, _) = read_field(data, pos)?;
 
-    let t1 = abc_to_qfi(setup, &t1_abc)?;
-    let t2 = abc_to_qfi(setup, &t2_abc)?;
+    let t1 = abc_to_qfi(&t1_abc)?;
+    let t2 = abc_to_qfi(&t2_abc)?;
     let proof = RDecDlProof {
         t1,
         t2,
@@ -318,9 +301,10 @@ fn deserialize_round3(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use elliptic_curve::CurveArithmetic;
     use tecdsa_protocol::{PartyId, StateMachine};
+
+    use super::*;
 
     /// Runs the TX25 keygen state machine for `n` parties with threshold `t`.
     ///

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -22,19 +22,22 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-
-use tecdsa_class_group::bicycl_glue::{BicyclPublicKey, ClSetup};
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
-use tecdsa_class_group::zk::r_com_kwlg::RComKwlgProof;
+use tecdsa_class_group::{
+    cl::{ClPublicKey, ClSetup},
+    zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof},
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
-use crate::error::{qfi_from_abc, qfi_to_abc, TroutError};
-use crate::key_share::TroutKeyShare;
-
-use super::presign_round1;
-use super::types::{TroutPresignOutput, TroutRound1Broadcast, TroutRound1State};
+use super::{
+    presign_round1,
+    types::{TroutPresignOutput, TroutRound1Broadcast, TroutRound1State},
+};
+use crate::{
+    error::{qfi_from_abc, qfi_to_abc, TroutError},
+    key_share::TroutKeyShare,
+};
 
 // ---------------------------------------------------------------------------
 // Serialized QFI (a, b, c) for wire messages
@@ -75,14 +78,14 @@ struct SerRClDlEcProof {
 }
 
 impl SerRClDlEcProof {
-    fn from_proof(setup: &ClSetup, proof: &RClDlEcProof) -> Result<Self, String> {
+    fn from_proof(proof: &RClDlEcProof) -> Result<Self, String> {
         Ok(Self {
             t1: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t1).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t1).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             t2: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t2).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t2).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
@@ -92,12 +95,10 @@ impl SerRClDlEcProof {
         })
     }
 
-    fn to_proof(&self, setup: &ClSetup) -> Result<RClDlEcProof, String> {
+    fn to_proof(&self) -> Result<RClDlEcProof, String> {
         Ok(RClDlEcProof {
-            t1: qfi_from_abc(setup.ctx(), &self.t1.a, &self.t1.b, &self.t1.c)
-                .map_err(|e| format!("{e}"))?,
-            t2: qfi_from_abc(setup.ctx(), &self.t2.a, &self.t2.b, &self.t2.c)
-                .map_err(|e| format!("{e}"))?,
+            t1: qfi_from_abc(&self.t1.a, &self.t1.b, &self.t1.c).map_err(|e| format!("{e}"))?,
+            t2: qfi_from_abc(&self.t2.a, &self.t2.b, &self.t2.c).map_err(|e| format!("{e}"))?,
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             u1: self.u1.clone(),
             u2: self.u2.clone(),
@@ -115,10 +116,10 @@ struct SerRComKwlgProof {
 }
 
 impl SerRComKwlgProof {
-    fn from_proof(setup: &ClSetup, proof: &RComKwlgProof) -> Result<Self, String> {
+    fn from_proof(proof: &RComKwlgProof) -> Result<Self, String> {
         Ok(Self {
             t: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             z1: proof.z1.clone(),
@@ -127,10 +128,9 @@ impl SerRComKwlgProof {
         })
     }
 
-    fn to_proof(&self, setup: &ClSetup) -> Result<RComKwlgProof, String> {
+    fn to_proof(&self) -> Result<RComKwlgProof, String> {
         Ok(RComKwlgProof {
-            t: qfi_from_abc(setup.ctx(), &self.t.a, &self.t.b, &self.t.c)
-                .map_err(|e| format!("{e}"))?,
+            t: qfi_from_abc(&self.t.a, &self.t.b, &self.t.c).map_err(|e| format!("{e}"))?,
             z1: self.z1.clone(),
             z2: self.z2.clone(),
             e: self.e.clone(),
@@ -195,7 +195,7 @@ struct Round1State {
 pub struct TroutPresignMachine {
     round: PresignRound,
     setup: ClSetup,
-    cl_pk: BicyclPublicKey,
+    cl_pk: ClPublicKey,
     my_id: PartyId,
     all_parties: Vec<PartyId>,
     my_state: TroutRound1State,
@@ -221,7 +221,7 @@ impl TroutPresignMachine {
         signing_parties_1based: Vec<u16>,
         session_nonce: &[u8],
         mut setup: ClSetup,
-        cl_pk: BicyclPublicKey,
+        cl_pk: ClPublicKey,
     ) -> Result<Self, TroutError> {
         if !all_parties.contains(&my_id) {
             return Err(TroutError::InvalidParam("my_id not in all_parties".into()));
@@ -238,9 +238,9 @@ impl TroutPresignMachine {
         )?;
 
         // Serialize the broadcast for wire transmission.
-        let pi_cl_ec_ser = SerRClDlEcProof::from_proof(&setup, &bcast.pi_cl_ec)
+        let pi_cl_ec_ser = SerRClDlEcProof::from_proof(&bcast.pi_cl_ec)
             .map_err(|e| TroutError::InvalidParam(format!("serialize pi_cl_ec: {e}")))?;
-        let pi_com_kwlg_ser = SerRComKwlgProof::from_proof(&setup, &bcast.pi_com_kwlg)
+        let pi_com_kwlg_ser = SerRComKwlgProof::from_proof(&bcast.pi_com_kwlg)
             .map_err(|e| TroutError::InvalidParam(format!("serialize pi_com_kwlg: {e}")))?;
 
         let payload = R1Payload {
@@ -330,9 +330,9 @@ impl TroutPresignMachine {
             let bcast = &r1.broadcast;
             let (c1_a, c1_b, c1_c) = &bcast.kt_c1_abc;
             let (c2_a, c2_b, c2_c) = &bcast.kt_c2_abc;
-            let c1 = qfi_from_abc(self.setup.ctx(), c1_a, c1_b, c1_c)
+            let c1 = qfi_from_abc(c1_a, c1_b, c1_c)
                 .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
-            let c2 = qfi_from_abc(self.setup.ctx(), c2_a, c2_b, c2_c)
+            let c2 = qfi_from_abc(c2_a, c2_b, c2_c)
                 .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
             let kt_ct = self
                 .setup
@@ -351,18 +351,15 @@ impl TroutPresignMachine {
         }
 
         // Verify R_{ComKwlg} proofs (U_i = h^beta_i * pk^u_i)
-        let pk_elt = self
-            .setup
-            .pk_element(&self.cl_pk)
-            .map_err(|e| TecdsaError::Other(format!("pk_elt: {e}")))?;
+        let pk_elt = self.cl_pk.elt();
         for r1 in state.received.values() {
             let bcast = &r1.broadcast;
             let (a, b, c) = &bcast.u_com_abc;
-            let u_com = qfi_from_abc(self.setup.ctx(), a, b, c)
-                .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
+            let u_com =
+                qfi_from_abc(a, b, c).map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
             let ok = bcast
                 .pi_com_kwlg
-                .verify_with_base(&self.setup, &u_com, &pk_elt)
+                .verify_with_base(&self.setup, &u_com, pk_elt)
                 .map_err(|e| TecdsaError::Other(format!("R_ComKwlg verify: {e}")))?;
             if !ok {
                 return Err(TecdsaError::Other(format!(
@@ -429,11 +426,11 @@ impl StateMachine for TroutPresignMachine {
                 // Deserialize proofs
                 let pi_cl_ec = payload
                     .pi_cl_ec
-                    .to_proof(&self.setup)
+                    .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("pi_cl_ec from {from}: {e}")))?;
                 let pi_com_kwlg = payload
                     .pi_com_kwlg
-                    .to_proof(&self.setup)
+                    .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("pi_com_kwlg from {from}: {e}")))?;
 
                 // Deserialize eVRF

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! In-memory network for deterministic, single-threaded protocol testing.
 
-use crate::Transport;
 use std::collections::{BTreeMap, HashMap};
+
 use tecdsa_protocol::PartyId;
+
+use crate::Transport;
 
 /// Per-party communication metrics.
 #[derive(Debug, Clone, Default)]

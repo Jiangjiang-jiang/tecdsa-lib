@@ -15,8 +15,10 @@
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use serde::{Deserialize, Serialize};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_ot::rvole::MulDataToReceiver;
-use tecdsa_ot::soft_spoken::{OteDataToSender, OteInitSenderMsg};
+use tecdsa_ot::{
+    rvole::MulDataToReceiver,
+    soft_spoken::{OteDataToSender, OteInitSenderMsg},
+};
 
 // ---------------------------------------------------------------------------
 // Round 1: nonce commitment + RVOLE init (presign)

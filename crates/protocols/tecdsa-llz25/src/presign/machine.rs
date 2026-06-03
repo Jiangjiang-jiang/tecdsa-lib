@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -23,18 +23,18 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use tecdsa_class_group::bicycl_glue::BicyclPublicKey as ClHsmqkPublicKey;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
-use tecdsa_class_group::zk::r_ped_ec::RPedEcProof;
+use tecdsa_class_group::{
+    cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup},
+    zk::{r_cl_dl_ec::RClDlEcProof, r_ped_ec::RPedEcProof},
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
-use crate::error::{qfi_from_abc, qfi_to_abc, Llz25Error};
-use crate::key_share::Llz25KeyShare;
-
 use super::{presign_round1, verify_presign_message, PresignMessage, PresignState};
+use crate::{
+    error::{qfi_from_abc, qfi_to_abc, Llz25Error},
+    key_share::Llz25KeyShare,
+};
 
 // ---------------------------------------------------------------------------
 // Serialized QFI (a, b, c) for wire messages
@@ -72,14 +72,14 @@ struct SerRClDlEcProof {
 }
 
 impl SerRClDlEcProof {
-    fn from_proof(setup: &ClSetup, proof: &RClDlEcProof) -> Result<Self, String> {
+    fn from_proof(proof: &RClDlEcProof) -> Result<Self, String> {
         Ok(Self {
             t1: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t1).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t1).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             t2: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t2).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t2).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
@@ -89,12 +89,10 @@ impl SerRClDlEcProof {
         })
     }
 
-    fn to_proof(&self, setup: &ClSetup) -> Result<RClDlEcProof, String> {
+    fn to_proof(&self) -> Result<RClDlEcProof, String> {
         Ok(RClDlEcProof {
-            t1: qfi_from_abc(setup.ctx(), &self.t1.a, &self.t1.b, &self.t1.c)
-                .map_err(|e| format!("{e}"))?,
-            t2: qfi_from_abc(setup.ctx(), &self.t2.a, &self.t2.b, &self.t2.c)
-                .map_err(|e| format!("{e}"))?,
+            t1: qfi_from_abc(&self.t1.a, &self.t1.b, &self.t1.c).map_err(|e| format!("{e}"))?,
+            t2: qfi_from_abc(&self.t2.a, &self.t2.b, &self.t2.c).map_err(|e| format!("{e}"))?,
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             u1: self.u1.clone(),
             u2: self.u2.clone(),
@@ -113,10 +111,10 @@ struct SerRPedEcProof {
 }
 
 impl SerRPedEcProof {
-    fn from_proof(setup: &ClSetup, proof: &RPedEcProof) -> Result<Self, String> {
+    fn from_proof(proof: &RPedEcProof) -> Result<Self, String> {
         Ok(Self {
             c_tilde: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.c_tilde).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.c_tilde).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
@@ -126,15 +124,10 @@ impl SerRPedEcProof {
         })
     }
 
-    fn to_proof(&self, setup: &ClSetup) -> Result<RPedEcProof, String> {
+    fn to_proof(&self) -> Result<RPedEcProof, String> {
         Ok(RPedEcProof {
-            c_tilde: qfi_from_abc(
-                setup.ctx(),
-                &self.c_tilde.a,
-                &self.c_tilde.b,
-                &self.c_tilde.c,
-            )
-            .map_err(|e| format!("{e}"))?,
+            c_tilde: qfi_from_abc(&self.c_tilde.a, &self.c_tilde.b, &self.c_tilde.c)
+                .map_err(|e| format!("{e}"))?,
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             s_r: self.s_r.clone(),
             s_v: self.s_v.clone(),
@@ -297,14 +290,14 @@ impl Llz25PresignMachine {
         let (pe_k_c1, pe_k_c2) = setup
             .ct_components(&my_message.pe_k)
             .map_err(|e| Llz25Error::ClassGroup(format!("ct_components: {e}")))?;
-        let pe_k_c1_abc = qfi_to_abc(setup.ctx(), &pe_k_c1)?;
-        let pe_k_c2_abc = qfi_to_abc(setup.ctx(), &pe_k_c2)?;
+        let pe_k_c1_abc = qfi_to_abc(&pe_k_c1)?;
+        let pe_k_c2_abc = qfi_to_abc(&pe_k_c2)?;
 
-        let pe_gamma_abc = qfi_to_abc(setup.ctx(), &my_message.pe_gamma)?;
+        let pe_gamma_abc = qfi_to_abc(&my_message.pe_gamma)?;
 
-        let proof_cl_ser = SerRClDlEcProof::from_proof(&setup, &my_message.proof_cl)
+        let proof_cl_ser = SerRClDlEcProof::from_proof(&my_message.proof_cl)
             .map_err(|e| Llz25Error::Protocol(format!("serialize proof_cl: {e}")))?;
-        let proof_ped_ser = SerRPedEcProof::from_proof(&setup, &my_message.proof_ped)
+        let proof_ped_ser = SerRPedEcProof::from_proof(&my_message.proof_ped)
             .map_err(|e| Llz25Error::Protocol(format!("serialize proof_ped: {e}")))?;
 
         let payload = R1Payload {
@@ -362,20 +355,10 @@ impl Llz25PresignMachine {
         let big_gamma = point_from_bytes(&payload.big_gamma_bytes)?;
 
         // Deserialize pe_k ciphertext.
-        let pe_k_c1 = qfi_from_abc(
-            self.setup.ctx(),
-            &payload.pe_k.c1.a,
-            &payload.pe_k.c1.b,
-            &payload.pe_k.c1.c,
-        )
-        .map_err(|e| TecdsaError::Other(format!("pe_k c1: {e}")))?;
-        let pe_k_c2 = qfi_from_abc(
-            self.setup.ctx(),
-            &payload.pe_k.c2.a,
-            &payload.pe_k.c2.b,
-            &payload.pe_k.c2.c,
-        )
-        .map_err(|e| TecdsaError::Other(format!("pe_k c2: {e}")))?;
+        let pe_k_c1 = qfi_from_abc(&payload.pe_k.c1.a, &payload.pe_k.c1.b, &payload.pe_k.c1.c)
+            .map_err(|e| TecdsaError::Other(format!("pe_k c1: {e}")))?;
+        let pe_k_c2 = qfi_from_abc(&payload.pe_k.c2.a, &payload.pe_k.c2.b, &payload.pe_k.c2.c)
+            .map_err(|e| TecdsaError::Other(format!("pe_k c2: {e}")))?;
         let pe_k = self
             .setup
             .ct_from_components(&pe_k_c1, &pe_k_c2)
@@ -383,7 +366,6 @@ impl Llz25PresignMachine {
 
         // Deserialize pe_gamma QFI.
         let pe_gamma = qfi_from_abc(
-            self.setup.ctx(),
             &payload.pe_gamma.a,
             &payload.pe_gamma.b,
             &payload.pe_gamma.c,
@@ -393,11 +375,11 @@ impl Llz25PresignMachine {
         // Deserialize proofs.
         let proof_cl = payload
             .proof_cl
-            .to_proof(&self.setup)
+            .to_proof()
             .map_err(|e| TecdsaError::Other(format!("proof_cl: {e}")))?;
         let proof_ped = payload
             .proof_ped
-            .to_proof(&self.setup)
+            .to_proof()
             .map_err(|e| TecdsaError::Other(format!("proof_ped: {e}")))?;
 
         Ok(PresignMessage {

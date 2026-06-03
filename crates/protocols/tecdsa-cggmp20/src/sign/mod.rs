@@ -3,17 +3,16 @@
 
 pub mod types;
 
-pub use types::{
-    DataToSign, PartialSignature, Presignature, PresignatureCommitment, PresignaturePublicData,
-    Signature,
-};
-
 use elliptic_curve::{
     group::Curve as CurveGroup, ops::LinearCombination, sec1::ModulusSize, CurveArithmetic, Field,
     FieldBytes, FieldBytesSize, PrimeField,
 };
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
+pub use types::{
+    DataToSign, PartialSignature, Presignature, PresignatureCommitment, PresignaturePublicData,
+    Signature,
+};
 
 impl<C: TecdsaCurve> Presignature<C>
 where

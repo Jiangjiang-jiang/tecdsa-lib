@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(non_snake_case)]
 
 //! LLZ25 key generation.
@@ -23,24 +23,21 @@ pub mod machine;
 pub mod msg;
 pub mod rounds;
 
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 pub use machine::Llz25KeygenMachine;
 pub use msg::Llz25KeygenMsg;
-
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
-
-use crate::error::qfi_to_abc;
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::bicycl_glue::{
-    BicyclCiphertext as ClHsmqkCiphertext, BicyclPublicKey as ClHsmqkPublicKey,
+use tecdsa_class_group::{
+    cl::{ClCiphertext as ClHsmqkCiphertext, ClPublicKey as ClHsmqkPublicKey, ClSetup},
+    nim::{Nim, NimEncodeBOutput},
+    zk::r_cl_dl_ec::RClDlEcProof,
 };
-use tecdsa_class_group::nim::{Nim, NimEncodeBOutput};
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_vss::shamir;
 
-use crate::error::Llz25Error;
-use crate::key_share::Llz25KeyShare;
+use crate::{
+    error::{qfi_to_abc, Llz25Error},
+    key_share::Llz25KeyShare,
+};
 
 /// Output of the keygen NIM encoding step for one party.
 ///
@@ -108,8 +105,8 @@ pub fn keygen_with_dealer(
         let (c1, c2) = setup
             .ct_components(&pe_b)
             .map_err(|e| Llz25Error::ClassGroup(format!("ct_components: {e}")))?;
-        let c1_abc = qfi_to_abc(setup.ctx(), &c1)?;
-        let c2_abc = qfi_to_abc(setup.ctx(), &c2)?;
+        let c1_abc = qfi_to_abc(&c1)?;
+        let c2_abc = qfi_to_abc(&c2)?;
         all_pe_x_components.push((
             c1_abc.0.clone(),
             c1_abc.1.clone(),

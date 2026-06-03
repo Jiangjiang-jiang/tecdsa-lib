@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::TecdsaCurve;
 use elliptic_curve::{
     ctutils::CtOption,
     ops::Reduce,
@@ -9,6 +8,8 @@ use elliptic_curve::{
 use k256::{AffinePoint, ProjectivePoint, Scalar, Secp256k1 as K256Curve, U256};
 use sha2::{Digest, Sha256};
 use tecdsa_core::TecdsaError;
+
+use crate::TecdsaCurve;
 
 /// Adapter type re-exported for users who want to name it via `Secp256k1Adapter`.
 ///

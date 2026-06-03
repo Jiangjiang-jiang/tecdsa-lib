@@ -1,22 +1,21 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! TX25 keygen round state structs and transition logic.
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::CurveArithmetic;
-
-use tecdsa_class_group::bicycl_glue::{BicyclPublicKey, BicyclQfi, BicyclSecretKey, ClSetup};
-use tecdsa_class_group::cl_enc::{ClPublicKey, ClSecretKey};
-use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use tecdsa_class_group::{
+    cl::{ClPublicKey, ClSecretKey, ClSetup, Qfi},
+    zk::r_dec_dl::RDecDlProof,
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, PartyId, Recipient};
 
-use crate::key_share::Tx25KeyShare;
-use crate::pvss::{pvss_decrypt_share, pvss_distribute, PvssOutput};
-
-use super::msg::Tx25KeygenMsg;
-use super::{abc_to_qfi, qfi_to_abc, serialize_round2, serialize_round3};
+use super::{abc_to_qfi, msg::Tx25KeygenMsg, qfi_to_abc, serialize_round2, serialize_round3};
+use crate::{
+    key_share::Tx25KeyShare,
+    pvss::{pvss_decrypt_share, pvss_distribute, PvssOutput},
+};
 
 // ---------------------------------------------------------------------------
 // Internal round states
@@ -27,8 +26,8 @@ pub(crate) struct Round1State {
     pub(crate) my_id: PartyId,
     pub(crate) all_parties: Vec<PartyId>,
     pub(crate) threshold: u16,
-    pub(crate) cl_sk_raw: BicyclSecretKey,
-    pub(crate) cl_pk_raw: BicyclPublicKey,
+    pub(crate) cl_sk_raw: ClSecretKey,
+    pub(crate) cl_pk_raw: ClPublicKey,
     pub(crate) cl_sk_decimal: Vec<u8>,
     pub(crate) cl_pk_abc: (String, String, String),
     pub(crate) received: BTreeMap<PartyId, Round1Msg>,
@@ -47,8 +46,8 @@ pub(crate) struct Round2State {
     pub(crate) my_id: PartyId,
     pub(crate) all_parties: Vec<PartyId>,
     pub(crate) threshold: u16,
-    pub(crate) cl_sk_raw: BicyclSecretKey,
-    pub(crate) cl_pk_raw: BicyclPublicKey,
+    pub(crate) cl_sk_raw: ClSecretKey,
+    pub(crate) cl_pk_raw: ClPublicKey,
     pub(crate) cl_sk_decimal: Vec<u8>,
     /// All parties' PK abcs in party order (including self).
     pub(crate) cl_pk_abcs: BTreeMap<PartyId, (String, String, String)>,
@@ -61,8 +60,8 @@ pub(crate) struct Round2State {
 
 /// Deserialized Round 2 message from a peer.
 pub(crate) struct Round2Msg {
-    pub(crate) c1: BicyclQfi,
-    pub(crate) c2s: Vec<BicyclQfi>,
+    pub(crate) c1: Qfi,
+    pub(crate) c2s: Vec<Qfi>,
 }
 
 /// Round 3 state: after decrypting and combining shares.
@@ -120,16 +119,14 @@ pub(crate) fn transition_r1_to_r2(
 
     // Collect all CL public keys and abcs in party order.
     let mut cl_pk_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
-    let mut ordered_pks: Vec<BicyclPublicKey> = Vec::with_capacity(n);
+    let mut ordered_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
 
     for pid in &state.all_parties {
         if *pid == my_id {
             // Clone our own PK from QFI.
-            let pk_elt = setup
-                .pk_element(&state.cl_pk_raw)
-                .map_err(|e| TecdsaError::Other(format!("pk_element: {e}")))?;
+            let pk_elt = state.cl_pk_raw.elt();
             let pk_clone = setup
-                .pk_from_qfi(&pk_elt)
+                .pk_from_qfi(pk_elt)
                 .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
             ordered_pks.push(pk_clone);
             cl_pk_abcs.insert(*pid, state.cl_pk_abc.clone());
@@ -138,7 +135,7 @@ pub(crate) fn transition_r1_to_r2(
                 TecdsaError::Other(format!("missing R1 message from party {pid}"))
             })?;
             // Clone the peer's PK by re-reconstructing from abc.
-            let qfi = abc_to_qfi(setup, &r1_msg.cl_pk_abc)
+            let qfi = abc_to_qfi(&r1_msg.cl_pk_abc)
                 .map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
             let pk = setup
                 .pk_from_qfi(&qfi)
@@ -163,7 +160,7 @@ pub(crate) fn transition_r1_to_r2(
     .map_err(|e| TecdsaError::Other(format!("pvss_distribute failed: {e}")))?;
 
     // Serialize Round 2 message.
-    let r2_payload = serialize_round2(setup, &pvss_output)
+    let r2_payload = serialize_round2(&pvss_output)
         .map_err(|e| TecdsaError::Other(format!("R2 serialize failed: {e}")))?;
 
     // Queue broadcast to all other parties.
@@ -178,11 +175,9 @@ pub(crate) fn transition_r1_to_r2(
     }
 
     // Clone the PK raw for Round 2 state.
-    let my_pk_elt = setup
-        .pk_element(&state.cl_pk_raw)
-        .map_err(|e| TecdsaError::Other(format!("pk_element: {e}")))?;
+    let my_pk_elt = state.cl_pk_raw.elt();
     let my_pk_clone = setup
-        .pk_from_qfi(&my_pk_elt)
+        .pk_from_qfi(my_pk_elt)
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
 
     Ok(Round2State {
@@ -262,7 +257,7 @@ pub(crate) fn transition_r2_to_r3(
             .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove failed: {e}")))?;
 
     // Serialize Round 3 message (includes pd for R_Dec_DL verification).
-    let r3_payload = serialize_round3(setup, &big_x_i_bytes, &pd, &r_dec_dl_proof)
+    let r3_payload = serialize_round3(&big_x_i_bytes, &pd, &r_dec_dl_proof)
         .map_err(|e| TecdsaError::Other(format!("R3 serialize failed: {e}")))?;
 
     // Queue broadcast.
@@ -277,10 +272,9 @@ pub(crate) fn transition_r2_to_r3(
     }
 
     // Build CL key types for the key share output.
-    let cl_sk_raw_for_share = setup
+    let cl_sk = setup
         .sk_from_bytes(&state.cl_sk_decimal)
         .map_err(|e| TecdsaError::Other(format!("sk_from_decimal: {e}")))?;
-    let cl_sk = ClSecretKey::from_raw(cl_sk_raw_for_share);
 
     // Reconstruct all CL public keys from stored abcs.
     let mut cl_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
@@ -289,24 +283,23 @@ pub(crate) fn transition_r2_to_r3(
             .cl_pk_abcs
             .get(pid)
             .ok_or_else(|| TecdsaError::Other(format!("missing pk abc for party {pid}")))?;
-        let qfi =
-            abc_to_qfi(setup, abc).map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
+        let qfi = abc_to_qfi(abc).map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
         let pk_raw = setup
             .pk_from_qfi(&qfi)
             .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
-        cl_pks.push(ClPublicKey::from_raw(pk_raw));
+        cl_pks.push(pk_raw);
     }
 
     // Carry forward per-party PVSS c1 values (as abc strings) for
     // R_Dec_DL verification in Round 3.
     let mut pvss_c1_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
     // Our own PVSS c1.
-    let own_c1_abc = qfi_to_abc(setup, &state.my_pvss.c1)
+    let own_c1_abc = qfi_to_abc(&state.my_pvss.c1)
         .map_err(|e| TecdsaError::Other(format!("qfi_to_abc own c1: {e}")))?;
     pvss_c1_abcs.insert(my_id, own_c1_abc);
     // Other parties' PVSS c1 values.
     for (pid, r2_msg) in &state.received {
-        let c1_abc = qfi_to_abc(setup, &r2_msg.c1)
+        let c1_abc = qfi_to_abc(&r2_msg.c1)
             .map_err(|e| TecdsaError::Other(format!("qfi_to_abc c1 from {pid}: {e}")))?;
         pvss_c1_abcs.insert(*pid, c1_abc);
     }

@@ -24,25 +24,22 @@ pub use tecdsa_ggn16 as ggn16;
 #[cfg(feature = "ln18")]
 pub use tecdsa_ln18 as ln18;
 
-// --- GPL-3.0-or-later protocols ---
-// Enabling any *-gpl feature makes the binary GPL-3.0-or-later.
-
-#[cfg(feature = "wmy23-gpl")]
+#[cfg(feature = "wmy23")]
 pub use tecdsa_wmy23 as wmy23;
 
-#[cfg(feature = "tx25-gpl")]
+#[cfg(feature = "tx25")]
 pub use tecdsa_tx25 as tx25;
 
-#[cfg(feature = "jtx25-gpl")]
+#[cfg(feature = "jtx25")]
 pub use tecdsa_jtx25 as jtx25;
 
-#[cfg(feature = "wmc24-gpl")]
+#[cfg(feature = "wmc24")]
 pub use tecdsa_wmc24 as wmc24;
 
-#[cfg(feature = "llz25-gpl")]
+#[cfg(feature = "llz25")]
 pub use tecdsa_llz25 as llz25;
 
-#[cfg(feature = "trout-gpl")]
+#[cfg(feature = "trout")]
 pub use tecdsa_trout as trout;
 
 #[cfg(feature = "xal23")]

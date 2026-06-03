@@ -12,7 +12,6 @@ default = ["curve-secp256k1"]
 curve-secp256k1 = ["tecdsa-curve/secp256k1"]
 curve-secp256r1 = ["tecdsa-curve/secp256r1"]
 
-# --- MIT/Apache-2.0 protocols (no GPL dependencies) ---
 cggmp20 = ["dep:tecdsa-cggmp20"]
 dkls23 = ["dep:tecdsa-dkls23"]
 gg18 = ["dep:tecdsa-gg18"]
@@ -26,16 +25,13 @@ xal21-paillier = ["xal21", "dep:tecdsa-paillier"]
 xal21-jl = ["xal21", "dep:tecdsa-joye-libert"]
 xal21-ot = ["xal21", "dep:tecdsa-ot"]
 abc24 = ["dep:tecdsa-abc24"]
-
-# --- GPL-3.0-or-later protocols (depend on tecdsa-class-group / bicycl-rs) ---
-# Enabling any of these features makes the binary GPL-3.0-or-later.
-wmy23-gpl = ["dep:tecdsa-wmy23"]
-tx25-gpl = ["dep:tecdsa-tx25"]
-jtx25-gpl = ["dep:tecdsa-jtx25"]
-wmc24-gpl = ["dep:tecdsa-wmc24"]
-llz25-gpl = ["dep:tecdsa-llz25"]
-trout-gpl = ["dep:tecdsa-trout"]
-xal21-cl-gpl = ["xal21", "dep:tecdsa-class-group"]
+wmy23 = ["dep:tecdsa-wmy23"]
+tx25 = ["dep:tecdsa-tx25"]
+jtx25 = ["dep:tecdsa-jtx25"]
+wmc24 = ["dep:tecdsa-wmc24"]
+llz25 = ["dep:tecdsa-llz25"]
+trout = ["dep:tecdsa-trout"]
+xal21-cl = ["xal21", "dep:tecdsa-class-group"]
 
 [dependencies]
 tecdsa-core = { workspace = true }

@@ -11,15 +11,13 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 use tecdsa_vss::feldman;
 use zeroize::Zeroize;
 
-use crate::key_share::{Cggmp20CoreKeyShare, VssSetup};
-
 use super::msg::{KeygenMsg, MsgRound1, MsgRound2Broad, MsgRound2Uni, MsgRound3};
+use crate::key_share::{Cggmp20CoreKeyShare, VssSetup};
 
 // ---------------------------------------------------------------------------
 // Round enum

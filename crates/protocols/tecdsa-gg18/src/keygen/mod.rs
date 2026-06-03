@@ -19,17 +19,16 @@ pub mod msg;
 mod rounds;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use msg::Gg18KeygenMsg;
 use rand_core::CryptoRngCore;
+// Re-export precomputed key types for external constructors.
+pub use rounds::{generate_n_tilde, PaillierPrecomputed};
+use rounds::{KeygenRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig, StateMachine};
 
 use crate::key_share::Gg18KeyShare;
-use msg::Gg18KeygenMsg;
-use rounds::{KeygenRound, Round1State};
-
-// Re-export precomputed key types for external constructors.
-pub use rounds::{generate_n_tilde, PaillierPrecomputed};
 
 /// GG18 threshold key generation state machine.
 pub struct Gg18KeygenMachine<C: TecdsaCurve>

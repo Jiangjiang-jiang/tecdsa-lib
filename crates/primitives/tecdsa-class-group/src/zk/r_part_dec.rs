@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -20,7 +20,7 @@ pub use super::r_dec_dl::RDecDlProof as RPartDecProof;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_part_dec_honest_verifies() {

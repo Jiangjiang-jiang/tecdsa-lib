@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -20,15 +20,13 @@
 //! The proof uses z1 unbounded (for CL checks) and z1 mod q (for EC checks),
 //! z2 mod q (for EC checks only).
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
-
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
 use num_bigint::BigUint;
 use tecdsa_curve::conv;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// ElGamal + CL scalar multiply proof (R_El-CL).
 pub struct RElClProof {
@@ -59,7 +57,7 @@ fn test_scalar(val: u64) -> Scalar {
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
     if bytes.len() != 33 {
-        return Err(crate::bicycl_glue::ClError::InvalidParam(format!(
+        return Err(crate::cl::ClError::InvalidParam(format!(
             "expected 33-byte compressed point, got {} bytes",
             bytes.len()
         )));
@@ -68,7 +66,7 @@ fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
     AsMut::<[u8]>::as_mut(&mut repr).copy_from_slice(bytes);
     let opt = ProjectivePoint::from_bytes(&repr);
     if bool::from(opt.is_none()) {
-        return Err(crate::bicycl_glue::ClError::InvalidParam(
+        return Err(crate::cl::ClError::InvalidParam(
             "invalid EC point encoding".into(),
         ));
     }
@@ -222,7 +220,7 @@ impl RElClProof {
         let ck_0_z1 = setup.exp_bytes(ck_0, &self.z1)?;
         let cgk_0_e = setup.exp_bytes(cgk_0, &self.e)?;
         let rhs3 = setup.compose(&self.r_ck, &cgk_0_e)?;
-        if !ck_0_z1.equal(setup.ctx(), &rhs3)? {
+        if ck_0_z1 != rhs3 {
             return Ok(false);
         }
 
@@ -230,7 +228,7 @@ impl RElClProof {
         let ck_1_z1 = setup.exp_bytes(ck_1, &self.z1)?;
         let cgk_1_e = setup.exp_bytes(cgk_1, &self.e)?;
         let rhs4 = setup.compose(&self.s_ck, &cgk_1_e)?;
-        if !ck_1_z1.equal(setup.ctx(), &rhs4)? {
+        if ck_1_z1 != rhs4 {
             return Ok(false);
         }
 
@@ -241,7 +239,7 @@ impl RElClProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_el_cl_honest_verifies() {

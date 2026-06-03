@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::{MerlinTranscript, SigmaRelation};
 use rand_core::CryptoRngCore;
+
+use crate::{MerlinTranscript, SigmaRelation};
 
 /// A non-interactive proof produced by the Fiat-Shamir transform of a
 /// [`SigmaRelation`].

@@ -27,8 +27,7 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::backend::Integer;
-use fast_paillier::{DecryptionKey, EncryptionKey};
+use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
@@ -292,8 +291,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
+
+    use super::*;
 
     /// Helper: create a test scenario with valid Paillier encryption of x_hat_1.
     fn setup_test_scenario() -> (

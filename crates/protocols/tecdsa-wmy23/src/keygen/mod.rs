@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! WMY23 threshold key generation protocol.
 //!
 //! A 4-round protocol where $n$ parties produce shared ECDSA key material
@@ -29,12 +29,12 @@
 pub mod msg;
 pub mod rounds;
 
+use msg::Wmy23KeygenMsg;
+use rounds::{KeygenR1Bcast, KeygenR1State, KeygenR2Bcast};
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
 use crate::key_share::Wmy23KeyShare;
-use msg::Wmy23KeygenMsg;
-use rounds::{KeygenR1Bcast, KeygenR1State, KeygenR2Bcast};
 
 /// WMY23 key generation state machine.
 ///
@@ -58,7 +58,7 @@ pub struct Wmy23KeygenMachine {
     all_parties: Vec<PartyId>,
     _threshold: u16,
     /// CL setup stored directly (Send since bicycl-rs v0.2.2).
-    setup: tecdsa_class_group::bicycl_glue::ClSetup,
+    setup: tecdsa_class_group::cl::ClSetup,
     /// Round 1 state (from keygen_round1).
     r1_state: Option<KeygenR1State>,
     /// Collected Round 1 broadcasts from all parties (indexed by party order).
@@ -108,9 +108,9 @@ impl Wmy23KeygenMachine {
 
         // Create a ClSetup and store it for use across all rounds.
         let mut setup = if use_128bit_security {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
         } else {
-            tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1(cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1(cl_setup_seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 

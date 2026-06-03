@@ -26,8 +26,10 @@ use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
-use crate::error::Abc24Error;
-use crate::key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare};
+use crate::{
+    error::Abc24Error,
+    key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare},
+};
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -349,11 +351,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::keygen::trusted_dealer_keygen;
     use k256::Secp256k1;
     use sha2::Sha256;
     use tecdsa_protocol::DataToSign;
+
+    use super::*;
+    use crate::keygen::trusted_dealer_keygen;
 
     fn make_message(msg: &[u8]) -> DataToSign<Secp256k1> {
         use elliptic_curve::PrimeField;

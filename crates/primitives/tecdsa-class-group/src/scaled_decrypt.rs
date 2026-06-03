@@ -1,5 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-//! Scaled Decryption primitive (Protocol 4.1 from Trout).
+// SPDX-License-Identifier: MIT OR Apache-2.0//! Scaled Decryption primitive (Protocol 4.1 from Trout).
 //!
 //! Given:
 //! - `{A_j = Enc(alpha_j, a_j)}`: CL encryptions summing to Enc(alpha, a)
@@ -12,8 +11,10 @@
 //!
 //! The combined `F = sum F_i = f^{a*b}` and `c = DLog_F(F)` gives `a*b mod q`.
 
-use crate::bicycl_glue::{BicyclCiphertext, BicyclPublicKey, BicyclQfi, ClResult, ClSetup};
-use crate::zk::r_aff_com::RAffComProof;
+use crate::{
+    cl::{ClCiphertext, ClPublicKey, ClResult, ClSetup, Qfi},
+    zk::r_aff_com::RAffComProof,
+};
 
 /// Per-party secret inputs for scaled decryption.
 pub struct ScaledDecryptPartyInput {
@@ -28,17 +29,17 @@ pub struct ScaledDecryptPartyInput {
 /// Aggregated public ciphertext and commitment.
 pub struct ScaledDecryptPublic {
     /// First component of aggregated encryption: A_1 = prod(c1_j).
-    pub a1: BicyclQfi,
+    pub a1: Qfi,
     /// Second component of aggregated encryption: A_2 = prod(c2_j).
-    pub a2: BicyclQfi,
+    pub a2: Qfi,
     /// Aggregated commitment: B = prod(B_j).
-    pub b_agg: BicyclQfi,
+    pub b_agg: Qfi,
 }
 
 /// Output of a single party's scaled decryption contribution.
 pub struct ScaledDecryptShare {
     /// This party's contribution F_i.
-    pub f_i: BicyclQfi,
+    pub f_i: Qfi,
     /// R_affCom proof for F_i (only in IA variant).
     pub pi_aff_com: Option<RAffComProof>,
 }
@@ -50,25 +51,25 @@ pub fn compute_f_share(
     setup: &ClSetup,
     input: &ScaledDecryptPartyInput,
     public: &ScaledDecryptPublic,
-) -> ClResult<BicyclQfi> {
+) -> ClResult<Qfi> {
     let a2_bi = setup.exp_bytes(&public.a2, &input.b_i)?;
     let a1_betai = setup.exp_bytes(&public.a1, &input.beta_i)?;
-    let b_alphai = setup.exp_bytes(&public.b_agg, &input.alpha_i)?;
-    let b_alphai_inv = setup.neg_qfi(&b_alphai)?;
+    let mut b_alphai = setup.exp_bytes(&public.b_agg, &input.alpha_i)?;
+    b_alphai.neg();
 
     let tmp = setup.compose(&a2_bi, &a1_betai)?;
-    let f_i = setup.compose(&tmp, &b_alphai_inv)?;
+    let f_i = setup.compose(&tmp, &b_alphai)?;
     Ok(f_i)
 }
 
 /// Compute F_i with R_affCom proof for identifiable abort.
 pub fn compute_f_share_with_proof(
     setup: &mut ClSetup,
-    cl_pk: &BicyclPublicKey,
+    cl_pk: &ClPublicKey,
     input: &ScaledDecryptPartyInput,
     public: &ScaledDecryptPublic,
-    ct_in: &BicyclCiphertext,
-    u_com_i: &BicyclQfi,
+    ct_in: &ClCiphertext,
+    u_com_i: &Qfi,
 ) -> ClResult<ScaledDecryptShare> {
     let f_i = compute_f_share(setup, input, public)?;
 
@@ -94,7 +95,7 @@ pub fn compute_f_share_with_proof(
 }
 
 /// Aggregate F_i shares and extract the product `a*b mod q`.
-pub fn aggregate_and_solve(setup: &ClSetup, f_shares: &[BicyclQfi]) -> ClResult<Vec<u8>> {
+pub fn aggregate_and_solve(setup: &ClSetup, f_shares: &[Qfi]) -> ClResult<Vec<u8>> {
     let id = setup.identity()?;
     let mut f_agg = id;
     for fi in f_shares {
@@ -106,8 +107,8 @@ pub fn aggregate_and_solve(setup: &ClSetup, f_shares: &[BicyclQfi]) -> ClResult<
 /// Aggregate ciphertext components from all parties.
 pub fn aggregate_ciphertext_components(
     setup: &ClSetup,
-    components: &[(BicyclQfi, BicyclQfi)],
-) -> ClResult<(BicyclQfi, BicyclQfi)> {
+    components: &[(Qfi, Qfi)],
+) -> ClResult<(Qfi, Qfi)> {
     let mut a1 = setup.identity()?;
     let mut a2 = setup.identity()?;
     for (c1, c2) in components {
@@ -118,7 +119,7 @@ pub fn aggregate_ciphertext_components(
 }
 
 /// Aggregate commitment elements from all parties.
-pub fn aggregate_commitments(setup: &ClSetup, commitments: &[BicyclQfi]) -> ClResult<BicyclQfi> {
+pub fn aggregate_commitments(setup: &ClSetup, commitments: &[Qfi]) -> ClResult<Qfi> {
     let id = setup.identity()?;
     let mut b = id;
     for bj in commitments {
@@ -133,7 +134,7 @@ pub fn scaled_decrypt_local(
     inputs: &[ScaledDecryptPartyInput],
     public: &ScaledDecryptPublic,
 ) -> ClResult<Vec<u8>> {
-    let f_shares: Vec<BicyclQfi> = inputs
+    let f_shares: Vec<Qfi> = inputs
         .iter()
         .map(|input| compute_f_share(setup, input, public))
         .collect::<ClResult<Vec<_>>>()?;

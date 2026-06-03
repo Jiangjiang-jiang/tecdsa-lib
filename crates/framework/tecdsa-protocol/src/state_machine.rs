@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::abort::IaReport;
-use crate::party::PartyId;
 use serde::{Deserialize, Serialize};
+
+use crate::{abort::IaReport, party::PartyId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Recipient {

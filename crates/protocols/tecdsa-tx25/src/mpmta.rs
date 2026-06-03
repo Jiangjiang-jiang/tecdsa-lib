@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -71,12 +71,10 @@ use num_bigint::BigUint;
 use num_traits::Num;
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
-
-use tecdsa_class_group::bicycl_glue::{
-    BicyclCiphertext, BicyclPublicKey, BicyclQfi, BicyclSecretKey, ClError, ClSetup,
+use tecdsa_class_group::{
+    cl::{ClCiphertext, ClPublicKey, ClSecretKey, ClSetup, Qfi},
+    zk::{r_enc::REncProof, r_m_aff_dl_ec::RMAffDlEcProof},
 };
-use tecdsa_class_group::zk::r_enc::REncProof;
-use tecdsa_class_group::zk::r_m_aff_dl_ec::RMAffDlEcProof;
 use tecdsa_curve::TecdsaCurve;
 
 use crate::error::Tx25Error;
@@ -91,7 +89,7 @@ use crate::error::Tx25Error;
 /// of well-formedness.
 pub struct MpmtaRound1Output {
     /// `Enc(ek_i, gamma_i; rho)` -- encryption of the sender's secret.
-    pub ciphertext: BicyclCiphertext,
+    pub ciphertext: ClCiphertext,
     /// `R_Enc` proof that the ciphertext is well-formed.
     pub proof: REncProof,
     /// Encryption randomness (kept by the prover, not broadcast).
@@ -116,7 +114,7 @@ impl std::fmt::Debug for MpmtaRound1Output {
 pub struct MpmtaRound2Output {
     /// `C_{alpha_{j,i}}` for each sender `j` (indexed same as `party_ids`).
     /// For `j == me`, this is a dummy identity ciphertext.
-    pub c_alphas: Vec<BicyclCiphertext>,
+    pub c_alphas: Vec<ClCiphertext>,
     /// `beta_{i,j}` values (secret, one per party).
     /// For `j == me`, this is `Scalar::ZERO`.
     pub betas: Vec<k256::Scalar>,
@@ -163,22 +161,16 @@ impl std::fmt::Debug for MpmtaDecryptOutput {
 /// Computes a Fiat-Shamir challenge hash from QFI elements, EC points,
 /// and extra strings, reduced modulo `q`.
 fn fiat_shamir_challenge(
-    setup: &ClSetup,
-    qfi_elements: &[&BicyclQfi],
+    qfi_elements: &[&Qfi],
     ec_points: &[&k256::ProjectivePoint],
     extra: &[&str],
 ) -> Result<Vec<u8>, Tx25Error> {
     use elliptic_curve::group::GroupEncoding;
 
-    let ctx = setup.ctx();
     let mut hasher = Sha256::new();
 
     for qfi in qfi_elements {
-        hasher.update(qfi.a_decimal(ctx).map_err(ClError::from)?.as_bytes());
-        hasher.update(b"|");
-        hasher.update(qfi.b_decimal(ctx).map_err(ClError::from)?.as_bytes());
-        hasher.update(b"|");
-        hasher.update(qfi.c_decimal(ctx).map_err(ClError::from)?.as_bytes());
+        hasher.update(qfi.to_bytes());
         hasher.update(b"||");
     }
 
@@ -195,7 +187,7 @@ fn fiat_shamir_challenge(
 
     let hash = hasher.finalize();
     let hash_uint = BigUint::from_bytes_be(&hash);
-    let q = BigUint::from_str_radix(tecdsa_class_group::bicycl_glue::SECP256K1_ORDER, 10)
+    let q = BigUint::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10)
         .map_err(|e| Tx25Error::InvalidInput(format!("parse q: {e}")))?;
     let e = hash_uint % &q;
     Ok(e.to_bytes_be())
@@ -217,7 +209,7 @@ fn fiat_shamir_challenge(
 /// * `gamma_bytes` - The secret value to encrypt (big-endian bytes).
 pub fn mpmta_round1(
     setup: &mut ClSetup,
-    pk: &BicyclPublicKey,
+    pk: &ClPublicKey,
     gamma_bytes: &[u8],
 ) -> Result<MpmtaRound1Output, Tx25Error> {
     // Encrypt with known randomness so we can produce the R_Enc proof.
@@ -267,8 +259,8 @@ pub fn mpmta_round2(
     setup: &mut ClSetup,
     party_ids: &[u16],
     my_index: usize,
-    pks: &[BicyclPublicKey],
-    c_gammas: &[BicyclCiphertext],
+    pks: &[ClPublicKey],
+    c_gammas: &[ClCiphertext],
     k_bytes: &[u8],
     rng: &mut impl CryptoRngCore,
 ) -> Result<MpmtaRound2Output, Tx25Error> {
@@ -308,13 +300,13 @@ pub fn mpmta_round2(
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
 
     // Step 2: For each j, compute affine operation.
-    let mut c_alphas: Vec<BicyclCiphertext> = Vec::with_capacity(n);
+    let mut c_alphas: Vec<ClCiphertext> = Vec::with_capacity(n);
     let mut betas: Vec<k256::Scalar> = Vec::with_capacity(n);
     let mut beta_points: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
 
     // Collect per-party (d1, d2) for the aggregated proof.
-    let mut all_d1s: Vec<BicyclQfi> = Vec::with_capacity(n);
-    let mut all_d2s: Vec<BicyclQfi> = Vec::with_capacity(n);
+    let mut all_d1s: Vec<Qfi> = Vec::with_capacity(n);
+    let mut all_d2s: Vec<Qfi> = Vec::with_capacity(n);
 
     for j in 0..n {
         if j == my_index {
@@ -378,7 +370,6 @@ pub fn mpmta_round2(
         // Compute per-party Fiat-Shamir challenge e_j.
         let (cj1, cj2) = setup.ct_components(&c_gammas[j])?;
         let e_j_bytes = fiat_shamir_challenge(
-            setup,
             &[&cj1, &cj2, &all_d1s[j], &all_d2s[j]],
             &[&beta_points[j], &r_point],
             &[&j.to_string(), &my_index.to_string()],
@@ -447,8 +438,8 @@ pub fn mpmta_round2(
 ///   the beta she received from Bob).
 pub fn mpmta_decrypt(
     setup: &ClSetup,
-    sk: &BicyclSecretKey,
-    c_alpha: &BicyclCiphertext,
+    sk: &ClSecretKey,
+    c_alpha: &ClCiphertext,
     beta: &k256::Scalar,
 ) -> Result<MpmtaDecryptOutput, Tx25Error> {
     // Decrypt: alpha = Dec(sk, C_alpha).
@@ -481,7 +472,7 @@ pub fn mpmta_verify_round2(
     setup: &ClSetup,
     party_ids: &[u16],
     prover_index: usize,
-    c_gammas: &[BicyclCiphertext],
+    c_gammas: &[ClCiphertext],
     round2: &MpmtaRound2Output,
 ) -> Result<bool, Tx25Error> {
     let n = party_ids.len();
@@ -506,7 +497,6 @@ pub fn mpmta_verify_round2(
 
         // Recompute per-party Fiat-Shamir challenge.
         let e_j_bytes = fiat_shamir_challenge(
-            setup,
             &[&cj1, &cj2, &dj1, &dj2],
             &[&round2.beta_points[j], &round2.r_point],
             &[&j.to_string(), &prover_index.to_string()],

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -12,10 +12,8 @@
 //! Proves that a DDH tuple `(g, A, B, C)` is valid: prover knows `x`
 //! such that `A = g^x` and `C = B^x`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// DDH proof over class groups.
 pub struct RDdhClProof {
@@ -59,7 +57,7 @@ impl RDdhClProof {
         let g_z = setup.exp_bytes(g, &self.z)?;
         let a_e = setup.exp_bytes(a, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &a_e)?;
-        if !g_z.equal(setup.ctx(), &rhs1)? {
+        if g_z != rhs1 {
             return Ok(false);
         }
 
@@ -67,7 +65,7 @@ impl RDdhClProof {
         let b_z = setup.exp_bytes(b, &self.z)?;
         let c_e = setup.exp_bytes(c, &self.e)?;
         let rhs2 = setup.compose(&self.t2, &c_e)?;
-        if !b_z.equal(setup.ctx(), &rhs2)? {
+        if b_z != rhs2 {
             return Ok(false);
         }
 
@@ -77,9 +75,10 @@ impl RDdhClProof {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bicycl_glue::ClSetup;
     use num_bigint::BigUint;
+
+    use super::*;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_ddh_cl_honest_verifies() {
@@ -87,13 +86,13 @@ mod tests {
 
         let x = "42";
         let x_bytes = BigUint::from(42u32).to_bytes_be();
-        let g = setup.h().expect("h");
+        let g = setup.cl().h().clone();
         let a = setup.exp(&g, x).expect("g^x");
 
         // Pick another base B = h^r.
         let r = {
             let (sk, _) = setup.keygen().expect("kg");
-            setup.sk_to_decimal(&sk).expect("dec")
+            sk.to_string()
         };
         let b = setup.exp(&g, &r).expect("h^r");
         let c = setup.exp(&b, x).expect("B^x");
@@ -108,12 +107,12 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("13002").expect("setup");
 
         let x = "42";
-        let g = setup.h().expect("h");
+        let g = setup.cl().h().clone();
         let a = setup.exp(&g, x).expect("g^x");
 
         let r = {
             let (sk, _) = setup.keygen().expect("kg");
-            setup.sk_to_decimal(&sk).expect("dec")
+            sk.to_string()
         };
         let b = setup.exp(&g, &r).expect("h^r");
         let c = setup.exp(&b, x).expect("B^x");

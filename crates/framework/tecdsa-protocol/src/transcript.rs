@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::party::PartyId;
-use crate::session::{SessionConfig, SessionId};
+use crate::{
+    party::PartyId,
+    session::{SessionConfig, SessionId},
+};
 
 #[derive(Debug, Clone)]
 pub struct TranscriptContext {

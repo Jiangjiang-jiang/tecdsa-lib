@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Zero-knowledge proofs over CL-HSM class groups.
 //!
 //! Each sub-module implements a Sigma-protocol relation following the
@@ -34,10 +34,10 @@ pub mod r_pc_dl;
 pub mod r_ped_ec;
 pub mod r_sh;
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
 use num_bigint::BigUint;
 use sha2::{Digest, Sha256};
+
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// Hashes QFI elements + optional extra byte slices via SHA-256 and
 /// returns the result reduced modulo `q` as big-endian bytes.
@@ -54,14 +54,11 @@ pub(crate) fn challenge_from_qfi(
     qfi_elements: &[&Qfi],
     extra: &[&[u8]],
 ) -> ClResult<Vec<u8>> {
-    let ctx = setup.ctx();
     let mut hasher = Sha256::new();
     hasher.update(label);
 
     for qfi in qfi_elements {
-        let bytes = qfi
-            .to_bytes(ctx)
-            .map_err(|e| crate::bicycl_glue::ClError::InvalidParam(format!("to_bytes: {e}")))?;
+        let bytes = qfi.to_bytes();
         hasher.update(&bytes);
         hasher.update(b"||");
     }
@@ -88,15 +85,12 @@ pub(crate) fn challenge_from_qfi_with_prefix(
     qfi_elements: &[&Qfi],
     extra: &[&[u8]],
 ) -> ClResult<Vec<u8>> {
-    let ctx = setup.ctx();
     let mut hasher = Sha256::new();
     hasher.update(prefix);
     hasher.update(label);
 
     for qfi in qfi_elements {
-        let bytes = qfi
-            .to_bytes(ctx)
-            .map_err(|e| crate::bicycl_glue::ClError::InvalidParam(format!("to_bytes: {e}")))?;
+        let bytes = qfi.to_bytes();
         hasher.update(&bytes);
         hasher.update(b"||");
     }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! Error type for TX25 protocol operations.
 
 /// Error type for TX25 operations.
@@ -6,7 +6,7 @@
 pub enum Tx25Error {
     /// CL operation failed.
     #[error("CL operation failed: {0}")]
-    ClError(#[from] tecdsa_class_group::bicycl_glue::ClError),
+    ClError(#[from] tecdsa_class_group::cl::ClError),
 
     /// Verification of a ZK proof or commitment failed.
     #[error("verification failed")]

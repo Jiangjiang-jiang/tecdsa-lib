@@ -37,25 +37,27 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::zk::mta_range::NTildeParams;
-use tecdsa_paillier::{DecryptionKey, EncryptionKey};
+use tecdsa_paillier::{zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey};
 use tecdsa_protocol::{
     ecdsa::{low_s_normalize, Signature},
     PartyId,
 };
 
-use crate::f_mult::{
-    affine::{affine, AffineInput, AffineOutput},
-    element_out::{ElementOutMsg, ElementOutState},
-    init::InitOutput,
-    input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
-    mult::{
-        MultOutput, MultRound1Msg, MultRound1Result, MultRound2Msg, MultRound2Result,
-        MultRound3Msg, MultRound3Result, MultRound4Msg, MultRound4Result, MultRound5Msg, MultState,
+use crate::{
+    f_mult::{
+        affine::{affine, AffineInput, AffineOutput},
+        element_out::{ElementOutMsg, ElementOutState},
+        init::InitOutput,
+        input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
+        mult::{
+            MultOutput, MultRound1Msg, MultRound1Result, MultRound2Msg, MultRound2Result,
+            MultRound3Msg, MultRound3Result, MultRound4Msg, MultRound4Result, MultRound5Msg,
+            MultState,
+        },
     },
+    key_share::{Ln18KeyShare, Ln18Presignature},
+    mta::paillier::{MtaRound1Msg, MtaRound2Msg, PaillierMtaState},
 };
-use crate::key_share::{Ln18KeyShare, Ln18Presignature};
-use crate::mta::paillier::{MtaRound1Msg, MtaRound2Msg, PaillierMtaState};
 
 // ===========================================================================
 // Parameter types
@@ -1241,9 +1243,10 @@ where
 
 #[cfg(feature = "mta-ot")]
 mod ot_sign {
+    use elliptic_curve::ops::Reduce;
+
     use super::*;
     use crate::mta::ot::{OtMtaInitMsg, OtMtaRound1Msg, OtMtaRound2Msg, OtMtaState};
-    use elliptic_curve::ops::Reduce;
 
     /// Parameters needed to run the LN18 presign protocol with OT MtA.
     pub struct Ln18OtPresignParams<C: TecdsaCurve>

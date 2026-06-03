@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -21,11 +21,13 @@
 //! 1. Each party `i` partially decrypts its encrypted share.
 //! 2. Combine `t` partial decryptions using Lagrange interpolation.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use crate::zk::r_enc::REncProof;
-use bicycl_rs::{ClHsmqkCiphertext, ClHsmqkPublicKey};
 use num_bigint::BigUint;
 use num_traits::Num;
+
+use crate::{
+    cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
+    zk::r_enc::REncProof,
+};
 
 /// A PVSS dealing: encrypted shares + proofs of correct encryption.
 pub struct PvssDeal {
@@ -34,7 +36,7 @@ pub struct PvssDeal {
     /// Proofs of correct encryption, one per share.
     pub proofs: Vec<REncProof>,
     /// Commitments to the polynomial coefficients: `f^{a_j}` for j = 0..t-1.
-    pub commitments: Vec<bicycl_rs::Qfi>,
+    pub commitments: Vec<Qfi>,
 }
 
 impl std::fmt::Debug for PvssDeal {
@@ -63,7 +65,7 @@ pub fn deal(
     let q_bytes = setup.q_bytes()?;
     let q = BigUint::from_bytes_be(&q_bytes);
     let secret = BigUint::from_str_radix(secret_decimal, 10)
-        .map_err(|e| crate::bicycl_glue::ClError::InvalidParam(format!("bad secret: {e}")))?;
+        .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad secret: {e}")))?;
 
     // Generate polynomial coefficients: a_0 = secret, a_1..a_{t-1} random.
     let mut coeffs = vec![secret];
@@ -139,16 +141,16 @@ pub fn verify_deal(setup: &ClSetup, deal: &PvssDeal, pks: &[ClHsmqkPublicKey]) -
 /// `shares` is a list of `(party_index, share_decimal)` pairs where
 /// `party_index` is 1-based.
 pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String> {
-    let q_str = setup.q_decimal()?;
+    let q_str = setup.cl().q().to_string();
     let q = BigUint::from_str_radix(&q_str, 10)
-        .map_err(|e| crate::bicycl_glue::ClError::InvalidParam(format!("bad q: {e}")))?;
+        .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad q: {e}")))?;
 
     let indices: Vec<usize> = shares.iter().map(|(i, _)| *i).collect();
     let mut secret = BigUint::ZERO;
 
     for (k, &(i_k, share_k)) in shares.iter().enumerate() {
         let share_val = BigUint::from_str_radix(share_k, 10)
-            .map_err(|e| crate::bicycl_glue::ClError::InvalidParam(format!("bad share: {e}")))?;
+            .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad share: {e}")))?;
 
         // Compute Lagrange coefficient lambda_k mod q.
         let mut num = num_bigint::BigInt::from(1);
@@ -186,7 +188,7 @@ pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn pvss_share_verify_reconstruct() {

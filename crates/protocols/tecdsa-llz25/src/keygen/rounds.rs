@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -18,23 +18,23 @@
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::group::GroupEncoding;
-use elliptic_curve::PrimeField;
+use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
-
-use tecdsa_class_group::bicycl_glue::ClSetup;
-use tecdsa_class_group::nim::{Nim, NimEncodeBOutput};
-use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
+use tecdsa_class_group::{
+    cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup},
+    nim::{Nim, NimEncodeBOutput},
+    zk::r_cl_dl_ec::RClDlEcProof,
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::zk::dlog::DlogProof;
 use tecdsa_protocol::PartyId;
+use zeroize::Zeroize;
 
-use crate::error::{qfi_from_abc, qfi_to_abc};
-use crate::key_share::Llz25KeyShare;
-
-use tecdsa_class_group::bicycl_glue::BicyclPublicKey as ClHsmqkPublicKey;
+use crate::{
+    error::{qfi_from_abc, qfi_to_abc},
+    key_share::Llz25KeyShare,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -102,14 +102,14 @@ pub(crate) struct SerRClDlEcProof {
 }
 
 impl SerRClDlEcProof {
-    pub fn from_proof(setup: &ClSetup, proof: &RClDlEcProof) -> Result<Self, String> {
+    pub fn from_proof(proof: &RClDlEcProof) -> Result<Self, String> {
         Ok(Self {
             t1: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t1).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t1).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             t2: {
-                let abc = qfi_to_abc(setup.ctx(), &proof.t2).map_err(|e| format!("{e}"))?;
+                let abc = qfi_to_abc(&proof.t2).map_err(|e| format!("{e}"))?;
                 SerQfi::from_abc(&abc)
             },
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
@@ -119,12 +119,10 @@ impl SerRClDlEcProof {
         })
     }
 
-    pub fn to_proof(&self, setup: &ClSetup) -> Result<RClDlEcProof, String> {
+    pub fn to_proof(&self) -> Result<RClDlEcProof, String> {
         Ok(RClDlEcProof {
-            t1: qfi_from_abc(setup.ctx(), &self.t1.a, &self.t1.b, &self.t1.c)
-                .map_err(|e| format!("{e}"))?,
-            t2: qfi_from_abc(setup.ctx(), &self.t2.a, &self.t2.b, &self.t2.c)
-                .map_err(|e| format!("{e}"))?,
+            t1: qfi_from_abc(&self.t1.a, &self.t1.b, &self.t1.c).map_err(|e| format!("{e}"))?,
+            t2: qfi_from_abc(&self.t2.a, &self.t2.b, &self.t2.c).map_err(|e| format!("{e}"))?,
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             u1: self.u1.clone(),
             u2: self.u2.clone(),
@@ -358,10 +356,8 @@ pub(crate) fn transition_to_r3(
     let (c1, c2) = setup
         .ct_components(&pe_b)
         .map_err(|e| TecdsaError::Other(format!("ct_components: {e}")))?;
-    let pe_x_c1_abc =
-        qfi_to_abc(setup.ctx(), &c1).map_err(|e| TecdsaError::Other(format!("{e}")))?;
-    let pe_x_c2_abc =
-        qfi_to_abc(setup.ctx(), &c2).map_err(|e| TecdsaError::Other(format!("{e}")))?;
+    let pe_x_c1_abc = qfi_to_abc(&c1).map_err(|e| TecdsaError::Other(format!("{e}")))?;
+    let pe_x_c2_abc = qfi_to_abc(&c2).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
     // 8. R_CL_DL_EC proof: proves pe_{x,i} encrypts dlog of X_i
     let proof = RClDlEcProof::prove(
@@ -374,7 +370,7 @@ pub(crate) fn transition_to_r3(
     )
     .map_err(|e| TecdsaError::Other(format!("RClDlEcProof::prove: {e}")))?;
 
-    let ser_proof = SerRClDlEcProof::from_proof(setup, &proof)
+    let ser_proof = SerRClDlEcProof::from_proof(&proof)
         .map_err(|e| TecdsaError::Other(format!("serialize proof: {e}")))?;
 
     let r3_payload = R3Payload {
@@ -439,20 +435,10 @@ pub(crate) fn finalize(
                 "X_i mismatch for party {pid}: received point differs from VSS-derived share"
             )));
         }
-        let c1 = qfi_from_abc(
-            setup.ctx(),
-            &r3.pe_x_c1_abc.0,
-            &r3.pe_x_c1_abc.1,
-            &r3.pe_x_c1_abc.2,
-        )
-        .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
-        let c2 = qfi_from_abc(
-            setup.ctx(),
-            &r3.pe_x_c2_abc.0,
-            &r3.pe_x_c2_abc.1,
-            &r3.pe_x_c2_abc.2,
-        )
-        .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
+        let c1 = qfi_from_abc(&r3.pe_x_c1_abc.0, &r3.pe_x_c1_abc.1, &r3.pe_x_c1_abc.2)
+            .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
+        let c2 = qfi_from_abc(&r3.pe_x_c2_abc.0, &r3.pe_x_c2_abc.1, &r3.pe_x_c2_abc.2)
+            .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
         let ct = setup
             .ct_from_components(&c1, &c2)
             .map_err(|e| TecdsaError::Other(format!("ct: {e}")))?;

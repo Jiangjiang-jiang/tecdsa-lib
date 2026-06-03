@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -41,19 +41,22 @@ use std::collections::BTreeMap;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-use tecdsa_class_group::bicycl_glue::{BicyclCiphertext, BicyclPublicKey, BicyclQfi, ClSetup};
-use tecdsa_class_group::zk::r_part_dec::RPartDecProof;
-use tecdsa_core::TecdsaError;
-
-use tecdsa_class_group::t_cl::{
-    final_decrypt as threshold_cl_combine, PartialDecryption as ClPartialDecryption,
+use tecdsa_class_group::{
+    cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
+    t_cl::{final_decrypt as threshold_cl_combine, PartialDecryption as ClPartialDecryption},
+    zk::r_part_dec::RPartDecProof,
 };
-use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
-use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+use tecdsa_core::TecdsaError;
+use tecdsa_protocol::{
+    ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
+    state_machine::Outgoing,
+    IaReport, PartyId, Recipient, StateMachine,
+};
 
-use crate::cl_wire::{SerRPartDecProof, SerializedQfi};
-use crate::presign::robust::Jtx25RobustPresignature;
+use crate::{
+    cl_wire::{SerRPartDecProof, SerializedQfi},
+    presign::robust::Jtx25RobustPresignature,
+};
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -85,8 +88,8 @@ struct R3Payload {
 // ---------------------------------------------------------------------------
 
 struct ReceivedR3 {
-    pc_0: BicyclQfi,
-    pc_1: BicyclQfi,
+    pc_0: Qfi,
+    pc_1: Qfi,
     party_index: usize,
 }
 
@@ -111,14 +114,14 @@ pub struct Jtx25RobustOnlineSignMachine {
     message: DataToSign<k256::Secp256k1>,
     public_key: k256::ProjectivePoint,
     /// The c^0 and c^1 ciphertexts (computed locally, same for all parties).
-    c0: BicyclCiphertext,
-    c1: BicyclCiphertext,
+    c0: ClCiphertext,
+    c1: ClCiphertext,
     /// CL setup.
     setup: ClSetup,
     /// Aggregate CL PK (for verification).
-    _cl_pk: BicyclPublicKey,
+    _cl_pk: ClPublicKey,
     /// Per-party CL PK shares (for verifying partial decryption proofs).
-    cl_pk_shares: BTreeMap<u16, BicyclPublicKey>,
+    cl_pk_shares: BTreeMap<u16, ClPublicKey>,
     /// Received Round 3 messages.
     received: BTreeMap<u16, ReceivedR3>,
     outgoing: Vec<Outgoing<Jtx25RobustOnlineSignMsg>>,
@@ -157,29 +160,23 @@ impl Jtx25RobustOnlineSignMachine {
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup: {e}")))?;
 
-        let ctx = setup.ctx();
-
         // Reconstruct phi_bar ciphertext.
-        let pb_c1 = BicyclQfi::from_bytes(ctx, &presignature.phi_bar_c1_bytes)
-            .map_err(|e| TecdsaError::Other(format!("phi_bar c1: {e}")))?;
-        let pb_c2 = BicyclQfi::from_bytes(ctx, &presignature.phi_bar_c2_bytes)
-            .map_err(|e| TecdsaError::Other(format!("phi_bar c2: {e}")))?;
+        let pb_c1 = Qfi::from_bytes(&presignature.phi_bar_c1_bytes);
+        let pb_c2 = Qfi::from_bytes(&presignature.phi_bar_c2_bytes);
         let phi_bar = setup
             .ct_from_components(&pb_c1, &pb_c2)
             .map_err(|e| TecdsaError::Other(format!("phi_bar ct: {e}")))?;
 
         // Reconstruct aggregate CL PK.
-        let cl_pk_qfi = BicyclQfi::from_bytes(ctx, &presignature.cl_pk_bytes)
-            .map_err(|e| TecdsaError::Other(format!("cl_pk: {e}")))?;
+        let cl_pk_qfi = Qfi::from_bytes(&presignature.cl_pk_bytes);
         let cl_pk = setup
             .pk_from_qfi(&cl_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("cl_pk from_qfi: {e}")))?;
 
         // Reconstruct per-party CL PK shares.
-        let mut cl_pk_shares: BTreeMap<u16, BicyclPublicKey> = BTreeMap::new();
+        let mut cl_pk_shares: BTreeMap<u16, ClPublicKey> = BTreeMap::new();
         for (&pid, bytes) in &presignature.cl_pk_share_bytes {
-            let qfi = BicyclQfi::from_bytes(ctx, bytes)
-                .map_err(|e| TecdsaError::Other(format!("cl_pk_share {pid}: {e}")))?;
+            let qfi = Qfi::from_bytes(bytes);
             let pk = setup
                 .pk_from_qfi(&qfi)
                 .map_err(|e| TecdsaError::Other(format!("pk_from_qfi {pid}: {e}")))?;
@@ -189,7 +186,7 @@ impl Jtx25RobustOnlineSignMachine {
         // --- Compute c^0 = sum_{j in T} (phi_bar_k_j * lambda_j) ---
         // This is the homomorphic sum of component-wise scalar multiples.
         let party_ids: Vec<u16> = all_parties.iter().map(|p| p.0).collect();
-        let mut c0_opt: Option<BicyclCiphertext> = None;
+        let mut c0_opt: Option<ClCiphertext> = None;
 
         for &pid in &party_ids {
             let lambda_j = presignature
@@ -207,10 +204,8 @@ impl Jtx25RobustOnlineSignMachine {
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing phi_bar_k c2 for {pid}")))?;
 
-            let kc1 = BicyclQfi::from_bytes(ctx, kc1_bytes)
-                .map_err(|e| TecdsaError::Other(format!("kc1: {e}")))?;
-            let kc2 = BicyclQfi::from_bytes(ctx, kc2_bytes)
-                .map_err(|e| TecdsaError::Other(format!("kc2: {e}")))?;
+            let kc1 = Qfi::from_bytes(kc1_bytes);
+            let kc2 = Qfi::from_bytes(kc2_bytes);
             let phi_bar_k_j = setup
                 .ct_from_components(&kc1, &kc2)
                 .map_err(|e| TecdsaError::Other(format!("phi_bar_k ct: {e}")))?;
@@ -294,10 +289,8 @@ impl Jtx25RobustOnlineSignMachine {
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing phi_bar_x c2 for {pid}")))?;
 
-            let xc1 = BicyclQfi::from_bytes(ctx, xc1_bytes)
-                .map_err(|e| TecdsaError::Other(format!("xc1: {e}")))?;
-            let xc2 = BicyclQfi::from_bytes(ctx, xc2_bytes)
-                .map_err(|e| TecdsaError::Other(format!("xc2: {e}")))?;
+            let xc1 = Qfi::from_bytes(xc1_bytes);
+            let xc2 = Qfi::from_bytes(xc2_bytes);
             let phi_bar_x_j = setup
                 .ct_from_components(&xc1, &xc2)
                 .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
@@ -346,8 +339,7 @@ impl Jtx25RobustOnlineSignMachine {
             .cl_pk_share_bytes
             .get(&presignature.party_index)
             .ok_or_else(|| TecdsaError::Other("missing own CL pk share".into()))?;
-        let my_pk_qfi = BicyclQfi::from_bytes(ctx, my_pk_data)
-            .map_err(|e| TecdsaError::Other(format!("my_pk: {e}")))?;
+        let my_pk_qfi = Qfi::from_bytes(my_pk_data);
         let my_pk_raw = setup
             .pk_from_qfi(&my_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
@@ -373,13 +365,13 @@ impl Jtx25RobustOnlineSignMachine {
             .map_err(|e| TecdsaError::Other(format!("pi_1: {e}")))?;
 
         // Serialize and broadcast.
-        let pc_0_ser = SerializedQfi::from_qfi(&setup, &pc_0)
+        let pc_0_ser = SerializedQfi::from_qfi(&pc_0)
             .map_err(|e| TecdsaError::Other(format!("ser pc_0: {e}")))?;
-        let pi_0_ser = SerRPartDecProof::from_proof(&setup, &pi_0)
+        let pi_0_ser = SerRPartDecProof::from_proof(&pi_0)
             .map_err(|e| TecdsaError::Other(format!("ser pi_0: {e}")))?;
-        let pc_1_ser = SerializedQfi::from_qfi(&setup, &pc_1)
+        let pc_1_ser = SerializedQfi::from_qfi(&pc_1)
             .map_err(|e| TecdsaError::Other(format!("ser pc_1: {e}")))?;
-        let pi_1_ser = SerRPartDecProof::from_proof(&setup, &pi_1)
+        let pi_1_ser = SerRPartDecProof::from_proof(&pi_1)
             .map_err(|e| TecdsaError::Other(format!("ser pi_1: {e}")))?;
 
         let r3_payload = R3Payload {
@@ -444,20 +436,11 @@ impl Jtx25RobustOnlineSignMachine {
 
         for r3 in self.received.values() {
             // Copy the QFI via binary round-trip since we need to move into PartialDecryption.
-            let ctx = self.setup.ctx();
-            let pc0_bytes = r3
-                .pc_0
-                .to_bytes(ctx)
-                .map_err(|e| TecdsaError::Other(format!("pc0 to_bytes: {e}")))?;
-            let pc0_copy = BicyclQfi::from_bytes(ctx, &pc0_bytes)
-                .map_err(|e| TecdsaError::Other(format!("pc0 from_bytes: {e}")))?;
+            let pc0_bytes = r3.pc_0.to_bytes();
+            let pc0_copy = Qfi::from_bytes(&pc0_bytes);
 
-            let pc1_bytes = r3
-                .pc_1
-                .to_bytes(ctx)
-                .map_err(|e| TecdsaError::Other(format!("pc1 to_bytes: {e}")))?;
-            let pc1_copy = BicyclQfi::from_bytes(ctx, &pc1_bytes)
-                .map_err(|e| TecdsaError::Other(format!("pc1 from_bytes: {e}")))?;
+            let pc1_bytes = r3.pc_1.to_bytes();
+            let pc1_copy = Qfi::from_bytes(&pc1_bytes);
 
             pd_0s.push(ClPartialDecryption {
                 party_index: r3.party_index,
@@ -551,19 +534,19 @@ impl StateMachine for Jtx25RobustOnlineSignMachine {
 
                 let pc_0 = payload
                     .pc_0
-                    .to_qfi(&self.setup)
+                    .to_qfi()
                     .map_err(|e| TecdsaError::Other(format!("pc_0 from {from}: {e}")))?;
                 let pi_0 = payload
                     .pi_0
-                    .to_proof(&self.setup)
+                    .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("pi_0 from {from}: {e}")))?;
                 let pc_1 = payload
                     .pc_1
-                    .to_qfi(&self.setup)
+                    .to_qfi()
                     .map_err(|e| TecdsaError::Other(format!("pc_1 from {from}: {e}")))?;
                 let pi_1 = payload
                     .pi_1
-                    .to_proof(&self.setup)
+                    .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("pi_1 from {from}: {e}")))?;
 
                 // Verify R_part_dec proofs.

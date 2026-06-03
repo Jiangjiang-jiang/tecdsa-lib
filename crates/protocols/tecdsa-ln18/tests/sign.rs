@@ -9,17 +9,21 @@ use elliptic_curve::{FieldBytes, PrimeField};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use tecdsa_core::Csprng;
-use tecdsa_ln18::f_mult::init::{InitOutput, InitState};
-use tecdsa_ln18::f_mult::input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState};
-use tecdsa_ln18::key_share::Ln18KeyShare;
-use tecdsa_ln18::keygen::Ln18KeygenMachine;
-use tecdsa_ln18::sign::{
-    ln18_online_sign_parallel, ln18_presign_parallel, ln18_sign_parallel, Ln18OnlineSignParams,
-    Ln18PresignParams,
+use tecdsa_ln18::{
+    f_mult::{
+        init::{InitOutput, InitState},
+        input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
+    },
+    key_share::Ln18KeyShare,
+    keygen::Ln18KeygenMachine,
+    sign::{
+        ln18_online_sign_parallel, ln18_presign_parallel, ln18_sign_parallel, Ln18OnlineSignParams,
+        Ln18PresignParams,
+    },
 };
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::zk::mta_range::NTildeParams;
-use tecdsa_paillier::{DecryptionKey, EncryptionKey};
+use tecdsa_paillier::{
+    backend::Integer, zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey,
+};
 use tecdsa_protocol::{
     ecdsa::{verify_ecdsa, DataToSign},
     PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine,
@@ -688,11 +692,12 @@ fn full_sign_8rounds_3of3() {
 
 #[cfg(feature = "mta-ot")]
 mod ot_sign_tests {
-    use super::*;
     use tecdsa_ln18::sign::{
         ln18_online_sign_parallel_ot, ln18_presign_parallel_ot, ln18_sign_parallel_ot,
         Ln18OtOnlineSignParams, Ln18OtPresignParams,
     };
+
+    use super::*;
 
     fn build_ot_presign_params(
         key_shares: &[Ln18KeyShare<C>],

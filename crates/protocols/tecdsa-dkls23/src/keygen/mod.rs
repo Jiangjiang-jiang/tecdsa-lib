@@ -23,14 +23,14 @@ pub mod msg;
 mod rounds;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use msg::Dkls23KeygenMsg;
 use rand_core::CryptoRngCore;
+use rounds::{KeygenConfig, KeygenRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
 use crate::key_share::Dkls23KeyShare;
-use msg::Dkls23KeygenMsg;
-use rounds::{KeygenConfig, KeygenRound, Round1State};
 
 /// DKLs23 key generation state machine.
 ///
@@ -190,9 +190,10 @@ fn msg_round(msg: &Dkls23KeygenMsg) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use elliptic_curve::{group::GroupEncoding, Field};
     use tecdsa_testkit::Orchestrator;
+
+    use super::*;
 
     type TestCurve = k256::Secp256k1;
 

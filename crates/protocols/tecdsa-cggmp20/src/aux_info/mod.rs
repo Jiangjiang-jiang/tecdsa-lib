@@ -10,14 +10,13 @@
 pub mod msg;
 mod rounds;
 
+use msg::AuxInfoMsg;
 use rand_core::CryptoRngCore;
+use rounds::{AuxInfoRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig, StateMachine};
 
-use crate::key_share::AuxInfo;
-use crate::security_level::Cggmp20SecurityParams;
-use msg::AuxInfoMsg;
-use rounds::{AuxInfoRound, Round1State};
+use crate::{key_share::AuxInfo, security_level::Cggmp20SecurityParams};
 
 /// Auxiliary-info generation state machine implementing the CGGMP20 protocol.
 ///

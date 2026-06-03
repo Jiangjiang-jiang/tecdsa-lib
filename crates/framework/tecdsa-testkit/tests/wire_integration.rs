@@ -108,8 +108,7 @@ fn wire_dkls23_keygen() {
 fn wire_gg18_keygen() {
     use tecdsa_core::Csprng;
     use tecdsa_gg18::keygen::{generate_n_tilde, Gg18KeygenMachine, PaillierPrecomputed};
-    use tecdsa_paillier::backend::Integer;
-    use tecdsa_paillier::DecryptionKey;
+    use tecdsa_paillier::{backend::Integer, DecryptionKey};
 
     let n = 3u16;
     let t = 2u16;
@@ -150,8 +149,7 @@ fn wire_gg18_keygen() {
 #[ignore = "slow Paillier keygen"]
 fn wire_ggn16_keygen() {
     use tecdsa_ggn16::keygen::Ggn16KeygenMachine;
-    use tecdsa_paillier::backend::Integer;
-    use tecdsa_paillier::threshold::trusted_dealer_setup;
+    use tecdsa_paillier::{backend::Integer, threshold::trusted_dealer_setup};
 
     let n = 3u16;
     let t = 1u16;
@@ -362,7 +360,7 @@ fn wire_wmc24_keygen() {
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_llz25_keygen() {
-    use tecdsa_class_group::bicycl_glue::ClSetup;
+    use tecdsa_class_group::cl::ClSetup;
     use tecdsa_llz25::keygen::Llz25KeygenMachine;
 
     let n = 3u16;

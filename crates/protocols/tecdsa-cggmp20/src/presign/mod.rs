@@ -11,16 +11,18 @@ pub mod msg;
 mod rounds;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use msg::PresignMsg;
 use rand_core::CryptoRngCore;
+use rounds::{PresignRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig, StateMachine};
 
-use crate::key_share::{AuxInfo, Cggmp20CoreKeyShare};
-use crate::security_level::{Cggmp20SecurityParams, SecurityLevel128};
-use crate::sign::types::{Presignature, PresignaturePublicData};
-use msg::PresignMsg;
-use rounds::{PresignRound, Round1State};
+use crate::{
+    key_share::{AuxInfo, Cggmp20CoreKeyShare},
+    security_level::{Cggmp20SecurityParams, SecurityLevel128},
+    sign::types::{Presignature, PresignaturePublicData},
+};
 
 /// Presigning state machine implementing the CGGMP20 protocol.
 pub struct Cggmp20PresignMachine<C: TecdsaCurve>

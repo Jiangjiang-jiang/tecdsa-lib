@@ -28,8 +28,10 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_ot::rvole::{MulDataToKeep, MulDataToReceiver, MulReceiver, MulSender};
-use tecdsa_ot::soft_spoken::OteInitSenderMsg;
+use tecdsa_ot::{
+    rvole::{MulDataToKeep, MulDataToReceiver, MulReceiver, MulSender},
+    soft_spoken::OteInitSenderMsg,
+};
 use tecdsa_protocol::PartyId;
 
 // ---------------------------------------------------------------------------

@@ -35,21 +35,22 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtaProofs};
-use tecdsa_paillier::zk::mta_range::BobProofExt;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::{
+    backend::Integer,
+    conv::{integer_to_scalar, scalar_to_integer},
+    mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtaProofs},
+    zk::mta_range::BobProofExt,
+};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 use tecdsa_vss::lagrange;
 use zeroize::Zeroize;
 
-use crate::key_share::Gg18KeyShare;
-use crate::sign::msg::*;
-use crate::sign::sign_keys::SignKeys;
-use tecdsa_paillier::conv::{integer_to_scalar, scalar_to_integer};
-
 use super::types::Gg18Presignature;
+use crate::{
+    key_share::Gg18KeyShare,
+    sign::{msg::*, sign_keys::SignKeys},
+};
 
 // ---------------------------------------------------------------------------
 // Round enum

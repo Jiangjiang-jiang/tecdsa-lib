@@ -31,15 +31,17 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::zk::dlog::DlogProof;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::{
+    backend::Integer,
+    zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof},
+};
 
 use super::curve_order;
-use crate::error::Kgg24Error;
-use crate::key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare};
-use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
-use tecdsa_paillier::zk::pi_eq::PiEqProof;
+use crate::{
+    error::Kgg24Error,
+    key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
+};
 
 /// Security parameter tau (bit-length of the noise exponent base).
 const TAU: u32 = 256;
@@ -403,9 +405,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
     use tecdsa_protocol::{verify_ecdsa, DataToSign};
+
+    use super::*;
 
     #[test]
     fn interactive_keygen_produces_consistent_shares() {
@@ -442,8 +445,9 @@ mod tests {
 
     #[test]
     fn interactive_keygen_signing_compatibility() {
-        use crate::sign;
         use sha2::{Digest, Sha256};
+
+        use crate::sign;
 
         let mut rng = rand_core::OsRng;
 
@@ -513,9 +517,9 @@ mod tests {
     #[test]
     #[ignore = "redundant keygen variant"]
     fn interactive_keygen_refresh_then_sign() {
-        use crate::refresh::refresh;
-        use crate::sign;
         use sha2::{Digest, Sha256};
+
+        use crate::{refresh::refresh, sign};
 
         let mut rng = rand_core::OsRng;
 

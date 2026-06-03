@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -11,10 +11,8 @@
 //!
 //! Sigma protocol: prover knows `sk` such that `pk = h^{sk}`.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::{ClHsmqkPublicKey, Qfi};
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
+use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
 /// CL knowledge proof (secret key knowledge).
 pub struct RClKwlgProof {
@@ -32,8 +30,8 @@ impl RClKwlgProof {
         let a = sample_random(setup)?;
         let t = setup.power_of_h_bytes(&a)?;
 
-        let pk_elt = setup.pk_element(pk)?;
-        let e = challenge_from_qfi(setup, b"R_cl_kwlg", &[&pk_elt, &t], &[])?;
+        let pk_elt = pk.elt();
+        let e = challenge_from_qfi(setup, b"R_cl_kwlg", &[pk_elt, &t], &[])?;
 
         let z = response_unbounded(&a, &e, sk_bytes)?;
 
@@ -42,18 +40,18 @@ impl RClKwlgProof {
 
     /// Verifies the CL knowledge proof.
     pub fn verify(&self, setup: &ClSetup, pk: &ClHsmqkPublicKey) -> ClResult<bool> {
-        let pk_elt = setup.pk_element(pk)?;
+        let pk_elt = pk.elt();
 
-        let e_check = challenge_from_qfi(setup, b"R_cl_kwlg", &[&pk_elt, &self.t], &[])?;
+        let e_check = challenge_from_qfi(setup, b"R_cl_kwlg", &[pk_elt, &self.t], &[])?;
         if e_check != self.e {
             return Ok(false);
         }
 
         // Check: h^z == t * pk^e
         let lhs = setup.power_of_h_bytes(&self.z)?;
-        let pk_e = setup.exp_bytes(&pk_elt, &self.e)?;
+        let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs = setup.compose(&self.t, &pk_e)?;
-        if !lhs.equal(setup.ctx(), &rhs)? {
+        if lhs != rhs {
             return Ok(false);
         }
 
@@ -64,7 +62,7 @@ impl RClKwlgProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_cl_kwlg_honest_verifies() {

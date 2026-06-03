@@ -5,11 +5,12 @@
 //! a pre-existing ECDSA secret key into threshold shares without requiring interactive
 //! key generation (DKG).
 
-use crate::key_share::{Cggmp20CoreKeyShare, VssSetup};
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_vss::feldman;
+
+use crate::key_share::{Cggmp20CoreKeyShare, VssSetup};
 
 /// Import an existing secret key into threshold shares using Feldman VSS.
 ///
@@ -71,8 +72,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use k256::Secp256k1;
+
+    use super::*;
 
     #[test]
     fn trusted_dealer_produces_valid_shares() {

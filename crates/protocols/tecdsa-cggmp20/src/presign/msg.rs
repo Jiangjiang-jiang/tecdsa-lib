@@ -13,11 +13,13 @@ use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use generic_ec::curves::Secp256k1 as GE;
 use serde::{Deserialize, Serialize};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::zk::paillier_zk::{
-    dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
-    paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
+use tecdsa_paillier::{
+    zk::paillier_zk::{
+        dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
+        paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
+    },
+    Ciphertext,
 };
-use tecdsa_paillier::Ciphertext;
 
 /// Round 1 broadcast: Paillier ciphertexts and El-Gamal commitment points.
 #[derive(Clone, Serialize, Deserialize)]

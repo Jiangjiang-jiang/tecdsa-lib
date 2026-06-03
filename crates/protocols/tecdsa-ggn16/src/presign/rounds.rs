@@ -32,23 +32,26 @@ use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::threshold::{combine_partials, partial_decrypt, PartialDecryption};
+use tecdsa_paillier::{
+    backend::Integer,
+    conv::{group_order_integer, integer_to_scalar, scalar_to_integer},
+    threshold::{combine_partials, partial_decrypt, PartialDecryption},
+    zk::{
+        homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness},
+        nonce_consist::{NonceConsistProof, NonceConsistStatement, NonceConsistWitness},
+    },
+};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 use zeroize::Zeroize;
 
-use tecdsa_paillier::zk::homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness};
-use tecdsa_paillier::zk::nonce_consist::{
-    NonceConsistProof, NonceConsistStatement, NonceConsistWitness,
+use crate::{
+    key_share::Ggn16KeyShare,
+    presign::types::Ggn16Presignature,
+    sign::msg::{
+        Ggn16SignMsg, SignRound1Msg, SignRound2Msg, SignRound3Msg, SignRound4Msg, SignRound5Msg,
+    },
+    utils::{deserialize_point, serialize_for_commit_r1, serialize_for_commit_r3},
 };
-
-use crate::key_share::Ggn16KeyShare;
-use crate::presign::types::Ggn16Presignature;
-use crate::sign::msg::{
-    Ggn16SignMsg, SignRound1Msg, SignRound2Msg, SignRound3Msg, SignRound4Msg, SignRound5Msg,
-};
-use crate::utils::{deserialize_point, serialize_for_commit_r1, serialize_for_commit_r3};
-use tecdsa_paillier::conv::{group_order_integer, integer_to_scalar, scalar_to_integer};
 
 // ---------------------------------------------------------------------------
 // Configuration

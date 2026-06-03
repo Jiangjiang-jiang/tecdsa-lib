@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -16,11 +16,12 @@
 //! This module provides a generic batch verification framework for
 //! Schnorr-like Sigma protocols over CL groups.
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
 use num_bigint::BigUint;
 
-use crate::zk::challenge_from_qfi;
+use crate::{
+    cl::{ClResult, ClSetup, Qfi},
+    zk::challenge_from_qfi,
+};
 
 /// A single proof instance for batch verification.
 ///
@@ -92,14 +93,13 @@ pub fn batch_verify(setup: &ClSetup, instances: &[BatchInstance]) -> ClResult<bo
         rhs = setup.compose(&rhs, &rhs_part)?;
     }
 
-    Ok(lhs.equal(setup.ctx(), &rhs)?)
+    Ok(lhs == rhs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bicycl_glue::ClSetup;
-    use crate::zk::r_cl_kwlg::RClKwlgProof;
+    use crate::{cl::ClSetup, zk::r_cl_kwlg::RClKwlgProof};
 
     #[test]
     fn batch_aggregator_n_proofs() {
@@ -110,11 +110,11 @@ mod tests {
         for _ in 0..3 {
             let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
             let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
-            let pk_elt = setup.pk_element(&pk_raw).expect("pk_elt");
+            let pk_elt = pk_raw.elt().clone();
 
             let proof = RClKwlgProof::prove(&mut setup, &pk_raw, &sk_bytes).expect("prove");
 
-            let h = setup.h().expect("h");
+            let h = setup.cl().h().clone();
             instances.push(BatchInstance {
                 base: h,
                 commitment: proof.t,

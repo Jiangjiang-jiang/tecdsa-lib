@@ -18,8 +18,7 @@
 //! The `domain` parameter provides protocol-specific domain separation for the
 //! Fiat-Shamir challenges (e.g. `b"lin17-correct-key-challenge"`).
 
-use fast_paillier::backend::Integer;
-use fast_paillier::{DecryptionKey, EncryptionKey};
+use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

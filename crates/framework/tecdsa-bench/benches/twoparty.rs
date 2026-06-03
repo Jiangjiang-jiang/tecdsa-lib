@@ -46,8 +46,10 @@ fn two_party_specs() -> [(u16, PartyId, PartyId); 2] {
 // ===========================================================================
 
 fn lin17_benchmarks(c: &mut Criterion) {
-    use tecdsa_lin17::keygen::{Lin17KeygenMachine, TwoPartyRole};
-    use tecdsa_lin17::sign;
+    use tecdsa_lin17::{
+        keygen::{Lin17KeygenMachine, TwoPartyRole},
+        sign,
+    };
 
     let mut group = c.benchmark_group("lin17");
     group.sample_size(10);
@@ -173,8 +175,10 @@ fn lin17_benchmarks(c: &mut Criterion) {
 // ===========================================================================
 
 fn kgg24_benchmarks(c: &mut Criterion) {
-    use tecdsa_kgg24::keygen::{Kgg24KeygenMachine, TwoPartyRole};
-    use tecdsa_kgg24::sign;
+    use tecdsa_kgg24::{
+        keygen::{Kgg24KeygenMachine, TwoPartyRole},
+        sign,
+    };
 
     let mut group = c.benchmark_group("kgg24");
     group.sample_size(10);
@@ -306,9 +310,10 @@ fn kgg24_benchmarks(c: &mut Criterion) {
 // ===========================================================================
 
 fn xal21_benchmarks(c: &mut Criterion) {
-    use tecdsa_xal21::keygen::{TwoPartyRole, Xal21KeygenMachine};
-    use tecdsa_xal21::offline_sign;
-    use tecdsa_xal21::online_sign;
+    use tecdsa_xal21::{
+        keygen::{TwoPartyRole, Xal21KeygenMachine},
+        offline_sign, online_sign,
+    };
 
     let mut group = c.benchmark_group("xal21");
     group.sample_size(10);
@@ -394,8 +399,10 @@ fn xal21_benchmarks(c: &mut Criterion) {
 // ===========================================================================
 
 fn abc24_benchmarks(c: &mut Criterion) {
-    use tecdsa_abc24::keygen::{Abc24KeygenMachine, TwoPartyRole};
-    use tecdsa_abc24::sign;
+    use tecdsa_abc24::{
+        keygen::{Abc24KeygenMachine, TwoPartyRole},
+        sign,
+    };
 
     let mut group = c.benchmark_group("abc24");
     group.sample_size(10);

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! `DDLog` — discrete-log labeling in the class group.
 //!
 //! The `DDLog` (or "coset labeling") maps an element of `Cl(Delta)` to a
@@ -9,9 +9,9 @@
 //! full `DDLog` proof (`Pi_DDLog`) will be implemented in the ZK proofs
 //! task (Task 17).
 
-use crate::bicycl_glue::{ClResult, ClSetup};
-use bicycl_rs::Qfi;
 use num_bigint::BigUint;
+
+use crate::cl::{ClResult, ClSetup, Qfi};
 
 /// A `DDLog` label: a scalar in `Z/q` obtained by computing the discrete
 /// logarithm of the `F`-component of a class-group element.
@@ -67,22 +67,12 @@ impl DdLogLabel {
 ///
 /// Returns an error if the BICYCL operations fail.
 pub fn ddlog_label(setup: &ClSetup, element: &Qfi) -> ClResult<DdLogLabel> {
-    let q_bytes = setup.q_bytes()?;
-    #[allow(non_snake_case)]
-    let dk_bytes = setup.DeltaK_bytes()?;
-    let ctx = setup.ctx();
-
-    // Clone the element by round-tripping through to_bytes/from_bytes.
-    let elt_bytes = element.to_bytes(ctx)?;
-    let mut label_elt = Qfi::from_bytes(ctx, &elt_bytes)?;
-
-    // Map to maximal order and lift.
-    label_elt.to_maximal_order_bytes(ctx, &q_bytes, &dk_bytes, true)?;
-    label_elt.lift_bytes(ctx, &q_bytes)?;
+    let mut label_elt = setup.cl().to_cl_delta_k(element); // reduced π(z)
+    setup.cl().from_cl_delta_k_to_cl_delta(&mut label_elt); // reduced lift back
 
     // Compute alpha = element * label_elt^{-1}
-    let label_inv = label_elt.neg(ctx)?;
-    let alpha = setup.compose(element, &label_inv)?;
+    label_elt.neg();
+    let alpha = setup.compose(element, &label_elt)?;
 
     // Discrete log in F.
     #[allow(non_snake_case)]

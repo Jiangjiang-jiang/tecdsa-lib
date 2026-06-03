@@ -13,11 +13,13 @@
 //!
 //! Together these ensure the public key `(N, y, h, k)` is correctly constructed.
 
-use crate::kgen::{JlPublicKey, JlSecretKey};
-use crate::zk::zkqr2k::ZkQr2kProof;
-use crate::zk::zkqr2kdl::ZkQr2kDlProof;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    kgen::{JlPublicKey, JlSecretKey},
+    zk::{zkqr2k::ZkQr2kProof, zkqr2kdl::ZkQr2kDlProof},
+};
 
 /// Proof that a JL modulus and public key have the correct structural properties.
 ///

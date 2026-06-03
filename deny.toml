@@ -19,44 +19,8 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "0BSD",
+    "LGPL-3.0-or-later",
 ]
-
-# One exception per crate: the schema uses singular `crate`, not `crates = [...]`.
-[[licenses.exceptions]]
-crate = "bicycl-rs"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "bicycl-rs-sys"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "tecdsa-class-group"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "tecdsa-wmy23"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "tecdsa-tx25"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "tecdsa-jtx25"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "tecdsa-wmc24"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "tecdsa-llz25"
-allow = ["GPL-3.0-or-later"]
-
-[[licenses.exceptions]]
-crate = "tecdsa-trout"
-allow = ["GPL-3.0-or-later"]
 
 [bans]
 multiple-versions = "warn"

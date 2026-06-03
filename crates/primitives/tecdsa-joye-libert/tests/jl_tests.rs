@@ -6,10 +6,12 @@
 
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
-use tecdsa_joye_libert::enc_dec::{decrypt, encrypt};
-use tecdsa_joye_libert::hom::{hadd, hscmul};
-use tecdsa_joye_libert::kgen::{generate_keypair, generate_keypair_with_params, SecurityLevel};
-use tecdsa_joye_libert::zk::zkjl_enc::ZkJlEncProof;
+use tecdsa_joye_libert::{
+    enc_dec::{decrypt, encrypt},
+    hom::{hadd, hscmul},
+    kgen::{generate_keypair, generate_keypair_with_params, SecurityLevel},
+    zk::zkjl_enc::ZkJlEncProof,
+};
 
 /// Helper to create a small test key pair (256-bit primes, k=32).
 fn small_keypair() -> (
