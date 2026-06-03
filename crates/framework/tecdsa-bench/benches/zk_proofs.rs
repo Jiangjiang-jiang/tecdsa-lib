@@ -6,6 +6,7 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use k256::Secp256k1;
+use num_traits::Num as _;
 use rand_core::OsRng;
 use tecdsa_bench::zk_fixtures::*;
 use tecdsa_curve::TecdsaCurve;
@@ -150,7 +151,7 @@ fn curve_zk(c: &mut Criterion) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// 2. Pedersen-mod ZK (Pi_prm, Pi_mod) — toy 512-bit params
+// 2. Pedersen-mod ZK (Pi_prm, Pi_mod) — Profile B: 1536-bit primes
 // ═══════════════════════════════════════════════════════════════════════
 
 fn pedersen_mod_zk(c: &mut Criterion) {
@@ -160,7 +161,7 @@ fn pedersen_mod_zk(c: &mut Criterion) {
     use tecdsa_pedersen_mod::zk::{PiMod, PiPrm};
     use tecdsa_pedersen_mod::PedersenModParams;
 
-    let (params, secret) = PedersenModParams::generate(512, &mut OsRng);
+    let (params, secret) = PedersenModParams::generate(1536, &mut OsRng);
 
     let piprm_proof = PiPrm::prove(&params, &secret, &mut OsRng);
     assert!(piprm_proof.verify(&params), "PiPrm fixture invalid");
@@ -394,6 +395,427 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
+    // R_cl_dl — prove knowledge of plaintext + randomness with F-subgroup
+    {
+        use tecdsa_class_group::zk::r_cl_dl::RClDlProof;
+        let x_bytes = 77u32.to_be_bytes().to_vec();
+        let (r_sk2, _) = setup.keygen().expect("keygen");
+        let r_bytes = setup.sk_to_bytes(&r_sk2).expect("r_bytes");
+        let ct = setup
+            .encrypt_with_r_bytes(&pk, &x_bytes, &r_bytes)
+            .expect("enc");
+        let y = setup.power_of_f_bytes(&x_bytes).expect("f^x");
+        let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &x_bytes, &r_bytes).expect("prove");
+        assert!(
+            proof.verify(&setup, &pk, &ct, &y).expect("verify"),
+            "RClDlProof fixture invalid"
+        );
+        g.bench_function("r_cl_dl/prove", |b| {
+            b.iter(|| RClDlProof::prove(&mut setup, &pk, &ct, &y, &x_bytes, &r_bytes))
+        });
+        g.bench_function("r_cl_dl/verify", |b| {
+            b.iter(|| proof.verify(&setup, &pk, &ct, &y))
+        });
+    }
+
+    // R_cl_dl_ec — CL encryption + EC discrete-log
+    {
+        use elliptic_curve::group::GroupEncoding;
+        use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
+        let v_bytes = 42u32.to_be_bytes().to_vec();
+        let (r_sk2, _) = setup.keygen().expect("keygen");
+        let r_bytes = setup.sk_to_bytes(&r_sk2).expect("r_bytes");
+        let ct = setup
+            .encrypt_with_r_bytes(&pk, &v_bytes, &r_bytes)
+            .expect("enc");
+        let v_scalar = tecdsa_curve::conv::bytes_to_scalar::<Secp256k1>(&v_bytes);
+        let big_v =
+            <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * v_scalar;
+        let big_v_bytes = big_v.to_bytes().to_vec();
+        let proof = RClDlEcProof::prove(&mut setup, &pk, &ct, &big_v_bytes, &v_bytes, &r_bytes)
+            .expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &pk, &ct, &big_v_bytes)
+                .expect("verify"),
+            "RClDlEcProof fixture invalid"
+        );
+        g.bench_function("r_cl_dl_ec/prove", |b| {
+            b.iter(|| RClDlEcProof::prove(&mut setup, &pk, &ct, &big_v_bytes, &v_bytes, &r_bytes))
+        });
+        g.bench_function("r_cl_dl_ec/verify", |b| {
+            b.iter(|| proof.verify(&setup, &pk, &ct, &big_v_bytes))
+        });
+    }
+
+    // R_ddh_cl — DDH tuple in class group
+    {
+        use tecdsa_class_group::zk::r_ddh_cl::RDdhClProof;
+        let x_bytes = 42u32.to_be_bytes().to_vec();
+        let g_qfi = setup.h().expect("h");
+        let x_dec = "42";
+        let a = setup.exp(&g_qfi, x_dec).expect("g^x");
+        let (r_sk2, _) = setup.keygen().expect("keygen");
+        let r_dec = setup.sk_to_decimal(&r_sk2).expect("dec");
+        let b_qfi = setup.exp(&g_qfi, &r_dec).expect("h^r");
+        let c_qfi = setup.exp(&b_qfi, x_dec).expect("B^x");
+        let proof =
+            RDdhClProof::prove(&mut setup, &g_qfi, &a, &b_qfi, &c_qfi, &x_bytes).expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &g_qfi, &a, &b_qfi, &c_qfi)
+                .expect("verify"),
+            "RDdhClProof fixture invalid"
+        );
+        g.bench_function("r_ddh_cl/prove", |b| {
+            b.iter(|| RDdhClProof::prove(&mut setup, &g_qfi, &a, &b_qfi, &c_qfi, &x_bytes))
+        });
+        g.bench_function("r_ddh_cl/verify", |b| {
+            b.iter(|| proof.verify(&setup, &g_qfi, &a, &b_qfi, &c_qfi))
+        });
+    }
+
+    // R_el_cl — ElGamal + CL scalar multiply
+    {
+        use tecdsa_class_group::zk::r_el_cl::RElClProof;
+        let gen = <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR;
+        let eldk = k256::Scalar::from(42u64);
+        let elek = gen * eldk;
+        let gamma_bytes = 17u32.to_be_bytes().to_vec();
+        let r_ec_bytes = 23u32.to_be_bytes().to_vec();
+        let gamma_scalar = k256::Scalar::from(17u64);
+        let r_scalar = k256::Scalar::from(23u64);
+        let elg_0 = gen * r_scalar;
+        let elg_1 = gen * gamma_scalar + elek * r_scalar;
+        let ct = setup.encrypt_bytes(&pk, &55u32.to_be_bytes()).expect("enc");
+        let (ck_0, ck_1) = setup.ct_components(&ct).expect("comp");
+        let cgk_0 = setup.exp_bytes(&ck_0, &gamma_bytes).expect("exp");
+        let cgk_1 = setup.exp_bytes(&ck_1, &gamma_bytes).expect("exp");
+        let proof = RElClProof::prove(
+            &mut setup,
+            &gen,
+            &elek,
+            &elg_0,
+            &elg_1,
+            &ck_0,
+            &ck_1,
+            &cgk_0,
+            &cgk_1,
+            &gamma_bytes,
+            &r_ec_bytes,
+        )
+        .expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &gen, &elek, &elg_0, &elg_1, &ck_0, &ck_1, &cgk_0, &cgk_1)
+                .expect("verify"),
+            "RElClProof fixture invalid"
+        );
+        g.bench_function("r_el_cl/prove", |b| {
+            b.iter(|| {
+                RElClProof::prove(
+                    &mut setup,
+                    &gen,
+                    &elek,
+                    &elg_0,
+                    &elg_1,
+                    &ck_0,
+                    &ck_1,
+                    &cgk_0,
+                    &cgk_1,
+                    &gamma_bytes,
+                    &r_ec_bytes,
+                )
+            })
+        });
+        g.bench_function("r_el_cl/verify", |b| {
+            b.iter(|| {
+                proof.verify(
+                    &setup, &gen, &elek, &elg_0, &elg_1, &ck_0, &ck_1, &cgk_0, &cgk_1,
+                )
+            })
+        });
+    }
+
+    // R_ped_ec — Pedersen CL commitment + EC point
+    {
+        use elliptic_curve::group::GroupEncoding as _;
+        use tecdsa_class_group::nim::Nim;
+        use tecdsa_class_group::zk::r_ped_ec::RPedEcProof;
+        let x_bytes = 42u32.to_be_bytes().to_vec();
+        let mut nim = Nim::new(&mut setup);
+        let encode_out = nim.encode_a(&x_bytes, &pk).expect("encode_a");
+        let pe_a = encode_out.pe_a;
+        let r_bytes_nim = encode_out.state.r_bytes.clone();
+        let x_scalar = tecdsa_curve::conv::bytes_to_scalar::<Secp256k1>(&x_bytes);
+        let big_v =
+            <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar;
+        let big_v_bytes = big_v.to_bytes().to_vec();
+        let proof =
+            RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v_bytes, &x_bytes, &r_bytes_nim)
+                .expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &pk, &pe_a, &big_v_bytes)
+                .expect("verify"),
+            "RPedEcProof fixture invalid"
+        );
+        g.bench_function("r_ped_ec/prove", |b| {
+            b.iter(|| {
+                RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v_bytes, &x_bytes, &r_bytes_nim)
+            })
+        });
+        g.bench_function("r_ped_ec/verify", |b| {
+            b.iter(|| proof.verify(&setup, &pk, &pe_a, &big_v_bytes))
+        });
+    }
+
+    // R_aff_com — affine operation with commitment
+    {
+        use tecdsa_class_group::zk::r_aff_com::RAffComProof;
+        let x_bytes = 5u32.to_be_bytes().to_vec();
+        let y_bytes = 10u32.to_be_bytes().to_vec();
+        let (r_sk2, _) = setup.keygen().expect("kg");
+        let r_base = setup.sk_to_bytes(&r_sk2).expect("bytes");
+        let r_base_dec = num_bigint::BigUint::from_bytes_be(&r_base).to_str_radix(10);
+        let ct_in = setup.encrypt_with_r(&pk, "100", &r_base_dec).expect("enc");
+        let (r_sk3, _) = setup.keygen().expect("kg");
+        let r1 = setup.sk_to_bytes(&r_sk3).expect("bytes");
+        let q_bu = num_bigint::BigUint::from_str_radix(
+            tecdsa_class_group::bicycl_glue::SECP256K1_ORDER,
+            10,
+        )
+        .unwrap();
+        let m_out = (num_bigint::BigUint::from(5u32) * num_bigint::BigUint::from(100u32)
+            + num_bigint::BigUint::from(10u32))
+            % &q_bu;
+        let r_out = (num_bigint::BigUint::from(5u32) * num_bigint::BigUint::from_bytes_be(&r_base)
+            + num_bigint::BigUint::from_bytes_be(&r1))
+        .to_str_radix(10);
+        let ct_out = setup
+            .encrypt_with_r(&pk, &m_out.to_str_radix(10), &r_out)
+            .expect("enc_out");
+        let (r_sk4, _) = setup.keygen().expect("kg");
+        let r2 = setup.sk_to_bytes(&r_sk4).expect("bytes");
+        let r2_dec = num_bigint::BigUint::from_bytes_be(&r2).to_str_radix(10);
+        let h_r2 = setup.power_of_h(&r2_dec).expect("h_r2");
+        let f_x = setup.power_of_f("5").expect("f_x");
+        let commitment = setup.compose(&h_r2, &f_x).expect("com");
+        let proof = RAffComProof::prove(
+            &mut setup,
+            &pk,
+            &ct_in,
+            &ct_out,
+            &commitment,
+            &x_bytes,
+            &y_bytes,
+            &r1,
+            &r2,
+        )
+        .expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &pk, &ct_in, &ct_out, &commitment)
+                .expect("verify"),
+            "RAffComProof fixture invalid"
+        );
+        g.bench_function("r_aff_com/prove", |b| {
+            b.iter(|| {
+                RAffComProof::prove(
+                    &mut setup,
+                    &pk,
+                    &ct_in,
+                    &ct_out,
+                    &commitment,
+                    &x_bytes,
+                    &y_bytes,
+                    &r1,
+                    &r2,
+                )
+            })
+        });
+        g.bench_function("r_aff_com/verify", |b| {
+            b.iter(|| proof.verify(&setup, &pk, &ct_in, &ct_out, &commitment))
+        });
+    }
+
+    // R_m_aff_dl — MtA affine DL with F-subgroup
+    {
+        use tecdsa_class_group::zk::r_m_aff_dl::RMAffDlProof;
+        let x_bytes = 3u32.to_be_bytes().to_vec();
+        let y_bytes = 7u32.to_be_bytes().to_vec();
+        let (r_sk2, _) = setup.keygen().expect("kg");
+        let r_base = setup.sk_to_bytes(&r_sk2).expect("bytes");
+        let (r_sk3, _) = setup.keygen().expect("kg");
+        let r_enc = setup.sk_to_bytes(&r_sk3).expect("bytes");
+        let r_base_dec = num_bigint::BigUint::from_bytes_be(&r_base).to_str_radix(10);
+        let ct_in = setup.encrypt_with_r(&pk, "100", &r_base_dec).expect("enc");
+        let q_bu = num_bigint::BigUint::from_str_radix(
+            tecdsa_class_group::bicycl_glue::SECP256K1_ORDER,
+            10,
+        )
+        .unwrap();
+        let m_out = (num_bigint::BigUint::from(3u32) * num_bigint::BigUint::from(100u32)
+            + num_bigint::BigUint::from(7u32))
+            % &q_bu;
+        let r_out = (num_bigint::BigUint::from(3u32) * num_bigint::BigUint::from_bytes_be(&r_base)
+            + num_bigint::BigUint::from_bytes_be(&r_enc))
+        .to_str_radix(10);
+        let ct_out = setup
+            .encrypt_with_r(&pk, &m_out.to_str_radix(10), &r_out)
+            .expect("enc_out");
+        let y_point = setup.power_of_f("7").expect("f^y");
+        let proof = RMAffDlProof::prove(
+            &mut setup, &pk, &ct_in, &ct_out, &y_point, &x_bytes, &y_bytes, &r_enc,
+        )
+        .expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &pk, &ct_in, &ct_out, &y_point)
+                .expect("verify"),
+            "RMAffDlProof fixture invalid"
+        );
+        g.bench_function("r_m_aff_dl/prove", |b| {
+            b.iter(|| {
+                RMAffDlProof::prove(
+                    &mut setup, &pk, &ct_in, &ct_out, &y_point, &x_bytes, &y_bytes, &r_enc,
+                )
+            })
+        });
+        g.bench_function("r_m_aff_dl/verify", |b| {
+            b.iter(|| proof.verify(&setup, &pk, &ct_in, &ct_out, &y_point))
+        });
+    }
+
+    // R_m_aff_dl_ec — MtA affine DL with EC checks
+    {
+        use tecdsa_class_group::zk::r_m_aff_dl_ec::RMAffDlEcProof;
+        let gamma_bytes = 42u32.to_be_bytes().to_vec();
+        let (r_sk2, _) = setup.keygen().expect("kg");
+        let r_gamma = setup.sk_to_bytes(&r_sk2).expect("r");
+        let ct = setup
+            .encrypt_with_r_bytes(&pk, &gamma_bytes, &r_gamma)
+            .expect("enc");
+        let (c1, c2) = setup.ct_components(&ct).expect("ct");
+        let (r_sk3, _) = setup.keygen().expect("kg");
+        let k_star = setup.sk_to_bytes(&r_sk3).expect("k");
+        let beta_bytes = 17u32.to_be_bytes().to_vec();
+        let q_bytes = setup.q_bytes().expect("q");
+        let d1 = setup.exp_bytes(&c1, &k_star).expect("d1");
+        let c2_k = setup.exp_bytes(&c2, &k_star).expect("c2k");
+        // negate_mod_q inlined
+        let q_bu = num_bigint::BigUint::from_bytes_be(&q_bytes);
+        let beta_bu = num_bigint::BigUint::from_bytes_be(&beta_bytes);
+        let neg_beta_bu = (&q_bu - &beta_bu % &q_bu) % &q_bu;
+        let neg_beta = neg_beta_bu.to_bytes_be();
+        let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
+        let d2 = setup.compose(&c2_k, &f_neg_beta).expect("d2");
+        let k_scalar = tecdsa_curve::conv::bytes_to_scalar::<Secp256k1>(&k_star);
+        let r_point =
+            <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * k_scalar;
+        let beta_scalar = k256::Scalar::from(17u64);
+        let b_point = <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR
+            * beta_scalar;
+        let proof = RMAffDlEcProof::prove(
+            &mut setup,
+            &c1,
+            &c2,
+            &d1,
+            &d2,
+            &r_point,
+            &b_point,
+            &k_star,
+            &beta_bytes,
+        )
+        .expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &c1, &c2, &d1, &d2, &r_point, &b_point)
+                .expect("verify"),
+            "RMAffDlEcProof fixture invalid"
+        );
+        g.bench_function("r_m_aff_dl_ec/prove", |b| {
+            b.iter(|| {
+                RMAffDlEcProof::prove(
+                    &mut setup,
+                    &c1,
+                    &c2,
+                    &d1,
+                    &d2,
+                    &r_point,
+                    &b_point,
+                    &k_star,
+                    &beta_bytes,
+                )
+            })
+        });
+        g.bench_function("r_m_aff_dl_ec/verify", |b| {
+            b.iter(|| proof.verify(&setup, &c1, &c2, &d1, &d2, &r_point, &b_point))
+        });
+    }
+
+    // R_sh — PVSS share consistency
+    {
+        use tecdsa_class_group::zk::r_sh::RShProof;
+        let n = 3u16;
+        let t = 2u16;
+        let mut pks = Vec::new();
+        for _ in 0..n {
+            let (_, pk_i) = setup.keygen().expect("keygen");
+            pks.push(pk_i);
+        }
+        let party_ids: Vec<u16> = (1..=n).collect();
+        let pk_refs: Vec<&_> = pks.iter().collect();
+        // Inline create_pvss_ciphertexts
+        let q_bu = num_bigint::BigUint::from_bytes_be(&setup.q_bytes().expect("q"));
+        let (rho_sk, _) = setup.keygen().expect("kg");
+        let rho_bytes = setup.sk_to_bytes(&rho_sk).expect("rho");
+        let c1_sh = setup.power_of_h_bytes(&rho_bytes).expect("h^rho");
+        let mut coeffs = Vec::new();
+        for _ in 0..t {
+            let (sk_c, _) = setup.keygen().expect("kg");
+            let c_bytes = setup.sk_to_bytes(&sk_c).expect("c");
+            coeffs.push(num_bigint::BigUint::from_bytes_be(&c_bytes) % &q_bu);
+        }
+        let mut c2s_sh = Vec::new();
+        for (idx, &id) in party_ids.iter().enumerate() {
+            let x = num_bigint::BigUint::from(id);
+            let mut val = num_bigint::BigUint::ZERO;
+            let mut x_pow = num_bigint::BigUint::from(1u32);
+            for coeff in &coeffs {
+                val = (&val + coeff * &x_pow) % &q_bu;
+                x_pow = (&x_pow * &x) % &q_bu;
+            }
+            let share_bytes = val.to_bytes_be();
+            let pk_elt = setup.pk_element(&pks[idx]).expect("pk_elt");
+            let pk_rho = setup.exp_bytes(&pk_elt, &rho_bytes).expect("pk^rho");
+            let f_v = setup.power_of_f_bytes(&share_bytes).expect("f^v");
+            let c2 = setup.compose(&pk_rho, &f_v).expect("compose");
+            c2s_sh.push(c2);
+        }
+        let c2_refs: Vec<&_> = c2s_sh.iter().collect();
+        let proof = RShProof::prove(
+            &mut setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs, &rho_bytes,
+        )
+        .expect("prove");
+        assert!(
+            proof
+                .verify(&setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs)
+                .expect("verify"),
+            "RShProof fixture invalid"
+        );
+        g.bench_function("r_sh/prove", |b| {
+            b.iter(|| {
+                RShProof::prove(
+                    &mut setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs, &rho_bytes,
+                )
+            })
+        });
+        g.bench_function("r_sh/verify", |b| {
+            b.iter(|| proof.verify(&setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs))
+        });
+    }
+
     g.finish();
 }
 
@@ -557,11 +979,520 @@ fn paillier_zk(c: &mut Criterion) {
         g.bench_function("range_ni/verify", |b| b.iter(|| proof.verify(&ek, &ct, &q)));
     }
 
+    // pdl_slack
+    {
+        use tecdsa_paillier::zk::pdl_slack::{PdlSlackProof, PdlSlackStatement, PdlSlackWitness};
+        let q = group_order();
+        let x = sample_below(&q);
+        let (ciphertext, r) = paillier_encrypt(&ek, &x);
+        let x_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&x);
+        let gen = C::generator();
+        let q_pt = gen * x_scalar;
+        let (n_tilde, h1, h2) = ntilde_params();
+        let stmt = PdlSlackStatement::<C> {
+            ciphertext: ciphertext.clone(),
+            ek_n: ek.n().clone(),
+            ek_nn: ek.nn().clone(),
+            Q: q_pt,
+            G: gen,
+            h1,
+            h2,
+            N_tilde: n_tilde,
+        };
+        let wit = PdlSlackWitness { x, r };
+        let proof = PdlSlackProof::prove(&wit, &stmt, &mut OsRng);
+        proof.verify(&stmt).expect("PdlSlackProof fixture invalid");
+        g.bench_function("pdl_slack/prove", |b| {
+            b.iter(|| PdlSlackProof::prove(&wit, &stmt, &mut OsRng))
+        });
+        g.bench_function("pdl_slack/verify", |b| b.iter(|| proof.verify(&stmt)));
+    }
+
+    // pib — proves c_B = Enc(pk, b; r)
+    {
+        use tecdsa_paillier::zk::pia_pib::PiBProof;
+        let q = group_order();
+        let b_val = sample_below(&q);
+        let (c_b, r_b) = paillier_encrypt(&ek, &b_val);
+        let proof = PiBProof::prove(&ek, &c_b, &b_val, &r_b, &q, &mut OsRng);
+        assert!(proof.verify(&ek, &c_b, &q), "PiBProof fixture invalid");
+        g.bench_function("pib/prove", |b| {
+            b.iter(|| PiBProof::prove(&ek, &c_b, &b_val, &r_b, &q, &mut OsRng))
+        });
+        g.bench_function("pib/verify", |b| b.iter(|| proof.verify(&ek, &c_b, &q)));
+    }
+
+    // bob_ext — Bob's extended MtA range proof with EC check
+    {
+        use tecdsa_paillier::zk::mta_range::{BobProofExt, NTildeParams};
+        let q = group_order();
+        let (n_tilde, h1, h2) = ntilde_params();
+        let ntilde = NTildeParams {
+            N_tilde: n_tilde,
+            h1,
+            h2,
+        };
+        let a = sample_below(&q);
+        let (enc_a, _) = paillier_encrypt(&ek, &a);
+        let b_val = sample_below(&q);
+        let b_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&b_val);
+        let x_pt = C::generator() * b_scalar;
+        let beta_prim = sample_below(&Integer::from_bytes_msf(&ek.half_n().to_bytes_msf()));
+        let r_bob = Integer::sample_in_mult_group_of(&mut OsRng, ek.n());
+        let b_times_enc_a = ek.omul(&b_val, &enc_a).expect("omul");
+        let enc_beta = ek.encrypt_with(&beta_prim, &r_bob).expect("encrypt beta");
+        let mta_out = ek.oadd(&b_times_enc_a, &enc_beta).expect("oadd");
+        let proof = BobProofExt::<C>::prove(
+            &enc_a,
+            &mta_out,
+            &b_val,
+            &beta_prim,
+            ek.n(),
+            ek.nn(),
+            &ntilde,
+            &r_bob,
+            &mut OsRng,
+        );
+        proof
+            .verify(&enc_a, &mta_out, ek.n(), ek.nn(), &ntilde, &x_pt)
+            .expect("BobProofExt fixture invalid");
+        g.bench_function("bob_ext/prove", |b| {
+            b.iter(|| {
+                BobProofExt::<C>::prove(
+                    &enc_a,
+                    &mta_out,
+                    &b_val,
+                    &beta_prim,
+                    ek.n(),
+                    ek.nn(),
+                    &ntilde,
+                    &r_bob,
+                    &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("bob_ext/verify", |b| {
+            b.iter(|| proof.verify(&enc_a, &mta_out, ek.n(), ek.nn(), &ntilde, &x_pt))
+        });
+    }
+
+    // nonce_consist
+    {
+        use tecdsa_paillier::zk::nonce_consist::{
+            NonceConsistProof, NonceConsistStatement, NonceConsistWitness,
+        };
+        let q = group_order();
+        let gen = C::generator();
+        let (n_tilde, h1, h2) = ntilde_params();
+        let eta1 = sample_below(&q);
+        let eta1_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&eta1);
+        let r_i = gen * eta1_scalar;
+        let rho = sample_below(&q);
+        let (u_ct, _) = paillier_encrypt(&ek, &rho);
+        let eta2 = sample_below(&q);
+        let r_c = Integer::sample_in_mult_group_of(&mut OsRng, ek.n());
+        let gamma_paillier = ek.n() + Integer::one();
+        let w_i = {
+            let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
+            let q_eta2 = &q * &eta2;
+            let g_q_eta2 = pow_mod_signed(&gamma_paillier, &q_eta2, ek.nn());
+            let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
+            (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
+        };
+        let stmt = NonceConsistStatement::<C> {
+            G: gen,
+            r_i,
+            w_i,
+            u: u_ct,
+            ek_n: ek.n().clone(),
+            ek_nn: ek.nn().clone(),
+            h1,
+            h2,
+            N_tilde: n_tilde,
+        };
+        let wit = NonceConsistWitness { eta1, eta2, r_c };
+        let proof = NonceConsistProof::prove(&wit, &stmt, &mut OsRng);
+        proof
+            .verify(&stmt)
+            .expect("NonceConsistProof fixture invalid");
+        g.bench_function("nonce_consist/prove", |b| {
+            b.iter(|| NonceConsistProof::prove(&wit, &stmt, &mut OsRng))
+        });
+        g.bench_function("nonce_consist/verify", |b| b.iter(|| proof.verify(&stmt)));
+    }
+
+    // pia — proves c_A = c_B^a * Enc(alpha'; r')
+    {
+        use tecdsa_paillier::zk::pia_pib::PiAProof;
+        let q = group_order();
+        let b_val = sample_below(&q);
+        let (c_b, _) = paillier_encrypt(&ek, &b_val);
+        let a = sample_below(&q);
+        let alpha_prime = sample_below(&q);
+        let r_prime = Integer::sample_in_mult_group_of(&mut OsRng, ek.n());
+        let c_b_a = pow_mod_signed(&c_b, &a, ek.nn());
+        let enc_alpha = ek.encrypt_with(&alpha_prime, &r_prime).expect("enc");
+        let c_a = (c_b_a * enc_alpha).modulo(ek.nn());
+        let proof = PiAProof::prove(&ek, &c_a, &c_b, &a, &alpha_prime, &r_prime, &q, &mut OsRng);
+        assert!(
+            proof.verify(&ek, &c_a, &c_b, &q),
+            "PiAProof fixture invalid"
+        );
+        g.bench_function("pia/prove", |b| {
+            b.iter(|| PiAProof::prove(&ek, &c_a, &c_b, &a, &alpha_prime, &r_prime, &q, &mut OsRng))
+        });
+        g.bench_function("pia/verify", |b| {
+            b.iter(|| proof.verify(&ek, &c_a, &c_b, &q))
+        });
+    }
+
+    // bob — Bob's MtA range proof (without EC check)
+    {
+        use tecdsa_paillier::zk::mta_range::{BobProof, NTildeParams};
+        let q = group_order();
+        let (n_tilde, h1, h2) = ntilde_params();
+        let ntilde = NTildeParams {
+            N_tilde: n_tilde,
+            h1,
+            h2,
+        };
+        let a = sample_below(&q);
+        let (enc_a, _) = paillier_encrypt(&ek, &a);
+        let b_val = sample_below(&q);
+        let beta_prim = sample_below(&Integer::from_bytes_msf(&ek.half_n().to_bytes_msf()));
+        let r_bob = Integer::sample_in_mult_group_of(&mut OsRng, ek.n());
+        let b_times_enc_a = ek.omul(&b_val, &enc_a).expect("omul");
+        let enc_beta = ek.encrypt_with(&beta_prim, &r_bob).expect("enc");
+        let mta_out = ek.oadd(&b_times_enc_a, &enc_beta).expect("oadd");
+        let (proof, _) = BobProof::prove::<C>(
+            &enc_a,
+            &mta_out,
+            &b_val,
+            &beta_prim,
+            ek.n(),
+            ek.nn(),
+            &ntilde,
+            &r_bob,
+            false,
+            &mut OsRng,
+        );
+        proof
+            .verify::<C>(&enc_a, &mta_out, ek.n(), ek.nn(), &ntilde)
+            .expect("BobProof fixture invalid");
+        g.bench_function("bob/prove", |b| {
+            b.iter(|| {
+                BobProof::prove::<C>(
+                    &enc_a,
+                    &mta_out,
+                    &b_val,
+                    &beta_prim,
+                    ek.n(),
+                    ek.nn(),
+                    &ntilde,
+                    &r_bob,
+                    false,
+                    &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("bob/verify", |b| {
+            b.iter(|| proof.verify::<C>(&enc_a, &mta_out, ek.n(), ek.nn(), &ntilde))
+        });
+    }
+
+    // pdl_transcript — full interactive PDL verification (5 steps)
+    {
+        use tecdsa_paillier::zk::pdl::pdl_verify;
+        let x1 = random_scalar();
+        let q1 = C::generator() * x1;
+        let x1_bytes = scalar_to_bytes(&x1);
+        let x1_int = Integer::from_bytes_msf(&x1_bytes);
+        let (c_key, _) = paillier_encrypt(&ek, &x1_int);
+        pdl_verify::<C>(&dk, &ek, &x1, &c_key, &q1, &mut OsRng)
+            .expect("PDL transcript fixture invalid");
+        g.bench_function("pdl_transcript/full", |b| {
+            b.iter(|| pdl_verify::<C>(&dk, &ek, &x1, &c_key, &q1, &mut OsRng))
+        });
+    }
+
     g.finish();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// 5. Joye-Libert ZK — toy 256-bit/k=32 params
+// 4b. Upstream paillier-zk facade (CGGMP20 ZK proofs)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn paillier_zk_facade(c: &mut Criterion) {
+    use sha2::Sha256;
+    use tecdsa_paillier::zk::bridge::pedersen_to_aux;
+    use tecdsa_paillier::zk::paillier_zk;
+    use tecdsa_pedersen_mod::PedersenModParams;
+
+    #[derive(udigest::Digestable)]
+    struct BenchTag(&'static str);
+
+    let mut g = c.benchmark_group("zk/paillier_zk_facade");
+    g.sample_size(10);
+
+    let (dk, ek) = paillier_keys();
+    // Aux N_tilde must be comparable to Paillier N (3072-bit); use 1536-bit primes.
+    let (ped_params, _ped_secret) = PedersenModParams::generate(1536, &mut OsRng);
+    let aux = pedersen_to_aux(&ped_params);
+    let tag = BenchTag("bench");
+
+    // Pi_enc
+    {
+        use paillier_zk::paillier_encryption_in_range as pi_enc;
+        let plaintext = Integer::from(42);
+        let (ct, nonce) = paillier_encrypt(&ek, &plaintext);
+        let data = pi_enc::Data {
+            key: &ek,
+            ciphertext: &ct,
+        };
+        let pdata = pi_enc::PrivateData {
+            plaintext: &plaintext,
+            nonce: &nonce,
+        };
+        let security = pi_enc::SecurityParams {
+            l: 256,
+            epsilon: 512,
+            q: group_order(),
+        };
+        let proof = pi_enc::non_interactive::prove::<Sha256>(
+            &tag, &aux, data, pdata, &security, &mut OsRng,
+        )
+        .expect("pi_enc prove");
+        pi_enc::non_interactive::verify::<Sha256>(&tag, &aux, data, &security, &proof)
+            .expect("pi_enc verify");
+        g.bench_function("pi_enc/prove", |b| {
+            b.iter(|| {
+                pi_enc::non_interactive::prove::<Sha256>(
+                    &tag, &aux, data, pdata, &security, &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("pi_enc/verify", |b| {
+            b.iter(|| {
+                pi_enc::non_interactive::verify::<Sha256>(&tag, &aux, data, &security, &proof)
+            })
+        });
+    }
+
+    // Pi_fac
+    {
+        use paillier_zk::no_small_factor as pi_fac;
+        let n = dk.n().clone();
+        let p = dk.p().clone();
+        let q_paillier = dk.q().clone();
+        let n_root = n.sqrt_ref().expect("sqrt");
+        let data = pi_fac::Data {
+            n: &n,
+            n_root: &n_root,
+        };
+        let pdata = pi_fac::PrivateData {
+            p: &p,
+            q: &q_paillier,
+        };
+        let security = pi_fac::SecurityParams {
+            l: 256,
+            epsilon: 512,
+        };
+        let proof = pi_fac::non_interactive::prove::<Sha256>(
+            &tag, &aux, data, pdata, &security, &mut OsRng,
+        )
+        .expect("pi_fac prove");
+        pi_fac::non_interactive::verify::<Sha256>(&tag, &aux, data, &security, &proof)
+            .expect("pi_fac verify");
+        g.bench_function("pi_fac/prove", |b| {
+            b.iter(|| {
+                pi_fac::non_interactive::prove::<Sha256>(
+                    &tag, &aux, data, pdata, &security, &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("pi_fac/verify", |b| {
+            b.iter(|| {
+                pi_fac::non_interactive::verify::<Sha256>(&tag, &aux, data, &security, &proof)
+            })
+        });
+    }
+
+    // Pi_mod (upstream paillier_blum_modulus)
+    {
+        use paillier_zk::paillier_blum_modulus as pi_mod_up;
+        let n = dk.n().clone();
+        let p = dk.p().clone();
+        let q_p = dk.q().clone();
+        let data = pi_mod_up::Data { n: &n };
+        let pdata = pi_mod_up::PrivateData { p: &p, q: &q_p };
+        let proof = pi_mod_up::non_interactive::prove::<80, Sha256>(&tag, data, pdata, &mut OsRng)
+            .expect("pi_mod_up prove");
+        pi_mod_up::non_interactive::verify::<80, Sha256>(&tag, data, &proof, &mut OsRng)
+            .expect("pi_mod_up verify");
+        g.bench_function("pi_mod_upstream/prove", |b| {
+            b.iter(|| {
+                pi_mod_up::non_interactive::prove::<80, Sha256>(&tag, data, pdata, &mut OsRng)
+            })
+        });
+        g.bench_function("pi_mod_upstream/verify", |b| {
+            b.iter(|| {
+                pi_mod_up::non_interactive::verify::<80, Sha256>(&tag, data, &proof, &mut OsRng)
+            })
+        });
+    }
+
+    // Pi_aff_g — affine operation in range with group commitment
+    {
+        use paillier_zk::paillier_affine_operation_in_range as pi_aff;
+        use tecdsa_paillier::zk::bridge::point_to_ge;
+        type GE = generic_ec::curves::Secp256k1;
+        let x_val = Integer::from(7);
+        let y_val = Integer::from(13);
+        let (ct_c, _nonce_c) = paillier_encrypt(&ek, &Integer::from(100));
+        let (ct_y, nonce_y) = paillier_encrypt(&ek, &y_val);
+        // D = C^x * Enc(y; rho) where rho is nonce_aff
+        let nonce_aff = Integer::sample_in_mult_group_of(&mut OsRng, ek.n());
+        let d_val = {
+            let c_x = pow_mod_signed(&ct_c, &x_val, ek.nn());
+            let enc_y = ek.encrypt_with(&y_val, &nonce_aff).expect("enc_y");
+            (c_x * enc_y).modulo(ek.nn())
+        };
+        let x_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&x_val);
+        let x_point_k256 = C::generator() * x_scalar;
+        let x_ge = point_to_ge(&x_point_k256);
+        let data = pi_aff::Data::<GE> {
+            key_j: &ek,
+            key_i: &ek,
+            c: &ct_c,
+            d: &d_val,
+            y: &ct_y,
+            x: &x_ge,
+        };
+        let pdata = pi_aff::PrivateData {
+            x: &x_val,
+            y: &y_val,
+            nonce: &nonce_aff,
+            nonce_y: &nonce_y,
+        };
+        let security = pi_aff::SecurityParams {
+            l_x: 256,
+            l_y: 256,
+            epsilon: 512,
+        };
+        let proof = pi_aff::non_interactive::prove::<GE, Sha256>(
+            &tag, &aux, data, pdata, &security, &mut OsRng,
+        )
+        .expect("pi_aff prove");
+        pi_aff::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &security, &proof)
+            .expect("pi_aff verify");
+        g.bench_function("pi_aff_g/prove", |b| {
+            b.iter(|| {
+                pi_aff::non_interactive::prove::<GE, Sha256>(
+                    &tag, &aux, data, pdata, &security, &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("pi_aff_g/verify", |b| {
+            b.iter(|| {
+                pi_aff::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &security, &proof)
+            })
+        });
+    }
+
+    // Pi_elog — dlog with El-Gamal commitment
+    {
+        use paillier_zk::dlog_with_el_gamal_commitment as pi_elog;
+        use tecdsa_paillier::zk::bridge::scalar_to_ge;
+        type GE = generic_ec::curves::Secp256k1;
+        let y_scalar = random_scalar();
+        let lambda_scalar = random_scalar();
+        let y_ge = scalar_to_ge(&y_scalar);
+        let lambda_ge = scalar_to_ge(&lambda_scalar);
+        let g_ge = generic_ec::Point::<GE>::generator();
+        let h_ge = g_ge * generic_ec::Scalar::<GE>::random(&mut OsRng);
+        let x_ge = g_ge * y_ge;
+        let l_ge = g_ge * lambda_ge;
+        let m_ge = g_ge * y_ge + x_ge * lambda_ge;
+        let y_pt = h_ge * y_ge;
+        let data = pi_elog::Data::<GE> {
+            l: &l_ge,
+            m: &m_ge,
+            x: &x_ge,
+            y: &y_pt,
+            h: &h_ge,
+        };
+        let pdata = pi_elog::PrivateData::<GE> {
+            y: &y_ge,
+            lambda: &lambda_ge,
+        };
+        let proof = pi_elog::non_interactive::prove::<GE, Sha256>(&tag, data, pdata, &mut OsRng)
+            .expect("pi_elog prove");
+        pi_elog::non_interactive::verify::<GE, Sha256>(&tag, data, &proof).expect("pi_elog verify");
+        g.bench_function("pi_elog/prove", |b| {
+            b.iter(|| pi_elog::non_interactive::prove::<GE, Sha256>(&tag, data, pdata, &mut OsRng))
+        });
+        g.bench_function("pi_elog/verify", |b| {
+            b.iter(|| pi_elog::non_interactive::verify::<GE, Sha256>(&tag, data, &proof))
+        });
+    }
+
+    // Pi_enc_elg — encryption in range with ElGamal
+    {
+        use paillier_zk::paillier_encryption_in_range_with_el_gamal as pi_enc_elg;
+        use paillier_zk::IntegerExt as _;
+        type GE = generic_ec::curves::Secp256k1;
+        let security = pi_enc_elg::SecurityParams {
+            l: 256,
+            epsilon: 512,
+        };
+        let plaintext = Integer::from_rng_half_pm(&mut OsRng, &(Integer::one() << security.l));
+        let nonce = Integer::sample_in_mult_group_of(&mut OsRng, ek.n());
+        let ct = ek.encrypt_with(&plaintext, &nonce).expect("enc");
+        let a_scalar = generic_ec::Scalar::<GE>::random(&mut OsRng);
+        let b_scalar_ge = generic_ec::Scalar::<GE>::random(&mut OsRng);
+        let g_ge = generic_ec::Point::<GE>::generator();
+        let a_pt = g_ge * a_scalar;
+        let b_pt = g_ge * b_scalar_ge;
+        let x_pt = g_ge * (a_scalar * b_scalar_ge + plaintext.to_scalar());
+        let pdata = pi_enc_elg::PrivateData::<GE> {
+            plaintext: &plaintext,
+            nonce: &nonce,
+            b: &b_scalar_ge,
+        };
+        let data = pi_enc_elg::Data::<GE> {
+            key: &ek,
+            ciphertext: &ct,
+            a: &a_pt,
+            b: &b_pt,
+            x: &x_pt,
+        };
+        let proof = pi_enc_elg::non_interactive::prove::<GE, Sha256>(
+            &tag, &aux, data, pdata, &security, &mut OsRng,
+        )
+        .expect("pi_enc_elg prove");
+        pi_enc_elg::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &proof, &security)
+            .expect("pi_enc_elg verify");
+        g.bench_function("pi_enc_elg/prove", |b| {
+            b.iter(|| {
+                pi_enc_elg::non_interactive::prove::<GE, Sha256>(
+                    &tag, &aux, data, pdata, &security, &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("pi_enc_elg/verify", |b| {
+            b.iter(|| {
+                pi_enc_elg::non_interactive::verify::<GE, Sha256>(
+                    &tag, &aux, data, &proof, &security,
+                )
+            })
+        });
+    }
+
+    g.finish();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 5. Joye-Libert ZK — Profile B: N=3072-bit, k=256
 // ═══════════════════════════════════════════════════════════════════════
 
 fn joye_libert_zk(c: &mut Criterion) {
@@ -595,6 +1526,234 @@ fn joye_libert_zk(c: &mut Criterion) {
             b.iter(|| ZkJlModProof::prove(&jl_pk, &jl_sk, &jl_x, &mut OsRng))
         });
         g.bench_function("zkjlmod/verify", |b| b.iter(|| proof.verify()));
+    }
+
+    // zkjl_com — Pedersen commitment c = y^m * h^r mod N
+    {
+        use num_bigint::BigUint;
+        use tecdsa_joye_libert::zk::zkjl_com::{jl_commit, ZkJlComProof};
+        let m = BigUint::from(42u32);
+        let r = num_bigint::RandBigInt::gen_biguint_below(&mut OsRng, &jl_pk.n);
+        let c = jl_commit(&jl_pk, &m, &r);
+        let proof = ZkJlComProof::prove(&jl_pk, &c, &m, &r, jl_pk.k, &mut OsRng);
+        assert!(proof.verify(&jl_pk, &c), "ZkJlComProof fixture invalid");
+        g.bench_function("zkjl_com/prove", |b| {
+            b.iter(|| ZkJlComProof::prove(&jl_pk, &c, &m, &r, jl_pk.k, &mut OsRng))
+        });
+        g.bench_function("zkjl_com/verify", |b| b.iter(|| proof.verify(&jl_pk, &c)));
+    }
+
+    // zkqr2k
+    {
+        use tecdsa_joye_libert::zk::zkqr2k::ZkQr2kProof;
+        let proof = ZkQr2kProof::prove(&jl_pk.n, jl_pk.k, &jl_x, &jl_pk.h, &mut OsRng);
+        assert!(proof.verify(), "ZkQr2kProof fixture invalid");
+        g.bench_function("zkqr2k/prove", |b| {
+            b.iter(|| ZkQr2kProof::prove(&jl_pk.n, jl_pk.k, &jl_x, &jl_pk.h, &mut OsRng))
+        });
+        g.bench_function("zkqr2k/verify", |b| b.iter(|| proof.verify()));
+    }
+
+    // zkqr2kdl
+    {
+        use tecdsa_joye_libert::zk::zkqr2kdl::ZkQr2kDlProof;
+        let proof = ZkQr2kDlProof::prove(
+            &jl_pk.n,
+            jl_pk.k,
+            &jl_sk.alpha,
+            &jl_pk.h,
+            &jl_pk.y,
+            &mut OsRng,
+        );
+        assert!(proof.verify(), "ZkQr2kDlProof fixture invalid");
+        g.bench_function("zkqr2kdl/prove", |b| {
+            b.iter(|| {
+                ZkQr2kDlProof::prove(
+                    &jl_pk.n,
+                    jl_pk.k,
+                    &jl_sk.alpha,
+                    &jl_pk.h,
+                    &jl_pk.y,
+                    &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("zkqr2kdl/verify", |b| b.iter(|| proof.verify()));
+    }
+
+    // zkjl_equ — proves two commitments under different PKs encrypt the same value
+    {
+        use num_bigint::{BigUint, RandBigInt};
+        use tecdsa_joye_libert::zk::zkjl_com::jl_commit;
+        use tecdsa_joye_libert::zk::zkjl_equ::ZkJlEquProof;
+        let (pk0, _, _) =
+            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
+        let m = BigUint::from(42u32);
+        let r1 = OsRng.gen_biguint_below(&jl_pk.n);
+        let r0 = OsRng.gen_biguint_below(&pk0.n);
+        let c = jl_commit(&jl_pk, &m, &r1);
+        let c_prime = jl_commit(&pk0, &m, &r0);
+        let proof = ZkJlEquProof::prove(
+            &jl_pk, &pk0, &c, &c_prime, &m, &r1, &r0, jl_pk.k, &mut OsRng,
+        );
+        assert!(
+            proof.verify(&jl_pk, &pk0, &c, &c_prime),
+            "ZkJlEquProof fixture invalid"
+        );
+        g.bench_function("zkjl_equ/prove", |b| {
+            b.iter(|| {
+                ZkJlEquProof::prove(
+                    &jl_pk, &pk0, &c, &c_prime, &m, &r1, &r0, jl_pk.k, &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("zkjl_equ/verify", |b| {
+            b.iter(|| proof.verify(&jl_pk, &pk0, &c, &c_prime))
+        });
+    }
+
+    // zkjl_aff — affine relation: c_aff = c^a * y^alpha * h^r mod N
+    {
+        use num_bigint::{BigUint, RandBigInt};
+        use tecdsa_joye_libert::zk::zkjl_aff::ZkJlAffProof;
+        let b_msg = BigUint::from(7u32);
+        let (ct_b, _) = tecdsa_joye_libert::enc_dec::encrypt(&jl_pk, &b_msg, &mut OsRng);
+        let a = BigUint::from(5u32);
+        let alpha = BigUint::from(13u32);
+        let r_aff = OsRng.gen_biguint_below(&jl_pk.n);
+        let c_a = ct_b.c.modpow(&a, &jl_pk.n);
+        let y_alpha = jl_pk.y.modpow(&alpha, &jl_pk.n);
+        let h_r = jl_pk.h.modpow(&r_aff, &jl_pk.n);
+        let c_aff = (&c_a * &y_alpha % &jl_pk.n) * &h_r % &jl_pk.n;
+        let proof = ZkJlAffProof::prove(
+            &jl_pk, &ct_b.c, &c_aff, &a, &alpha, &r_aff, jl_pk.k, jl_pk.k, &mut OsRng,
+        );
+        assert!(
+            proof.verify(&jl_pk, &ct_b.c, &c_aff),
+            "ZkJlAffProof fixture invalid"
+        );
+        g.bench_function("zkjl_aff/prove", |b| {
+            b.iter(|| {
+                ZkJlAffProof::prove(
+                    &jl_pk, &ct_b.c, &c_aff, &a, &alpha, &r_aff, jl_pk.k, jl_pk.k, &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("zkjl_aff/verify", |b| {
+            b.iter(|| proof.verify(&jl_pk, &ct_b.c, &c_aff))
+        });
+    }
+
+    // zkjlv_com — vector Pedersen commitment
+    {
+        use num_bigint::{BigUint, RandBigInt};
+        use tecdsa_joye_libert::zk::zkjlv_com::{jl_vec_commit, ZkJlvComProof};
+        let ell = 3;
+        let mut y_vec = Vec::with_capacity(ell);
+        for _ in 0..ell {
+            let alpha_i = OsRng.gen_biguint_below(&jl_pk.n);
+            let y_i = jl_x.modpow(&alpha_i, &jl_pk.n);
+            y_vec.push(y_i);
+        }
+        let m_vec = vec![
+            BigUint::from(42u32),
+            BigUint::from(17u32),
+            BigUint::from(99u32),
+        ];
+        let b_bits_vec = vec![32u32, 32, 32];
+        let r_vc = OsRng.gen_biguint_below(&jl_pk.n);
+        let c_vc = jl_vec_commit(&jl_pk, &y_vec, &m_vec, &r_vc);
+        let proof = ZkJlvComProof::prove(
+            &jl_pk,
+            &y_vec,
+            &c_vc,
+            &m_vec,
+            &r_vc,
+            &b_bits_vec,
+            &mut OsRng,
+        );
+        assert!(
+            proof.verify(&jl_pk, &y_vec, &c_vc),
+            "ZkJlvComProof fixture invalid"
+        );
+        g.bench_function("zkjlv_com/prove", |b| {
+            b.iter(|| {
+                ZkJlvComProof::prove(
+                    &jl_pk,
+                    &y_vec,
+                    &c_vc,
+                    &m_vec,
+                    &r_vc,
+                    &b_bits_vec,
+                    &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("zkjlv_com/verify", |b| {
+            b.iter(|| proof.verify(&jl_pk, &y_vec, &c_vc))
+        });
+    }
+
+    // zkjlv_equ — vector commitment + individual commitment equality
+    {
+        use num_bigint::{BigUint, RandBigInt};
+        use tecdsa_joye_libert::zk::zkjl_com::jl_commit;
+        use tecdsa_joye_libert::zk::zkjlv_com::jl_vec_commit;
+        use tecdsa_joye_libert::zk::zkjlv_equ::ZkJlvEquProof;
+        let (pk0, _, _) =
+            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
+        let ell = 2;
+        let mut y_vec = Vec::with_capacity(ell);
+        for _ in 0..ell {
+            let alpha_i = OsRng.gen_biguint_below(&jl_pk.n);
+            y_vec.push(jl_x.modpow(&alpha_i, &jl_pk.n));
+        }
+        let m_vec = vec![BigUint::from(42u32), BigUint::from(17u32)];
+        let b_bits_vec = vec![32u32, 32];
+        let r1 = OsRng.gen_biguint_below(&jl_pk.n);
+        let c_ve = jl_vec_commit(&jl_pk, &y_vec, &m_vec, &r1);
+        let mut c_prime_vec = Vec::with_capacity(ell);
+        let mut r0_vec = Vec::with_capacity(ell);
+        for i in 0..ell {
+            let r0 = OsRng.gen_biguint_below(&pk0.n);
+            c_prime_vec.push(jl_commit(&pk0, &m_vec[i], &r0));
+            r0_vec.push(r0);
+        }
+        let proof = ZkJlvEquProof::prove(
+            &jl_pk,
+            &pk0,
+            &y_vec,
+            &c_ve,
+            &c_prime_vec,
+            &m_vec,
+            &r1,
+            &r0_vec,
+            &b_bits_vec,
+            &mut OsRng,
+        );
+        assert!(
+            proof.verify(&jl_pk, &pk0, &y_vec, &c_ve, &c_prime_vec),
+            "ZkJlvEquProof fixture invalid"
+        );
+        g.bench_function("zkjlv_equ/prove", |b| {
+            b.iter(|| {
+                ZkJlvEquProof::prove(
+                    &jl_pk,
+                    &pk0,
+                    &y_vec,
+                    &c_ve,
+                    &c_prime_vec,
+                    &m_vec,
+                    &r1,
+                    &r0_vec,
+                    &b_bits_vec,
+                    &mut OsRng,
+                )
+            })
+        });
+        g.bench_function("zkjlv_equ/verify", |b| {
+            b.iter(|| proof.verify(&jl_pk, &pk0, &y_vec, &c_ve, &c_prime_vec))
+        });
     }
 
     g.finish();
@@ -635,6 +1794,7 @@ criterion_group!(
     pedersen_mod_zk,
     class_group_zk,
     paillier_zk,
+    paillier_zk_facade,
     joye_libert_zk,
     evrf_zk,
 );

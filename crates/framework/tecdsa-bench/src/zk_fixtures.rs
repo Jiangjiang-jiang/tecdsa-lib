@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Shared fixture builders for ZK proof benchmarks.
+//!
+//! **Profile B** (lambda=128, secp256k1):
+//! - Paillier N = 3072 bit (two 1536-bit safe primes, fast-paillier default)
+//! - CL |DeltaK| ~ 1827 bit (new_secp256k1_128bit)
+//! - JL N = 3072 bit (p_bits=1536, k=256)
+//! - NTilde = 3072 bit (two 1536-bit safe primes)
+//! - Pedersen-mod = 1536-bit primes (3072-bit N)
 
 use k256::Secp256k1;
 use rand_core::OsRng;
@@ -33,8 +40,9 @@ pub fn paillier_encrypt(
         .expect("encrypt")
 }
 
+/// CL setup with 128-bit security (|DeltaK| ~ 1827 bit).
 pub fn cl_setup() -> tecdsa_class_group::bicycl_glue::ClSetup {
-    tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1("42042").expect("cl setup")
+    tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1_128bit("42042").expect("cl setup")
 }
 
 pub fn cl_setup_with_keys() -> (
@@ -55,10 +63,11 @@ pub fn group_order() -> Integer {
     tecdsa_paillier::conv::group_order_integer::<C>()
 }
 
-/// Ring-Pedersen auxiliary parameters (N_tilde, h1, h2) for MtA range proofs.
+/// Ring-Pedersen auxiliary parameters (N_tilde, h1, h2).
+/// Profile B: N_tilde = 3072 bit (two 1536-bit safe primes).
 pub fn ntilde_params() -> (Integer, Integer, Integer) {
-    let p = Integer::generate_safe_prime(&mut OsRng, 256);
-    let q = Integer::generate_safe_prime(&mut OsRng, 256);
+    let p = Integer::generate_safe_prime(&mut OsRng, 1536);
+    let q = Integer::generate_safe_prime(&mut OsRng, 1536);
     let n_tilde = &p * &q;
     let h1 = Integer::sample_in_mult_group_of(&mut OsRng, &n_tilde);
     let lambda = (&p - Integer::one()) * (&q - Integer::one());
@@ -76,10 +85,11 @@ pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integ
     }
 }
 
+/// JL keys: Profile B = N=3072 bit (p_bits=1536), k=256.
 pub fn jl_keys() -> (
     tecdsa_joye_libert::kgen::JlPublicKey,
     tecdsa_joye_libert::kgen::JlSecretKey,
     num_bigint::BigUint,
 ) {
-    tecdsa_joye_libert::kgen::generate_keypair_with_qnr(256, 32, &mut OsRng)
+    tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng)
 }
