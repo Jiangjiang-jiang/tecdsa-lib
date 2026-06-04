@@ -54,8 +54,8 @@ use crate::{
     keygen::{curve_order, int_to_scalar},
 };
 
-/// Default MtA backend: Paillier-based MtA from `tecdsa_paillier`.
-pub type DefaultMtA = tecdsa_paillier::mta::PaillierMtA;
+/// Default MtA backend: Paillier-based MtA with Alice/Bob range proofs.
+pub type DefaultMtA = tecdsa_paillier::mta::PaillierMtA<tecdsa_paillier::mta::Gg18Proofs>;
 
 // ---------------------------------------------------------------------------
 // Presignature output types
@@ -546,7 +546,9 @@ where
     let mta_setup = tecdsa_paillier::mta::PaillierMtaSetup {
         ek: p2_key.ek.clone(),
         dk: p2_key.dk.clone(),
-        proof_setup: (),
+        proof_setup: tecdsa_paillier::mta::Gg18ProofSetup {
+            ntilde: p2_key.ntilde.clone(),
+        },
     };
 
     offline_sign_generic::<C, DefaultMtA>(p1_key, p2_key, &mta_setup, rng)

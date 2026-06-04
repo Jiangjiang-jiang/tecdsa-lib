@@ -112,6 +112,8 @@ where
     pub ek: tecdsa_paillier::EncryptionKey,
     /// Pi_GCD proof: proves knowledge of factorization of N.
     pub pi_gcd: NICorrectKeyProof,
+    /// Ring-Pedersen auxiliary parameters for MtA range proofs.
+    pub ntilde: tecdsa_paillier::zk::mta_range::NTildeParams,
 }
 
 /// P2's internal state after round 2.
@@ -127,6 +129,8 @@ where
     pub dk: tecdsa_paillier::DecryptionKey,
     /// Paillier encryption key (public).
     pub ek: tecdsa_paillier::EncryptionKey,
+    /// Ring-Pedersen auxiliary parameters for MtA range proofs.
+    pub ntilde: tecdsa_paillier::zk::mta_range::NTildeParams,
 }
 
 /// P2 round 2: sample `x2`, compute `Q2 = x2 * G`, create DLog proof,
@@ -154,14 +158,23 @@ where
     // Create Pi_GCD proof (proves knowledge of factorization of N)
     let pi_gcd = NICorrectKeyProof::prove(&dk, b"xal21-correct-key-challenge");
 
+    let ntilde = super::generate_ntilde_params(rng);
+
     let msg = KeyGenP2Round2Msg {
         q2,
         dlog_proof,
         ek: ek.clone(),
         pi_gcd,
+        ntilde: ntilde.clone(),
     };
 
-    let state = KeyGenP2State { x2, q2, dk, ek };
+    let state = KeyGenP2State {
+        x2,
+        q2,
+        dk,
+        ek,
+        ntilde,
+    };
 
     Ok((msg, state))
 }
@@ -277,6 +290,7 @@ where
         public_key,
         public_share: p1_state.q1,
         ek: p2_msg.ek.clone(),
+        ntilde: p2_msg.ntilde.clone(),
     }
 }
 
@@ -298,6 +312,7 @@ where
         public_share_p1: p1_round3.q1,
         dk: p2_state.dk,
         ek: p2_state.ek,
+        ntilde: p2_state.ntilde,
     }
 }
 

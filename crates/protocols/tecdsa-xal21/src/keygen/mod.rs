@@ -26,7 +26,24 @@ pub use machine::{TwoPartyRole, Xal21KeyShare, Xal21KeygenMachine, Xal21KeygenMs
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
 
+use tecdsa_paillier::backend::Integer;
+use tecdsa_paillier::zk::mta_range::NTildeParams;
+
 use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
+
+fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
+    let p = Integer::generate_safe_prime(rng, 1536);
+    let q = Integer::generate_safe_prime(rng, 1536);
+    let n_tilde = &p * &q;
+    let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
+    let lambda = (&p - Integer::one()) * (&q - Integer::one());
+    let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2");
+    NTildeParams {
+        N_tilde: n_tilde,
+        h1,
+        h2,
+    }
+}
 
 /// Generate key shares for the XAL+21 two-party ECDSA protocol via a trusted dealer.
 ///
@@ -59,11 +76,15 @@ where
     let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
+    // Generate Ring-Pedersen auxiliary parameters for MtA range proofs
+    let ntilde = generate_ntilde_params(rng);
+
     let p1_share = Xal21Party1KeyShare {
         secret_share: x1,
         public_key,
         public_share: q1,
         ek: ek.clone(),
+        ntilde: ntilde.clone(),
     };
 
     let p2_share = Xal21Party2KeyShare {
@@ -72,6 +93,7 @@ where
         public_share_p1: q1,
         dk,
         ek,
+        ntilde,
     };
 
     (p1_share, p2_share)

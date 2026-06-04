@@ -12,6 +12,7 @@
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::zk::mta_range::NTildeParams;
 use tecdsa_paillier::{DecryptionKey, EncryptionKey};
 use zeroize::Zeroize;
 
@@ -21,6 +22,7 @@ use zeroize::Zeroize;
 /// - `x_1`: additive secret share
 /// - `Q`: joint public key `Q = (x_1 + x_2) * G`
 /// - `ek`: Paillier encryption key (public, from P_2)
+/// - `ntilde`: Ring-Pedersen auxiliary parameters for MtA range proofs
 pub struct Xal21Party1KeyShare<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -33,6 +35,8 @@ where
     pub public_share: C::ProjectivePoint,
     /// Paillier encryption key (public, owned by P_2).
     pub ek: EncryptionKey,
+    /// Ring-Pedersen auxiliary parameters for MtA range proofs.
+    pub ntilde: NTildeParams,
 }
 
 impl<C: TecdsaCurve> Zeroize for Xal21Party1KeyShare<C>
@@ -52,6 +56,7 @@ where
 /// - `Q_1`: public key of Party 1 (needed for consistency check)
 /// - `dk`: Paillier decryption key (secret)
 /// - `ek`: Paillier encryption key (public)
+/// - `ntilde`: Ring-Pedersen auxiliary parameters for MtA range proofs
 pub struct Xal21Party2KeyShare<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -66,6 +71,8 @@ where
     pub dk: DecryptionKey,
     /// Paillier encryption key (public).
     pub ek: EncryptionKey,
+    /// Ring-Pedersen auxiliary parameters for MtA range proofs.
+    pub ntilde: NTildeParams,
 }
 
 impl<C: TecdsaCurve> Zeroize for Xal21Party2KeyShare<C>

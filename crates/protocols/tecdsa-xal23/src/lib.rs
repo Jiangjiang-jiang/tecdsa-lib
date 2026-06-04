@@ -16,8 +16,8 @@
 //! | Proof | Layer | Status | Notes |
 //! |-------|-------|--------|-------|
 //! | `zkjl_aff` (Pi_JLAff) | MtA | Wired into `JlMtA::receiver_compute` | Proves affine ciphertext correctness |
-//! | `zkjl_equ` (Pi_JLEqu) | MtA | Wired into `JlMtA::sender_encrypt` | Proves plaintext equality across two JL instances |
-//! | `zkjl_enc` (Pi_JLEnc) | MtA | Implemented in `tecdsa-joye-libert` | Proves encryption correctness |
+//! | `zkjl_enc` (Pi_JLEnc) | MtA | Wired into `JlMtA::sender_encrypt` | Proves encryption correctness |
+//! | `zkjl_equ` (Pi_JLEqu) | Primitive | Implemented in `tecdsa-joye-libert` | Proves plaintext equality across two JL instances |
 //! | `zkjl_com` (Pi_JLCom) | Primitive | Implemented in `tecdsa-joye-libert` | Proves JL commitment opening |
 //! | `zkjlv_com` (Pi_JLvCom) | Primitive | Implemented in `tecdsa-joye-libert` | Vector commitment variant |
 //! | `zkjlv_equ` (Pi_JLvEqu) | Primitive | Implemented in `tecdsa-joye-libert` | Vector equality variant |
@@ -29,9 +29,9 @@
 //!
 //! The `JlMtA` trait implementation (`tecdsa-joye-libert/src/mta.rs`) performs
 //! the homomorphic affine computation with full ZK proof coverage:
-//! - `sender_encrypt`: produces `ZkJlEquProof` proving plaintext equality
-//!   across two JL commitment instances (under `pk` and `pk0`).
-//! - `receiver_compute`: verifies the sender's `ZkJlEquProof`, then produces
+//! - `sender_encrypt`: produces `ZkJlEncProof` proving the JL ciphertext
+//!   encrypts the claimed plaintext.
+//! - `receiver_compute`: verifies the sender's `ZkJlEncProof`, then produces
 //!   `ZkJlAffProof` proving the affine operation was correct.
 //! - `sender_decrypt`: verifies the receiver's `ZkJlAffProof` before decrypting.
 //!

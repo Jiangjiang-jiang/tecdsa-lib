@@ -38,6 +38,7 @@ pub(crate) struct WireR2Msg {
     pub(crate) dlog_proof_json: Vec<u8>,
     pub(crate) ek: tecdsa_paillier::EncryptionKey,
     pub(crate) pi_gcd: NICorrectKeyProof,
+    pub(crate) ntilde: tecdsa_paillier::zk::mta_range::NTildeParams,
 }
 
 /// Wire-safe Round 3 message (P1 -> P2).
@@ -128,6 +129,7 @@ where
         dlog_proof_json: encode_dlog_proof::<C>(&msg.dlog_proof)?,
         ek: msg.ek.clone(),
         pi_gcd: msg.pi_gcd.clone(),
+        ntilde: msg.ntilde.clone(),
     };
     bincode::serde::encode_to_vec(&wire, bincode::config::standard())
         .map_err(|e| TecdsaError::Other(format!("failed to serialize Round2: {e}")))
@@ -146,6 +148,7 @@ where
         dlog_proof: decode_dlog_proof::<C>(&wire.dlog_proof_json)?,
         ek: wire.ek,
         pi_gcd: wire.pi_gcd,
+        ntilde: wire.ntilde,
     })
 }
 

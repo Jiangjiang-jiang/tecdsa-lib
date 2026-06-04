@@ -166,7 +166,9 @@ fn step_by_step_offline_and_online() {
     let mta_setup = PaillierMtaSetup {
         ek: p2_key.ek.clone(),
         dk: p2_key.dk.clone(),
-        proof_setup: (),
+        proof_setup: tecdsa_paillier::mta::Gg18ProofSetup {
+            ntilde: p2_key.ntilde.clone(),
+        },
     };
 
     type M = offline_sign::DefaultMtA;
@@ -302,7 +304,9 @@ fn generic_mta_interface() {
     let mta_setup = PaillierMtaSetup {
         ek: p2_key.ek.clone(),
         dk: p2_key.dk.clone(),
-        proof_setup: (),
+        proof_setup: tecdsa_paillier::mta::Gg18ProofSetup {
+            ntilde: p2_key.ntilde.clone(),
+        },
     };
 
     let (p1_presig, p2_presig) = offline_sign::offline_sign_generic::<
