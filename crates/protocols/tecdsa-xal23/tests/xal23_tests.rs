@@ -121,6 +121,81 @@ fn xal23_full_protocol_n3_all_signers() {
 }
 
 #[test]
+fn presign_sign_via_orchestrator_3of3() {
+    use tecdsa_protocol::PartyId;
+    use tecdsa_testkit::Orchestrator;
+    use tecdsa_xal23::{presign::Xal23PresignMachine, sign::Xal23SignMachine};
+
+    let mut rng = rand::thread_rng();
+    let n = 3u16;
+    let key_shares = trusted_dealer_keygen::<C>(n, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+    let all_parties: Vec<PartyId> = (0..n).map(PartyId).collect();
+
+    // Presign via Orchestrator
+    let presign_machines: Vec<(PartyId, Xal23PresignMachine<C>)> = all_parties
+        .iter()
+        .map(|&pid| {
+            let machine = Xal23PresignMachine::with_sec(
+                pid,
+                all_parties.clone(),
+                &key_shares[pid.0 as usize],
+                TEST_S,
+                TEST_T,
+                &mut rand::thread_rng(),
+            )
+            .expect("presign machine");
+            (pid, machine)
+        })
+        .collect();
+
+    let presign_result = Orchestrator::new(presign_machines, 10)
+        .run()
+        .expect("presign orchestrator");
+    let presigs: Vec<_> = presign_result
+        .outputs
+        .into_iter()
+        .map(|r| r.expect("presign"))
+        .collect();
+
+    assert_eq!(presigs.len(), n as usize);
+    for i in 1..presigs.len() {
+        assert_eq!(presigs[0].R, presigs[i].R, "all parties must agree on R");
+        assert_eq!(presigs[0].r, presigs[i].r, "all parties must agree on r");
+    }
+
+    // Online sign via Orchestrator
+    let message = b"orchestrator presign test";
+    let data = hash_message(message);
+
+    let sign_machines: Vec<(PartyId, Xal23SignMachine<C>)> = presigs
+        .iter()
+        .map(|p| {
+            let pid = p.my_id;
+            (pid, Xal23SignMachine::new(p.clone(), data))
+        })
+        .collect();
+
+    let sign_result = Orchestrator::new(sign_machines, 5)
+        .run()
+        .expect("sign orchestrator");
+    let sigs: Vec<_> = sign_result
+        .outputs
+        .into_iter()
+        .map(|r| r.expect("sign"))
+        .collect();
+
+    // All parties produce the same signature
+    for i in 1..sigs.len() {
+        assert_eq!(sigs[0].r, sigs[i].r);
+        assert_eq!(sigs[0].s, sigs[i].s);
+    }
+
+    // Verify ECDSA
+    tecdsa_protocol::verify_ecdsa(&sigs[0], &key_shares[0].public_key, &data)
+        .expect("ECDSA verification should succeed");
+}
+
+#[test]
 fn xal23_metadata() {
     let meta = &tecdsa_xal23::XAL23_METADATA;
     assert_eq!(meta.name, "XAL23");

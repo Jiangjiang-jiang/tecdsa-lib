@@ -16,6 +16,7 @@
 
 pub mod machine;
 pub mod msg;
+pub mod rounds;
 mod types;
 
 use elliptic_curve::{

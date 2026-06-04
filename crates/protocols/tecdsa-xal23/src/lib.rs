@@ -64,11 +64,13 @@ use tecdsa_protocol::{NoOpMachine, Protocol, ProtocolMetadata};
 ///
 /// ## Presign
 ///
-/// [`presign::Xal23PresignMachine`] provides a StateMachine wrapper around
-/// the `presign_all` simulation function.  It runs all 4 presign rounds
-/// internally on construction (simulation mode -- multi-round decomposition
-/// deferred).  For direct usage, call `presign::presign_all` or
-/// `presign::presign_all_with_sec`.
+/// [`presign::Xal23PresignMachine`] is a proper 4-round interactive
+/// StateMachine driven by the Orchestrator/Session layer.  Use
+/// `Xal23PresignMachine::new()` for the interactive protocol, or
+/// `Xal23PresignMachine::new_simulation()` for backward-compatible
+/// simulation mode.  The free functions `presign::presign_all` and
+/// `presign::presign_all_with_sec` remain available for orchestrated
+/// simulation usage.
 ///
 /// ## Sign
 ///
@@ -91,7 +93,7 @@ impl Protocol for Xal23 {
 
     type KeyGen = keygen::Xal23KeygenMachine<k256::Secp256k1>;
     type AuxGen = NoOpMachine;
-    /// Presign StateMachine (simulation mode -- runs `presign_all` on construction).
+    /// Presign StateMachine (4-round interactive protocol with JL MtA).
     type Presign = presign::Xal23PresignMachine<k256::Secp256k1>;
     /// Sign StateMachine (proper 1-round interactive protocol).
     type Sign = sign::Xal23SignMachine<k256::Secp256k1>;
