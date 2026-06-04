@@ -50,9 +50,9 @@ fn main() {
 
     let (pk, sk, pk0) = time_once("mta/setup/jl_keygen", || {
         let (pk, sk, _x) =
-            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
+            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng);
         let (pk0, _, _) =
-            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
+            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng);
         (pk, sk, pk0)
     });
 

@@ -134,8 +134,8 @@ fn jl_mta(c: &mut Criterion) {
     use tecdsa_joye_libert::mta::{JlMtA, JlMtaSetup};
     type M = JlMtA;
 
-    let (pk, sk, _) = tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
-    let (pk0, _, _) = tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
+    let (pk, sk, _) = tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng);
+    let (pk0, _, _) = tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng);
     let setup = JlMtaSetup {
         pk,
         pk0,

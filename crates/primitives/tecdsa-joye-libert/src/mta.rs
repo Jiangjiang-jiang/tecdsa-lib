@@ -298,6 +298,7 @@ pub struct JlMtaSetup {
 }
 
 /// Sender's internal state between encrypt and decrypt.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JlMtaSenderState {
     /// The encryption randomness (for potential proof construction).
     pub nonce: BigUint,
@@ -309,6 +310,7 @@ pub struct JlMtaSenderState {
 ///
 /// Contains the ciphertext and a `ZkJlEncProof` proving that the ciphertext
 /// encrypts the sender's input `b`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JlMtaSenderMsg {
     /// `c_B = Enc(pk, b; r)`: JL ciphertext of the sender's input.
     pub ciphertext: JlCiphertext,
@@ -320,6 +322,7 @@ pub struct JlMtaSenderMsg {
 ///
 /// Contains the affine ciphertext and a `ZkJlAffProof` proving that the
 /// affine operation was computed correctly from the base ciphertext.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JlMtaReceiverMsg {
     /// `c_A = c_shifted^a * y^{alpha'} * h^r mod N`: the affine ciphertext.
     pub ciphertext: JlCiphertext,

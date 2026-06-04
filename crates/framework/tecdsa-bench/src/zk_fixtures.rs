@@ -4,7 +4,7 @@
 //! **Profile B** (lambda=128, secp256k1):
 //! - Paillier N = 3072 bit (two 1536-bit safe primes, fast-paillier default)
 //! - CL |DeltaK| ~ 1827 bit (new_secp256k1_128bit)
-//! - JL N = 3072 bit (p_bits=1536, k=256)
+//! - JL N = 3360 bit (p_bits=1680, k=712)
 //! - NTilde = 3072 bit (two 1536-bit safe primes)
 //! - Pedersen-mod = 1536-bit primes (3072-bit N)
 
@@ -85,13 +85,15 @@ pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integ
     }
 }
 
-/// JL keys: Profile B = N=3072 bit (p_bits=1536), k=256.
+/// JL keys: Profile B = N=3360 bit (p_bits=1680), k=712.
+/// Per XAL23 paper: 2 log q + 3s + 2t < k <= 1/4 log N - lambda.
+/// With lambda=128, log q=256, s=t=40: k=712, log N=3360.
 pub fn jl_keys() -> (
     tecdsa_joye_libert::kgen::JlPublicKey,
     tecdsa_joye_libert::kgen::JlSecretKey,
     num_bigint::BigUint,
 ) {
-    tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng)
+    tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng)
 }
 
 // ── Shared fixture structs (avoid redundant keygen) ──────────────
@@ -162,7 +164,7 @@ pub struct JlExtraFixture {
 impl JlExtraFixture {
     pub fn generate() -> Self {
         let (pk0, _, _) =
-            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
+            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng);
         Self { pk0 }
     }
 }
