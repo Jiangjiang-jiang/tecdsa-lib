@@ -41,14 +41,14 @@ pub fn paillier_encrypt(
 }
 
 /// CL setup with 128-bit security (|DeltaK| ~ 1827 bit).
-pub fn cl_setup() -> tecdsa_class_group::bicycl_glue::ClSetup {
-    tecdsa_class_group::bicycl_glue::ClSetup::new_secp256k1_128bit("42042").expect("cl setup")
+pub fn cl_setup() -> tecdsa_class_group::cl::ClSetup {
+    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042").expect("cl setup")
 }
 
 pub fn cl_setup_with_keys() -> (
-    tecdsa_class_group::bicycl_glue::ClSetup,
-    tecdsa_class_group::bicycl_glue::BicyclSecretKey,
-    tecdsa_class_group::bicycl_glue::BicyclPublicKey,
+    tecdsa_class_group::cl::ClSetup,
+    tecdsa_class_group::cl::ClSecretKey,
+    tecdsa_class_group::cl::ClPublicKey,
 ) {
     let mut setup = cl_setup();
     let (sk, pk) = setup.keygen().expect("cl keygen");
@@ -92,4 +92,77 @@ pub fn jl_keys() -> (
     num_bigint::BigUint,
 ) {
     tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng)
+}
+
+// ── Shared fixture structs (avoid redundant keygen) ──────────────
+
+pub struct PaillierFixture {
+    pub dk: tecdsa_paillier::DecryptionKey,
+    pub ek: tecdsa_paillier::EncryptionKey,
+}
+
+impl PaillierFixture {
+    pub fn generate() -> Self {
+        let dk = tecdsa_paillier::DecryptionKey::generate(&mut OsRng).expect("paillier keygen");
+        let ek = dk.encryption_key().clone();
+        Self { dk, ek }
+    }
+}
+
+pub struct NTildeFixture {
+    pub n_tilde: Integer,
+    pub h1: Integer,
+    pub h2: Integer,
+}
+
+impl NTildeFixture {
+    pub fn generate() -> Self {
+        let (n_tilde, h1, h2) = ntilde_params();
+        Self { n_tilde, h1, h2 }
+    }
+
+    pub fn to_mta_params(&self) -> tecdsa_paillier::zk::mta_range::NTildeParams {
+        tecdsa_paillier::zk::mta_range::NTildeParams {
+            N_tilde: self.n_tilde.clone(),
+            h1: self.h1.clone(),
+            h2: self.h2.clone(),
+        }
+    }
+}
+
+pub struct PedersenFixture {
+    pub params: tecdsa_pedersen_mod::PedersenModParams,
+    pub secret: tecdsa_pedersen_mod::PedersenModSecret,
+}
+
+impl PedersenFixture {
+    pub fn generate() -> Self {
+        let (params, secret) = tecdsa_pedersen_mod::PedersenModParams::generate(1536, &mut OsRng);
+        Self { params, secret }
+    }
+}
+
+pub struct JlFixture {
+    pub pk: tecdsa_joye_libert::kgen::JlPublicKey,
+    pub sk: tecdsa_joye_libert::kgen::JlSecretKey,
+    pub x: num_bigint::BigUint,
+}
+
+impl JlFixture {
+    pub fn generate() -> Self {
+        let (pk, sk, x) = jl_keys();
+        Self { pk, sk, x }
+    }
+}
+
+pub struct JlExtraFixture {
+    pub pk0: tecdsa_joye_libert::kgen::JlPublicKey,
+}
+
+impl JlExtraFixture {
+    pub fn generate() -> Self {
+        let (pk0, _, _) =
+            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1536, 256, &mut OsRng);
+        Self { pk0 }
+    }
 }

@@ -25,7 +25,7 @@ use zeroize::Zeroize;
 use crate::{
     enc_dec::{decrypt, encrypt, JlCiphertext},
     kgen::{JlPublicKey, JlSecretKey},
-    zk::{zkjl_aff::ZkJlAffProof, zkjl_com::jl_commit, zkjl_equ::ZkJlEquProof},
+    zk::{zkjl_aff::ZkJlAffProof, zkjl_enc::ZkJlEncProof},
 };
 
 /// Sender state for the JL-based `MtA` protocol.
@@ -259,10 +259,10 @@ use tecdsa_protocol::MtA;
 /// Per XAL23 Section 5.1, this implementation attaches ZK proofs to all
 /// MtA messages to achieve malicious security:
 ///
-/// - **`sender_encrypt`**: P2 produces `ZkJlEquProof` proving that the
-///   JL commitments under `pk` and `pk0` encode the same plaintext `b`.
+/// - **`sender_encrypt`**: P2 produces `ZkJlEncProof` proving that the
+///   JL ciphertext encrypts plaintext `b`.
 ///
-/// - **`receiver_compute`**: P1 verifies the sender's `ZkJlEquProof`,
+/// - **`receiver_compute`**: P1 verifies the sender's `ZkJlEncProof`,
 ///   performs the affine operation, and produces `ZkJlAffProof` proving
 ///   the affine ciphertext was computed correctly.
 ///
@@ -276,10 +276,9 @@ pub struct JlMtA;
 /// Both parties need the public key. The secret key is used only by
 /// the sender (P2) for decryption in step 3.
 ///
-/// `pk0` is a second JL public key used as the commitment key for
-/// `ZkJlEquProof`. In a typical protocol setup, each MtA pair
-/// (party_i, party_j) has `pk` = party_j's key (for ciphertext/decryption)
-/// and `pk0` = party_i's key (for the commitment in the equality proof).
+/// `pk0` is a second JL public key retained for callers that also perform
+/// paper commitment/equality checks outside this MtA primitive. The MtA
+/// first message itself is proven with `ZkJlEncProof` against `pk`.
 ///
 /// `s` and `t` are statistical security parameters for the MtA protocol.
 /// The JL message space parameter `k` must satisfy
@@ -288,7 +287,7 @@ pub struct JlMtA;
 pub struct JlMtaSetup {
     /// JL public key for encryption/decryption (shared).
     pub pk: JlPublicKey,
-    /// Second JL public key for the commitment in `ZkJlEquProof`.
+    /// Second JL public key for protocol-level JL commitment/equality checks.
     pub pk0: JlPublicKey,
     /// JL secret key (owned by the sender for decryption).
     pub sk: JlSecretKey,
@@ -308,22 +307,13 @@ pub struct JlMtaSenderState {
 
 /// Message from sender (P2) to receiver (P1): encrypted `b` with ZK proof.
 ///
-/// Contains the ciphertext, two JL commitments (under `pk` and `pk0`
-/// respectively), and a `ZkJlEquProof` proving that both commitments
-/// encode the same plaintext `b`.
-///
-/// The commitment under `pk` binds the sender's value in the same algebraic
-/// group as the ciphertext, while the commitment under `pk0` provides
-/// cross-key verifiability. The equality proof ensures consistency.
+/// Contains the ciphertext and a `ZkJlEncProof` proving that the ciphertext
+/// encrypts the sender's input `b`.
 pub struct JlMtaSenderMsg {
     /// `c_B = Enc(pk, b; r)`: JL ciphertext of the sender's input.
     pub ciphertext: JlCiphertext,
-    /// JL commitment of `b` under `pk`: `c_com = y^{2^k*b} * h^{2^k*r_c} mod N`.
-    pub commitment_pk: BigUint,
-    /// JL commitment of `b` under `pk0`: `C_com = y0^{2^k*b} * h0^{2^k*r0} mod N0`.
-    pub commitment_pk0: BigUint,
-    /// ZK proof that `commitment_pk` and `commitment_pk0` encode the same `b`.
-    pub proof_equ: ZkJlEquProof,
+    /// ZK proof that `ciphertext` is a correct JL encryption of `b`.
+    pub proof_enc: ZkJlEncProof,
 }
 
 /// Message from receiver (P1) to sender (P2): affine result with ZK proof.
@@ -362,9 +352,9 @@ impl MtA for JlMtA {
 
     /// Step 1: Sender (P2) encrypts input `b` using JL encryption.
     ///
-    /// The sender encrypts `b` under the shared JL public key and creates
-    /// a JL commitment under `pk0`. A `ZkJlEquProof` proves that the
-    /// ciphertext and commitment encode the same plaintext `b`.
+    /// The sender encrypts `b` under the shared JL public key. A
+    /// `ZkJlEncProof` proves that the ciphertext is a correct JL encryption
+    /// of the same plaintext.
     ///
     /// `b` must fit in `Z_{2^k}`.
     fn sender_encrypt(
@@ -378,38 +368,15 @@ impl MtA for JlMtA {
         // Encrypt b under pk (for the MtA computation).
         let (ciphertext, nonce) = encrypt(&setup.pk, &b, rng);
 
-        // Create a JL commitment of b under pk (for the equality proof).
-        // The commitment uses the 2^k exponent form:
-        //   c_com = y^{2^k*b} * h^{2^k*r_com} mod N
-        let r_com = rng.gen_biguint_below(&setup.pk.n);
-        let c_com = jl_commit(&setup.pk, &b, &r_com);
-
-        // Create a JL commitment of b under pk0:
-        //   C_com = y0^{2^k*b} * h0^{2^k*r0} mod N0
-        let r0 = rng.gen_biguint_below(&setup.pk0.n);
-        let commitment = jl_commit(&setup.pk0, &b, &r0);
-
         // Message bit-length bound for the ZK proof
         let msg_bits = setup.pk.k;
 
-        // Prove equality: c_com and commitment encode the same b
-        let proof_equ = ZkJlEquProof::prove(
-            &setup.pk,
-            &setup.pk0,
-            &c_com,
-            &commitment,
-            &b,
-            &r_com,
-            &r0,
-            msg_bits,
-            rng,
-        );
+        // Prove the actual MtA ciphertext is a correct JL encryption of b.
+        let proof_enc = ZkJlEncProof::prove(&setup.pk, &ciphertext.c, &b, &nonce, msg_bits, rng);
 
         let msg = JlMtaSenderMsg {
             ciphertext,
-            commitment_pk: c_com,
-            commitment_pk0: commitment,
-            proof_equ,
+            proof_enc,
         };
         let state = JlMtaSenderState {
             nonce,
@@ -422,8 +389,8 @@ impl MtA for JlMtA {
     /// Step 2: Receiver (P1) performs homomorphic affine operation and
     /// obtains `alpha`.
     ///
-    /// First verifies the sender's `ZkJlEquProof` to ensure the encrypted
-    /// value is committed consistently.
+    /// First verifies the sender's `ZkJlEncProof` to ensure the encrypted
+    /// value is correctly formed.
     ///
     /// Then computes the XAL23 MtA affine operation:
     ///   1. Shift: `c_shifted = c_B * y^{2^{s+t} * q}` (ensures positivity)
@@ -440,15 +407,13 @@ impl MtA for JlMtA {
         rng: &mut impl CryptoRngCore,
     ) -> Result<(Self::ReceiverMsg, Vec<u8>), Self::Error> {
         // ------------------------------------------------------------------
-        // Verify the sender's ZkJlEquProof
+        // Verify the sender's ZkJlEncProof against the actual MtA ciphertext.
         // ------------------------------------------------------------------
-        if !sender_msg.proof_equ.verify(
-            &setup.pk,
-            &setup.pk0,
-            &sender_msg.commitment_pk,
-            &sender_msg.commitment_pk0,
-        ) {
-            return Err(JlMtaError::ProofVerificationFailed("ZkJlEquProof"));
+        if !sender_msg
+            .proof_enc
+            .verify(&setup.pk, &sender_msg.ciphertext.c)
+        {
+            return Err(JlMtaError::ProofVerificationFailed("ZkJlEncProof"));
         }
 
         // ------------------------------------------------------------------

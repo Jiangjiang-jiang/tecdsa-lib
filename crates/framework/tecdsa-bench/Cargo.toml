@@ -19,6 +19,7 @@ tecdsa-pedersen-mod = { workspace = true }
 tecdsa-class-group = { workspace = true }
 tecdsa-joye-libert = { workspace = true }
 tecdsa-evrf = { workspace = true }
+tecdsa-ot = { workspace = true }
 tecdsa-fs = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
@@ -30,6 +31,13 @@ tecdsa-abc24 = { workspace = true }
 tecdsa-cggmp20 = { workspace = true }
 tecdsa-dkls23 = { workspace = true }
 tecdsa-gg18 = { workspace = true }
+tecdsa-tx25 = { workspace = true }
+tecdsa-jtx25 = { workspace = true }
+tecdsa-wmy23 = { workspace = true }
+tecdsa-wmc24 = { workspace = true }
+tecdsa-llz25 = { workspace = true }
+tecdsa-trout = { workspace = true }
+tecdsa-xal23 = { workspace = true }
 tecdsa-core = { workspace = true }
 criterion = { workspace = true }
 serde = { workspace = true }
