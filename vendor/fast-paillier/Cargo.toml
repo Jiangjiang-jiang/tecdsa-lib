@@ -47,7 +47,7 @@ backend-rug = [
     "dep:bytemuck",
 ]
 default = [
-    "backend-num-bigint",
+    "backend-rug",
     "std",
 ]
 no_std = ["glass_pumpkin?/no_std"]
