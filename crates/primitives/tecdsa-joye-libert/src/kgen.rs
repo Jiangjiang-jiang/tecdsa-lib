@@ -12,11 +12,12 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use rand_core::CryptoRngCore;
 use rug::{
-    integer::{IsPrime, Order},
-    rand::{MutRandState, ThreadRandGen, ThreadRandState},
+    integer::Order,
+    rand::{MutRandState, ThreadRandState},
     Integer,
 };
 use serde::{Deserialize, Serialize};
+use tecdsa_bigint::{gen_pair, small_odd_primes, SyncRng};
 use zeroize::Zeroize;
 
 /// Public key for the Joye-Libert encryption scheme.
@@ -87,108 +88,6 @@ impl SecurityLevel {
     }
 }
 
-/// Odd primes below `limit` (sieve of Eratosthenes), used for the double sieve.
-fn small_odd_primes(limit: usize) -> Vec<u64> {
-    let mut composite = vec![false; limit];
-    let mut out = Vec::new();
-    for i in 2..limit {
-        if !composite[i] {
-            if i > 2 {
-                out.push(i as u64);
-            }
-            let mut m = i * i;
-            while m < limit {
-                composite[m] = true;
-                m += i;
-            }
-        }
-    }
-    out
-}
-
-/// x^(l-2) mod l = x^-1 mod l (Fermat; l an odd prime, 0 < x < l).
-fn inv_mod(x: u64, l: u64) -> u64 {
-    let (mut result, mut base, mut e) = (1u64, x % l, l - 2);
-    while e > 0 {
-        if e & 1 == 1 {
-            result = result * base % l;
-        }
-        base = base * base % l;
-        e >>= 1;
-    }
-    result
-}
-
-/// Uniform random odd integer with exactly `bits` bits (top bit set), from the OS CSPRNG.
-fn random_odd(bits: u32, rng: &mut impl MutRandState) -> Integer {
-    let mut x = Integer::from(Integer::random_bits(bits, rng));
-    x.keep_bits_mut(bits);
-    x.set_bit(bits - 1, true);
-    x.set_bit(0, true);
-    x
-}
-
-/// Return (r, a*r + 1) with both prime; r has ~`seed_bits` bits.
-///
-/// Generic builder for a "chain" prime: r prime AND a*r+1 prime.
-///   - q : call with a=2   -> returns (q', q)
-///   - p : call with a=2^k -> returns (p', p)
-fn gen_pair(
-    seed_bits: u32,
-    a: &Integer,
-    mr_rounds: u32,
-    window_bits: u32,
-    small_primes: &[u64],
-    rng: &mut impl MutRandState,
-) -> (Integer, Integer) {
-    let w: usize = 1 << window_bits;
-    loop {
-        // Random odd base; candidates in this window are r = base + 2*j, j in [0, w).
-        let base = random_odd(seed_bits, rng);
-        let mut sieve = vec![false; w]; // true = ruled out
-
-        for &l in small_primes {
-            let base_l = base.mod_u(l as u32) as u64;
-            let a_l = a.mod_u(l as u32) as u64;
-            let inv2 = l.div_ceil(2); // 2^-1 mod l for odd l
-
-            // Kill positions where r = base + 2j == 0 (mod l).
-            let j0 = ((l - base_l) % l * inv2 % l) as usize;
-            let mut idx = j0;
-            while idx < w {
-                sieve[idx] = true;
-                idx += l as usize;
-            }
-            // Kill positions where f = a*r + 1 == 0 (mod l): 2*a*j == -(a*base + 1).
-            if a_l != 0 {
-                let c = (a_l * base_l + 1) % l;
-                let jf = ((l - c) % l * inv_mod(2 * a_l % l, l) % l) as usize;
-                let mut idx = jf;
-                while idx < w {
-                    sieve[idx] = true;
-                    idx += l as usize;
-                }
-            }
-        }
-
-        for j in 0..w {
-            if sieve[j] {
-                continue;
-            }
-            let r = Integer::from(&base + 2 * j as u64);
-            if r.is_probably_prime(mr_rounds) != IsPrime::No {
-                // cheap seed first
-                let mut f = Integer::from(a * &r);
-                f += Integer::ONE;
-                if f.is_probably_prime(mr_rounds) != IsPrime::No {
-                    return (r, f);
-                }
-            }
-        }
-        // window exhausted -> draw a fresh random base
-    }
-}
-
 /// Generates a JL key pair at the given security level.
 ///
 /// # Note
@@ -203,12 +102,6 @@ pub fn generate_keypair(
     generate_keypair_with_params(p_bits, k, rng)
 }
 
-struct SyncRng<R: CryptoRngCore>(R);
-impl<R: CryptoRngCore> ThreadRandGen for SyncRng<R> {
-    fn r#gen(&mut self) -> u32 {
-        self.0.next_u32()
-    }
-}
 /// Generates a JL key pair with explicit bit-size and message-space parameters.
 ///
 /// `p_bits` controls the bit length of the prime `p`.

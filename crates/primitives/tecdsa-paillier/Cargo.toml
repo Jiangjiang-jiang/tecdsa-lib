@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Paillier encryption wrapper for tecdsa"
 
 [dependencies]
+rug = { workspace = true }
 tecdsa-core = { workspace = true }
 tecdsa-bigint = { workspace = true }
 tecdsa-commit = { workspace = true }

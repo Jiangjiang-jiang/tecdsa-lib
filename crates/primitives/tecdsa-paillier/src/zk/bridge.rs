@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::sec1::ToSec1Point;
 use fast_paillier::backend::Integer;
-use tecdsa_bigint::DynInt;
+use rug::Integer as RugInteger;
 use tecdsa_curve::TecdsaCurve;
 
 /// Bridge between `elliptic-curve` types (used in tecdsa) and `generic_ec` types
@@ -40,8 +40,11 @@ pub fn point_to_ge(p: &k256::ProjectivePoint) -> generic_ec::Point<generic_ec::c
 }
 
 #[must_use]
-pub fn dynint_to_integer(d: &DynInt) -> Integer {
-    Integer::from_bytes_msf(&d.to_bytes_be())
+pub fn dynint_to_integer(d: &RugInteger) -> Integer {
+    let n = d.significant_digits::<u8>();
+    let mut buf = vec![0u8; n];
+    d.write_digits(&mut buf, rug::integer::Order::Msf);
+    Integer::from_bytes_msf(&buf)
 }
 
 #[must_use]

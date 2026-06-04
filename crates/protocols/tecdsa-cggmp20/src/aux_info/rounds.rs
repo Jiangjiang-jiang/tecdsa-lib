@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use rand_core::CryptoRngCore;
-use tecdsa_bigint::DynInt;
+use rug::{integer::Order, Integer};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_paillier::{zk::paillier_zk::no_small_factor as pi_fac, DecryptionKey, EncryptionKey};
@@ -25,6 +25,13 @@ struct AuxInfoProofTag {
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn integer_to_bytes(val: &Integer) -> Vec<u8> {
+    let n = val.significant_digits::<u8>();
+    let mut bytes = vec![0u8; n];
+    val.write_digits(&mut bytes, Order::Msf);
+    bytes
+}
+
 /// Serialise the commitment payload: ek || pedersen_params || pi_prm || rho.
 ///
 /// We concatenate deterministic byte representations of the public data.
@@ -37,9 +44,9 @@ fn commitment_data(msg: &MsgRound2) -> Vec<u8> {
     // EncryptionKey → serialise N as big-endian bytes
     data.extend_from_slice(&msg.paillier_ek.n().to_bytes_msf());
     // PedersenModParams → serialise n, s, t
-    data.extend_from_slice(&msg.pedersen_params.n.to_bytes_be());
-    data.extend_from_slice(&msg.pedersen_params.s.to_bytes_be());
-    data.extend_from_slice(&msg.pedersen_params.t.to_bytes_be());
+    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.n));
+    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.s));
+    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.t));
     // PiPrm → hash the debug representation as a deterministic fingerprint.
     // Both prover and verifier call this function with the same data, so
     // determinism is all that matters.
@@ -298,9 +305,9 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
 
         // 4. Generate π_mod proof (same for all peers — only depends on own N).
         let mut rng = tecdsa_core::Csprng::new();
-        let paillier_n = DynInt::from_bytes_be(&self.dk.n().to_bytes_msf());
-        let paillier_p = DynInt::from_bytes_be(&self.dk.p().to_bytes_msf());
-        let paillier_q = DynInt::from_bytes_be(&self.dk.q().to_bytes_msf());
+        let paillier_n = Integer::from_digits(&self.dk.n().to_bytes_msf(), Order::Msf);
+        let paillier_p = Integer::from_digits(&self.dk.p().to_bytes_msf(), Order::Msf);
+        let paillier_q = Integer::from_digits(&self.dk.q().to_bytes_msf(), Order::Msf);
         let pi_mod_proof = PiMod::prove_modulus(&paillier_n, &paillier_p, &paillier_q, &mut rng)
             .ok_or_else(|| TecdsaError::Other("pi_mod proof generation failed".into()))?;
 
@@ -445,8 +452,9 @@ impl Round3State {
                 .ok_or_else(|| TecdsaError::Other(format!("missing round2 from {pid}")))?;
 
             // Verify π_mod (Paillier-Blum modulus proof).
-            let peer_n_dyn = DynInt::from_bytes_be(&round2.paillier_ek.n().to_bytes_msf());
-            if !round3.pi_mod.verify_modulus(&peer_n_dyn, &mut rng) {
+            let peer_n_rug =
+                Integer::from_digits(&round2.paillier_ek.n().to_bytes_msf(), Order::Msf);
+            if !round3.pi_mod.verify_modulus(&peer_n_rug, &mut rng) {
                 return Err(TecdsaError::InvalidProof(format!(
                     "party {pid} pi_mod verification failed"
                 )));

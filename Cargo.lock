@@ -1360,6 +1360,7 @@ dependencies = [
  "gmp-mpfr-sys",
  "libc",
  "libm",
+ "serde",
 ]
 
 [[package]]
@@ -1737,6 +1738,7 @@ dependencies = [
  "num-traits",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "subtle",
  "tecdsa-core",
@@ -1752,6 +1754,7 @@ dependencies = [
  "k256 0.14.0-rc.9",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -2122,6 +2125,7 @@ dependencies = [
  "paillier-zk",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -2144,6 +2148,7 @@ dependencies = [
  "num-traits",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",

@@ -9,15 +9,21 @@
 //!   p, q with p = q = 3 mod 4, via Jacobi classification + Blum fourth roots
 //!   + N-th roots (CGGMP20 Figure 12). Soundness error: 2^{-81}.
 
-use num_bigint::{BigUint, RandBigInt};
-use num_traits::One;
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::DynInt;
+use tecdsa_bigint::SyncRng;
 
-use crate::params::{PedersenModParams, PedersenModSecret, RandAdapter};
+use crate::params::{PedersenModParams, PedersenModSecret};
 
 const SECURITY_PARAM: usize = 80;
+
+fn integer_to_bytes(val: &Integer) -> Vec<u8> {
+    let n = val.significant_digits::<u8>();
+    let mut bytes = vec![0u8; n];
+    val.write_digits(&mut bytes, rug::integer::Order::Msf);
+    bytes
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Pi_prm — ring-Pedersen parameter proof (CGGMP20 Figure 13)
@@ -29,8 +35,8 @@ const SECURITY_PARAM: usize = 80;
 /// using m = 80 binary Fiat-Shamir challenges per CGGMP20 Figure 13.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiPrm {
-    commitment: Vec<DynInt>,
-    zs: Vec<DynInt>,
+    commitment: Vec<Integer>,
+    zs: Vec<Integer>,
 }
 
 impl PiPrm {
@@ -42,30 +48,31 @@ impl PiPrm {
         secret: &PedersenModSecret,
         rng: &mut impl CryptoRngCore,
     ) -> Self {
-        let phi_n = (secret.p.inner() - BigUint::one()) * (secret.q.inner() - BigUint::one());
+        let phi_n = Integer::from(&secret.p - 1) * Integer::from(&secret.q - 1);
 
-        let mut adapter = RandAdapter(rng);
+        let mut sync_rng = SyncRng(rng);
+        let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
 
-        let private_commitment: Vec<BigUint> = (0..SECURITY_PARAM)
-            .map(|_| adapter.gen_biguint_below(&phi_n))
+        let private_commitment: Vec<Integer> = (0..SECURITY_PARAM)
+            .map(|_| phi_n.clone().random_below(rug_rng))
             .collect();
-        let commitment: Vec<DynInt> = private_commitment
+        let commitment: Vec<Integer> = private_commitment
             .iter()
-            .map(|a_i| DynInt::from(params.t.inner().modpow(a_i, params.n.inner())))
+            .map(|a_i| params.t.clone().pow_mod(a_i, &params.n).unwrap())
             .collect();
 
         let challenges = Self::derive_challenges(params, &commitment);
 
-        let zs: Vec<DynInt> = private_commitment
+        let zs: Vec<Integer> = private_commitment
             .iter()
             .zip(challenges.iter())
             .map(|(a_i, &e_i)| {
                 let mut z = a_i.clone();
                 if e_i {
-                    z += secret.lambda.inner();
+                    z += &secret.lambda;
                     z %= &phi_n;
                 }
-                DynInt::from(z)
+                z
             })
             .collect();
 
@@ -84,13 +91,13 @@ impl PiPrm {
         }
 
         for (a_i, z_i) in self.commitment.iter().zip(self.zs.iter()) {
-            if a_i.is_zero() || *a_i >= params.n {
+            if *a_i == 0 || *a_i >= params.n {
                 return false;
             }
-            if tecdsa_bigint::gcd(a_i, &params.n) != DynInt::one() {
+            if a_i.clone().gcd(&params.n) != 1 {
                 return false;
             }
-            if z_i.is_zero() || *z_i >= params.n {
+            if *z_i == 0 || *z_i >= params.n {
                 return false;
             }
         }
@@ -103,9 +110,9 @@ impl PiPrm {
             .zip(self.commitment.iter())
             .zip(challenges.iter())
         {
-            let lhs = params.t.modpow(z_i, &params.n);
+            let lhs = params.t.clone().pow_mod(z_i, &params.n).unwrap();
             let rhs = if e_i {
-                DynInt::from((a_i.inner() * params.s.inner()) % params.n.inner())
+                Integer::from(a_i * &params.s) % &params.n
             } else {
                 a_i.clone()
             };
@@ -117,15 +124,15 @@ impl PiPrm {
         true
     }
 
-    fn derive_challenges(params: &PedersenModParams, commitment: &[DynInt]) -> Vec<bool> {
+    fn derive_challenges(params: &PedersenModParams, commitment: &[Integer]) -> Vec<bool> {
         use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
-        hasher.update(params.n.to_bytes_be());
-        hasher.update(params.s.to_bytes_be());
-        hasher.update(params.t.to_bytes_be());
+        hasher.update(integer_to_bytes(&params.n));
+        hasher.update(integer_to_bytes(&params.s));
+        hasher.update(integer_to_bytes(&params.t));
         for a_i in commitment {
-            hasher.update(a_i.to_bytes_be());
+            hasher.update(integer_to_bytes(a_i));
         }
         let hash = hasher.finalize();
 
@@ -164,16 +171,16 @@ impl PiPrm {
 /// and N-th roots. Soundness error: 2^{-81}.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiMod {
-    w: DynInt,
+    w: Integer,
     proof_points: Vec<PiModPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PiModPoint {
-    x: DynInt,
+    x: Integer,
     a: bool,
     b: bool,
-    z: DynInt,
+    z: Integer,
 }
 
 impl PiMod {
@@ -188,16 +195,16 @@ impl PiMod {
     /// happen with a valid Blum modulus and correctly chosen w.
     #[allow(clippy::similar_names, clippy::many_single_char_names)]
     pub fn prove_modulus(
-        n: &DynInt,
-        p: &DynInt,
-        q: &DynInt,
+        n: &Integer,
+        p: &Integer,
+        q: &Integer,
         rng: &mut impl CryptoRngCore,
     ) -> Option<Self> {
         use crate::number_theory::{
             blum_fourth_root, find_residue, mod_inverse, sample_neg_jacobi,
         };
 
-        let expected_n = DynInt::from(p.inner() * q.inner());
+        let expected_n = Integer::from(p * q);
         if expected_n != *n {
             return None;
         }
@@ -205,25 +212,22 @@ impl PiMod {
         if !tecdsa_bigint::is_safe_prime(p) || !tecdsa_bigint::is_safe_prime(q) {
             return None;
         }
-        let four = BigUint::from(4u32);
-        let three = BigUint::from(3u32);
-        if p.inner() % &four != three || q.inner() % &four != three {
+        if p.mod_u(4) != 3 || q.mod_u(4) != 3 {
             return None;
         }
 
         let w = sample_neg_jacobi(n, rng);
 
-        let phi_n = (p.inner() - BigUint::one()) * (q.inner() - BigUint::one());
-        let phi_n_dyn = DynInt::from(phi_n);
+        let phi_n = Integer::from(p - 1) * Integer::from(q - 1);
 
-        let n_inv = mod_inverse(n, &phi_n_dyn)?;
+        let n_inv = mod_inverse(n, &phi_n)?;
 
         let challenges = Self::derive_challenges(n, &w);
 
         let proof_points: Vec<PiModPoint> = challenges
             .iter()
             .map(|y_i| {
-                let z = y_i.modpow(&n_inv, n);
+                let z = y_i.clone().pow_mod(&n_inv, n).unwrap();
 
                 let (a, b, y_prime) = find_residue(y_i, &w, p, q, n)
                     .expect("find_residue must succeed for valid Blum modulus");
@@ -256,10 +260,10 @@ impl PiMod {
     /// testing (25 rounds). For deterministic benchmark results, pass a
     /// seeded CSPRNG.
     #[must_use]
-    pub fn verify_modulus(&self, n: &DynInt, rng: &mut impl CryptoRngCore) -> bool {
+    pub fn verify_modulus(&self, n: &Integer, rng: &mut impl CryptoRngCore) -> bool {
         use crate::number_theory::is_probably_composite;
 
-        if !n.is_odd() {
+        if n.is_even() {
             return false;
         }
 
@@ -267,14 +271,14 @@ impl PiMod {
             return false;
         }
 
-        if *n <= DynInt::one() {
+        if *n <= 1 {
             return false;
         }
 
-        if self.w.is_zero() || self.w >= *n {
+        if self.w == 0 || self.w >= *n {
             return false;
         }
-        if tecdsa_bigint::gcd(&self.w, n) != DynInt::one() {
+        if self.w.clone().gcd(n) != 1 {
             return false;
         }
         if tecdsa_bigint::jacobi(&self.w, n) != -1 {
@@ -287,36 +291,34 @@ impl PiMod {
 
         let challenges = Self::derive_challenges(n, &self.w);
 
-        let four_dyn = DynInt::from(4u64);
-
         for (point, y_i) in self.proof_points.iter().zip(challenges.iter()) {
-            if point.x.is_zero() || point.x >= *n {
+            if point.x == 0 || point.x >= *n {
                 return false;
             }
-            if tecdsa_bigint::gcd(&point.x, n) != DynInt::one() {
+            if point.x.clone().gcd(n) != 1 {
                 return false;
             }
-            if point.z.is_zero() || point.z >= *n {
+            if point.z == 0 || point.z >= *n {
                 return false;
             }
-            if tecdsa_bigint::gcd(&point.z, n) != DynInt::one() {
+            if point.z.clone().gcd(n) != 1 {
                 return false;
             }
 
-            let z_pow_n = point.z.modpow(n, n);
+            let z_pow_n = point.z.clone().pow_mod(n, n).unwrap();
             if z_pow_n != *y_i {
                 return false;
             }
 
             let mut expected = y_i.clone();
             if point.a {
-                expected = DynInt::from(n.inner() - expected.inner());
+                expected = Integer::from(n - &expected);
             }
             if point.b {
-                expected = DynInt::from((expected.inner() * self.w.inner()) % n.inner());
+                expected = Integer::from(&expected * &self.w) % n;
             }
 
-            let x_pow_4 = point.x.modpow(&four_dyn, n);
+            let x_pow_4 = point.x.clone().pow_mod(&Integer::from(4), n).unwrap();
             if x_pow_4 != expected {
                 return false;
             }
@@ -331,10 +333,10 @@ impl PiMod {
         self.verify_modulus(&params.n, rng)
     }
 
-    fn derive_challenges(n: &DynInt, w: &DynInt) -> Vec<DynInt> {
+    fn derive_challenges(n: &Integer, w: &Integer) -> Vec<Integer> {
         use sha2::{Digest, Sha256};
 
-        let n_bytes = n.to_bytes_be();
+        let n_bytes = integer_to_bytes(n);
         let n_byte_len = n_bytes.len();
 
         let mut challenges = Vec::with_capacity(SECURITY_PARAM);
@@ -344,7 +346,7 @@ impl PiMod {
             let mut hasher = Sha256::new();
             hasher.update(b"pi_mod_challenge");
             hasher.update(&n_bytes);
-            hasher.update(w.to_bytes_be());
+            hasher.update(integer_to_bytes(w));
             hasher.update(counter.to_be_bytes());
             let seed = hasher.finalize();
 
@@ -359,12 +361,9 @@ impl PiMod {
             }
             expanded.truncate(n_byte_len);
 
-            let candidate = BigUint::from_bytes_be(&expanded) % n.inner();
-            if candidate > BigUint::one() {
-                let candidate = DynInt::from(candidate);
-                if tecdsa_bigint::gcd(&candidate, n) == DynInt::one() {
-                    challenges.push(candidate);
-                }
+            let candidate = Integer::from_digits(&expanded, rug::integer::Order::Msf) % n;
+            if candidate > 1 && candidate.clone().gcd(n) == 1 {
+                challenges.push(candidate);
             }
             counter += 1;
         }
@@ -396,7 +395,7 @@ mod tests {
     #[test]
     fn piprm_wrong_lambda_fails() {
         let (params, mut secret) = generate_blum_params(256);
-        secret.lambda = DynInt::from(42u64);
+        secret.lambda = Integer::from(42u64);
         let mut rng = rand::thread_rng();
         let proof = PiPrm::prove(&params, &secret, &mut rng);
         assert!(!proof.verify(&params), "PiPrm with wrong lambda must fail");
@@ -408,7 +407,7 @@ mod tests {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
         let mut proof = PiPrm::prove(&params, &secret, &mut rng);
-        proof.commitment[0] = DynInt::from(2u64);
+        proof.commitment[0] = Integer::from(2u64);
         assert!(!proof.verify(&params), "tampered PiPrm must fail");
     }
 
@@ -418,7 +417,7 @@ mod tests {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
         let mut proof = PiPrm::prove(&params, &secret, &mut rng);
-        proof.zs[0] = DynInt::from(1u64);
+        proof.zs[0] = Integer::from(1u64);
         assert!(!proof.verify(&params), "tampered PiPrm response must fail");
     }
 
@@ -464,7 +463,7 @@ mod tests {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
         let mut proof = PiMod::prove(&params, &secret, &mut rng).expect("prove must succeed");
-        proof.w = DynInt::from(2u64);
+        proof.w = Integer::from(2u64);
         assert!(!proof.verify(&params, &mut rng), "tampered w must fail");
     }
 
@@ -474,7 +473,7 @@ mod tests {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
         let mut proof = PiMod::prove(&params, &secret, &mut rng).expect("prove must succeed");
-        proof.proof_points[0].x = DynInt::from(3u64);
+        proof.proof_points[0].x = Integer::from(3u64);
         assert!(
             !proof.verify(&params, &mut rng),
             "tampered proof point must fail"
@@ -497,12 +496,11 @@ mod tests {
         let mut rng = rand::thread_rng();
         let mut proof = PiMod::prove(&params, &secret, &mut rng).expect("prove must succeed");
         // Replace w with a value that has Jacobi symbol +1 (a QR)
-        let qr = DynInt::from(
-            params
-                .t
-                .inner()
-                .modpow(&num_bigint::BigUint::from(2u32), params.n.inner()),
-        );
+        let qr = params
+            .t
+            .clone()
+            .pow_mod(&Integer::from(2), &params.n)
+            .unwrap();
         proof.w = qr;
         assert!(
             !proof.verify(&params, &mut rng),

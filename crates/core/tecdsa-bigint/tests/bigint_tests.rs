@@ -1,46 +1,47 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use tecdsa_bigint::{gcd, generate_safe_prime, is_safe_prime, jacobi, tonelli_shanks, DynInt};
+use rug::{integer::Order, Integer};
+use tecdsa_bigint::{gcd, generate_safe_prime, is_safe_prime, jacobi, tonelli_shanks};
 
 #[test]
 fn jacobi_known_values() {
     // 2 is a QR mod 7 (squares mod 7 = {1,2,4}) → Jacobi(2/7) = 1
-    assert_eq!(jacobi(&DynInt::from(2u64), &DynInt::from(7u64)), 1);
-    assert_eq!(jacobi(&DynInt::from(1u64), &DynInt::from(7u64)), 1);
-    assert_eq!(jacobi(&DynInt::from(0u64), &DynInt::from(7u64)), 0);
+    assert_eq!(jacobi(&Integer::from(2u64), &Integer::from(7u64)), 1);
+    assert_eq!(jacobi(&Integer::from(1u64), &Integer::from(7u64)), 1);
+    assert_eq!(jacobi(&Integer::from(0u64), &Integer::from(7u64)), 0);
     // 2 is a NQR mod 5 (squares mod 5 = {1,4}) → Jacobi(2/5) = -1
-    assert_eq!(jacobi(&DynInt::from(2u64), &DynInt::from(5u64)), -1);
-    assert_eq!(jacobi(&DynInt::from(3u64), &DynInt::from(5u64)), -1);
-    assert_eq!(jacobi(&DynInt::from(4u64), &DynInt::from(5u64)), 1);
+    assert_eq!(jacobi(&Integer::from(2u64), &Integer::from(5u64)), -1);
+    assert_eq!(jacobi(&Integer::from(3u64), &Integer::from(5u64)), -1);
+    assert_eq!(jacobi(&Integer::from(4u64), &Integer::from(5u64)), 1);
 }
 
 #[test]
 fn gcd_basic() {
     assert_eq!(
-        gcd(&DynInt::from(12u64), &DynInt::from(8u64)),
-        DynInt::from(4u64)
+        gcd(&Integer::from(12u64), &Integer::from(8u64)),
+        Integer::from(4u64)
     );
     assert_eq!(
-        gcd(&DynInt::from(17u64), &DynInt::from(13u64)),
-        DynInt::from(1u64)
+        gcd(&Integer::from(17u64), &Integer::from(13u64)),
+        Integer::from(1u64)
     );
 }
 
 #[test]
 fn tonelli_shanks_known_square_root() {
-    let r = tonelli_shanks(&DynInt::from(4u64), &DynInt::from(7u64)).unwrap();
-    let r_sq = &r * &r % DynInt::from(7u64);
-    assert_eq!(r_sq, DynInt::from(4u64));
+    let r = tonelli_shanks(&Integer::from(4u64), &Integer::from(7u64)).unwrap();
+    let r_sq = Integer::from(&r * &r) % Integer::from(7u64);
+    assert_eq!(r_sq, Integer::from(4u64));
 }
 
 #[test]
 fn tonelli_shanks_non_residue_returns_none() {
-    assert!(tonelli_shanks(&DynInt::from(3u64), &DynInt::from(7u64)).is_none());
+    assert!(tonelli_shanks(&Integer::from(3u64), &Integer::from(7u64)).is_none());
 }
 
 #[test]
 fn safe_prime_check() {
-    assert!(is_safe_prime(&DynInt::from(11u64)));
-    assert!(!is_safe_prime(&DynInt::from(13u64)));
+    assert!(is_safe_prime(&Integer::from(11u64)));
+    assert!(!is_safe_prime(&Integer::from(13u64)));
 }
 
 #[test]
@@ -51,9 +52,11 @@ fn generate_safe_prime_produces_valid() {
 }
 
 #[test]
-fn dyn_int_from_to_bytes_roundtrip() {
-    let val = DynInt::from(0xDEAD_BEEFu64);
-    let bytes = val.to_bytes_be();
-    let recovered = DynInt::from_bytes_be(&bytes);
+fn integer_from_to_bytes_roundtrip() {
+    let val = Integer::from(0xDEAD_BEEFu64);
+    let n = val.significant_digits::<u8>();
+    let mut bytes = vec![0u8; n];
+    val.write_digits(&mut bytes, Order::Msf);
+    let recovered = Integer::from_digits(&bytes, Order::Msf);
     assert_eq!(val, recovered);
 }

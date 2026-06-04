@@ -1,66 +1,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use num_bigint::{BigUint, RandBigInt};
-use num_integer::Integer;
-use num_traits::One;
 use rand_core::CryptoRngCore;
-
-use crate::DynInt;
-
-/// Miller-Rabin primality test with `rounds` witness iterations.
-///
-/// Uses `rand::thread_rng()` internally for witness selection.
-#[allow(clippy::many_single_char_names)]
-fn is_probably_prime(n: &BigUint, rounds: u32) -> bool {
-    let one = BigUint::one();
-    let two = BigUint::from(2u32);
-
-    if *n < two {
-        return false;
-    }
-    if *n == two || *n == BigUint::from(3u32) {
-        return true;
-    }
-    if n.is_even() {
-        return false;
-    }
-
-    let n_minus_1 = n - &one;
-    let mut d = n_minus_1.clone();
-    let mut r = 0u32;
-    while d.is_even() {
-        d >>= 1u32;
-        r += 1;
-    }
-
-    let mut rng = rand::thread_rng();
-    'witness: for _ in 0..rounds {
-        let a = rng.gen_biguint_range(&two, &(n - &one));
-        let mut x = a.modpow(&d, n);
-        if x.is_one() || x == n_minus_1 {
-            continue 'witness;
-        }
-        for _ in 1..r {
-            x = (&x * &x) % n;
-            if x == n_minus_1 {
-                continue 'witness;
-            }
-        }
-        return false;
-    }
-    true
-}
+use rug::{
+    integer::IsPrime,
+    rand::{MutRandState, ThreadRandGen},
+    Integer,
+};
 
 /// Returns `true` if `p` is a safe prime, i.e. both `p` and `(p-1)/2` are
 /// (probably) prime.
 #[must_use]
 #[allow(clippy::module_name_repetitions)]
-pub fn is_safe_prime(p: &DynInt) -> bool {
-    let p_inner = p.inner();
-    if !is_probably_prime(p_inner, 40) {
+pub fn is_safe_prime(p: &Integer) -> bool {
+    if p.is_probably_prime(25) == IsPrime::No {
         return false;
     }
-    let sophie = (p_inner - BigUint::one()) >> 1u32;
-    is_probably_prime(&sophie, 40)
+    let sophie = Integer::from(p - 1) >> 1u32;
+    sophie.is_probably_prime(25) != IsPrime::No
 }
 
 /// Generates a random safe prime of approximately `bits` bits using `rng`.
@@ -68,39 +23,12 @@ pub fn is_safe_prime(p: &DynInt) -> bool {
 /// Generates a Sophie Germain prime `q` of `bits - 1` bits, then returns
 /// `p = 2q + 1`.
 #[allow(clippy::module_name_repetitions)]
-pub fn generate_safe_prime(bits: u64, rng: &mut impl CryptoRngCore) -> DynInt {
-    // Wrap the CryptoRngCore in a rand-compatible adapter so we can call
-    // gen_biguint from RandBigInt.
-    struct RandAdapter<'a, R: CryptoRngCore>(&'a mut R);
-
-    impl<R: CryptoRngCore> rand_core::RngCore for RandAdapter<'_, R> {
-        fn next_u32(&mut self) -> u32 {
-            self.0.next_u32()
-        }
-        fn next_u64(&mut self) -> u64 {
-            self.0.next_u64()
-        }
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
-            self.0.fill_bytes(dest);
-        }
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-            self.0.try_fill_bytes(dest)
-        }
-    }
-
-    let mut adapter = RandAdapter(rng);
-    loop {
-        // Generate a (bits-1)-bit odd candidate for q.
-        let q = adapter.gen_biguint(bits - 1);
-        let q = q | BigUint::one();
-        if !is_probably_prime(&q, 40) {
-            continue;
-        }
-        let p = (&q << 1u32) | BigUint::one();
-        if is_probably_prime(&p, 40) {
-            return DynInt::from(p);
-        }
-    }
+pub fn generate_safe_prime(bits: u64, rng: &mut impl CryptoRngCore) -> Integer {
+    let mut sync_rng = SyncRng(&mut *rng);
+    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
+    let primes = small_odd_primes(50_000);
+    let (_, p) = gen_pair(bits as u32 - 1, &Integer::from(2), 25, 15, &primes, rug_rng);
+    p
 }
 
 /// Generate a random Blum prime: a safe prime p with p = 3 mod 4.
@@ -112,12 +40,117 @@ pub fn generate_safe_prime(bits: u64, rng: &mut impl CryptoRngCore) -> DynInt {
 ///
 /// Panics if the generated safe prime is not = 3 mod 4 (invariant violation).
 #[allow(clippy::module_name_repetitions)]
-pub fn generate_blum_prime(bits: u64, rng: &mut impl CryptoRngCore) -> DynInt {
+pub fn generate_blum_prime(bits: u64, rng: &mut impl CryptoRngCore) -> Integer {
     let p = generate_safe_prime(bits, rng);
-    assert_eq!(
-        p.inner() % BigUint::from(4u32),
-        BigUint::from(3u32),
-        "safe prime must be = 3 mod 4 for bits >= 3"
-    );
+    assert_eq!(p.mod_u(4), 3, "safe prime must be = 3 mod 4 for bits >= 3");
     p
+}
+
+/// Odd primes below `limit` (sieve of Eratosthenes), used for the double sieve.
+pub fn small_odd_primes(limit: usize) -> Vec<u64> {
+    let mut composite = vec![false; limit];
+    let mut out = Vec::new();
+    for i in 2..limit {
+        if !composite[i] {
+            if i > 2 {
+                out.push(i as u64);
+            }
+            let mut m = i * i;
+            while m < limit {
+                composite[m] = true;
+                m += i;
+            }
+        }
+    }
+    out
+}
+
+/// x^(l-2) mod l = x^-1 mod l (Fermat; l an odd prime, 0 < x < l).
+fn inv_mod(x: u64, l: u64) -> u64 {
+    let (mut result, mut base, mut e) = (1u64, x % l, l - 2);
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result * base % l;
+        }
+        base = base * base % l;
+        e >>= 1;
+    }
+    result
+}
+
+/// Uniform random odd integer with exactly `bits` bits (top bit set), from the OS CSPRNG.
+fn random_odd(bits: u32, rng: &mut impl MutRandState) -> Integer {
+    let mut x = Integer::from(Integer::random_bits(bits, rng));
+    x.keep_bits_mut(bits);
+    x.set_bit(bits - 1, true);
+    x.set_bit(0, true);
+    x
+}
+
+/// Return (r, a*r + 1) with both prime; r has ~`seed_bits` bits.
+///
+/// Generic builder for a "chain" prime: r prime AND a*r+1 prime.
+///   - q : call with a=2   -> returns (q', q)
+///   - p : call with a=2^k -> returns (p', p)
+pub fn gen_pair(
+    seed_bits: u32,
+    a: &Integer,
+    mr_rounds: u32,
+    window_bits: u32,
+    small_primes: &[u64],
+    rng: &mut impl MutRandState,
+) -> (Integer, Integer) {
+    let w: usize = 1 << window_bits;
+    loop {
+        // Random odd base; candidates in this window are r = base + 2*j, j in [0, w).
+        let base = random_odd(seed_bits, rng);
+        let mut sieve = vec![false; w]; // true = ruled out
+
+        for &l in small_primes {
+            let base_l = base.mod_u(l as u32) as u64;
+            let a_l = a.mod_u(l as u32) as u64;
+            let inv2 = l.div_ceil(2); // 2^-1 mod l for odd l
+
+            // Kill positions where r = base + 2j == 0 (mod l).
+            let j0 = ((l - base_l) % l * inv2 % l) as usize;
+            let mut idx = j0;
+            while idx < w {
+                sieve[idx] = true;
+                idx += l as usize;
+            }
+            // Kill positions where f = a*r + 1 == 0 (mod l): 2*a*j == -(a*base + 1).
+            if a_l != 0 {
+                let c = (a_l * base_l + 1) % l;
+                let jf = ((l - c) % l * inv_mod(2 * a_l % l, l) % l) as usize;
+                let mut idx = jf;
+                while idx < w {
+                    sieve[idx] = true;
+                    idx += l as usize;
+                }
+            }
+        }
+
+        for j in 0..w {
+            if sieve[j] {
+                continue;
+            }
+            let r = Integer::from(&base + 2 * j as u64);
+            if r.is_probably_prime(mr_rounds) != IsPrime::No {
+                // cheap seed first
+                let mut f = Integer::from(a * &r);
+                f += Integer::ONE;
+                if f.is_probably_prime(mr_rounds) != IsPrime::No {
+                    return (r, f);
+                }
+            }
+        }
+        // window exhausted -> draw a fresh random base
+    }
+}
+
+pub struct SyncRng<R: CryptoRngCore>(pub R);
+impl<R: CryptoRngCore> ThreadRandGen for SyncRng<R> {
+    fn r#gen(&mut self) -> u32 {
+        self.0.next_u32()
+    }
 }

@@ -8,12 +8,9 @@
 //!
 //! This follows the setup described in CGGMP20 Section 3.3.
 
-use num_bigint::RandBigInt;
-use num_integer::Integer as IntTrait;
-use num_traits::One;
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{generate_blum_prime, DynInt};
 
 /// Ring-Pedersen parameters over an RSA modulus.
 ///
@@ -23,11 +20,11 @@ use tecdsa_bigint::{generate_blum_prime, DynInt};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PedersenModParams {
     /// RSA modulus `N = p * q`.
-    pub n: DynInt,
+    pub n: Integer,
     /// Ring-Pedersen base `s = t^lambda mod N`.
-    pub s: DynInt,
+    pub s: Integer,
     /// Ring-Pedersen base `t = r^2 mod N` (quadratic residue).
-    pub t: DynInt,
+    pub t: Integer,
 }
 
 /// Secret material held by the party that generated the parameters.
@@ -36,11 +33,11 @@ pub struct PedersenModParams {
 #[derive(Debug, Clone)]
 pub struct PedersenModSecret {
     /// Safe prime factor of `N`.
-    pub p: DynInt,
+    pub p: Integer,
     /// Safe prime factor of `N`.
-    pub q: DynInt,
+    pub q: Integer,
     /// Discrete log `lambda` such that `s = t^lambda mod N`.
-    pub lambda: DynInt,
+    pub lambda: Integer,
 }
 
 impl PedersenModParams {
@@ -50,31 +47,41 @@ impl PedersenModParams {
     /// Use `bits = 256` for fast tests and `bits >= 1536` for production security.
     #[allow(clippy::similar_names, clippy::many_single_char_names)]
     pub fn generate(bits: u64, rng: &mut impl CryptoRngCore) -> (Self, PedersenModSecret) {
-        let p = generate_blum_prime(bits, rng);
-        let q = generate_blum_prime(bits, rng);
+        use rug::rand::ThreadRandState;
+        use tecdsa_bigint::{gen_pair, small_odd_primes, SyncRng};
 
-        let n_big = p.inner() * q.inner();
-        let n = DynInt::from(n_big);
+        let p;
+        let q;
+        {
+            let mut sync_rng = SyncRng(&mut *rng);
+            let rug_rng = &mut ThreadRandState::new_custom(&mut sync_rng);
+            let primes = small_odd_primes(50_000);
+
+            // p and q are safe primes (p = 2p' + 1), which are automatically Blum primes
+            // (p = 3 mod 4) because p' is an odd prime.
+            let (_, p_rug) = gen_pair(bits as u32 - 1, &Integer::from(2), 25, 15, &primes, rug_rng);
+            let (_, q_rug) = gen_pair(bits as u32 - 1, &Integer::from(2), 25, 15, &primes, rug_rng);
+
+            p = p_rug;
+            q = q_rug;
+        }
+
+        let n = Integer::from(&p * &q);
 
         // phi(N) = (p-1)(q-1)
-        let p_minus_1 = p.inner() - num_bigint::BigUint::one();
-        let q_minus_1 = q.inner() - num_bigint::BigUint::one();
-        let phi_n = &p_minus_1 * &q_minus_1;
+        let p_minus_1 = Integer::from(&p - 1);
+        let q_minus_1 = Integer::from(&q - 1);
+        let phi_n = Integer::from(&p_minus_1 * &q_minus_1);
 
         // Sample r in Z*_N, compute t = r^2 mod N (quadratic residue)
         let r = sample_coprime(rng, &n);
-        let t_big = r
-            .inner()
-            .modpow(&num_bigint::BigUint::from(2u32), n.inner());
-        let t = DynInt::from(t_big);
+        let t = r.pow_mod(&Integer::from(2), &n).unwrap();
 
         // Sample lambda in [1, phi(N))
-        let lambda_big = sample_in_range(rng, &phi_n);
-        let lambda = DynInt::from(lambda_big.clone());
+        let lambda = sample_in_range(rng, &phi_n);
 
         // s = t^lambda mod N
-        let s_big = t.inner().modpow(&lambda_big, n.inner());
-        let s = DynInt::from(s_big);
+        let s = t.clone().pow_mod(&lambda, &n).unwrap();
 
         let params = Self { n, s, t };
         let secret = PedersenModSecret { p, q, lambda };
@@ -84,80 +91,57 @@ impl PedersenModParams {
     /// Returns the bit-length of the modulus `N`.
     #[must_use]
     pub fn modulus_bits(&self) -> u64 {
-        self.n.bits()
+        self.n.significant_bits() as u64
     }
 
     /// Basic structural validation: `N > 1`, `s, t` are in `[1, N)` and
     /// coprime to `N`.
     #[must_use]
     pub fn is_well_formed(&self) -> bool {
-        let one = DynInt::from(1u64);
-
         // N must be > 1 and odd
-        if self.n.bits() < 2 || !self.n.is_odd() {
+        if self.n.significant_bits() < 2 || self.n.is_even() {
             return false;
         }
 
         // s, t must be in [1, N) and coprime to N
         is_in_mult_group(&self.s, &self.n)
             && is_in_mult_group(&self.t, &self.n)
-            && self.s != one
-            && self.t != one
+            && self.s != 1
+            && self.t != 1
     }
 }
 
 /// Check that `x` is in `Z*_N`: `0 < x < N` and `gcd(x, N) = 1`.
-fn is_in_mult_group(x: &DynInt, n: &DynInt) -> bool {
-    let zero = DynInt::zero();
+fn is_in_mult_group(x: &Integer, n: &Integer) -> bool {
+    let zero = Integer::from(0);
     if *x <= zero || *x >= *n {
         return false;
     }
-    tecdsa_bigint::gcd(x, n) == DynInt::from(1u64)
+    tecdsa_bigint::gcd(x, n) == 1
 }
 
 /// Sample a random element in `Z*_N`.
-fn sample_coprime(rng: &mut impl CryptoRngCore, n: &DynInt) -> DynInt {
-    let n_big = n.inner();
-    let mut adapter = RandAdapter(rng);
+fn sample_coprime(rng: &mut impl CryptoRngCore, n: &Integer) -> Integer {
+    use tecdsa_bigint::SyncRng;
+    let mut sync_rng = SyncRng(rng);
+    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
     loop {
-        let x = adapter.gen_biguint_below(n_big);
-        if x > num_bigint::BigUint::one() && x.gcd(n_big).is_one() {
-            return DynInt::from(x);
-        }
-    }
-}
-
-/// Sample a random value in `[1, upper)`.
-fn sample_in_range(
-    rng: &mut impl CryptoRngCore,
-    upper: &num_bigint::BigUint,
-) -> num_bigint::BigUint {
-    let mut adapter = RandAdapter(rng);
-    loop {
-        let x = adapter.gen_biguint_below(upper);
-        if x > num_bigint::BigUint::zero() {
+        let x = n.clone().random_below(rug_rng);
+        if x > 1 && x.clone().gcd(n) == 1 {
             return x;
         }
     }
 }
 
-use num_traits::Zero;
-
-/// Adapter from `CryptoRngCore` to the `rand 0.8` `RngCore` trait required
-/// by `RandBigInt`.
-pub(crate) struct RandAdapter<'a, R: CryptoRngCore>(pub(crate) &'a mut R);
-
-impl<R: CryptoRngCore> rand_core::RngCore for RandAdapter<'_, R> {
-    fn next_u32(&mut self) -> u32 {
-        self.0.next_u32()
-    }
-    fn next_u64(&mut self) -> u64 {
-        self.0.next_u64()
-    }
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.0.fill_bytes(dest);
-    }
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.0.try_fill_bytes(dest)
+/// Sample a random value in `[1, upper)`.
+fn sample_in_range(rng: &mut impl CryptoRngCore, upper: &Integer) -> Integer {
+    use tecdsa_bigint::SyncRng;
+    let mut sync_rng = SyncRng(rng);
+    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
+    loop {
+        let x = upper.clone().random_below(rug_rng);
+        if x > 0 {
+            return x;
+        }
     }
 }

@@ -1,60 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use num_integer::Integer;
-use num_traits::{One, Zero};
-
-use crate::DynInt;
+use rug::Integer;
 
 /// Computes the greatest common divisor of `a` and `b`.
 #[must_use]
-pub fn gcd(a: &DynInt, b: &DynInt) -> DynInt {
-    DynInt::from(a.inner().gcd(b.inner()))
+pub fn gcd(a: &Integer, b: &Integer) -> Integer {
+    a.clone().gcd(b)
 }
 
 /// Computes the Jacobi symbol `(a/n)`.
 ///
 /// Returns `1`, `-1`, or `0`.  `n` must be a positive odd integer.
-#[allow(clippy::many_single_char_names)]
 #[must_use]
-pub fn jacobi(a: &DynInt, n: &DynInt) -> i8 {
-    let mut a = a.inner().clone();
-    let n_inner = n.inner();
-    let mut n = n_inner.clone();
-    let mut result: i8 = 1;
-
-    a %= &n;
-    while !a.is_zero() {
-        while a.is_even() {
-            a >>= 1u32;
-            let n_mod8 = (&n % num_bigint::BigUint::from(8u32))
-                .to_u64_digits()
-                .first()
-                .copied()
-                .unwrap_or(0);
-            if n_mod8 == 3 || n_mod8 == 5 {
-                result = -result;
-            }
-        }
-        std::mem::swap(&mut a, &mut n);
-        let a_mod4 = (&a % num_bigint::BigUint::from(4u32))
-            .to_u64_digits()
-            .first()
-            .copied()
-            .unwrap_or(0);
-        let n_mod4 = (&n % num_bigint::BigUint::from(4u32))
-            .to_u64_digits()
-            .first()
-            .copied()
-            .unwrap_or(0);
-        if a_mod4 == 3 && n_mod4 == 3 {
-            result = -result;
-        }
-        a %= &n;
-    }
-    if n.is_one() {
-        result
-    } else {
-        0
-    }
+pub fn jacobi(a: &Integer, n: &Integer) -> i8 {
+    a.jacobi(n) as i8
 }
 
 /// Tonelli-Shanks square root: returns `r` such that `r² ≡ n (mod p)`,
@@ -63,16 +21,14 @@ pub fn jacobi(a: &DynInt, n: &DynInt) -> i8 {
 /// `p` must be an odd prime.
 #[must_use]
 #[allow(clippy::many_single_char_names)]
-pub fn tonelli_shanks(n: &DynInt, p: &DynInt) -> Option<DynInt> {
+pub fn tonelli_shanks(n: &Integer, p: &Integer) -> Option<Integer> {
     if jacobi(n, p) != 1 {
         return None;
     }
-    let p_inner = p.inner();
-    let n_inner = n.inner();
-    let one = num_bigint::BigUint::one();
-    let two = num_bigint::BigUint::from(2u32);
+    let one = Integer::from(1);
+    let two = Integer::from(2);
 
-    let p_minus_1 = p_inner - &one;
+    let p_minus_1 = Integer::from(p - &one);
     let mut q = p_minus_1.clone();
     let mut s: u32 = 0;
     while q.is_even() {
@@ -81,37 +37,44 @@ pub fn tonelli_shanks(n: &DynInt, p: &DynInt) -> Option<DynInt> {
     }
 
     if s == 1 {
-        let exp = (p_inner + &one) >> 2u32;
-        return Some(DynInt::from(n_inner.modpow(&exp, p_inner)));
+        let exp = Integer::from(p + &one) >> 2u32;
+        return n.clone().pow_mod(&exp, p).ok();
     }
 
-    let mut z = num_bigint::BigUint::from(2u32);
-    while jacobi(&DynInt::from(z.clone()), p) != -1 {
+    let mut z = Integer::from(2);
+    while jacobi(&z, p) != -1 {
         z += &one;
     }
 
     let mut m_val = s;
-    let mut c = z.modpow(&q, p_inner);
-    let mut t = n_inner.modpow(&q, p_inner);
-    let mut r = n_inner.modpow(&((&q + &one) >> 1u32), p_inner);
+    let mut c = z.pow_mod(&q, p).unwrap();
+    let mut t = n.clone().pow_mod(&q, p).unwrap();
+    let mut r = n
+        .clone()
+        .pow_mod(&(Integer::from(&q + &one) >> 1u32), p)
+        .unwrap();
 
     loop {
-        if t.is_one() {
-            return Some(DynInt::from(r));
+        if t == 1 {
+            return Some(r);
         }
         let mut i: u32 = 1;
-        let mut tmp = (&t * &t) % p_inner;
-        while !tmp.is_one() {
-            tmp = (&tmp * &tmp) % p_inner;
+        let mut tmp = Integer::from(&t * &t) % p;
+        while tmp != 1 {
+            tmp = Integer::from(&tmp * &tmp) % p;
             i += 1;
         }
-        let b = c.modpow(
-            &two.modpow(&num_bigint::BigUint::from(m_val - i - 1), &p_minus_1),
-            p_inner,
-        );
+        let b = c
+            .pow_mod(
+                &two.clone()
+                    .pow_mod(&Integer::from(m_val - i - 1), &p_minus_1)
+                    .unwrap(),
+                p,
+            )
+            .unwrap();
         m_val = i;
-        c = (&b * &b) % p_inner;
-        t = (&t * &c) % p_inner;
-        r = (&r * &b) % p_inner;
+        c = Integer::from(&b * &b) % p;
+        t = Integer::from(&t * &c) % p;
+        r = Integer::from(&r * &b) % p;
     }
 }

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Big-integer facade (crypto-bigint + num-bigint) for tecdsa"
+description = "Big-integer facade for tecdsa"
 
 [dependencies]
 tecdsa-core = { workspace = true }
@@ -17,6 +17,7 @@ rand = { workspace = true }
 zeroize = { workspace = true }
 serde = { workspace = true }
 subtle = { workspace = true }
+rug = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }

@@ -22,12 +22,11 @@ elliptic-curve = { version = "0.14.0-rc", default-features = false, features = [
 generic-ec = { version = "0.5", features = ["curve-secp256k1", "serde"] }
 
 # Big integers
-crypto-bigint = { version = "0.6", features = ["serde"] }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
 num-integer = "0.1"
 gmp-mpfr-sys = "1.7"
-rug = "1"
+rug = { version = "1", features = ["serde"] }
 
 # Hashing
 sha2 = "0.10"

@@ -15,6 +15,7 @@ identifiable-abort = []
 key-import = ["tecdsa-protocol/key-import"]
 
 [dependencies]
+rug = { workspace = true }
 tecdsa-core.workspace = true
 tecdsa-bigint.workspace = true
 tecdsa-curve.workspace = true
