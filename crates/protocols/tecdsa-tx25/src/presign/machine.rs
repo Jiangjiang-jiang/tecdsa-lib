@@ -90,21 +90,54 @@ impl Tx25PresignMachine {
         let sk_decimal = setup
             .sk_to_bytes(&key_share.cl_sk)
             .map_err(|e| Tx25Error::InvalidInput(format!("sk_to_bytes: {e}")))?;
-        let raw_pks: Vec<ClPublicKey> = key_share
-            .cl_pks
+
+        // Key shares are produced for the full DKG committee, while presign may
+        // run with a signer subset. Keep per-party public material ordered by
+        // this presign session's active party list because later rounds index it
+        // with positions in `all_parties`.
+        let active_indices: Vec<usize> = all_parties
             .iter()
-            .map(|pk| {
-                let qfi = pk.elt();
+            .map(|party| {
+                let idx = party.0.checked_sub(1).ok_or_else(|| {
+                    Tx25Error::InvalidInput(format!("invalid zero party id: {party}"))
+                })? as usize;
+
+                if idx >= key_share.cl_pks.len() {
+                    return Err(Tx25Error::InvalidInput(format!(
+                        "{party} has no CL public key ({} available)",
+                        key_share.cl_pks.len()
+                    )));
+                }
+                if idx >= key_share.public_shares.len() {
+                    return Err(Tx25Error::InvalidInput(format!(
+                        "{party} has no public share ({} available)",
+                        key_share.public_shares.len()
+                    )));
+                }
+
+                Ok(idx)
+            })
+            .collect::<Result<_, _>>()?;
+
+        let raw_pks: Vec<ClPublicKey> = active_indices
+            .iter()
+            .map(|&idx| {
+                let qfi = key_share.cl_pks[idx].elt();
                 setup.pk_from_qfi(qfi)
             })
             .collect::<Result<Vec<_>, _>>()?;
+
+        let public_shares: Vec<k256::ProjectivePoint> = active_indices
+            .iter()
+            .map(|&idx| key_share.public_shares[idx])
+            .collect();
 
         let key_mat = KeyMaterial {
             sk_decimal,
             raw_pks,
             x_i: key_share.secret_share,
             public_key: key_share.public_key,
-            public_shares: key_share.public_shares.clone(),
+            public_shares,
             threshold,
         };
 
@@ -472,5 +505,59 @@ impl StateMachine for Tx25PresignMachine {
 
     fn ia_report(&self) -> Option<&IaReport> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use elliptic_curve::CurveArithmetic;
+    use tecdsa_class_group::cl::ClSetup;
+
+    use super::*;
+
+    #[test]
+    fn new_accepts_active_signer_subset_from_full_key_share() {
+        let seed = "90001";
+        let mut setup = ClSetup::new_secp256k1(seed).expect("setup");
+
+        let (_, cl_pk_1) = setup.keygen().expect("cl keygen 1");
+        let (cl_sk_2, cl_pk_2) = setup.keygen().expect("cl keygen 2");
+        let (_, cl_pk_3) = setup.keygen().expect("cl keygen 3");
+
+        let generator = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
+        let public_shares = vec![
+            generator * k256::Scalar::from(1u64),
+            generator * k256::Scalar::from(2u64),
+            generator * k256::Scalar::from(3u64),
+        ];
+        let expected_active_public_shares = vec![public_shares[1], public_shares[2]];
+
+        let key_share = Tx25KeyShare {
+            party_index: 2,
+            secret_share: k256::Scalar::from(2u64),
+            public_key: public_shares[0] + public_shares[1] + public_shares[2],
+            public_shares,
+            cl_sk: cl_sk_2,
+            cl_pks: vec![cl_pk_1, cl_pk_2, cl_pk_3],
+            cl_setup_seed: seed.to_string(),
+            use_128bit_security: false,
+            threshold: 1,
+            total: 3,
+        };
+
+        let active_signers = vec![PartyId(2), PartyId(3)];
+        let presign_setup = ClSetup::new_secp256k1(seed).expect("presign setup");
+
+        let result = Tx25PresignMachine::new(PartyId(2), active_signers, &key_share, presign_setup);
+
+        let machine = match result {
+            Ok(machine) => machine,
+            Err(err) => {
+                panic!("active signer subset should use only active parties' key material: {err}")
+            }
+        };
+
+        assert_eq!(machine.key_mat.raw_pks.len(), 2);
+        assert_eq!(machine.key_mat.public_shares, expected_active_public_shares);
     }
 }
