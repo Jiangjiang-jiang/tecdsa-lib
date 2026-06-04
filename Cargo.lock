@@ -1943,6 +1943,7 @@ dependencies = [
  "num-traits",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
