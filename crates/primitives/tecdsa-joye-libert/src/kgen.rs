@@ -150,7 +150,7 @@ fn gen_pair(
         for &l in small_primes {
             let base_l = base.mod_u(l as u32) as u64;
             let a_l = a.mod_u(l as u32) as u64;
-            let inv2 = (l + 1) / 2; // 2^-1 mod l for odd l
+            let inv2 = l.div_ceil(2); // 2^-1 mod l for odd l
 
             // Kill positions where r = base + 2j == 0 (mod l).
             let j0 = ((l - base_l) % l * inv2 % l) as usize;
@@ -289,7 +289,7 @@ fn choose_non_quadratic_residue(
 ) -> Integer {
     loop {
         let x = n.clone().random_below(rng);
-        if x.jacobi(&p) == -1 && x.jacobi(&q) == -1 {
+        if x.jacobi(p) == -1 && x.jacobi(q) == -1 {
             return x;
         }
     }
