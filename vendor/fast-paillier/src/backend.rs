@@ -101,52 +101,122 @@ impl Integer {
 
     /// Generates a random safe prime
     pub fn generate_safe_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self {
-        sieve_generate_safe_primes(rng, bits, 135)
+        sieve_generate_safe_primes(rng, bits, 50_000)
     }
 }
 
-/// Generate a random safe prime with a given sieve parameter.
+/// Generate a random safe prime using a windowed double sieve.
 ///
-/// For different bit sizes, different parameter value will give fastest
-/// generation, the higher bit size - the higher the sieve parameter.
-/// The best way to select the parameter is by trial. The one used by
-/// [`generate_safe_prime`] is indistinguishable from optimal for 500-1700 bit
-/// lengths.
+/// Generates a Sophie Germain prime `q` of `bits - 1` bits and returns the safe
+/// prime `p = 2q + 1` of `bits` bits.
+///
+/// Rather than testing random candidates one at a time, this draws a single
+/// random odd base and sieves a whole window of candidates `q = base + 2j`
+/// against every odd prime below `sieve_limit`, ruling out in one pass any
+/// position where either `q` or `2q + 1` is divisible by a small prime. Only the
+/// survivors are subjected to the (expensive) Miller-Rabin test, which sharply
+/// reduces the number of big-integer primality checks per safe prime found.
+///
+/// A larger `sieve_limit` removes more composite candidates up front at the cost
+/// of a bigger sieve; `50_000` (used by [`generate_safe_prime`]) works well for
+/// the bit lengths used in practice.
 pub fn sieve_generate_safe_primes(
     rng: &mut impl rand_core::RngCore,
     bits: u32,
-    amount: usize,
+    sieve_limit: usize,
 ) -> Integer {
     use crate::backend::IsPrime;
-    use crate::utils::small_primes;
 
-    let amount = amount.min(small_primes::SMALL_PRIMES.len());
-    let mut x = Integer::zero();
+    /// Width (in bits) of the candidate window scanned per random base.
+    const WINDOW_BITS: u32 = 15;
+    /// Miller-Rabin rounds (25 taken same as one used in `mpz_nextprime`).
+    const MR_ROUNDS: u32 = 25;
 
-    'trial: loop {
-        // generate an odd number of length `bits - 2`
-        x.assign_random_bits(bits - 1, rng);
-        // `random_bits` is guaranteed to not set `bits-1`-th bit, but not
-        // guaranteed to set the `bits-2`-th
-        x.set_bit(bits - 2, true);
-        x |= 1u32;
+    let window: usize = 1 << WINDOW_BITS;
+    let seed_bits = bits - 1;
+    let small_primes = small_odd_primes(sieve_limit);
 
-        for &small_prime in &small_primes::SMALL_PRIMES[0..amount] {
-            let mod_result = x.mod_u(small_prime);
-            if mod_result == (small_prime - 1) / 2 {
-                continue 'trial;
+    loop {
+        // Random odd base; the window holds candidates q = base + 2*j, j in [0, window).
+        let mut base = Integer::zero();
+        base.assign_random_bits(seed_bits, rng);
+        base.set_bit(seed_bits - 1, true);
+        base |= 1u32;
+
+        // `true` marks a candidate position ruled out by the small-prime sieve.
+        let mut ruled_out = alloc::vec![false; window];
+
+        for &l in &small_primes {
+            let base_l = u64::from(base.mod_u(l as u32));
+            let inv2 = (l + 1) / 2; // 2^-1 mod l, for odd l
+
+            // Kill positions where q = base + 2j == 0 (mod l).
+            let j0 = ((l - base_l) % l * inv2 % l) as usize;
+            let mut idx = j0;
+            while idx < window {
+                ruled_out[idx] = true;
+                idx += l as usize;
+            }
+
+            // Kill positions where 2q + 1 == 0 (mod l): 4j == -(2*base + 1) (mod l).
+            let c = (2 * base_l + 1) % l;
+            let jf = ((l - c) % l * inv_mod(4 % l, l) % l) as usize;
+            let mut idx = jf;
+            while idx < window {
+                ruled_out[idx] = true;
+                idx += l as usize;
             }
         }
 
-        // 25 taken same as one used in mpz_nextprime
-        if let IsPrime::Yes | IsPrime::Probably = x.is_probably_prime(25, rng) {
-            x <<= 1;
-            x += 1;
-            if let IsPrime::Yes | IsPrime::Probably = x.is_probably_prime(25, rng) {
-                return x;
+        for j in 0..window {
+            if ruled_out[j] {
+                continue;
+            }
+            let q = &base + 2 * (j as u64);
+            if let IsPrime::Yes | IsPrime::Probably = q.is_probably_prime(MR_ROUNDS, rng) {
+                // q (the cheaper, smaller candidate) passed; now test p = 2q + 1.
+                let mut p = q;
+                p <<= 1;
+                p += 1;
+                if let IsPrime::Yes | IsPrime::Probably = p.is_probably_prime(MR_ROUNDS, rng) {
+                    return p;
+                }
+            }
+        }
+        // Window exhausted without success: draw a fresh random base.
+    }
+}
+
+/// Odd primes below `limit` (sieve of Eratosthenes), used for the double sieve.
+fn small_odd_primes(limit: usize) -> alloc::vec::Vec<u64> {
+    let mut composite = alloc::vec![false; limit];
+    let mut out = alloc::vec::Vec::new();
+    for i in 2..limit {
+        if !composite[i] {
+            if i > 2 {
+                out.push(i as u64);
+            }
+            let mut m = i * i;
+            while m < limit {
+                composite[m] = true;
+                m += i;
             }
         }
     }
+    out
+}
+
+/// `x^(l-2) mod l == x^-1 mod l` (Fermat; `l` an odd prime, `0 < x < l`).
+fn inv_mod(x: u64, l: u64) -> u64 {
+    let (mut result, mut base, mut e) = (1u64, x % l, l - 2);
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result * base % l;
+        }
+        base = base * base % l;
+        e >>= 1;
+    }
+    result
 }
 
 #[cfg(feature = "quickcheck")]

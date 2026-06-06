@@ -172,19 +172,19 @@ fn safe_primes(c: &mut criterion::Criterion) {
         group.bench_function(id("Current"), |b| {
             b.iter(|| Integer::generate_safe_prime(&mut rng.clone(), bits))
         });
-        group.bench_function(id("Trial with sieve of 120 primes"), |b| {
+        group.bench_function(id("Windowed sieve, primes < 1000"), |b| {
             b.iter(|| {
-                fast_paillier::backend::sieve_generate_safe_primes(&mut rng.clone(), bits, 120)
+                fast_paillier::backend::sieve_generate_safe_primes(&mut rng.clone(), bits, 1_000)
             })
         });
-        group.bench_function(id("Trial with sieve of 135 primes"), |b| {
+        group.bench_function(id("Windowed sieve, primes < 10000"), |b| {
             b.iter(|| {
-                fast_paillier::backend::sieve_generate_safe_primes(&mut rng.clone(), bits, 135)
+                fast_paillier::backend::sieve_generate_safe_primes(&mut rng.clone(), bits, 10_000)
             })
         });
-        group.bench_function(id("Trial with sieve of 150 primes"), |b| {
+        group.bench_function(id("Windowed sieve, primes < 50000"), |b| {
             b.iter(|| {
-                fast_paillier::backend::sieve_generate_safe_primes(&mut rng.clone(), bits, 150)
+                fast_paillier::backend::sieve_generate_safe_primes(&mut rng.clone(), bits, 50_000)
             })
         });
     }

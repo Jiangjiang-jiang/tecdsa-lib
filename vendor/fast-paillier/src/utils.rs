@@ -4,8 +4,6 @@ use core::fmt;
 
 use crate::backend::Integer;
 
-pub(crate) mod small_primes;
-
 /// Faster algorithm for modular exponentiation based on Chinese remainder theorem when modulo factorization is known
 ///
 /// `CrtExp` makes exponentation modulo `n` faster when factorization `n = n1 * n2` is known as well as `phi(n1)` and `phi(n2)`
