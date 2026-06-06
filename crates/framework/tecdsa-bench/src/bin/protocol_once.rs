@@ -1204,7 +1204,10 @@ fn abc24_once() {
 /// protocol requires a shared master CL key split via delta-scaled Shamir. This
 /// mirrors the crate's integration-test `setup_threshold_cl_keys`, but uses the
 /// 128-bit parameters the benchmark presign/sign run with.
-fn setup_threshold_cl_keys_jtx25(shares: &mut [tecdsa_jtx25::key_share::Jtx25KeyShare], seed: &str) {
+fn setup_threshold_cl_keys_jtx25(
+    shares: &mut [tecdsa_jtx25::key_share::Jtx25KeyShare],
+    seed: &str,
+) {
     use tecdsa_class_group::cl::{ClSetup, Qfi};
 
     let n = shares.len();
@@ -1231,7 +1234,10 @@ fn setup_threshold_cl_keys_jtx25(shares: &mut [tecdsa_jtx25::key_share::Jtx25Key
 /// Install a trusted threshold-CL + threshold-ElGamal key setup into WMC24 key
 /// shares. As with JTX25, WMC24's DKG emits placeholder material; this mirrors
 /// the crate's integration-test `setup_threshold_cl_keys` at 128-bit params.
-fn setup_threshold_cl_keys_wmc24(shares: &mut [tecdsa_wmc24::key_share::Wmc24KeyShare], seed: &str) {
+fn setup_threshold_cl_keys_wmc24(
+    shares: &mut [tecdsa_wmc24::key_share::Wmc24KeyShare],
+    seed: &str,
+) {
     use elliptic_curve::CurveArithmetic;
     use num_bigint::{BigInt, BigUint};
     use tecdsa_class_group::cl::{ClSetup, Qfi};
@@ -1263,7 +1269,8 @@ fn setup_threshold_cl_keys_wmc24(shares: &mut [tecdsa_wmc24::key_share::Wmc24Key
     let master_eldk = shares
         .iter()
         .fold(k256::Scalar::ZERO, |acc, s| acc + s.eldk_i);
-    let master_elek = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * master_eldk;
+    let master_elek =
+        <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * master_eldk;
 
     let master_eldk_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&master_eldk);
     let q_bytes = setup.q_bytes().expect("q_bytes");
@@ -1502,9 +1509,9 @@ fn wmy23_once() {
     let seed = "42042";
     let n = 3u16;
     let t = 1u16; // corruption threshold; reconstruction threshold = t + 1
-    // WMY23 keygen now produces (t+1, n) Feldman-VSS shares, so a strict t+1
-    // subset can sign: the presign machine Lagrange-weights each signer's share
-    // for the active quorum. Benchmark a 2-of-3 subset.
+                  // WMY23 keygen now produces (t+1, n) Feldman-VSS shares, so a strict t+1
+                  // subset can sign: the presign machine Lagrange-weights each signer's share
+                  // for the active quorum. Benchmark a 2-of-3 subset.
     let signers = [1u16, 2];
     let msg_data = make_data_to_sign(b"benchmark message");
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();

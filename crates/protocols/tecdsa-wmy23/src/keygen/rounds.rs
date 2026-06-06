@@ -255,7 +255,11 @@ pub fn keygen_round1(
 /// [`keygen_round2_share`].
 #[must_use]
 pub fn keygen_round2_bcast(state: &KeygenR1State) -> KeygenR2Bcast {
-    let feldman_commitments = state.feldman_commitments.iter().map(point_to_bytes).collect();
+    let feldman_commitments = state
+        .feldman_commitments
+        .iter()
+        .map(point_to_bytes)
+        .collect();
     KeygenR2Bcast {
         nonce: state.nonce,
         feldman_commitments,

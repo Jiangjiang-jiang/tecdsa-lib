@@ -92,7 +92,10 @@ fn make_data_to_sign(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
 /// protocol requires a shared master CL key split via delta-scaled Shamir. This
 /// mirrors the crate's integration-test `setup_threshold_cl_keys`, using the
 /// 128-bit parameters the benchmark presign/sign run with.
-fn setup_threshold_cl_keys_jtx25(shares: &mut [tecdsa_jtx25::key_share::Jtx25KeyShare], seed: &str) {
+fn setup_threshold_cl_keys_jtx25(
+    shares: &mut [tecdsa_jtx25::key_share::Jtx25KeyShare],
+    seed: &str,
+) {
     use tecdsa_class_group::cl::{ClSetup, Qfi};
 
     let n = shares.len();
@@ -119,7 +122,10 @@ fn setup_threshold_cl_keys_jtx25(shares: &mut [tecdsa_jtx25::key_share::Jtx25Key
 /// Install a trusted threshold-CL + threshold-ElGamal key setup into WMC24 key
 /// shares (WMC24's DKG emits placeholder material, same as JTX25). Mirrors the
 /// crate's integration-test `setup_threshold_cl_keys` at 128-bit params.
-fn setup_threshold_cl_keys_wmc24(shares: &mut [tecdsa_wmc24::key_share::Wmc24KeyShare], seed: &str) {
+fn setup_threshold_cl_keys_wmc24(
+    shares: &mut [tecdsa_wmc24::key_share::Wmc24KeyShare],
+    seed: &str,
+) {
     use elliptic_curve::CurveArithmetic;
     use num_bigint::{BigInt, BigUint};
     use tecdsa_class_group::cl::{ClSetup, Qfi};
@@ -151,7 +157,8 @@ fn setup_threshold_cl_keys_wmc24(shares: &mut [tecdsa_wmc24::key_share::Wmc24Key
     let master_eldk = shares
         .iter()
         .fold(k256::Scalar::ZERO, |acc, s| acc + s.eldk_i);
-    let master_elek = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * master_eldk;
+    let master_elek =
+        <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * master_eldk;
 
     let master_eldk_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&master_eldk);
     let q_bytes = setup.q_bytes().expect("q_bytes");
