@@ -77,12 +77,11 @@ fn hash_with_prefix(prefix: &[u8], data: &[u8]) -> k256::Scalar {
         .finalize();
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&hash);
-    use num_bigint::BigUint;
-    use num_traits::Num;
-    let val = BigUint::from_bytes_be(&bytes);
-    let q = BigUint::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
+    use rug::{integer::Order, Integer};
+    let val = Integer::from_digits(&bytes, Order::Msf);
+    let q = Integer::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
     let reduced = val % &q;
-    tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&reduced)
+    tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
 }
 
 /// Compute the message hash $m = H_{sig}(msg)$.

@@ -10,10 +10,10 @@
 //! C_aff = C^a * y^alpha * h^r is a vector commitment with bases (C, y)
 //! and messages (a, alpha).
 
-use num_bigint::{BigUint, RandBigInt};
-use num_traits::One;
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 
 use crate::kgen::JlPublicKey;
 
@@ -25,13 +25,13 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlAffProof {
     /// Commitment: d = C^v1 * y^v2 * h^w mod N
-    pub d: BigUint,
+    pub d: Integer,
     /// Response for `a`: z_a = e*a + v1
-    pub z_a: BigUint,
+    pub z_a: Integer,
     /// Response for `alpha`: z_alpha = e*alpha + v2
-    pub z_alpha: BigUint,
+    pub z_alpha: Integer,
     /// Response for `r`: z_r = e*r + w
-    pub z_r: BigUint,
+    pub z_r: Integer,
 }
 
 /// Statistical security parameter (in bits).
@@ -55,37 +55,37 @@ impl ZkJlAffProof {
     #[allow(clippy::many_single_char_names, clippy::too_many_arguments)]
     pub fn prove(
         pk: &JlPublicKey,
-        c_base: &BigUint,
-        c_aff: &BigUint,
-        a: &BigUint,
-        alpha: &BigUint,
-        r: &BigUint,
+        c_base: &Integer,
+        c_aff: &Integer,
+        a: &Integer,
+        alpha: &Integer,
+        r: &Integer,
         b1_bits: u32,
         b2_bits: u32,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         // Upper bounds for the blinding values
-        let v1_bound = BigUint::one() << (STAT_SEC + CHALLENGE_BITS + b1_bits);
-        let v2_bound = BigUint::one() << (STAT_SEC + CHALLENGE_BITS + b2_bits);
-        let w_bound = &pk.n << (STAT_SEC + CHALLENGE_BITS);
+        let v1_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b1_bits);
+        let v2_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b2_bits);
+        let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
 
-        let v1 = rng.gen_biguint_below(&v1_bound);
-        let v2 = rng.gen_biguint_below(&v2_bound);
-        let w = rng.gen_biguint_below(&w_bound);
+        let v1 = random_below(&v1_bound, rng);
+        let v2 = random_below(&v2_bound, rng);
+        let w = random_below(&w_bound, rng);
 
         // Commitment: d = C^v1 * y^v2 * h^w mod N
-        let c_v1 = c_base.modpow(&v1, &pk.n);
-        let y_v2 = pk.y.modpow(&v2, &pk.n);
-        let h_w = pk.h.modpow(&w, &pk.n);
-        let d = (&c_v1 * &y_v2 % &pk.n) * &h_w % &pk.n;
+        let c_v1 = pow_mod(c_base, &v1, &pk.n);
+        let y_v2 = pow_mod(&pk.y, &v2, &pk.n);
+        let h_w = pow_mod(&pk.h, &w, &pk.n);
+        let d = mul_mod(&mul_mod(&c_v1, &y_v2, &pk.n), &h_w, &pk.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, c_base, c_aff, &d);
 
         // Responses
-        let z_a = &e * a + &v1;
-        let z_alpha = &e * alpha + &v2;
-        let z_r = &e * r + &w;
+        let z_a = Integer::from(&e * a) + &v1;
+        let z_alpha = Integer::from(&e * alpha) + &v2;
+        let z_r = Integer::from(&e * r) + &w;
 
         Self {
             d,
@@ -98,18 +98,18 @@ impl ZkJlAffProof {
     /// Verifies the proof against public key `pk`, base ciphertext `c_base`,
     /// and affine ciphertext `c_aff`.
     #[must_use]
-    pub fn verify(&self, pk: &JlPublicKey, c_base: &BigUint, c_aff: &BigUint) -> bool {
+    pub fn verify(&self, pk: &JlPublicKey, c_base: &Integer, c_aff: &Integer) -> bool {
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, c_base, c_aff, &self.d);
 
         // Check: C^z_a * y^z_alpha * h^z_r == c_aff^e * d mod N
-        let lhs_1 = c_base.modpow(&self.z_a, &pk.n);
-        let lhs_2 = pk.y.modpow(&self.z_alpha, &pk.n);
-        let lhs_3 = pk.h.modpow(&self.z_r, &pk.n);
-        let lhs = (&lhs_1 * &lhs_2 % &pk.n) * &lhs_3 % &pk.n;
+        let lhs_1 = pow_mod(c_base, &self.z_a, &pk.n);
+        let lhs_2 = pow_mod(&pk.y, &self.z_alpha, &pk.n);
+        let lhs_3 = pow_mod(&pk.h, &self.z_r, &pk.n);
+        let lhs = mul_mod(&mul_mod(&lhs_1, &lhs_2, &pk.n), &lhs_3, &pk.n);
 
-        let c_aff_e = c_aff.modpow(&e, &pk.n);
-        let rhs = (&c_aff_e * &self.d) % &pk.n;
+        let c_aff_e = pow_mod(c_aff, &e, &pk.n);
+        let rhs = mul_mod(&c_aff_e, &self.d, &pk.n);
 
         lhs == rhs
     }
@@ -118,24 +118,22 @@ impl ZkJlAffProof {
 /// Computes the Fiat-Shamir challenge.
 fn fiat_shamir_challenge(
     pk: &JlPublicKey,
-    c_base: &BigUint,
-    c_aff: &BigUint,
-    d: &BigUint,
-) -> BigUint {
+    c_base: &Integer,
+    c_aff: &Integer,
+    d: &Integer,
+) -> Integer {
     let mut hasher = Sha256::new();
     hasher.update(b"ZkJlAff");
-    hasher.update(pk.n.to_bytes_be());
-    hasher.update(pk.y.to_bytes_be());
-    hasher.update(pk.h.to_bytes_be());
+    hasher.update(pk.n.to_digits::<u8>(Order::Msf));
+    hasher.update(pk.y.to_digits::<u8>(Order::Msf));
+    hasher.update(pk.h.to_digits::<u8>(Order::Msf));
     hasher.update(pk.k.to_be_bytes());
-    hasher.update(c_base.to_bytes_be());
-    hasher.update(c_aff.to_bytes_be());
-    hasher.update(d.to_bytes_be());
+    hasher.update(c_base.to_digits::<u8>(Order::Msf));
+    hasher.update(c_aff.to_digits::<u8>(Order::Msf));
+    hasher.update(d.to_digits::<u8>(Order::Msf));
     let hash = hasher.finalize();
 
-    let full = BigUint::from_bytes_be(&hash);
-    let mask = (BigUint::one() << CHALLENGE_BITS) - BigUint::one();
-    full & mask
+    Integer::from_digits(&hash, Order::Msf).keep_bits(CHALLENGE_BITS)
 }
 
 #[cfg(test)]
@@ -149,18 +147,18 @@ mod tests {
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
         // Encrypt a message to get a base ciphertext
-        let b = BigUint::from(7u32);
+        let b = Integer::from(7u32);
         let (ct_b, _r_b) = encrypt(&pk, &b, &mut rng);
 
         // Affine op: C_aff = C^a * y^alpha * h^r mod N
-        let a = BigUint::from(5u32);
-        let alpha = BigUint::from(13u32);
-        let r = rng.gen_biguint_below(&pk.n);
+        let a = Integer::from(5u32);
+        let alpha = Integer::from(13u32);
+        let r = random_below(&pk.n, &mut rng);
 
-        let c_a = ct_b.c.modpow(&a, &pk.n);
-        let y_alpha = pk.y.modpow(&alpha, &pk.n);
-        let h_r = pk.h.modpow(&r, &pk.n);
-        let c_aff = (&c_a * &y_alpha % &pk.n) * &h_r % &pk.n;
+        let c_a = pow_mod(&ct_b.c, &a, &pk.n);
+        let y_alpha = pow_mod(&pk.y, &alpha, &pk.n);
+        let h_r = pow_mod(&pk.h, &r, &pk.n);
+        let c_aff = mul_mod(&mul_mod(&c_a, &y_alpha, &pk.n), &h_r, &pk.n);
 
         let proof = ZkJlAffProof::prove(&pk, &ct_b.c, &c_aff, &a, &alpha, &r, 32, 32, &mut rng);
         assert!(proof.verify(&pk, &ct_b.c, &c_aff));
@@ -172,21 +170,21 @@ mod tests {
         let mut rng = rand::thread_rng();
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
-        let b = BigUint::from(7u32);
+        let b = Integer::from(7u32);
         let (ct_b, _r_b) = encrypt(&pk, &b, &mut rng);
 
-        let a = BigUint::from(5u32);
-        let alpha = BigUint::from(13u32);
-        let r = rng.gen_biguint_below(&pk.n);
+        let a = Integer::from(5u32);
+        let alpha = Integer::from(13u32);
+        let r = random_below(&pk.n, &mut rng);
 
-        let c_a = ct_b.c.modpow(&a, &pk.n);
-        let y_alpha = pk.y.modpow(&alpha, &pk.n);
-        let h_r = pk.h.modpow(&r, &pk.n);
-        let c_aff = (&c_a * &y_alpha % &pk.n) * &h_r % &pk.n;
+        let c_a = pow_mod(&ct_b.c, &a, &pk.n);
+        let y_alpha = pow_mod(&pk.y, &alpha, &pk.n);
+        let h_r = pow_mod(&pk.h, &r, &pk.n);
+        let c_aff = mul_mod(&mul_mod(&c_a, &y_alpha, &pk.n), &h_r, &pk.n);
 
         // Wrong witness
-        let wrong_a = BigUint::from(99u32);
-        let wrong_r = rng.gen_biguint_below(&pk.n);
+        let wrong_a = Integer::from(99u32);
+        let wrong_r = random_below(&pk.n, &mut rng);
         let proof = ZkJlAffProof::prove(
             &pk, &ct_b.c, &c_aff, &wrong_a, &alpha, &wrong_r, 32, 32, &mut rng,
         );

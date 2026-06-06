@@ -22,7 +22,7 @@
 
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 use tecdsa_curve::conv;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
@@ -139,12 +139,12 @@ impl RElClProof {
 
         // z2 = a2 + e * r mod q (for EC checks).
         let q_bytes = setup.q_bytes()?;
-        let q = BigUint::from_bytes_be(&q_bytes);
-        let a2_big = BigUint::from_bytes_be(&a2);
-        let e_big = BigUint::from_bytes_be(&e);
-        let r_big = BigUint::from_bytes_be(r_bytes);
-        let z2_big = (&a2_big + &e_big * &r_big) % &q;
-        let z2 = z2_big.to_bytes_be();
+        let q = Integer::from_digits(&q_bytes, Order::Msf);
+        let a2_big = Integer::from_digits(&a2, Order::Msf);
+        let e_big = Integer::from_digits(&e, Order::Msf);
+        let r_big = Integer::from_digits(r_bytes, Order::Msf);
+        let z2_big = (&a2_big + Integer::from(&e_big * &r_big)) % &q;
+        let z2 = z2_big.to_digits::<u8>(Order::Msf);
 
         Ok(Self {
             r_elg_bytes,
@@ -253,8 +253,8 @@ mod tests {
         let elek = g * eldk;
 
         // Witness: gamma and r
-        let gamma_bytes = BigUint::from(17u32).to_bytes_be();
-        let r_bytes = BigUint::from(23u32).to_bytes_be();
+        let gamma_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
+        let r_bytes = Integer::from(23u32).to_digits::<u8>(Order::Msf);
         let gamma_scalar = test_scalar(17);
         let r_scalar = test_scalar(23);
 
@@ -264,16 +264,16 @@ mod tests {
 
         // CL ciphertext to scalar multiply
         let ct = setup
-            .encrypt_bytes(&pk, &BigUint::from(55u32).to_bytes_be())
+            .encrypt_bytes(&pk, &Integer::from(55u32).to_digits::<u8>(Order::Msf))
             .expect("encrypt");
         let (ck_0, ck_1) = setup.ct_components(&ct).expect("comp");
 
         // CL scalar multiply by gamma
         let cgk_0 = setup
-            .exp_bytes(&ck_0, &BigUint::from(17u32).to_bytes_be())
+            .exp_bytes(&ck_0, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
             .expect("exp");
         let cgk_1 = setup
-            .exp_bytes(&ck_1, &BigUint::from(17u32).to_bytes_be())
+            .exp_bytes(&ck_1, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
             .expect("exp");
 
         let proof = RElClProof::prove(
@@ -308,24 +308,24 @@ mod tests {
 
         let gamma_scalar = test_scalar(17);
         let r_scalar = test_scalar(23);
-        let r_bytes = BigUint::from(23u32).to_bytes_be();
+        let r_bytes = Integer::from(23u32).to_digits::<u8>(Order::Msf);
 
         let elg_0 = g * r_scalar;
         let elg_1 = g * gamma_scalar + elek * r_scalar;
 
         let ct = setup
-            .encrypt_bytes(&pk, &BigUint::from(55u32).to_bytes_be())
+            .encrypt_bytes(&pk, &Integer::from(55u32).to_digits::<u8>(Order::Msf))
             .expect("encrypt");
         let (ck_0, ck_1) = setup.ct_components(&ct).expect("comp");
         let cgk_0 = setup
-            .exp_bytes(&ck_0, &BigUint::from(17u32).to_bytes_be())
+            .exp_bytes(&ck_0, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
             .expect("exp");
         let cgk_1 = setup
-            .exp_bytes(&ck_1, &BigUint::from(17u32).to_bytes_be())
+            .exp_bytes(&ck_1, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
             .expect("exp");
 
         // Prove with WRONG gamma
-        let wrong_gamma_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_gamma_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RElClProof::prove(
             &mut setup,
             &g,

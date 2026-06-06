@@ -13,7 +13,7 @@
 //!
 //! Together these ensure the public key `(N, y, h, k)` is correctly constructed.
 
-use num_bigint::BigUint;
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -45,7 +45,7 @@ impl ZkJlModProof {
     pub fn prove(
         pk: &JlPublicKey,
         sk: &JlSecretKey,
-        x: &BigUint,
+        x: &Integer,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         let proof_qr2k = ZkQr2kProof::prove(&pk.n, pk.k, x, &pk.h, rng);

@@ -2452,17 +2452,17 @@ fn xal23_benchmarks(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    cggmp20_benchmarks,
-    dkls23_benchmarks,
-    gg18_benchmarks,
-    ggn16_benchmarks,
-    ln18_benchmarks,
-    tx25_benchmarks,
-    jtx25_benchmarks,
-    wmy23_benchmarks,
-    wmc24_benchmarks,
-    llz25_benchmarks,
-    trout_benchmarks,
+    // cggmp20_benchmarks,
+    // dkls23_benchmarks,
+    // gg18_benchmarks,
+    // ggn16_benchmarks,
+    // ln18_benchmarks,
+    // tx25_benchmarks,
+    // jtx25_benchmarks,
+    // wmy23_benchmarks,
+    // wmc24_benchmarks,
+    // llz25_benchmarks,
+    // trout_benchmarks,
     xal23_benchmarks
 );
 criterion_main!(benches);

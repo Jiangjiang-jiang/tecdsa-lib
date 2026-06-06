@@ -5,10 +5,10 @@
 //! This is a Sigma-protocol-style proof made non-interactive via
 //! the Fiat-Shamir heuristic (using SHA-256).
 
-use num_bigint::{BigUint, RandBigInt};
-use num_traits::One;
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 
 use crate::kgen::JlPublicKey;
 
@@ -19,11 +19,11 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlEncProof {
     /// Commitment: `a = y^v * h^w mod N`
-    pub a: BigUint,
+    pub a: Integer,
     /// Response for the message: `z_m = v + e * m`
-    pub z_m: BigUint,
+    pub z_m: Integer,
     /// Response for the randomness: `z_r = w + e * r`
-    pub z_r: BigUint,
+    pub z_r: Integer,
 }
 
 /// Security parameter for the Fiat-Shamir challenge (in bits).
@@ -42,33 +42,33 @@ impl ZkJlEncProof {
     #[allow(clippy::many_single_char_names)]
     pub fn prove(
         pk: &JlPublicKey,
-        ct: &BigUint,
-        msg: &BigUint,
-        rand: &BigUint,
+        ct: &Integer,
+        msg: &Integer,
+        rand: &Integer,
         msg_bits: u32,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         let stat_sec = 80u32;
 
         // Upper bounds for the blinding values
-        let v_bound = BigUint::one() << (msg_bits + stat_sec);
-        let w_bound = &pk.n << stat_sec;
+        let v_bound = Integer::from(1) << (msg_bits + stat_sec);
+        let w_bound = Integer::from(&pk.n << stat_sec);
 
         // Sample blinding values
-        let blind_v = rng.gen_biguint_below(&v_bound);
-        let blind_w = rng.gen_biguint_below(&w_bound);
+        let blind_v = random_below(&v_bound, rng);
+        let blind_w = random_below(&w_bound, rng);
 
         // Commitment: a = y^v * h^w mod N
-        let y_v = pk.y.modpow(&blind_v, &pk.n);
-        let h_w = pk.h.modpow(&blind_w, &pk.n);
-        let commit_a = (&y_v * &h_w) % &pk.n;
+        let y_v = pow_mod(&pk.y, &blind_v, &pk.n);
+        let h_w = pow_mod(&pk.h, &blind_w, &pk.n);
+        let commit_a = mul_mod(&y_v, &h_w, &pk.n);
 
         // Fiat-Shamir challenge
         let challenge = fiat_shamir_challenge(pk, ct, &commit_a);
 
         // Responses
-        let z_m = &blind_v + &challenge * msg;
-        let z_r = &blind_w + &challenge * rand;
+        let z_m = &blind_v + Integer::from(&challenge * msg);
+        let z_r = &blind_w + Integer::from(&challenge * rand);
 
         Self {
             a: commit_a,
@@ -79,17 +79,17 @@ impl ZkJlEncProof {
 
     /// Verifies the proof against public key `pk` and ciphertext `ct`.
     #[must_use]
-    pub fn verify(&self, pk: &JlPublicKey, ct: &BigUint) -> bool {
+    pub fn verify(&self, pk: &JlPublicKey, ct: &Integer) -> bool {
         // Recompute challenge
         let challenge = fiat_shamir_challenge(pk, ct, &self.a);
 
         // Check: y^{z_m} * h^{z_r} == a * c^e mod N
-        let lhs_1 = pk.y.modpow(&self.z_m, &pk.n);
-        let lhs_2 = pk.h.modpow(&self.z_r, &pk.n);
-        let lhs = (&lhs_1 * &lhs_2) % &pk.n;
+        let lhs_1 = pow_mod(&pk.y, &self.z_m, &pk.n);
+        let lhs_2 = pow_mod(&pk.h, &self.z_r, &pk.n);
+        let lhs = mul_mod(&lhs_1, &lhs_2, &pk.n);
 
-        let c_e = ct.modpow(&challenge, &pk.n);
-        let rhs = (&self.a * &c_e) % &pk.n;
+        let c_e = pow_mod(ct, &challenge, &pk.n);
+        let rhs = mul_mod(&self.a, &c_e, &pk.n);
 
         lhs == rhs
     }
@@ -99,21 +99,19 @@ impl ZkJlEncProof {
 ///
 /// Context-free challenge derivation. Prefer [`fiat_shamir_challenge_with_prefix`]
 /// for new code that has session/party context available.
-fn fiat_shamir_challenge(pk: &JlPublicKey, c: &BigUint, a: &BigUint) -> BigUint {
+fn fiat_shamir_challenge(pk: &JlPublicKey, c: &Integer, a: &Integer) -> Integer {
     let mut hasher = Sha256::new();
     hasher.update(b"ZkJlEnc");
-    hasher.update(pk.n.to_bytes_be());
-    hasher.update(pk.y.to_bytes_be());
-    hasher.update(pk.h.to_bytes_be());
+    hasher.update(pk.n.to_digits::<u8>(Order::Msf));
+    hasher.update(pk.y.to_digits::<u8>(Order::Msf));
+    hasher.update(pk.h.to_digits::<u8>(Order::Msf));
     hasher.update(pk.k.to_be_bytes());
-    hasher.update(c.to_bytes_be());
-    hasher.update(a.to_bytes_be());
+    hasher.update(c.to_digits::<u8>(Order::Msf));
+    hasher.update(a.to_digits::<u8>(Order::Msf));
     let hash = hasher.finalize();
 
     // Truncate to CHALLENGE_BITS
-    let full = BigUint::from_bytes_be(&hash);
-    let mask = (BigUint::one() << CHALLENGE_BITS) - BigUint::one();
-    full & mask
+    Integer::from_digits(&hash, Order::Msf).keep_bits(CHALLENGE_BITS)
 }
 
 /// Like [`fiat_shamir_challenge`], but prepends an opaque context prefix before
@@ -122,24 +120,22 @@ fn fiat_shamir_challenge(pk: &JlPublicKey, c: &BigUint, a: &BigUint) -> BigUint 
 fn fiat_shamir_challenge_with_prefix(
     prefix: &[u8],
     pk: &JlPublicKey,
-    c: &BigUint,
-    a: &BigUint,
-) -> BigUint {
+    c: &Integer,
+    a: &Integer,
+) -> Integer {
     let mut hasher = Sha256::new();
     hasher.update(prefix);
     hasher.update(b"ZkJlEnc");
-    hasher.update(pk.n.to_bytes_be());
-    hasher.update(pk.y.to_bytes_be());
-    hasher.update(pk.h.to_bytes_be());
+    hasher.update(pk.n.to_digits::<u8>(Order::Msf));
+    hasher.update(pk.y.to_digits::<u8>(Order::Msf));
+    hasher.update(pk.h.to_digits::<u8>(Order::Msf));
     hasher.update(pk.k.to_be_bytes());
-    hasher.update(c.to_bytes_be());
-    hasher.update(a.to_bytes_be());
+    hasher.update(c.to_digits::<u8>(Order::Msf));
+    hasher.update(a.to_digits::<u8>(Order::Msf));
     let hash = hasher.finalize();
 
     // Truncate to CHALLENGE_BITS
-    let full = BigUint::from_bytes_be(&hash);
-    let mask = (BigUint::one() << CHALLENGE_BITS) - BigUint::one();
-    full & mask
+    Integer::from_digits(&hash, Order::Msf).keep_bits(CHALLENGE_BITS)
 }
 
 impl ZkJlEncProof {
@@ -149,28 +145,28 @@ impl ZkJlEncProof {
     pub fn prove_with_prefix(
         prefix: &[u8],
         pk: &JlPublicKey,
-        ct: &BigUint,
-        msg: &BigUint,
-        rand: &BigUint,
+        ct: &Integer,
+        msg: &Integer,
+        rand: &Integer,
         msg_bits: u32,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         let stat_sec = 80u32;
 
-        let v_bound = BigUint::one() << (msg_bits + stat_sec);
-        let w_bound = &pk.n << stat_sec;
+        let v_bound = Integer::from(1) << (msg_bits + stat_sec);
+        let w_bound = Integer::from(&pk.n << stat_sec);
 
-        let blind_v = rng.gen_biguint_below(&v_bound);
-        let blind_w = rng.gen_biguint_below(&w_bound);
+        let blind_v = random_below(&v_bound, rng);
+        let blind_w = random_below(&w_bound, rng);
 
-        let y_v = pk.y.modpow(&blind_v, &pk.n);
-        let h_w = pk.h.modpow(&blind_w, &pk.n);
-        let commit_a = (&y_v * &h_w) % &pk.n;
+        let y_v = pow_mod(&pk.y, &blind_v, &pk.n);
+        let h_w = pow_mod(&pk.h, &blind_w, &pk.n);
+        let commit_a = mul_mod(&y_v, &h_w, &pk.n);
 
         let challenge = fiat_shamir_challenge_with_prefix(prefix, pk, ct, &commit_a);
 
-        let z_m = &blind_v + &challenge * msg;
-        let z_r = &blind_w + &challenge * rand;
+        let z_m = &blind_v + Integer::from(&challenge * msg);
+        let z_r = &blind_w + Integer::from(&challenge * rand);
 
         Self {
             a: commit_a,
@@ -182,15 +178,15 @@ impl ZkJlEncProof {
     /// Like [`verify`](Self::verify), but uses the same context prefix that was
     /// used during proving.
     #[must_use]
-    pub fn verify_with_prefix(&self, prefix: &[u8], pk: &JlPublicKey, ct: &BigUint) -> bool {
+    pub fn verify_with_prefix(&self, prefix: &[u8], pk: &JlPublicKey, ct: &Integer) -> bool {
         let challenge = fiat_shamir_challenge_with_prefix(prefix, pk, ct, &self.a);
 
-        let lhs_1 = pk.y.modpow(&self.z_m, &pk.n);
-        let lhs_2 = pk.h.modpow(&self.z_r, &pk.n);
-        let lhs = (&lhs_1 * &lhs_2) % &pk.n;
+        let lhs_1 = pow_mod(&pk.y, &self.z_m, &pk.n);
+        let lhs_2 = pow_mod(&pk.h, &self.z_r, &pk.n);
+        let lhs = mul_mod(&lhs_1, &lhs_2, &pk.n);
 
-        let c_e = ct.modpow(&challenge, &pk.n);
-        let rhs = (&self.a * &c_e) % &pk.n;
+        let c_e = pow_mod(ct, &challenge, &pk.n);
+        let rhs = mul_mod(&self.a, &c_e, &pk.n);
 
         lhs == rhs
     }
@@ -206,7 +202,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
-        let m = BigUint::from(42u32);
+        let m = Integer::from(42u32);
         let (ct, r) = encrypt(&pk, &m, &mut rng);
 
         let proof = ZkJlEncProof::prove(&pk, &ct.c, &m, &r, 32, &mut rng);
@@ -219,12 +215,12 @@ mod tests {
         let mut rng = rand::thread_rng();
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
-        let m = BigUint::from(42u32);
+        let m = Integer::from(42u32);
         let (ct, _r) = encrypt(&pk, &m, &mut rng);
 
         // Prove with wrong message
-        let wrong_m = BigUint::from(99u32);
-        let wrong_r = rng.gen_biguint_below(&pk.n);
+        let wrong_m = Integer::from(99u32);
+        let wrong_r = random_below(&pk.n, &mut rng);
         let proof = ZkJlEncProof::prove(&pk, &ct.c, &wrong_m, &wrong_r, 32, &mut rng);
         assert!(!proof.verify(&pk, &ct.c));
     }
@@ -234,7 +230,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
-        let m = BigUint::from(42u32);
+        let m = Integer::from(42u32);
         let (ct, r) = encrypt(&pk, &m, &mut rng);
 
         let prefix = b"session-1::party-2::round-3";
@@ -248,7 +244,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
-        let m = BigUint::from(42u32);
+        let m = Integer::from(42u32);
         let (ct, r) = encrypt(&pk, &m, &mut rng);
 
         let proof = ZkJlEncProof::prove_with_prefix(b"prefix-A", &pk, &ct.c, &m, &r, 32, &mut rng);
@@ -261,13 +257,13 @@ mod tests {
         let mut rng = rand::thread_rng();
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
-        let m = BigUint::from(42u32);
+        let m = Integer::from(42u32);
         let (ct, r) = encrypt(&pk, &m, &mut rng);
 
         let mut proof = ZkJlEncProof::prove(&pk, &ct.c, &m, &r, 32, &mut rng);
 
         // Mutate the z_m response field by adding 1.
-        proof.z_m += BigUint::from(1u32);
+        proof.z_m += 1;
 
         assert!(
             !proof.verify(&pk, &ct.c),

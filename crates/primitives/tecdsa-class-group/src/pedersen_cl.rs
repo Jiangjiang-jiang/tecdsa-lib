@@ -22,10 +22,7 @@
 //! - `h` is the hidden-order generator accessed via `ClSetup::power_of_h_bytes`
 //! - `g_q` = `f` is the order-`q` generator accessed via `ClSetup::power_of_f_bytes`
 
-use num_bigint::BigUint;
-use num_traits::Zero;
-
-use crate::cl::{ClResult, ClSetup, Qfi};
+use crate::cl::{ClResult, ClSetup, Mpz, Qfi};
 
 /// Compute a Pedersen commitment in the class group: `PC = h^a * g_q^{b * Delta}`.
 ///
@@ -43,13 +40,13 @@ pub fn pedersen_commit_cl(
     setup: &ClSetup,
     a_bytes: &[u8],
     b_bytes: &[u8],
-    delta: &BigUint,
+    delta: &Mpz,
 ) -> ClResult<Qfi> {
     // Compute h^a
     let h_a = setup.power_of_h_bytes(a_bytes)?;
 
     // Compute b * Delta
-    let b = BigUint::from_bytes_be(b_bytes);
+    let b = Mpz::from_bytes_be(b_bytes);
     let b_delta = &b * delta;
 
     // Compute g_q^{b * Delta} = f^{b * Delta}
@@ -85,7 +82,7 @@ pub fn pedersen_verify_cl(
     pc: &Qfi,
     a_bytes: &[u8],
     b_bytes: &[u8],
-    delta: &BigUint,
+    delta: &Mpz,
 ) -> ClResult<bool> {
     let recomputed = pedersen_commit_cl(setup, a_bytes, b_bytes, delta)?;
     Ok(*pc == recomputed)
@@ -94,7 +91,6 @@ pub fn pedersen_verify_cl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_bigint::BigUint;
 
     fn test_setup() -> ClSetup {
         ClSetup::new_secp256k1("42").unwrap()
@@ -107,7 +103,7 @@ mod tests {
         let a_bytes = 12345u64.to_be_bytes();
         let b_bytes = 67890u64.to_be_bytes();
         // delta = 6! = 720
-        let delta = BigUint::from(720u64);
+        let delta = Mpz::from(720u64);
 
         let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
         let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &delta).unwrap();
@@ -120,7 +116,7 @@ mod tests {
 
         let a_bytes = 12345u64.to_be_bytes();
         let b_bytes = 67890u64.to_be_bytes();
-        let delta = BigUint::from(720u64);
+        let delta = Mpz::from(720u64);
 
         let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
 
@@ -135,7 +131,7 @@ mod tests {
         assert!(!valid, "commitment should NOT verify with wrong b");
 
         // Wrong delta
-        let wrong_delta = BigUint::from(100u64);
+        let wrong_delta = Mpz::from(100u64);
         let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &wrong_delta).unwrap();
         assert!(!valid, "commitment should NOT verify with wrong delta");
     }
@@ -146,7 +142,7 @@ mod tests {
 
         let a_bytes = 42u64.to_be_bytes();
         let b_bytes = 0u64.to_be_bytes();
-        let delta = BigUint::from(720u64);
+        let delta = Mpz::from(720u64);
 
         let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
         let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &delta).unwrap();
@@ -159,7 +155,7 @@ mod tests {
 
         let a_bytes = 42u64.to_be_bytes();
         let b_bytes = 67890u64.to_be_bytes();
-        let delta = BigUint::ZERO;
+        let delta = Mpz::from(0);
 
         let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
         let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &delta).unwrap();

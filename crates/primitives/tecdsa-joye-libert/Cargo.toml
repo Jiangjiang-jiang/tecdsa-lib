@@ -10,9 +10,6 @@ description = "Joye-Libert encryption, ZK proofs, and MtA for tecdsa"
 [dependencies]
 tecdsa-core = { workspace = true, features = ["std"] }
 tecdsa-bigint = { workspace = true }
-num-bigint = { workspace = true }
-num-traits = { workspace = true }
-num-integer = { workspace = true }
 rug = { workspace = true }
 rand_core = { workspace = true }
 rand = { workspace = true }
@@ -24,8 +21,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
-num-bigint = { workspace = true }
-num-traits = { workspace = true }
 
 [lints]
 workspace = true

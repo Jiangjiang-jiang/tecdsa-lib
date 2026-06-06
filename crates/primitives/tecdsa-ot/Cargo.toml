@@ -19,8 +19,6 @@ zeroize = { workspace = true }
 serde = { workspace = true }
 subtle = { workspace = true }
 tecdsa-protocol = { workspace = true }
-num-bigint = { workspace = true, features = ["rand"] }
-num-traits = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

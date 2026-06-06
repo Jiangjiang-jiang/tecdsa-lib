@@ -135,7 +135,7 @@ impl RComKwlgProof {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::ClSetup;
@@ -153,8 +153,8 @@ mod tests {
             let (sk, _) = setup.keygen().expect("keygen");
             setup.sk_to_bytes(&sk).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
-        let m_bytes = BigUint::from(42u32).to_bytes_be();
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
+        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let c = make_commitment(&setup, "42", &r_dec).expect("commit");
 
         let proof = RComKwlgProof::prove(&mut setup, &c, &m_bytes, &r).expect("prove");
@@ -169,10 +169,10 @@ mod tests {
             let (sk, _) = setup.keygen().expect("keygen");
             setup.sk_to_bytes(&sk).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
         let c = make_commitment(&setup, "42", &r_dec).expect("commit");
 
-        let wrong_m_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_m_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RComKwlgProof::prove(&mut setup, &c, &wrong_m_bytes, &r).expect("prove");
         assert!(!proof.verify(&setup, &c).expect("verify"));
     }
@@ -187,8 +187,8 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("keygen2");
             setup.sk_to_bytes(&sk2).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
-        let m_bytes = BigUint::from(42u32).to_bytes_be();
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
+        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
 
         // Com(r, m) = h^r * pk^m
         let h_r = setup.power_of_h(&r_dec).expect("h_r");
@@ -211,14 +211,14 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("keygen2");
             setup.sk_to_bytes(&sk2).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
 
         let h_r = setup.power_of_h(&r_dec).expect("h_r");
         let pk_m = setup.exp(pk_elt, "42").expect("pk_m");
         let c = setup.compose(&h_r, &pk_m).expect("compose");
 
         // Prove with wrong message
-        let wrong_m_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_m_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RComKwlgProof::prove_with_base(&mut setup, &c, pk_elt, &wrong_m_bytes, &r)
             .expect("prove_with_base");
         assert!(!proof.verify_with_base(&setup, &c, pk_elt).expect("verify"));

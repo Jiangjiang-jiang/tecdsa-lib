@@ -171,7 +171,7 @@ impl RDlClProof {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::ClSetup;
@@ -192,7 +192,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("14001").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let m_bytes = BigUint::from(42u32).to_bytes_be();
+        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let r_m = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -201,7 +201,7 @@ mod tests {
             .encrypt_with_r_bytes(&pk, &m_bytes, &r_m)
             .expect("enc");
 
-        let x_bytes = BigUint::from(17u32).to_bytes_be();
+        let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
 
         let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
 
@@ -222,7 +222,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("14002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let m_bytes = BigUint::from(42u32).to_bytes_be();
+        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let r_m = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -231,13 +231,13 @@ mod tests {
             .encrypt_with_r_bytes(&pk, &m_bytes, &r_m)
             .expect("enc");
 
-        let x_bytes = BigUint::from(17u32).to_bytes_be();
+        let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
 
         let x_scalar = test_scalar(17);
         let x_point = ProjectivePoint::GENERATOR * x_scalar;
 
-        let wrong_x_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &wrong_x_bytes)
             .expect("prove");
 
@@ -252,7 +252,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("14003").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let m_bytes = BigUint::from(42u32).to_bytes_be();
+        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let r_m = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -261,7 +261,7 @@ mod tests {
             .encrypt_with_r_bytes(&pk, &m_bytes, &r_m)
             .expect("enc");
 
-        let x_bytes = BigUint::from(17u32).to_bytes_be();
+        let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
 
         let x_scalar = test_scalar(17);
@@ -271,7 +271,7 @@ mod tests {
             RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &x_bytes).expect("prove");
 
         let wrong_ct_out =
-            scalar_mul_components(&setup, &ct_in, &BigUint::from(3u32).to_bytes_be());
+            scalar_mul_components(&setup, &ct_in, &Integer::from(3u32).to_digits::<u8>(Order::Msf));
 
         assert!(!proof
             .verify(&setup, &x_point, &ct_in, &wrong_ct_out)

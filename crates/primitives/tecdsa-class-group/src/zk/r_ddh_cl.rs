@@ -75,7 +75,7 @@ impl RDdhClProof {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::ClSetup;
@@ -85,7 +85,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("13001").expect("setup");
 
         let x = "42";
-        let x_bytes = BigUint::from(42u32).to_bytes_be();
+        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let g = setup.cl().h().clone();
         let a = setup.exp(&g, x).expect("g^x");
 
@@ -117,7 +117,7 @@ mod tests {
         let b = setup.exp(&g, &r).expect("h^r");
         let c = setup.exp(&b, x).expect("B^x");
 
-        let wrong_x_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RDdhClProof::prove(&mut setup, &g, &a, &b, &c, &wrong_x_bytes).expect("prove");
         assert!(!proof.verify(&setup, &g, &a, &b, &c).expect("verify"));
     }

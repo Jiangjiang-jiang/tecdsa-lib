@@ -33,6 +33,7 @@
 
 use std::collections::BTreeMap;
 
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
     cl::{ClPublicKey, ClSetup, Qfi},
@@ -304,10 +305,9 @@ impl TroutSignMachine {
 
         // SD2 input: alpha_z_i = r * l_i * delta_i, beta_i, b_i = u_i
         let alpha_z = {
-            use num_bigint::BigUint;
-            let r_val = BigUint::from_bytes_be(&r_bytes);
-            let lid_val = BigUint::from_bytes_be(&my_presign.l_i_delta_i);
-            (&r_val * &lid_val).to_bytes_be()
+            let r_val = Integer::from_digits(&r_bytes, Order::Msf);
+            let lid_val = Integer::from_digits(&my_presign.l_i_delta_i, Order::Msf);
+            Integer::from(&r_val * &lid_val).to_digits::<u8>(Order::Msf)
         };
         let sd2_input = ScaledDecryptPartyInput {
             alpha_i: alpha_z,

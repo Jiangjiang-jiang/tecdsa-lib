@@ -168,8 +168,7 @@ impl RAffComProof {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
-    use num_traits::Num;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::{ClSetup, SECP256K1_ORDER};
@@ -179,14 +178,14 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("6001").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x_bytes = BigUint::from(5u32).to_bytes_be();
-        let y_bytes = BigUint::from(10u32).to_bytes_be();
+        let x_bytes = Integer::from(5u32).to_digits::<u8>(Order::Msf);
+        let y_bytes = Integer::from(10u32).to_digits::<u8>(Order::Msf);
 
         let r_base = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let r_base_dec = BigUint::from_bytes_be(&r_base).to_str_radix(10);
+        let r_base_dec = Integer::from_digits(&r_base, Order::Msf).to_string_radix(10);
         let ct_in = setup
             .encrypt_with_r(&pk, "100", &r_base_dec)
             .expect("enc_in");
@@ -196,17 +195,17 @@ mod tests {
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
 
-        let q = BigUint::from_str_radix(SECP256K1_ORDER, 10).unwrap();
-        let x_val = BigUint::from(5u32);
-        let m_in = BigUint::from(100u32);
-        let y_val = BigUint::from(10u32);
-        let m_out = (&x_val * &m_in + &y_val) % &q;
-        let m_out_dec = m_out.to_str_radix(10);
+        let q = Integer::from_str_radix(SECP256K1_ORDER, 10).unwrap();
+        let x_val = Integer::from(5u32);
+        let m_in = Integer::from(100u32);
+        let y_val = Integer::from(10u32);
+        let m_out = (Integer::from(&x_val * &m_in) + &y_val) % &q;
+        let m_out_dec = m_out.to_string_radix(10);
 
-        let r_base_val = BigUint::from_bytes_be(&r_base);
-        let r1_val = BigUint::from_bytes_be(&r1);
-        let r_out_val = &x_val * &r_base_val + &r1_val;
-        let r_out_dec = r_out_val.to_str_radix(10);
+        let r_base_val = Integer::from_digits(&r_base, Order::Msf);
+        let r1_val = Integer::from_digits(&r1, Order::Msf);
+        let r_out_val = Integer::from(&x_val * &r_base_val) + &r1_val;
+        let r_out_dec = r_out_val.to_string_radix(10);
 
         let ct_out2 = setup
             .encrypt_with_r(&pk, &m_out_dec, &r_out_dec)
@@ -217,7 +216,7 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let r2_dec = BigUint::from_bytes_be(&r2).to_str_radix(10);
+        let r2_dec = Integer::from_digits(&r2, Order::Msf).to_string_radix(10);
         let h_r2 = setup.power_of_h(&r2_dec).expect("h_r2");
         let f_x = setup.power_of_f("5").expect("f_x");
         let commitment = setup.compose(&h_r2, &f_x).expect("com");
@@ -245,7 +244,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("6002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let y_bytes = BigUint::from(10u32).to_bytes_be();
+        let y_bytes = Integer::from(10u32).to_digits::<u8>(Order::Msf);
         let r1 = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -254,18 +253,18 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let r_base_dec = BigUint::from_bytes_be(&r_base).to_str_radix(10);
+        let r_base_dec = Integer::from_digits(&r_base, Order::Msf).to_string_radix(10);
 
-        let q = BigUint::from_str_radix(SECP256K1_ORDER, 10).unwrap();
-        let x_val = BigUint::from(5u32);
-        let m_in = BigUint::from(100u32);
-        let y_val = BigUint::from(10u32);
-        let m_out = (&x_val * &m_in + &y_val) % &q;
-        let m_out_dec = m_out.to_str_radix(10);
+        let q = Integer::from_str_radix(SECP256K1_ORDER, 10).unwrap();
+        let x_val = Integer::from(5u32);
+        let m_in = Integer::from(100u32);
+        let y_val = Integer::from(10u32);
+        let m_out = (Integer::from(&x_val * &m_in) + &y_val) % &q;
+        let m_out_dec = m_out.to_string_radix(10);
 
-        let r_base_val = BigUint::from_bytes_be(&r_base);
-        let r1_val = BigUint::from_bytes_be(&r1);
-        let r_out = (&x_val * &r_base_val + &r1_val).to_str_radix(10);
+        let r_base_val = Integer::from_digits(&r_base, Order::Msf);
+        let r1_val = Integer::from_digits(&r1, Order::Msf);
+        let r_out = (Integer::from(&x_val * &r_base_val) + &r1_val).to_string_radix(10);
 
         let ct_in = setup
             .encrypt_with_r(&pk, "100", &r_base_dec)
@@ -278,13 +277,13 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let r2_dec = BigUint::from_bytes_be(&r2).to_str_radix(10);
+        let r2_dec = Integer::from_digits(&r2, Order::Msf).to_string_radix(10);
         let h_r2 = setup.power_of_h(&r2_dec).expect("h_r2");
         let f_x = setup.power_of_f("5").expect("f_x");
         let commitment = setup.compose(&h_r2, &f_x).expect("com");
 
         // Prove with wrong x.
-        let wrong_x_bytes = BigUint::from(7u32).to_bytes_be();
+        let wrong_x_bytes = Integer::from(7u32).to_digits::<u8>(Order::Msf);
         let proof = RAffComProof::prove(
             &mut setup,
             &pk,

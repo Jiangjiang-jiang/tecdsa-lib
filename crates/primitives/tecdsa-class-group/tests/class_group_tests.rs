@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Integration tests for `tecdsa-class-group`.
 
-use num_bigint::BigUint;
-use num_traits::Num;
+use rug::{integer::Order, Integer};
+use tecdsa_bigint::mul_mod;
 use tecdsa_class_group::{cl::ClSetup, nim::Nim};
 
 /// The secp256k1 curve order.
-fn q() -> BigUint {
-    BigUint::from_str_radix(
+fn q() -> Integer {
+    Integer::from_str_radix(
         "115792089237316195423570985008687907852837564279074904382605163141518161494337",
         10,
     )
@@ -20,34 +20,37 @@ fn cl_enc_dec_roundtrip() {
     let (sk, pk) = setup.keygen().expect("keygen failed");
 
     // Encrypt and decrypt a small value.
-    let plaintext = BigUint::from(42u32);
+    let plaintext = Integer::from(42u32);
     let ct = setup
-        .encrypt_bytes(&pk, &plaintext.to_bytes_be())
+        .encrypt_bytes(&pk, &plaintext.to_digits::<u8>(Order::Msf))
         .expect("encrypt failed");
-    let decrypted = BigUint::from_bytes_be(&setup.decrypt_bytes(&sk, &ct).expect("decrypt failed"));
+    let decrypted =
+        Integer::from_digits(&setup.decrypt_bytes(&sk, &ct).expect("decrypt failed"), Order::Msf);
     assert_eq!(decrypted, plaintext, "roundtrip failed for plaintext=42");
 
     // Encrypt and decrypt zero.
-    let zero = BigUint::from(0u32);
+    let zero = Integer::from(0u32);
     let ct_zero = setup
-        .encrypt_bytes(&pk, &zero.to_bytes_be())
+        .encrypt_bytes(&pk, &zero.to_digits::<u8>(Order::Msf))
         .expect("encrypt zero failed");
-    let dec_zero = BigUint::from_bytes_be(
+    let dec_zero = Integer::from_digits(
         &setup
             .decrypt_bytes(&sk, &ct_zero)
             .expect("decrypt zero failed"),
+        Order::Msf,
     );
     assert_eq!(dec_zero, zero, "roundtrip failed for plaintext=0");
 
     // Encrypt and decrypt a larger value.
-    let large = BigUint::from(123_456_789u64);
+    let large = Integer::from(123_456_789u64);
     let ct_large = setup
-        .encrypt_bytes(&pk, &large.to_bytes_be())
+        .encrypt_bytes(&pk, &large.to_digits::<u8>(Order::Msf))
         .expect("encrypt large failed");
-    let dec_large = BigUint::from_bytes_be(
+    let dec_large = Integer::from_digits(
         &setup
             .decrypt_bytes(&sk, &ct_large)
             .expect("decrypt large failed"),
+        Order::Msf,
     );
     assert_eq!(dec_large, large, "roundtrip failed for large plaintext");
 }
@@ -57,20 +60,21 @@ fn cl_homomorphic_add() {
     let mut setup = ClSetup::new_secp256k1("200").expect("setup failed");
     let (sk, pk) = setup.keygen().expect("keygen failed");
 
-    let a = BigUint::from(100u32);
-    let b = BigUint::from(200u32);
+    let a = Integer::from(100u32);
+    let b = Integer::from(200u32);
 
     let ct_a = setup
-        .encrypt_bytes(&pk, &a.to_bytes_be())
+        .encrypt_bytes(&pk, &a.to_digits::<u8>(Order::Msf))
         .expect("encrypt a");
     let ct_b = setup
-        .encrypt_bytes(&pk, &b.to_bytes_be())
+        .encrypt_bytes(&pk, &b.to_digits::<u8>(Order::Msf))
         .expect("encrypt b");
 
     let ct_sum = setup.add_ciphertexts(&pk, &ct_a, &ct_b).expect("hadd");
-    let sum = BigUint::from_bytes_be(&setup.decrypt_bytes(&sk, &ct_sum).expect("decrypt sum"));
+    let sum =
+        Integer::from_digits(&setup.decrypt_bytes(&sk, &ct_sum).expect("decrypt sum"), Order::Msf);
 
-    let expected = (&a + &b) % q();
+    let expected = Integer::from(&a + &b) % q();
     assert_eq!(sum, expected, "homomorphic add failed: {sum} != {expected}");
 }
 
@@ -79,22 +83,23 @@ fn cl_homomorphic_scalar_mul() {
     let mut setup = ClSetup::new_secp256k1("300").expect("setup failed");
     let (sk, pk) = setup.keygen().expect("keygen failed");
 
-    let m = BigUint::from(7u32);
-    let s = BigUint::from(6u32);
+    let m = Integer::from(7u32);
+    let s = Integer::from(6u32);
 
     let ct_m = setup
-        .encrypt_bytes(&pk, &m.to_bytes_be())
+        .encrypt_bytes(&pk, &m.to_digits::<u8>(Order::Msf))
         .expect("encrypt m");
     let ct_scaled = setup
-        .scal_ciphertext_bytes(&pk, &ct_m, &s.to_bytes_be())
+        .scal_ciphertext_bytes(&pk, &ct_m, &s.to_digits::<u8>(Order::Msf))
         .expect("hscmul");
-    let result = BigUint::from_bytes_be(
+    let result = Integer::from_digits(
         &setup
             .decrypt_bytes(&sk, &ct_scaled)
             .expect("decrypt scaled"),
+        Order::Msf,
     );
 
-    let expected = (&m * &s) % q();
+    let expected = mul_mod(&m, &s, &q());
     assert_eq!(
         result, expected,
         "homomorphic scalar mul failed: {result} != {expected}"
@@ -108,10 +113,10 @@ fn nim_correctness() {
     // Single CRS key pair shared by both parties.
     let (_sk, pk) = setup.keygen().expect("keygen");
 
-    let x_val = BigUint::from(1234u32);
-    let y_val = BigUint::from(5678u32);
-    let x_bytes = x_val.to_bytes_be();
-    let y_bytes = y_val.to_bytes_be();
+    let x_val = Integer::from(1234u32);
+    let y_val = Integer::from(5678u32);
+    let x_bytes = x_val.to_digits::<u8>(Order::Msf);
+    let y_bytes = y_val.to_digits::<u8>(Order::Msf);
 
     let mut nim = Nim::new(&mut setup);
 
@@ -133,10 +138,10 @@ fn nim_correctness() {
 
     // Verify correctness: z_A + z_B = x * y mod q
     let q = q();
-    let z_a = BigUint::from_bytes_be(&share_a);
-    let z_b = BigUint::from_bytes_be(&share_b);
-    let xy = (&x_val * &y_val) % &q;
-    let sum = (&z_a + &z_b) % &q;
+    let z_a = Integer::from_digits(&share_a, Order::Msf);
+    let z_b = Integer::from_digits(&share_b, Order::Msf);
+    let xy = mul_mod(&x_val, &y_val, &q);
+    let sum = Integer::from(&z_a + &z_b) % &q;
 
     assert_eq!(
         sum, xy,

@@ -24,7 +24,7 @@
 //! This module is distinct from the Cascudo-David PVSS in `pvss.rs`, which
 //! uses per-share independent randomness and individual `R_Enc` proofs.
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 
 use crate::{
     cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
@@ -62,10 +62,10 @@ pub struct PvssShareWithCoeffsOutput {
 /// Evaluates a polynomial at a point modulo `q` using Horner's method.
 ///
 /// `coeffs[i]` is the coefficient of `x^i`.
-fn eval_poly_mod_q(coeffs: &[BigUint], x: &BigUint, q: &BigUint) -> BigUint {
-    let mut result = BigUint::ZERO;
+fn eval_poly_mod_q(coeffs: &[Integer], x: &Integer, q: &Integer) -> Integer {
+    let mut result = Integer::new();
     for coeff in coeffs.iter().rev() {
-        result = (&result * x + coeff) % q;
+        result = (Integer::from(&result * x) + coeff) % q;
     }
     result
 }
@@ -91,22 +91,22 @@ pub fn pvss_share_distribute(
     my_index_in_list: usize,
 ) -> ClResult<PvssShareOutput> {
     let n = party_ids.len();
-    let q = BigUint::from_bytes_be(&setup.q_bytes()?);
+    let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
     let t = reconstruct_threshold as usize;
 
     // Generate random polynomial coefficients in [0, q).
     let mut coeffs = Vec::with_capacity(t);
     for _ in 0..t {
         let r = sample_random_mod_q(setup)?;
-        coeffs.push(BigUint::from_bytes_be(&r));
+        coeffs.push(Integer::from_digits(&r, Order::Msf));
     }
 
     // Evaluate polynomial at each party's id.
     let shares: Vec<Vec<u8>> = party_ids
         .iter()
         .map(|&id| {
-            let x = BigUint::from(id);
-            eval_poly_mod_q(&coeffs, &x, &q).to_bytes_be()
+            let x = Integer::from(id);
+            eval_poly_mod_q(&coeffs, &x, &q).to_digits::<u8>(Order::Msf)
         })
         .collect();
 
@@ -163,23 +163,23 @@ pub fn pvss_share_distribute_with_secret(
     secret_bytes: &[u8],
 ) -> ClResult<PvssShareWithCoeffsOutput> {
     let n = party_ids.len();
-    let q = BigUint::from_bytes_be(&setup.q_bytes()?);
+    let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
     let t = reconstruct_threshold as usize;
 
     // Build polynomial: a_0 = secret, a_1..a_{t-1} random.
     let mut coeffs = Vec::with_capacity(t);
-    coeffs.push(BigUint::from_bytes_be(secret_bytes) % &q);
+    coeffs.push(Integer::from_digits(secret_bytes, Order::Msf) % &q);
     for _ in 1..t {
         let r = sample_random_mod_q(setup)?;
-        coeffs.push(BigUint::from_bytes_be(&r));
+        coeffs.push(Integer::from_digits(&r, Order::Msf));
     }
 
     // Evaluate polynomial at each party's id.
     let shares: Vec<Vec<u8>> = party_ids
         .iter()
         .map(|&id| {
-            let x = BigUint::from(id);
-            eval_poly_mod_q(&coeffs, &x, &q).to_bytes_be()
+            let x = Integer::from(id);
+            eval_poly_mod_q(&coeffs, &x, &q).to_digits::<u8>(Order::Msf)
         })
         .collect();
 
@@ -213,7 +213,8 @@ pub fn pvss_share_distribute_with_secret(
         &rho_bytes,
     )?;
 
-    let polynomial_coeffs_bytes: Vec<Vec<u8>> = coeffs.iter().map(|c| c.to_bytes_be()).collect();
+    let polynomial_coeffs_bytes: Vec<Vec<u8>> =
+        coeffs.iter().map(|c| c.to_digits::<u8>(Order::Msf)).collect();
 
     Ok(PvssShareWithCoeffsOutput {
         c1,

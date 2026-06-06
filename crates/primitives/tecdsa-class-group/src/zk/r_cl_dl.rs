@@ -218,7 +218,7 @@ impl RClDlProof {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::ClSetup;
@@ -229,12 +229,12 @@ mod tests {
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         let x = "77";
-        let x_bytes = BigUint::from(77u32).to_bytes_be();
+        let x_bytes = Integer::from(77u32).to_digits::<u8>(Order::Msf);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
             setup.sk_to_bytes(&sk2).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
         let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
         let y = setup.power_of_f(x).expect("f^x");
 
@@ -253,12 +253,12 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("keygen2");
             setup.sk_to_bytes(&sk2).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
         let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
         let y = setup.power_of_f(x).expect("f^x");
 
         // Prove with wrong x.
-        let wrong_x_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &wrong_x_bytes, &r).expect("prove");
         assert!(!proof.verify(&setup, &pk, &ct, &y).expect("verify"));
     }
@@ -269,12 +269,12 @@ mod tests {
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         let x = "77";
-        let x_bytes = BigUint::from(77u32).to_bytes_be();
+        let x_bytes = Integer::from(77u32).to_digits::<u8>(Order::Msf);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
             setup.sk_to_bytes(&sk2).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
         let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
         let y = setup.power_of_f(x).expect("f^x");
 
@@ -293,12 +293,12 @@ mod tests {
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         let x = "77";
-        let x_bytes = BigUint::from(77u32).to_bytes_be();
+        let x_bytes = Integer::from(77u32).to_digits::<u8>(Order::Msf);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
             setup.sk_to_bytes(&sk2).expect("sk_bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
         let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
         let y = setup.power_of_f(x).expect("f^x");
 

@@ -220,7 +220,7 @@ fn point_from_compressed(bytes: &[u8]) -> ClResult<ProjectivePoint> {
 #[cfg(test)]
 mod tests {
     use elliptic_curve::group::GroupEncoding;
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::ClSetup;
@@ -246,7 +246,7 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
         let ct = setup.encrypt_with_r(&pk, "77", &r_dec).expect("enc");
 
         let proof = REncPcProof::prove(
@@ -288,7 +288,7 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let r_dec = BigUint::from_bytes_be(&r).to_str_radix(10);
+        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
         let ct = setup.encrypt_with_r(&pk, "77", &r_dec).expect("enc");
 
         // Try to prove with wrong chi -- prover cheating.

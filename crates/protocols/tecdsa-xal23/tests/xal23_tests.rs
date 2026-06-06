@@ -37,8 +37,9 @@ fn hash_message(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
 /// Test the JL MtA correctness in isolation with secp256k1 scalars.
 #[test]
 fn xal23_mta_correctness_secp256k1() {
+    use rug::Integer;
     use tecdsa_curve::{
-        conv::{curve_order, scalar_to_biguint},
+        conv::{curve_order, scalar_to_integer},
         TecdsaCurve,
     };
     use tecdsa_joye_libert::{kgen::generate_keypair_with_params, mta::*};
@@ -52,10 +53,10 @@ fn xal23_mta_correctness_secp256k1() {
     let a_scalar = C::random_scalar(&mut rng);
     let b_scalar = C::random_scalar(&mut rng);
     let ab_scalar = a_scalar * b_scalar;
-    let ab_uint = scalar_to_biguint::<C>(&ab_scalar);
+    let ab_uint = scalar_to_integer::<C>(&ab_scalar);
 
-    let a = scalar_to_biguint::<C>(&a_scalar);
-    let b = scalar_to_biguint::<C>(&b_scalar);
+    let a = scalar_to_integer::<C>(&a_scalar);
+    let b = scalar_to_integer::<C>(&b_scalar);
 
     let sender = JlMtaSender::new(a);
     let receiver = JlMtaReceiver::new(b);
@@ -65,7 +66,7 @@ fn xal23_mta_correctness_secp256k1() {
         mta_sender_step_with_sec(&sender, &pk, &recv_msg, &q, TEST_S, TEST_T, &mut rng);
     let receiver_out = mta_receiver_step2(&sk, &pk, &send_msg, &q);
 
-    let sum = (&sender_out.alpha + &receiver_out.beta) % &q;
+    let sum = Integer::from(&sender_out.alpha + &receiver_out.beta) % &q;
     assert_eq!(sum, ab_uint, "MtA failed with secp256k1 scalars");
 }
 

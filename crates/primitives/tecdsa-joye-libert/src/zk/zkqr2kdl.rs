@@ -14,10 +14,10 @@
 //!   z_i = beta_i + e_i * alpha
 //! Verify: h^{z_i} == a_i * y^{2^k * e_i} mod N
 
-use num_bigint::{BigUint, RandBigInt};
-use num_traits::One;
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -29,17 +29,17 @@ const STAT_SEC: u32 = 80;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkQr2kDlProof {
     /// Public: h (the QR_{2^k} element, h = x^{2^k})
-    pub h: BigUint,
+    pub h: Integer,
     /// Public: N (RSA modulus)
-    pub n: BigUint,
+    pub n: Integer,
     /// Public: y = x^alpha mod N
-    pub y: BigUint,
+    pub y: Integer,
     /// Public: parameter k
     pub k: u32,
     /// Commitment values: a_i = h^{beta_i} mod N
-    a_vec: Vec<BigUint>,
+    a_vec: Vec<Integer>,
     /// Response values: z_i = beta_i + e_i * alpha
-    z_vec: Vec<BigUint>,
+    z_vec: Vec<Integer>,
 }
 
 impl ZkQr2kDlProof {
@@ -53,22 +53,22 @@ impl ZkQr2kDlProof {
     /// * `h` - the base (a QR_{2^k} element, h = x^{2^k})
     /// * `y` - the public value (y = x^alpha mod N)
     pub fn prove(
-        n: &BigUint,
+        n: &Integer,
         k: u32,
-        alpha: &BigUint,
-        h: &BigUint,
-        y: &BigUint,
+        alpha: &Integer,
+        h: &Integer,
+        y: &Integer,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         // beta_i sampled from [0, 2^s * N)
-        let beta_bound = n << STAT_SEC;
+        let beta_bound = Integer::from(n << STAT_SEC);
 
         let mut a_vec = Vec::with_capacity(REPEAT);
         let mut beta_vec = Vec::with_capacity(REPEAT);
 
         for _ in 0..REPEAT {
-            let beta = rng.gen_biguint_below(&beta_bound);
-            let a = h.modpow(&beta, n);
+            let beta = random_below(&beta_bound, rng);
+            let a = pow_mod(h, &beta, n);
             a_vec.push(a);
             beta_vec.push(beta);
         }
@@ -79,8 +79,11 @@ impl ZkQr2kDlProof {
         // Compute responses: z_i = beta_i + e_i * alpha
         let mut z_vec = Vec::with_capacity(REPEAT);
         for i in 0..REPEAT {
-            let e_bit = (&e >> i) & BigUint::one();
-            let z = &beta_vec[i] + &e_bit * alpha;
+            let z = if e.get_bit(i as u32) {
+                Integer::from(&beta_vec[i] + alpha)
+            } else {
+                beta_vec[i].clone()
+            };
             z_vec.push(z);
         }
 
@@ -99,21 +102,22 @@ impl ZkQr2kDlProof {
     /// Checks: for each i, h^{z_i} == a_i * y^{2^k * e_i} mod N.
     #[must_use]
     pub fn verify(&self) -> bool {
-        let two_pow_k = BigUint::one() << self.k;
+        let two_pow_k = Integer::from(1) << self.k;
 
         // Recompute challenge
         let e = compute_challenge(&self.a_vec);
 
         for i in 0..REPEAT {
-            let e_bit = (&e >> i) & BigUint::one();
-
             // LHS: h^{z_i} mod N
-            let lhs = self.h.modpow(&self.z_vec[i], &self.n);
+            let lhs = pow_mod(&self.h, &self.z_vec[i], &self.n);
 
             // RHS: a_i * y^{2^k * e_i} mod N
-            let two_k_e = &two_pow_k * &e_bit;
-            let y_exp = self.y.modpow(&two_k_e, &self.n);
-            let rhs = (&self.a_vec[i] * &y_exp) % &self.n;
+            let rhs = if e.get_bit(i as u32) {
+                let y_exp = pow_mod(&self.y, &two_pow_k, &self.n);
+                mul_mod(&self.a_vec[i], &y_exp, &self.n)
+            } else {
+                self.a_vec[i].clone()
+            };
 
             if lhs != rhs {
                 return false;
@@ -125,12 +129,12 @@ impl ZkQr2kDlProof {
 }
 
 /// Computes the Fiat-Shamir challenge from the commitment vector.
-fn compute_challenge(a_vec: &[BigUint]) -> BigUint {
+fn compute_challenge(a_vec: &[Integer]) -> Integer {
     let mut fs_vec = Vec::with_capacity(a_vec.len());
     for a in a_vec {
         let mut h = Sha256::new();
         h.update(b"ZkQr2kDl-a");
-        h.update(a.to_bytes_be());
+        h.update(a.to_digits::<u8>(Order::Msf));
         fs_vec.push(h.finalize());
     }
 
@@ -140,7 +144,7 @@ fn compute_challenge(a_vec: &[BigUint]) -> BigUint {
         hasher.update(fs);
     }
     let hash = hasher.finalize();
-    BigUint::from_bytes_be(&hash)
+    Integer::from_digits(&hash, Order::Msf)
 }
 
 #[cfg(test)]

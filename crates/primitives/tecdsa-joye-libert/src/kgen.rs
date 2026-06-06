@@ -8,27 +8,24 @@
 //! The public key contains a generator derived from a quadratic non-residue
 //! modulo both `p` and `q`, ensuring the scheme's security properties.
 
-use num_bigint::BigUint;
-use num_traits::{One, Zero};
 use rand_core::CryptoRngCore;
 use rug::{
-    integer::Order,
     rand::{MutRandState, ThreadRandState},
     Integer,
 };
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{gen_pair, small_odd_primes, SyncRng};
+use tecdsa_bigint::{gen_pair, pow_mod, small_odd_primes, SyncRng};
 use zeroize::Zeroize;
 
 /// Public key for the Joye-Libert encryption scheme.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JlPublicKey {
     /// Modulus N = p * q.
-    pub n: BigUint,
+    pub n: Integer,
     /// Generator y = x^alpha mod N, used for encoding messages.
-    pub y: BigUint,
+    pub y: Integer,
     /// Element h = x^{2^k} mod N, used for randomisation.
-    pub h: BigUint,
+    pub h: Integer,
     /// Parameter k: plaintexts live in Z_{2^k}.
     pub k: u32,
 }
@@ -37,16 +34,16 @@ pub struct JlPublicKey {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct JlSecretKey {
     /// Prime factor p of N, where p = 2^k * p' + 1.
-    pub p: BigUint,
+    pub p: Integer,
     /// Discrete log alpha such that y = x^alpha mod N.
-    pub alpha: BigUint,
+    pub alpha: Integer,
 }
 
 impl Zeroize for JlSecretKey {
     fn zeroize(&mut self) {
         // Overwrite secret fields with zero before dropping.
-        self.p = BigUint::zero();
-        self.alpha = BigUint::zero();
+        self.p = Integer::new();
+        self.alpha = Integer::new();
     }
 }
 
@@ -128,7 +125,7 @@ pub fn generate_keypair_with_qnr(
     p_bits: u64,
     msg_space_bits: u32,
     rng: impl CryptoRngCore,
-) -> (JlPublicKey, JlSecretKey, BigUint) {
+) -> (JlPublicKey, JlSecretKey, Integer) {
     let mut rng = SyncRng(rng);
     let rng = &mut ThreadRandState::new_custom(&mut rng);
     let primes = small_odd_primes(50_000);
@@ -140,27 +137,21 @@ pub fn generate_keypair_with_qnr(
     // Step 2: q = 2*q'+1
     let (_, q) = gen_pair(b - 1, &Integer::from(2), 25, 15, &primes, rng);
 
-    let n = (&p * &q).into();
+    let n: Integer = (&p * &q).into();
 
     // Step 3: Find x that is a quadratic non-residue mod both p and q
     let qnr = choose_non_quadratic_residue(&p, &q, &n, rng);
-
-    let p = BigUint::from_bytes_be(&p.to_digits(Order::Msf));
-    let qnr = BigUint::from_bytes_be(&qnr.to_digits(Order::Msf));
 
     // Step 4: Choose random odd alpha
     let mut alpha = n.clone().random_below(rng);
     alpha.set_bit(0, true);
 
-    let alpha = BigUint::from_bytes_be(&alpha.to_digits(Order::Msf));
-    let n = BigUint::from_bytes_be(&n.to_digits(Order::Msf));
-
     // Step 5: Compute y = x^alpha mod N
-    let gen_y = qnr.modpow(&alpha, &n);
+    let gen_y = pow_mod(&qnr, &alpha, &n);
 
     // Step 6: Compute h = x^{2^k} mod N
-    let two_pow_k = BigUint::one() << msg_space_bits;
-    let elem_h = qnr.modpow(&two_pow_k, &n);
+    let two_pow_k = Integer::from(1) << msg_space_bits;
+    let elem_h = pow_mod(&qnr, &two_pow_k, &n);
 
     let pk = JlPublicKey {
         n,
@@ -198,13 +189,13 @@ mod tests {
         let (pk, sk) = generate_keypair_with_params(256, 32, &mut rng);
 
         // N should be non-zero
-        assert!(!pk.n.is_zero());
+        assert!(pk.n != 0);
         // p should divide N
-        assert!((&pk.n % &sk.p).is_zero());
+        assert!(pk.n.is_divisible(&sk.p));
         // k should match
         assert_eq!(pk.k, 32);
         // y and h should be non-zero
-        assert!(!pk.y.is_zero());
-        assert!(!pk.h.is_zero());
+        assert!(pk.y != 0);
+        assert!(pk.h != 0);
     }
 }

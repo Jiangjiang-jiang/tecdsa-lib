@@ -26,8 +26,9 @@
 //!
 //! Follows the PolyVerify pattern from BICYCL C++ reference (TX25).
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::pow_mod;
 
 use super::sample_random;
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
@@ -47,7 +48,7 @@ pub struct RShProof {
 }
 
 /// Computes per-party hash challenge: `c_j = H(sum_c2_repr, pk_j_repr, j) mod 2^SOUNDNESS_BITS`.
-fn c_from_hash(c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<BigUint> {
+fn c_from_hash(c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<Integer> {
     let mut hasher = Sha256::new();
 
     // Hash all c2 elements to form a binding context.
@@ -66,15 +67,15 @@ fn c_from_hash(c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<BigUint> {
     hasher.update(j.to_string().as_bytes());
 
     let hash = hasher.finalize();
-    let hash_uint = BigUint::from_bytes_be(&hash);
-    let modulus = BigUint::from(1u32) << SOUNDNESS_BITS;
+    let hash_uint = Integer::from_digits(&hash, Order::Msf);
+    let modulus = Integer::from(1) << SOUNDNESS_BITS;
     Ok(hash_uint % modulus)
 }
 
 /// Derives deterministic dual-code polynomial coefficients from a hash of the c2 values.
 ///
 /// Returns `degree + 1` coefficients in `[0, q)`.
-fn dual_code_coeffs(c2s: &[&Qfi], degree: usize, q: &BigUint) -> ClResult<Vec<BigUint>> {
+fn dual_code_coeffs(c2s: &[&Qfi], degree: usize, q: &Integer) -> ClResult<Vec<Integer>> {
     let mut coeffs = Vec::with_capacity(degree + 1);
 
     for d in 0..=degree {
@@ -90,7 +91,7 @@ fn dual_code_coeffs(c2s: &[&Qfi], degree: usize, q: &BigUint) -> ClResult<Vec<Bi
         }
 
         let hash = hasher.finalize();
-        let coeff = BigUint::from_bytes_be(&hash) % q;
+        let coeff = Integer::from_digits(&hash, Order::Msf) % q;
         coeffs.push(coeff);
     }
 
@@ -98,10 +99,10 @@ fn dual_code_coeffs(c2s: &[&Qfi], degree: usize, q: &BigUint) -> ClResult<Vec<Bi
 }
 
 /// Evaluates a polynomial at a point using Horner's method (mod q).
-fn horner_eval(coeffs: &[BigUint], x: &BigUint, q: &BigUint) -> BigUint {
-    let mut result = BigUint::ZERO;
+fn horner_eval(coeffs: &[Integer], x: &Integer, q: &Integer) -> Integer {
+    let mut result = Integer::new();
     for coeff in coeffs.iter().rev() {
-        result = (&result * x + coeff) % q;
+        result = (Integer::from(&result * x) + coeff) % q;
     }
     result
 }
@@ -124,8 +125,8 @@ fn aggregate_products(
     c2s: &[&Qfi],
 ) -> ClResult<(Qfi, Qfi)> {
     let n = party_ids.len();
-    let q = BigUint::from_bytes_be(&setup.q_bytes()?);
-    let M = BigUint::from_bytes_be(&setup.cl().m().to_bytes_be());
+    let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
+    let M = Integer::from_digits(&setup.cl().m().to_bytes_be(), Order::Msf);
 
     // degree = n - t - 2  (the dual code degree).
     // When n <= t + 1, degree < 0 and there is no dual code check.
@@ -135,7 +136,7 @@ fn aggregate_products(
     let pk_elts: Vec<Qfi> = pks.iter().map(|pk| pk.elt().clone()).collect::<Vec<_>>();
 
     // Compute per-party challenges c_j.
-    let challenges: Vec<BigUint> = party_ids
+    let challenges: Vec<Integer> = party_ids
         .iter()
         .enumerate()
         .map(|(idx, &j)| c_from_hash(c2s, &pk_elts[idx], j))
@@ -148,43 +149,38 @@ fn aggregate_products(
         vec![]
     };
 
-    let q_minus_2 = &q - BigUint::from(2u32);
+    let q_minus_2 = Integer::from(&q - 2);
 
     let mut prod_U = setup.identity()?;
     let mut prod_V = setup.identity()?;
 
     for (idx, &i_id) in party_ids.iter().enumerate() {
-        let i_big = BigUint::from(i_id);
+        let i_big = Integer::from(i_id);
 
         // Compute Lagrange inverse denominator: 1 / prod_{j != i}(i - j) mod q.
-        let mut den = BigUint::from(1u32);
-        let i_signed = num_bigint::BigInt::from(i_id);
-        let q_int = num_bigint::BigInt::from(q.clone());
+        let mut den = Integer::from(1);
 
         for (jdx, &j_id) in party_ids.iter().enumerate() {
             if jdx == idx {
                 continue;
             }
-            let j_signed = num_bigint::BigInt::from(j_id);
-            let diff = (&i_signed - &j_signed) % &q_int;
-            // Normalize to positive.
-            let diff_pos = ((&diff % &q_int) + &q_int) % &q_int;
-            let diff_uint = diff_pos.to_biguint().expect("positive after mod");
-            den = (&den * &diff_uint) % &q;
+            // (i - j) mod q, normalized to [0, q).
+            let diff_pos = (Integer::from(i_id) - Integer::from(j_id)).modulo(&q);
+            den = Integer::from(&den * &diff_pos) % &q;
         }
 
         // Invert via Fermat's little theorem.
-        den = den.modpow(&q_minus_2, &q);
+        den = pow_mod(&den, &q_minus_2, &q);
 
         // If dual code is active, multiply by polynomial evaluation.
         if degree_signed >= 0 {
             let value = horner_eval(&check_coeffs, &i_big, &q);
-            den = (&den * &value) % &q;
+            den = Integer::from(&den * &value) % &q;
         }
 
         // exp_i = c_i * M + den.
-        let exp_i = &challenges[idx] * &M + &den;
-        let exp_i_bytes = exp_i.to_bytes_be();
+        let exp_i = Integer::from(&challenges[idx] * &M) + &den;
+        let exp_i_bytes = exp_i.to_digits::<u8>(Order::Msf);
 
         // Accumulate: prod_U *= pk_i^{exp_i}.
         let pk_exp = setup.exp_bytes(&pk_elts[idx], &exp_i_bytes)?;
@@ -211,10 +207,10 @@ fn schnorr_challenge(prod_u: &Qfi, prod_v: &Qfi, r0: &Qfi, v0: &Qfi) -> ClResult
     }
 
     let hash = hasher.finalize();
-    let k_full = BigUint::from_bytes_be(&hash);
-    let modulus = BigUint::from(1u32) << SOUNDNESS_BITS;
+    let k_full = Integer::from_digits(&hash, Order::Msf);
+    let modulus = Integer::from(1) << SOUNDNESS_BITS;
     let k = k_full % modulus;
-    Ok(k.to_bytes_be())
+    Ok(k.to_digits::<u8>(Order::Msf))
 }
 
 impl RShProof {
@@ -258,14 +254,14 @@ impl RShProof {
 
         // 2. Compute the randomness bound for the Schnorr-like proof.
         //    B = secretkey_bound * 2^soundness * 2^lambda_distance
-        let sk_bound = BigUint::from_bytes_be(&setup.secretkey_bound_bytes()?);
-        let B = &sk_bound << (SOUNDNESS_BITS + LAMBDA_DISTANCE);
+        let sk_bound = Integer::from_digits(&setup.secretkey_bound_bytes()?, Order::Msf);
+        let B = Integer::from(&sk_bound << (SOUNDNESS_BITS + LAMBDA_DISTANCE));
 
         // 3. Sample rho0 in [0, B).  We use sample_random and reduce mod B.
         let rho0_raw = sample_random(setup)?;
-        let rho0_uint = BigUint::from_bytes_be(&rho0_raw);
-        let rho0 = &rho0_uint % &B;
-        let rho0_bytes = rho0.to_bytes_be();
+        let rho0_uint = Integer::from_digits(&rho0_raw, Order::Msf);
+        let rho0 = rho0_uint % &B;
+        let rho0_bytes = rho0.to_digits::<u8>(Order::Msf);
 
         // 4. Compute commitments R0 = h^{rho0}, V0 = prod_U^{rho0}.
         let R0 = setup.power_of_h_bytes(&rho0_bytes)?;
@@ -275,13 +271,13 @@ impl RShProof {
         let k_bytes = schnorr_challenge(&prod_U, &prod_V, &R0, &V0)?;
 
         // 6. Response: rho_response = k * rho + rho0.
-        let k_uint = BigUint::from_bytes_be(&k_bytes);
-        let rho_uint = BigUint::from_bytes_be(rho_bytes);
-        let rho_response = &k_uint * &rho_uint + &rho0;
+        let k_uint = Integer::from_digits(&k_bytes, Order::Msf);
+        let rho_uint = Integer::from_digits(rho_bytes, Order::Msf);
+        let rho_response = Integer::from(&k_uint * &rho_uint) + &rho0;
 
         Ok(Self {
             k: k_bytes,
-            rho_response: rho_response.to_bytes_be(),
+            rho_response: rho_response.to_digits::<u8>(Order::Msf),
         })
     }
 
@@ -309,11 +305,11 @@ impl RShProof {
 
         // 1. Check rho_response is in range: 0 <= rho_response <= bound.
         //    bound = (1 + 2^lambda_distance) * 2^soundness * secretkey_bound
-        let sk_bound = BigUint::from_bytes_be(&setup.secretkey_bound_bytes()?);
-        let factor = (BigUint::from(1u32) << LAMBDA_DISTANCE) + BigUint::from(1u32);
-        let upper_bound = &factor * (&sk_bound << SOUNDNESS_BITS);
+        let sk_bound = Integer::from_digits(&setup.secretkey_bound_bytes()?, Order::Msf);
+        let factor = (Integer::from(1) << LAMBDA_DISTANCE) + 1;
+        let upper_bound = Integer::from(&sk_bound << SOUNDNESS_BITS) * &factor;
 
-        let rho_resp = BigUint::from_bytes_be(&self.rho_response);
+        let rho_resp = Integer::from_digits(&self.rho_response, Order::Msf);
         if rho_resp > upper_bound {
             return Ok(false);
         }
@@ -322,7 +318,7 @@ impl RShProof {
         let (prod_U, prod_V) = aggregate_products(setup, party_ids, threshold, pks, c2s)?;
 
         // 3. Reconstruct R0: R = h^{rho_response}, R_tmp = R / c1^k.
-        let rho_resp_bytes = rho_resp.to_bytes_be();
+        let rho_resp_bytes = rho_resp.to_digits::<u8>(Order::Msf);
         let R = setup.power_of_h_bytes(&rho_resp_bytes)?;
         let mut c1_k = setup.exp_bytes(c1, &self.k)?;
         c1_k.neg();
@@ -355,28 +351,28 @@ mod tests {
         threshold: u16,
         pks: &[&ClHsmqkPublicKey],
     ) -> ClResult<(Qfi, Vec<Qfi>, Vec<u8>)> {
-        let q = BigUint::from_bytes_be(&setup.q_bytes()?);
+        let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
         let n = party_ids.len();
 
         // Generate degree-(t-1) polynomial coefficients.
         let mut coeffs = Vec::with_capacity(threshold as usize);
         for _ in 0..threshold {
             let r = sample_random_mod_q(setup)?;
-            let r_val = BigUint::from_bytes_be(&r);
+            let r_val = Integer::from_digits(&r, Order::Msf);
             coeffs.push(r_val);
         }
 
         // Evaluate polynomial at each party's id.
         let mut shares = Vec::with_capacity(n);
         for &id in party_ids {
-            let x = BigUint::from(id);
-            let mut val = BigUint::ZERO;
-            let mut x_pow = BigUint::from(1u32);
+            let x = Integer::from(id);
+            let mut val = Integer::new();
+            let mut x_pow = Integer::from(1);
             for coeff in &coeffs {
-                val = (&val + coeff * &x_pow) % &q;
-                x_pow = (&x_pow * &x) % &q;
+                val = (&val + Integer::from(coeff * &x_pow)) % &q;
+                x_pow = Integer::from(&x_pow * &x) % &q;
             }
-            shares.push(val.to_bytes_be());
+            shares.push(val.to_digits::<u8>(Order::Msf));
         }
 
         // Sample shared randomness rho.

@@ -22,8 +22,7 @@ tecdsa-evrf = { workspace = true }
 tecdsa-ot = { workspace = true }
 tecdsa-fs = { workspace = true }
 tecdsa-vss = { workspace = true }
-num-bigint = { workspace = true }
-num-traits = { workspace = true }
+rug = { workspace = true }
 udigest = { workspace = true }
 tecdsa-lin17 = { workspace = true }
 tecdsa-kgg24 = { workspace = true }

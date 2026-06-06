@@ -45,6 +45,7 @@ pub mod machine;
 pub mod types;
 
 use rand_core::CryptoRngCore;
+use rug::{integer::Order, Integer};
 use tecdsa_class_group::{
     cl::ClSetup,
     zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof},
@@ -135,11 +136,10 @@ pub fn presign_round1(
 
     // The effective encryption randomness after scaling: L_i * delta_i.
     // We need this for the scaled decryption step.
-    // Compute as BigUint: l_i_val * delta_i_val
-    use num_bigint::BigUint;
-    let l_i_val = BigUint::from_bytes_be(&l_i_bytes);
-    let delta_i_val = BigUint::from_bytes_be(&share.delta_i);
-    let l_i_delta_i = (&l_i_val * &delta_i_val).to_bytes_be();
+    // Compute as Integer: l_i_val * delta_i_val
+    let l_i_val = Integer::from_digits(&l_i_bytes, Order::Msf);
+    let delta_i_val = Integer::from_digits(&share.delta_i, Order::Msf);
+    let l_i_delta_i = Integer::from(&l_i_val * &delta_i_val).to_digits::<u8>(Order::Msf);
 
     // 6. Prove R_{CL-EC}: K_tilde_i encrypts same k_i as R_i
     let pi_cl_ec = RClDlEcProof::prove(setup, cl_pk, &kt_ct, &r_i_bytes, &k_i_bytes, &alpha_i)?;

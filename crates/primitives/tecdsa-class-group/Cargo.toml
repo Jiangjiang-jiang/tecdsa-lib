@@ -11,8 +11,6 @@ description = "Class-group encryption and proofs for tecdsa"
 tecdsa-core = { workspace = true }
 tecdsa-bigint = { workspace = true }
 thiserror = { workspace = true }
-num-bigint = { workspace = true }
-num-traits = { workspace = true }
 gmp-mpfr-sys = { workspace = true }
 rug = { workspace = true }
 rand_core = { workspace = true }

@@ -17,12 +17,12 @@ use elliptic_curve::{
     sec1::ModulusSize,
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
-    conv::{biguint_to_scalar, curve_order, scalar_to_biguint},
+    conv::{integer_to_scalar, curve_order, scalar_to_integer},
     TecdsaCurve,
 };
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSenderState, JlMtaSetup};
@@ -143,9 +143,9 @@ where
     /// R1 commitments from all parties.
     pub commitments: BTreeMap<PartyId, [u8; 32]>,
     /// alpha_kg[j]: my alpha from receiver_compute(k_i, gamma_ct_j).
-    pub alpha_kg: BTreeMap<PartyId, BigUint>,
+    pub alpha_kg: BTreeMap<PartyId, Integer>,
     /// mu_kw[j]: my mu from receiver_compute(k_i, w_ct_j).
-    pub mu_kw: BTreeMap<PartyId, BigUint>,
+    pub mu_kw: BTreeMap<PartyId, Integer>,
     /// Received R2 broadcast (gamma points).
     pub r2_bcast: BTreeMap<PartyId, R2BroadcastPayload>,
     /// Received R2 P2P (receiver messages).
@@ -233,9 +233,9 @@ where
 
     // MtA setup and sender_encrypt for each peer
     let q = curve_order::<C>();
-    let q_bytes = q.to_bytes_be();
-    let gamma_i_bytes = scalar_to_biguint::<C>(&gamma_i).to_bytes_be();
-    let w_i_bytes = scalar_to_biguint::<C>(&w_i).to_bytes_be();
+    let q_bytes = q.to_digits::<u8>(Order::Msf);
+    let gamma_i_bytes = scalar_to_integer::<C>(&gamma_i).to_digits::<u8>(Order::Msf);
+    let w_i_bytes = scalar_to_integer::<C>(&w_i).to_digits::<u8>(Order::Msf);
 
     let mut gamma_sender_states = BTreeMap::new();
     let mut w_sender_states = BTreeMap::new();
@@ -320,8 +320,8 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     let q = curve_order::<C>();
-    let q_bytes = q.to_bytes_be();
-    let k_i_bytes = scalar_to_biguint::<C>(&state.k_i).to_bytes_be();
+    let q_bytes = q.to_digits::<u8>(Order::Msf);
+    let k_i_bytes = scalar_to_integer::<C>(&state.k_i).to_digits::<u8>(Order::Msf);
 
     let mut alpha_kg = BTreeMap::new();
     let mut mu_kw = BTreeMap::new();
@@ -373,13 +373,13 @@ where
             rng,
         )
         .map_err(|e| TecdsaError::Other(format!("gamma receiver_compute for {peer}: {e}")))?;
-        alpha_kg.insert(peer, BigUint::from_bytes_be(&alpha_bytes));
+        alpha_kg.insert(peer, Integer::from_digits(&alpha_bytes, Order::Msf));
 
         // receiver_compute for w MtA: mu_kw[peer] = my mu
         let (w_recv_msg, mu_bytes) =
             JlMtA::receiver_compute(&setup, &k_i_bytes, &q_bytes, &r1_payload.w_sender_msg, rng)
                 .map_err(|e| TecdsaError::Other(format!("w receiver_compute for {peer}: {e}")))?;
-        mu_kw.insert(peer, BigUint::from_bytes_be(&mu_bytes));
+        mu_kw.insert(peer, Integer::from_digits(&mu_bytes, Order::Msf));
 
         // Queue R2 P2P to peer: receiver messages
         // Note: we send to the SENDER of the ciphertext (= peer) since they need
@@ -430,7 +430,7 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     let q = curve_order::<C>();
-    let q_bytes = q.to_bytes_be();
+    let q_bytes = q.to_digits::<u8>(Order::Msf);
     let my_idx = state.key_share.party_index as usize;
 
     // Collect Gamma points. Start with own.
@@ -462,8 +462,8 @@ where
     // sender_decrypt for each peer's receiver messages.
     // beta_kg[j]: my beta from sender_decrypt(gamma_state_j, receiver_msg from j).
     // nu_kw[j]: my nu from sender_decrypt(w_state_j, receiver_msg from j).
-    let mut beta_kg: BTreeMap<PartyId, BigUint> = BTreeMap::new();
-    let mut nu_kw: BTreeMap<PartyId, BigUint> = BTreeMap::new();
+    let mut beta_kg: BTreeMap<PartyId, Integer> = BTreeMap::new();
+    let mut nu_kw: BTreeMap<PartyId, Integer> = BTreeMap::new();
 
     // Build setup for own key (decrypt with own sk)
     let setup = JlMtaSetup {
@@ -488,12 +488,12 @@ where
         let beta_bytes =
             JlMtA::sender_decrypt(&setup, gamma_state, &q_bytes, &r2_p2p.gamma_receiver_msg)
                 .map_err(|e| TecdsaError::Other(format!("gamma sender_decrypt for {peer}: {e}")))?;
-        beta_kg.insert(peer, BigUint::from_bytes_be(&beta_bytes));
+        beta_kg.insert(peer, Integer::from_digits(&beta_bytes, Order::Msf));
 
         // sender_decrypt for w MtA
         let nu_bytes = JlMtA::sender_decrypt(&setup, w_state, &q_bytes, &r2_p2p.w_receiver_msg)
             .map_err(|e| TecdsaError::Other(format!("w sender_decrypt for {peer}: {e}")))?;
-        nu_kw.insert(peer, BigUint::from_bytes_be(&nu_bytes));
+        nu_kw.insert(peer, Integer::from_digits(&nu_bytes, Order::Msf));
     }
 
     // Compute delta_i = k_i * gamma_i + sum_j(alpha_kg[j] + beta_kg[j])
@@ -511,8 +511,8 @@ where
         let beta = beta_kg
             .get(&peer)
             .ok_or_else(|| TecdsaError::Other(format!("missing beta_kg for {peer}")))?;
-        delta_i += biguint_to_scalar::<C>(alpha);
-        delta_i += biguint_to_scalar::<C>(beta);
+        delta_i += integer_to_scalar::<C>(alpha);
+        delta_i += integer_to_scalar::<C>(beta);
     }
 
     // Compute sigma_i = k_i * w_i + sum_j(mu_kw[j] + nu_kw[j])
@@ -528,8 +528,8 @@ where
         let nu = nu_kw
             .get(&peer)
             .ok_or_else(|| TecdsaError::Other(format!("missing nu_kw for {peer}")))?;
-        sigma_i += biguint_to_scalar::<C>(mu);
-        sigma_i += biguint_to_scalar::<C>(nu);
+        sigma_i += integer_to_scalar::<C>(mu);
+        sigma_i += integer_to_scalar::<C>(nu);
     }
 
     // Broadcast delta_i

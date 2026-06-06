@@ -21,6 +21,9 @@
 //!   Lagrange in the exponent: `combined = product(pd_i^{lambda_i})`,
 //!   then extract plaintext from `c2 * combined^{-1}`.
 
+use rug::{integer::Order, Integer};
+use tecdsa_bigint::{mul_mod, pow_mod};
+
 use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
 
 /// A partial decryption share from party `i`.
@@ -64,26 +67,21 @@ pub fn partial_decrypt(
 /// all required denominators as factors.
 ///
 /// Returns `(index, signed_lambda)` pairs.
-fn lagrange_coefficients_delta(
-    indices: &[usize],
-    delta: &num_bigint::BigInt,
-) -> Vec<(usize, num_bigint::BigInt)> {
-    use num_bigint::BigInt;
-
+fn lagrange_coefficients_delta(indices: &[usize], delta: &Integer) -> Vec<(usize, Integer)> {
     let mut result = Vec::with_capacity(indices.len());
     for (k, &i_k) in indices.iter().enumerate() {
         let mut coeff = delta.clone();
-        let i_k_big = BigInt::from(i_k as i64);
+        let i_k_big = Integer::from(i_k as i64);
 
         for (j, &i_j) in indices.iter().enumerate() {
             if j == k {
                 continue;
             }
-            let i_j_big = BigInt::from(i_j as i64);
-            let diff = &i_k_big - &i_j_big;
+            let i_j_big = Integer::from(i_j as i64);
+            let diff = Integer::from(&i_k_big - &i_j_big);
             // Exact division: delta = N! ensures this is always exact.
-            coeff = &coeff / &diff;
-            coeff *= -&i_j_big;
+            coeff /= &diff;
+            coeff *= Integer::from(-&i_j_big);
         }
 
         result.push((i_k, coeff));
@@ -115,16 +113,13 @@ pub fn final_decrypt(
     n_parties: usize,
     partial_decs: &[PartialDecryption],
 ) -> ClResult<Vec<u8>> {
-    use num_bigint::BigInt;
-    use num_traits::One as _;
-
     let q_bytes = setup.q_bytes()?;
-    let q = num_bigint::BigUint::from_bytes_be(&q_bytes);
+    let q = Integer::from_digits(&q_bytes, Order::Msf);
 
     // delta = n_parties!
-    let mut delta = BigInt::one();
+    let mut delta = Integer::from(1);
     for i in 2..=n_parties {
-        delta *= BigInt::from(i as i64);
+        delta *= i as i64;
     }
 
     let indices: Vec<usize> = partial_decs.iter().map(|pd| pd.party_index).collect();
@@ -143,13 +138,9 @@ pub fn final_decrypt(
             .find(|p| p.party_index == *idx)
             .expect("party index mismatch");
 
-        let (exp_bytes, should_invert) = if lambda.sign() == num_bigint::Sign::Minus {
-            let abs_val = (-lambda).to_biguint().expect("abs value");
-            (abs_val.to_bytes_be(), true)
-        } else {
-            let abs_val = lambda.to_biguint().expect("abs value");
-            (abs_val.to_bytes_be(), false)
-        };
+        // `to_digits` yields the magnitude (sign discarded); track sign separately.
+        let should_invert = lambda.cmp0() == core::cmp::Ordering::Less;
+        let exp_bytes = lambda.to_digits::<u8>(Order::Msf);
 
         let mut pd_lambda = setup.exp_bytes(&pd.dec_share, &exp_bytes)?;
         if should_invert {
@@ -163,10 +154,8 @@ pub fn final_decrypt(
     // combined = c1^{sk * delta^2}
     // c2^{delta^2} = (h^{sk*r} * f^m)^{delta^2} = h^{sk*r*delta^2} * f^{m*delta^2}
     // result = f^{m * delta^2}
-    let delta2 = (&delta * &delta)
-        .to_biguint()
-        .expect("delta^2 non-negative");
-    let delta2_bytes = delta2.to_bytes_be();
+    let delta2 = Integer::from(&delta * &delta);
+    let delta2_bytes = delta2.to_digits::<u8>(Order::Msf);
     let (_c1, c2) = setup.ct_components(ct)?;
     let c2_delta2 = setup.exp_bytes(&c2, &delta2_bytes)?;
     combined.neg();
@@ -174,20 +163,18 @@ pub fn final_decrypt(
 
     // Extract m * delta^2 mod q, then divide by delta^2 mod q.
     let m_scaled_bytes = setup.dlog_in_F_bytes(&plaintext_elt)?;
-    let m_scaled = num_bigint::BigUint::from_bytes_be(&m_scaled_bytes);
+    let m_scaled = Integer::from_digits(&m_scaled_bytes, Order::Msf);
 
     // delta2_inv = delta^{-2} mod q  (via Fermat's little theorem)
-    let q_minus_2 = &q - num_bigint::BigUint::from(2u32);
-    let delta2_inv = delta2.modpow(&q_minus_2, &q);
+    let q_minus_2 = Integer::from(&q - 2);
+    let delta2_inv = pow_mod(&delta2, &q_minus_2, &q);
 
-    let m = (&m_scaled * &delta2_inv) % &q;
-    Ok(m.to_bytes_be())
+    let m = mul_mod(&m_scaled, &delta2_inv, &q);
+    Ok(m.to_digits::<u8>(Order::Msf))
 }
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
-
     use super::*;
     use crate::cl::ClSetup;
 
@@ -209,46 +196,45 @@ mod tests {
         n: usize,
         t: usize,
     ) -> ClResult<Vec<Vec<u8>>> {
-        let sk = BigUint::from_bytes_be(sk_bytes);
+        let sk = Integer::from_digits(sk_bytes, Order::Msf);
 
         // delta = n!
-        let mut delta = BigUint::from(1u32);
+        let mut delta = Integer::from(1);
         for i in 2..=n {
-            delta *= BigUint::from(i as u64);
+            delta *= i as u64;
         }
-        let delta_sk = &delta * &sk;
+        let delta_sk = Integer::from(&delta * &sk);
 
         // Generate t-1 random coefficients (arbitrary precision).
         // Use secretkey_bound as the range for random coefficients.
-        let mut coeffs: Vec<num_bigint::BigInt> = vec![num_bigint::BigInt::from(delta_sk)];
+        let mut coeffs: Vec<Integer> = vec![delta_sk];
         for _ in 1..t {
             let r = super::super::zk::sample_random(setup)?;
-            let r_val = num_bigint::BigInt::from(num_bigint::BigUint::from_bytes_be(&r));
+            let r_val = Integer::from_digits(&r, Order::Msf);
             coeffs.push(r_val);
         }
 
         // Evaluate polynomial at i = 1, 2, ..., n (over the integers).
         let mut shares = Vec::with_capacity(n);
         for i in 1..=n {
-            let x = num_bigint::BigInt::from(i as i64);
-            let mut val = num_bigint::BigInt::from(0);
-            let mut x_pow = num_bigint::BigInt::from(1);
+            let x = Integer::from(i as i64);
+            let mut val = Integer::new();
+            let mut x_pow = Integer::from(1);
             for coeff in &coeffs {
-                val += coeff * &x_pow;
+                val += Integer::from(coeff * &x_pow);
                 x_pow *= &x;
             }
             // Store share magnitude as big-endian bytes. exp_bytes
             // requires unsigned input; for small (t,n) and large
             // delta*sk, polynomial evaluations are always non-negative.
             // We assert this below to catch any unexpected cases.
-            let abs_val = val.magnitude();
-            let abs_bytes = abs_val.to_bytes_be();
+            let abs_bytes = val.to_digits::<u8>(Order::Msf);
             // For negative values, we'd need to negate after exponentiation.
             // In practice, delta * sk is much larger than the random terms,
             // so shares are always positive.
             // To be safe, we'll assert non-negative in tests.
             assert!(
-                val.sign() != num_bigint::Sign::Minus,
+                val.cmp0() != core::cmp::Ordering::Less,
                 "test assumption: share should be non-negative for small t,n"
             );
             shares.push(abs_bytes);
@@ -276,8 +262,8 @@ mod tests {
         let f_m = setup.compose(&c2, &pd_inv).expect("compose");
         #[allow(non_snake_case)]
         let m_bytes = setup.dlog_in_F_bytes(&f_m).expect("dlog");
-        let m_val = BigUint::from_bytes_be(&m_bytes);
-        assert_eq!(m_val, BigUint::from(42u32));
+        let m_val = Integer::from_digits(&m_bytes, Order::Msf);
+        assert_eq!(m_val, Integer::from(42u32));
     }
 
     #[test]
@@ -298,8 +284,8 @@ mod tests {
         let pd2 = partial_decrypt(&setup, &ct, 2, &shares[1]).expect("pd2");
 
         let decrypted = final_decrypt(&setup, &ct, n, &[pd1, pd2]).expect("fin_dec");
-        let m_val = BigUint::from_bytes_be(&decrypted);
-        assert_eq!(m_val, BigUint::from(123u32));
+        let m_val = Integer::from_digits(&decrypted, Order::Msf);
+        assert_eq!(m_val, Integer::from(123u32));
     }
 
     #[test]
@@ -322,7 +308,7 @@ mod tests {
         let pd5 = partial_decrypt(&setup, &ct, 5, &shares[4]).expect("pd5");
 
         let decrypted = final_decrypt(&setup, &ct, n, &[pd1, pd3, pd5]).expect("fin_dec");
-        let m_val = BigUint::from_bytes_be(&decrypted);
-        assert_eq!(m_val, BigUint::from(999u32));
+        let m_val = Integer::from_digits(&decrypted, Order::Msf);
+        assert_eq!(m_val, Integer::from(999u32));
     }
 }

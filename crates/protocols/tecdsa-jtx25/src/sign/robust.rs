@@ -38,9 +38,10 @@
 
 use std::collections::BTreeMap;
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::{mul_mod, pow_mod};
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
     t_cl::{final_decrypt as threshold_cl_combine, PartialDecryption as ClPartialDecryption},
@@ -465,17 +466,17 @@ impl Jtx25RobustOnlineSignMachine {
             .setup
             .q_bytes()
             .map_err(|e| TecdsaError::Other(format!("q_bytes: {e}")))?;
-        let q = BigUint::from_bytes_be(&q_bytes);
+        let q = Integer::from_digits(&q_bytes, Order::Msf);
 
-        let p0 = BigUint::from_bytes_be(&p0_bytes);
-        let p1 = BigUint::from_bytes_be(&p1_bytes);
+        let p0 = Integer::from_digits(&p0_bytes, Order::Msf);
+        let p1 = Integer::from_digits(&p1_bytes, Order::Msf);
 
         // p0_inv = p0^{q-2} mod q (Fermat's little theorem).
-        let q_minus_2 = &q - BigUint::from(2u32);
-        let p0_inv = p0.modpow(&q_minus_2, &q);
+        let q_minus_2 = Integer::from(&q - 2);
+        let p0_inv = pow_mod(&p0, &q_minus_2, &q);
 
-        let s_big = (&p1 * &p0_inv) % &q;
-        let s_raw = tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&s_big);
+        let s_big = mul_mod(&p1, &p0_inv, &q);
+        let s_raw = tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&s_big);
         let s = low_s_normalize::<k256::Secp256k1>(s_raw);
 
         let sig = Signature { r: r_x, s };

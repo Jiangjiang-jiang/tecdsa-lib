@@ -1,10 +1,34 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use rug::Integer;
+use rug::{Complete, Integer};
 
 /// Computes the greatest common divisor of `a` and `b`.
 #[must_use]
 pub fn gcd(a: &Integer, b: &Integer) -> Integer {
     a.clone().gcd(b)
+}
+
+/// Modular exponentiation: returns `base^exp mod modulus` as the unique
+/// representative in `[0, modulus)`.
+///
+/// `modulus` must be non-zero.
+///
+/// # Panics
+///
+/// Panics if `exp` is negative and `base` is not invertible modulo `modulus`.
+#[must_use]
+pub fn pow_mod(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
+    base.pow_mod_ref(exp, modulus)
+        .expect("base not invertible modulo modulus")
+        .complete()
+}
+
+/// Computes `(a * b) mod modulus` as the unique representative in
+/// `[0, modulus)`.
+///
+/// `modulus` must be non-zero.
+#[must_use]
+pub fn mul_mod(a: &Integer, b: &Integer, modulus: &Integer) -> Integer {
+    (a * b).complete().modulo(modulus)
 }
 
 /// Computes the Jacobi symbol `(a/n)`.

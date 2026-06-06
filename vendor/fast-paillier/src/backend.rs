@@ -24,21 +24,8 @@
 
 pub(crate) mod macro_defs;
 
-#[cfg(feature = "backend-num-bigint")]
-pub mod num_bigint;
-#[cfg(feature = "backend-rug")]
 pub mod rug;
-#[cfg(not(any(feature = "backend-num-bigint", feature = "backend-rug")))]
-compile_error!(
-    r#"A backend must be selected for fast-paillier: either set feature "backend-num-bigit" or "backend-rug""#
-);
 
-// num-bigint backend is used when both backends are turned on. This is useful
-// for tests and benchmarks, as one could explicitly refer to the backends by
-// the module name to compare their behaviour
-#[cfg(feature = "backend-num-bigint")]
-pub use num_bigint::*;
-#[cfg(all(not(feature = "backend-num-bigint"), feature = "backend-rug"))]
 pub use rug::*;
 
 /// Whether a number is prime. See [`Integer::is_probably_prime`] method

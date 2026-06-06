@@ -26,13 +26,12 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
     k256::Scalar::from_repr(k256::FieldBytes::from(bytes))
         .into_option()
         .unwrap_or_else(|| {
-            use num_bigint::BigUint;
-            use num_traits::Num;
-            let q = BigUint::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
-            let val = BigUint::from_bytes_be(&bytes) % &q;
+            use rug::{integer::Order, Integer};
+            let q = Integer::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
+            let val = Integer::from_digits(&bytes, Order::Msf) % &q;
             let mut padded = [0u8; 32];
-            let offset = 32 - val.to_bytes_be().len();
-            padded[offset..].copy_from_slice(&val.to_bytes_be());
+            let offset = 32 - val.to_digits::<u8>(Order::Msf).len();
+            padded[offset..].copy_from_slice(&val.to_digits::<u8>(Order::Msf));
             k256::Scalar::from_repr(k256::FieldBytes::from(padded))
                 .into_option()
                 .unwrap()

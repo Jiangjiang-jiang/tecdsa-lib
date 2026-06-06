@@ -4,8 +4,7 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
-use num_bigint::BigUint;
-use num_traits::Num as _;
+use rug::Integer;
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
     t_cl::{self as threshold_cl, PartialDecryption as ClPartialDecryption},
@@ -215,12 +214,12 @@ pub(crate) fn transition_r1_to_r2(
             .map_err(|e| TecdsaError::Other(format!("keygen: {e}")))?;
         let sk_dec = sk.to_string();
         let q_dec = setup.cl().q().to_string();
-        let q = BigUint::from_str_radix(&q_dec, 10)
+        let q = Integer::from_str_radix(&q_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse q: {e}")))?;
-        let bu = BigUint::from_str_radix(&sk_dec, 10)
+        let bu = Integer::from_str_radix(&sk_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse sk: {e}")))?;
         let reduced = bu % &q;
-        tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&reduced)
+        tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
     };
     let gamma_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&gamma_i);
 
@@ -235,12 +234,12 @@ pub(crate) fn transition_r1_to_r2(
             .map_err(|e| TecdsaError::Other(format!("keygen: {e}")))?;
         let sk_dec = sk.to_string();
         let q_dec = setup.cl().q().to_string();
-        let q = BigUint::from_str_radix(&q_dec, 10)
+        let q = Integer::from_str_radix(&q_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse q: {e}")))?;
-        let bu = BigUint::from_str_radix(&sk_dec, 10)
+        let bu = Integer::from_str_radix(&sk_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse sk: {e}")))?;
         let reduced = bu % &q;
-        tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&reduced)
+        tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
     };
     let d_gamma_i = tecdsa_elgamal::encrypt(&key_mat.elek, &g_gamma_i, &r_elg_i);
 

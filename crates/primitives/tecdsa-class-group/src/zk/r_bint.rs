@@ -13,7 +13,7 @@
 //! specified range `[0, B)`.  Uses a statistical zero-knowledge technique
 //! where the commitment randomness is sampled from a larger range.
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{ClResult, ClSetup, Qfi};
@@ -51,7 +51,7 @@ impl RBintProof {
         }
 
         // Check: h^z == t * Y^e
-        let z_val = BigUint::from_bytes_be(&self.z);
+        let z_val = Integer::from_digits(&self.z, Order::Msf);
         let h_z = setup.power_of_h_bytes(&self.z)?;
         let y_e = setup.exp_bytes(y, &self.e)?;
         let rhs = setup.compose(&self.t, &y_e)?;
@@ -60,12 +60,12 @@ impl RBintProof {
         }
 
         // Statistical bound check: z < B * 2^256 (slack from commitment randomness).
-        let bound = BigUint::from_bytes_be(bound_bytes);
+        let bound = Integer::from_digits(bound_bytes, Order::Msf);
         let sk_bound_bytes = setup.secretkey_bound_bytes()?;
-        let sk_bound = BigUint::from_bytes_be(&sk_bound_bytes);
+        let sk_bound = Integer::from_digits(&sk_bound_bytes, Order::Msf);
         // z should be bounded by sk_bound + e * bound, which for our test params is fine.
-        let e_val = BigUint::from_bytes_be(&self.e);
-        let max_z = &sk_bound + &e_val * &bound;
+        let e_val = Integer::from_digits(&self.e, Order::Msf);
+        let max_z = &sk_bound + Integer::from(&e_val * &bound);
         if z_val > max_z {
             return Ok(false);
         }
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn r_bint_honest_verifies() {
         let mut setup = ClSetup::new_secp256k1("11001").expect("setup");
-        let x_bytes = BigUint::from(42u32).to_bytes_be();
+        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let y = setup.power_of_h("42").expect("h^x");
 
         let proof = RBintProof::prove(&mut setup, &y, &x_bytes).expect("prove");
@@ -96,7 +96,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("11002").expect("setup");
         let y = setup.power_of_h("42").expect("h^x");
 
-        let wrong_x_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RBintProof::prove(&mut setup, &y, &wrong_x_bytes).expect("prove");
         let bound = setup.secretkey_bound_bytes().expect("bound");
         assert!(!proof.verify(&setup, &y, &bound).expect("verify"));

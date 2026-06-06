@@ -28,57 +28,56 @@
 //! - **RevealVf**: verify Reveal messages and compute aggregate public
 //!   key.
 
-use num_bigint::{BigInt, BigUint};
-use num_traits::{One, Signed, Zero};
+use rug::{Complete, Integer};
 
-use crate::cl::{
-    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
+use crate::{
+    cl::{
+        Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Mpz, PublicKey as ClHsmqkPublicKey, Qfi,
+    },
+    zk::{r_blnt::RBlntProof, r_gdec_cl::RGdecClProof, sample_random},
 };
-use crate::zk::r_blnt::RBlntProof;
-use crate::zk::r_gdec_cl::RGdecClProof;
-use crate::zk::sample_random;
 
 // ---- q-ary decomposition / recomposition -----------------------------------
 
 /// Decomposes `value` into base-`q` digits: `value = sum q^l * chunks[l]`.
 ///
 /// Each chunk is in `[0, q)`. The returned vector has at least one element.
-fn decompose_q_ary(value: &BigUint, q: &BigUint) -> Vec<BigUint> {
+fn decompose_q_ary(value: &Mpz, q: &Mpz) -> Vec<Mpz> {
     let mut chunks = Vec::new();
-    let mut remaining = value.clone();
-    while remaining > BigUint::ZERO {
-        let chunk = &remaining % q;
-        remaining /= q;
-        chunks.push(chunk);
+    let mut remaining = value.inner().clone();
+    while remaining > Integer::ZERO {
+        let chunk;
+        (remaining, chunk) = remaining.div_rem_ref(q.inner()).complete();
+        chunks.push(Mpz::from_inner(chunk));
     }
     if chunks.is_empty() {
-        chunks.push(BigUint::ZERO);
+        chunks.push(Mpz::from(0));
     }
     chunks
 }
 
 /// Recomposes a value from base-`q` digits: `result = sum q^l * chunks[l]`.
 #[cfg(test)]
-fn recompose_q_ary(chunks: &[BigUint], q: &BigUint) -> BigUint {
-    let mut result = BigUint::ZERO;
-    let mut q_pow = BigUint::one();
+fn recompose_q_ary(chunks: &[Mpz], q: &Mpz) -> Mpz {
+    let mut result = Mpz::from(0);
+    let mut q_pow = Mpz::from(1);
     for chunk in chunks {
-        result += &q_pow * chunk;
-        q_pow *= q;
+        result = result + &q_pow * chunk;
+        q_pow = q_pow * q;
     }
     result
 }
 
 /// Number of base-`q` digits needed to represent values up to `bound`
 /// (inclusive): `ceil(log_q(bound + 1))`, but at least 1.
-fn num_chunks_for_bound(bound: &BigUint, q: &BigUint) -> usize {
+fn num_chunks_for_bound(bound: &Mpz, q: &Mpz) -> usize {
     if bound.is_zero() {
         return 1;
     }
     let mut count = 0usize;
-    let mut remaining = bound.clone();
-    while remaining > BigUint::ZERO {
-        remaining /= q;
+    let mut remaining = bound.inner().clone();
+    while remaining > Integer::ZERO {
+        remaining /= q.inner();
         count += 1;
     }
     count.max(1)
@@ -87,10 +86,10 @@ fn num_chunks_for_bound(bound: &BigUint, q: &BigUint) -> usize {
 // ---- delta-scaled integer Shamir sharing -----------------------------------
 
 /// Computes `Delta = n!`.
-fn factorial(n: usize) -> BigUint {
-    let mut delta = BigUint::one();
+fn factorial(n: usize) -> Mpz {
+    let mut delta = Mpz::from(1);
     for i in 2..=n {
-        delta *= BigUint::from(i as u64);
+        delta = delta * Mpz::from(i as u64);
     }
     delta
 }
@@ -110,30 +109,30 @@ fn shamir_share_delta_signed(
     n: usize,
     t: usize,
 ) -> ClResult<Vec<(Vec<u8>, bool)>> {
-    let s = BigInt::from(BigUint::from_bytes_be(s_bytes));
-    let delta = BigInt::from(factorial(n));
+    let s = Mpz::from_bytes_be(s_bytes);
+    let delta = factorial(n);
     let delta_s = &delta * &s;
 
     // Random coefficients for degree 1..t-1.
-    let mut coeffs: Vec<BigInt> = vec![delta_s];
+    let mut coeffs = vec![delta_s];
     for _ in 1..t {
         let r = sample_random(setup)?;
-        let r_val = BigInt::from(BigUint::from_bytes_be(&r));
+        let r_val = Mpz::from_bytes_be(&r);
         coeffs.push(r_val);
     }
 
     // Evaluate at X = 1, 2, ..., n.
     let mut shares = Vec::with_capacity(n);
     for i in 1..=n {
-        let x = BigInt::from(i as i64);
-        let mut val = BigInt::zero();
-        let mut x_pow = BigInt::one();
+        let x = Mpz::from(i as i64);
+        let mut val = Mpz::from(0);
+        let mut x_pow = Mpz::from(1);
         for coeff in &coeffs {
-            val += coeff * &x_pow;
-            x_pow *= &x;
+            val = val + coeff * &x_pow;
+            x_pow = x_pow * &x;
         }
-        let is_negative = val.is_negative();
-        let abs_bytes = val.magnitude().to_bytes_be();
+        let is_negative = val.inner().is_negative();
+        let abs_bytes = val.abs().to_bytes_be();
         shares.push((abs_bytes, is_negative));
     }
 
@@ -198,9 +197,9 @@ pub fn dkg_cl_gen(
     assert!(t < n);
 
     let q_bytes = setup.q_bytes()?;
-    let q = BigUint::from_bytes_be(&q_bytes);
+    let q = Mpz::from_bytes_be(&q_bytes);
     let sk_bound_bytes = setup.secretkey_bound_bytes()?;
-    let sk_bound = BigUint::from_bytes_be(&sk_bound_bytes);
+    let sk_bound = Mpz::from_bytes_be(&sk_bound_bytes);
     let num_chunks = num_chunks_for_bound(&sk_bound, &q);
 
     // 1. Sample chi_i in [0, B] and chi'_i in [0, B].
@@ -219,12 +218,12 @@ pub fn dkg_cl_gen(
         let (share_prime_j_bytes, _share_prime_j_neg) = &shares_chi_prime[j];
 
         // q-ary decomposition of |chi_ij|.
-        let share_j_uint = BigUint::from_bytes_be(share_j_bytes);
+        let share_j_uint = Mpz::from_bytes_be(share_j_bytes);
         let raw_chunks = decompose_q_ary(&share_j_uint, &q);
 
         // Pad or truncate to exactly num_chunks.
-        let mut chi_chunks: Vec<BigUint> = raw_chunks;
-        chi_chunks.resize(num_chunks, BigUint::ZERO);
+        let mut chi_chunks = raw_chunks;
+        chi_chunks.resize(num_chunks, Mpz::from(0));
 
         let chi_chunk_bytes: Vec<Vec<u8>> = chi_chunks
             .iter()
@@ -343,9 +342,9 @@ pub fn dkg_cl_gen_with_secret(
     assert!(t < n);
 
     let q_bytes = setup.q_bytes()?;
-    let q = BigUint::from_bytes_be(&q_bytes);
+    let q = Mpz::from_bytes_be(&q_bytes);
     let sk_bound_bytes = setup.secretkey_bound_bytes()?;
-    let sk_bound = BigUint::from_bytes_be(&sk_bound_bytes);
+    let sk_bound = Mpz::from_bytes_be(&sk_bound_bytes);
     let num_chunks = num_chunks_for_bound(&sk_bound, &q);
 
     // Use the provided secret instead of sampling.
@@ -361,11 +360,11 @@ pub fn dkg_cl_gen_with_secret(
         let (share_j_bytes, share_j_neg) = &shares_chi[j];
         let (share_prime_j_bytes, _share_prime_j_neg) = &shares_chi_prime[j];
 
-        let share_j_uint = BigUint::from_bytes_be(share_j_bytes);
+        let share_j_uint = Mpz::from_bytes_be(share_j_bytes);
         let raw_chunks = decompose_q_ary(&share_j_uint, &q);
 
-        let mut chi_chunks: Vec<BigUint> = raw_chunks;
-        chi_chunks.resize(num_chunks, BigUint::ZERO);
+        let mut chi_chunks = raw_chunks;
+        chi_chunks.resize(num_chunks, Mpz::from(0));
 
         let chi_chunk_bytes: Vec<Vec<u8>> = chi_chunks
             .iter()
@@ -509,13 +508,13 @@ pub fn dkg_cl_reveal(
     assert_eq!(received_chunks.len(), n);
 
     let q_bytes = setup.q_bytes()?;
-    let q = BigUint::from_bytes_be(&q_bytes);
+    let q = Mpz::from_bytes_be(&q_bytes);
 
     // Import our secret key so we can decrypt.
     let sk = setup.sk_from_bytes(my_sk_bytes)?;
 
     // Decrypt and recombine shares from each dealer.
-    let mut combined_share = BigUint::ZERO;
+    let mut combined_share = Mpz::from(0);
 
     // Also accumulate the homomorphically-combined ciphertext for the proof.
     let mut combined_c1 = setup.identity()?;
@@ -523,27 +522,27 @@ pub fn dkg_cl_reveal(
 
     for dealer_chunks in received_chunks {
         // Decrypt each chunk via standard CL decryption and recombine.
-        let mut dealer_share = BigUint::ZERO;
-        let mut q_pow = BigUint::one();
+        let mut dealer_share = Mpz::from(0);
+        let mut q_pow = Mpz::from(1);
 
         for (c_l_0, c_l_1) in dealer_chunks {
             // Decrypt: m_l = dlog_in_F( c_{l,1} * (c_{l,0}^{sk})^{-1} )
             let ct_l = setup.ct_from_components(c_l_0, c_l_1)?;
             let m_l_bytes = setup.decrypt_bytes(&sk, &ct_l)?;
-            let m_l = BigUint::from_bytes_be(&m_l_bytes);
+            let m_l = Mpz::from_bytes_be(&m_l_bytes);
             let q_pow_bytes = q_pow.to_bytes_be();
             let weighted_c1 = setup.exp_bytes(c_l_0, &q_pow_bytes)?;
             let weighted_c2 = setup.exp_bytes(c_l_1, &q_pow_bytes)?;
 
-            dealer_share += &q_pow * &m_l;
-            q_pow *= &q;
+            dealer_share = dealer_share + &q_pow * &m_l;
+            q_pow = q_pow * &q;
 
             // Accumulate the ciphertext components for the combined ct.
             combined_c1 = setup.compose(&combined_c1, &weighted_c1)?;
             combined_c2 = setup.compose(&combined_c2, &weighted_c2)?;
         }
 
-        combined_share += dealer_share;
+        combined_share = combined_share + dealer_share;
     }
 
     let combined_share_bytes = if combined_share.is_zero() {
@@ -624,7 +623,7 @@ pub fn dkg_cl_aggregate(
 ) -> ClResult<Qfi> {
     assert_eq!(public_shares.len(), party_indices.len());
 
-    let delta = BigInt::from(factorial(n_total));
+    let delta = factorial(n_total);
     let coeffs = lagrange_coefficients_delta(party_indices, &delta);
 
     let mut aggregate = setup.identity()?;
@@ -636,12 +635,10 @@ pub fn dkg_cl_aggregate(
             .expect("index mismatch");
         let share = &public_shares[share_pos];
 
-        let (exp_bytes, should_invert) = if lambda.is_negative() {
-            let abs_val = (-lambda).to_biguint().expect("abs value");
-            (abs_val.to_bytes_be(), true)
+        let (exp_bytes, should_invert) = if lambda.inner().is_negative() {
+            (lambda.abs().to_bytes_be(), true)
         } else {
-            let abs_val = lambda.to_biguint().expect("abs value");
-            (abs_val.to_bytes_be(), false)
+            (lambda.abs().to_bytes_be(), false)
         };
 
         let mut term = setup.exp_bytes(share, &exp_bytes)?;
@@ -661,20 +658,20 @@ pub fn dkg_cl_aggregate(
 ///
 /// Each coefficient is `delta * prod_{j!=k} (-i_j / (i_k - i_j))`,
 /// guaranteed integer because `delta = N!`.
-fn lagrange_coefficients_delta(indices: &[usize], delta: &BigInt) -> Vec<(usize, BigInt)> {
+fn lagrange_coefficients_delta(indices: &[usize], delta: &Mpz) -> Vec<(usize, Mpz)> {
     let mut result = Vec::with_capacity(indices.len());
     for (k, &i_k) in indices.iter().enumerate() {
         let mut coeff = delta.clone();
-        let i_k_big = BigInt::from(i_k as i64);
+        let i_k_big = Mpz::from(i_k as i64);
 
         for (j, &i_j) in indices.iter().enumerate() {
             if j == k {
                 continue;
             }
-            let i_j_big = BigInt::from(i_j as i64);
+            let i_j_big = Mpz::from(i_j as i64);
             let diff = &i_k_big - &i_j_big;
-            coeff /= &diff;
-            coeff *= -&i_j_big;
+            coeff = Mpz::from_inner((coeff.inner() / diff.inner()).complete());
+            coeff = coeff * -&i_j_big;
         }
 
         result.push((i_k, coeff));
@@ -683,12 +680,12 @@ fn lagrange_coefficients_delta(indices: &[usize], delta: &BigInt) -> Vec<(usize,
 }
 
 /// Computes `prod_l h^{q^l * x_l}` for a list of exponents `x_l` (big-endian bytes).
-fn compute_h_q_pow_product(setup: &ClSetup, q: &BigUint, exponents: &[Vec<u8>]) -> ClResult<Qfi> {
+fn compute_h_q_pow_product(setup: &ClSetup, q: &Mpz, exponents: &[Vec<u8>]) -> ClResult<Qfi> {
     let mut product = setup.identity()?;
-    let mut q_pow_l = BigUint::one();
+    let mut q_pow_l = Mpz::from(1);
 
     for x_l in exponents {
-        let x = BigUint::from_bytes_be(x_l);
+        let x = Mpz::from_bytes_be(x_l);
         let exp = &q_pow_l * &x;
 
         if !exp.is_zero() {
@@ -697,7 +694,7 @@ fn compute_h_q_pow_product(setup: &ClSetup, q: &BigUint, exponents: &[Vec<u8>]) 
             product = setup.compose(&product, &h_exp)?;
         }
 
-        q_pow_l *= q;
+        q_pow_l = q_pow_l * q;
     }
 
     Ok(product)
@@ -706,6 +703,7 @@ fn compute_h_q_pow_product(setup: &ClSetup, q: &BigUint, exponents: &[Vec<u8>]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cl::Mpz;
 
     /// Basic smoke test: 3 parties, threshold t=1 (2-of-3 reconstruction).
     /// Runs Gen + GenVf + Reveal + RevealVf + Aggregate.
@@ -827,10 +825,10 @@ mod tests {
     /// Tests that q-ary decompose/recompose round-trips correctly.
     #[test]
     fn q_ary_roundtrip() {
-        let q = BigUint::from(997u32); // small prime for testing
+        let q = Mpz::from(997u32); // small prime for testing
 
         for val in [0u64, 1, 42, 996, 997, 998, 1000000, u64::MAX] {
-            let v = BigUint::from(val);
+            let v = Mpz::from(val);
             let chunks = decompose_q_ary(&v, &q);
             let recomposed = recompose_q_ary(&chunks, &q);
             assert_eq!(v, recomposed, "roundtrip failed for {val}");
@@ -840,8 +838,8 @@ mod tests {
     /// Tests that decomposition produces chunks < q.
     #[test]
     fn q_ary_chunks_in_range() {
-        let q = BigUint::from(256u32);
-        let v = BigUint::from(123456789u64);
+        let q = Mpz::from(256u32);
+        let v = Mpz::from(123456789u64);
         let chunks = decompose_q_ary(&v, &q);
         for chunk in &chunks {
             assert!(chunk < &q, "chunk {chunk} >= q");
@@ -851,12 +849,12 @@ mod tests {
     /// Tests that num_chunks_for_bound gives the right count.
     #[test]
     fn chunk_count_correct() {
-        let q = BigUint::from(10u32);
-        assert_eq!(num_chunks_for_bound(&BigUint::ZERO, &q), 1);
-        assert_eq!(num_chunks_for_bound(&BigUint::from(9u32), &q), 1);
-        assert_eq!(num_chunks_for_bound(&BigUint::from(10u32), &q), 2);
-        assert_eq!(num_chunks_for_bound(&BigUint::from(99u32), &q), 2);
-        assert_eq!(num_chunks_for_bound(&BigUint::from(100u32), &q), 3);
+        let q = Mpz::from(10u32);
+        assert_eq!(num_chunks_for_bound(&Mpz::from(0), &q), 1);
+        assert_eq!(num_chunks_for_bound(&Mpz::from(9u32), &q), 1);
+        assert_eq!(num_chunks_for_bound(&Mpz::from(10u32), &q), 2);
+        assert_eq!(num_chunks_for_bound(&Mpz::from(99u32), &q), 2);
+        assert_eq!(num_chunks_for_bound(&Mpz::from(100u32), &q), 3);
     }
 
     /// Tests the 2-party degenerate case.

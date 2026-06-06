@@ -229,7 +229,8 @@ fn sample_randomness(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
+    use tecdsa_bigint::mul_mod;
 
     use super::*;
 
@@ -261,13 +262,13 @@ mod tests {
             .decode_b(&encode_a.pe_a, &encode_b.state)
             .expect("decode_b");
 
-        let q = BigUint::from_bytes_be(&setup.q_bytes().unwrap());
-        let z_a = BigUint::from_bytes_be(&share_a_bytes);
-        let z_b = BigUint::from_bytes_be(&share_b_bytes);
-        let x_val = BigUint::from(7u32);
-        let y_val = BigUint::from(11u32);
-        let xy = (&x_val * &y_val) % &q;
-        let sum = (&z_a + &z_b) % &q;
+        let q = Integer::from_digits(&setup.q_bytes().unwrap(), Order::Msf);
+        let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
+        let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
+        let x_val = Integer::from(7u32);
+        let y_val = Integer::from(11u32);
+        let xy = mul_mod(&x_val, &y_val, &q);
+        let sum = Integer::from(&z_a + &z_b) % &q;
 
         assert_eq!(sum, xy, "NIM correctness: z_A + z_B != x*y mod q");
     }

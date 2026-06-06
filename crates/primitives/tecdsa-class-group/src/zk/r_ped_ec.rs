@@ -18,8 +18,7 @@
 //!
 //! Reference: LLZ25 (Lyu-Li-Zhou-Deng, CCS 2025), Section 4.3.
 
-use num_bigint::BigUint;
-use num_traits::Num;
+use rug::{integer::Order, Integer};
 use tecdsa_curve::conv;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
@@ -129,21 +128,21 @@ impl RPedEcProof {
 // ---------------------------------------------------------------------------
 
 fn mod_reduce_bytes(a: &[u8], q: &[u8]) -> Vec<u8> {
-    let a_val = BigUint::from_bytes_be(a);
-    let q_val = BigUint::from_bytes_be(q);
-    if q_val.bits() == 0 {
+    let a_val = Integer::from_digits(a, Order::Msf);
+    let q_val = Integer::from_digits(q, Order::Msf);
+    if q_val.significant_bits() == 0 {
         return a.to_vec();
     }
-    (a_val % q_val).to_bytes_be()
+    (a_val % q_val).to_digits::<u8>(Order::Msf)
 }
 
 fn ec_scalar_base_mul_bytes(scalar_bytes: &[u8]) -> Vec<u8> {
     use elliptic_curve::group::GroupEncoding;
 
-    let val = BigUint::from_bytes_be(scalar_bytes);
-    let q = BigUint::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
+    let val = Integer::from_digits(scalar_bytes, Order::Msf);
+    let q = Integer::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
     let reduced = val % &q;
-    let scalar = biguint_to_scalar(&reduced);
+    let scalar = integer_to_scalar(&reduced);
     let point = k256::ProjectivePoint::GENERATOR * scalar;
     point.to_bytes().to_vec()
 }
@@ -154,12 +153,12 @@ fn ec_schnorr_check_bytes(
     e_bytes: &[u8],
     big_v_bytes: &[u8],
 ) -> bool {
-    let q = BigUint::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
-    let u2_val = BigUint::from_bytes_be(u2_bytes) % &q;
-    let e_val = BigUint::from_bytes_be(e_bytes) % &q;
+    let q = Integer::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
+    let u2_val = Integer::from_digits(u2_bytes, Order::Msf) % &q;
+    let e_val = Integer::from_digits(e_bytes, Order::Msf) % &q;
 
-    let u2_scalar = biguint_to_scalar(&u2_val);
-    let e_scalar = biguint_to_scalar(&e_val);
+    let u2_scalar = integer_to_scalar(&u2_val);
+    let e_scalar = integer_to_scalar(&e_val);
 
     let lhs = k256::ProjectivePoint::GENERATOR * u2_scalar;
 
@@ -175,8 +174,8 @@ fn ec_schnorr_check_bytes(
     lhs == rhs
 }
 
-fn biguint_to_scalar(val: &num_bigint::BigUint) -> k256::Scalar {
-    conv::biguint_to_scalar::<k256::Secp256k1>(val)
+fn integer_to_scalar(val: &Integer) -> k256::Scalar {
+    conv::integer_to_scalar::<k256::Secp256k1>(val)
 }
 
 fn point_from_compressed(bytes: &[u8]) -> Option<k256::ProjectivePoint> {
@@ -205,7 +204,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("6001").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x_bytes = BigUint::from(42u32).to_bytes_be();
+        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
 
         // Compute pe_A = h^r * pk^x via NIM Encode_A.
         let mut nim = Nim::new(&mut setup);
@@ -214,7 +213,7 @@ mod tests {
         let r_bytes = encode_out.state.r_bytes.clone();
 
         // V = x * G
-        let x_scalar = biguint_to_scalar(&num_bigint::BigUint::from(42u32));
+        let x_scalar = integer_to_scalar(&Integer::from(42u32));
         let big_v = k256::ProjectivePoint::GENERATOR * x_scalar;
         let big_v_bytes = big_v.to_bytes().to_vec();
 
@@ -231,7 +230,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("6002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x_bytes = BigUint::from(42u32).to_bytes_be();
+        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
 
         let mut nim = Nim::new(&mut setup);
         let encode_out = nim.encode_a(&42u32.to_be_bytes(), &pk).expect("encode_a");
@@ -239,7 +238,7 @@ mod tests {
         let r_bytes = encode_out.state.r_bytes.clone();
 
         // Use wrong V
-        let wrong_scalar = biguint_to_scalar(&num_bigint::BigUint::from(99u32));
+        let wrong_scalar = integer_to_scalar(&Integer::from(99u32));
         let wrong_v = k256::ProjectivePoint::GENERATOR * wrong_scalar;
         let wrong_v_bytes = wrong_v.to_bytes().to_vec();
 

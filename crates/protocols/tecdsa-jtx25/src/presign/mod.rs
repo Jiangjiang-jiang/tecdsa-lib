@@ -57,6 +57,7 @@ pub mod robust;
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_class_group::{
@@ -392,10 +393,10 @@ impl Jtx25PresignMachine {
             let (sk, _) = setup.keygen()?;
             let sk_bytes = setup.sk_to_bytes(&sk)?;
             let q_bytes = setup.q_bytes()?;
-            let q = num_bigint::BigUint::from_bytes_be(&q_bytes);
-            let bu = num_bigint::BigUint::from_bytes_be(&sk_bytes);
+            let q = Integer::from_digits(&q_bytes, Order::Msf);
+            let bu = Integer::from_digits(&sk_bytes, Order::Msf);
             let reduced = bu % &q;
-            tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&reduced)
+            tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
         };
         let phi_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&phi_i);
 
@@ -404,10 +405,10 @@ impl Jtx25PresignMachine {
             let (sk, _) = setup.keygen()?;
             let sk_bytes = setup.sk_to_bytes(&sk)?;
             let q_bytes = setup.q_bytes()?;
-            let q = num_bigint::BigUint::from_bytes_be(&q_bytes);
-            let bu = num_bigint::BigUint::from_bytes_be(&sk_bytes);
+            let q = Integer::from_digits(&q_bytes, Order::Msf);
+            let bu = Integer::from_digits(&sk_bytes, Order::Msf);
             let reduced = bu % &q;
-            tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&reduced)
+            tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
         };
 
         // --- Step 3: Encrypt phi_i under aggregate CL pk ---

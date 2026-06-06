@@ -30,11 +30,8 @@
 //! In our CL-HSMqk code: `g_q = h` (hidden-order generator), `f` (order-q
 //! generator), `ek = pk` (public key).
 
-use num_bigint::BigUint;
-use num_traits::{One, Zero};
-
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
-use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
+use crate::cl::{ClResult, ClSetup, Mpz, PublicKey as ClHsmqkPublicKey, Qfi};
 
 /// Blinded chunk-encryption proof (`Z_Blnt` / `R_Blnt`).
 pub struct RBlntProof {
@@ -90,8 +87,7 @@ impl RBlntProof {
         assert_eq!(chi_chunks.len(), num_chunks);
         assert_eq!(r_chunks.len(), num_chunks);
 
-        let q_bytes = setup.q_bytes()?;
-        let q = BigUint::from_bytes_be(&q_bytes);
+        let q = setup.cl().q().clone();
 
         // 1. Sample random commitment values.
         // a_{1l} <- Z_q (one per chunk)
@@ -252,8 +248,7 @@ impl RBlntProof {
             return Ok(false);
         }
 
-        let q_bytes = setup.q_bytes()?;
-        let q = BigUint::from_bytes_be(&q_bytes);
+        let q = setup.cl().q();
 
         // Compute the shared product term: prod_l h^{q^l * z_{1l}}
         let h_q_pow_z1_product = compute_h_q_pow_product(setup, &q, &self.z1_chunks)?;
@@ -314,13 +309,13 @@ impl RBlntProof {
 ///
 /// Each `x_l` is big-endian bytes. The product iterates over `l = 0, 1, ...`
 /// computing `h^{q^l * x_l}` and composing them together.
-fn compute_h_q_pow_product(setup: &ClSetup, q: &BigUint, exponents: &[Vec<u8>]) -> ClResult<Qfi> {
+fn compute_h_q_pow_product(setup: &ClSetup, q: &Mpz, exponents: &[Vec<u8>]) -> ClResult<Qfi> {
     let mut product = setup.identity()?;
-    let mut q_pow_l = BigUint::one(); // q^0 = 1
+    let mut q_pow_l = Mpz::from(1); // q^0 = 1
 
     for x_l in exponents {
         // Compute q^l * x_l
-        let x = BigUint::from_bytes_be(x_l);
+        let x = Mpz::from_bytes_be(x_l);
         let exp = &q_pow_l * &x;
 
         if !exp.is_zero() {
@@ -330,7 +325,7 @@ fn compute_h_q_pow_product(setup: &ClSetup, q: &BigUint, exponents: &[Vec<u8>]) 
         }
 
         // q^{l+1} = q^l * q
-        q_pow_l *= q;
+        q_pow_l = q_pow_l * q;
     }
 
     Ok(product)
@@ -338,16 +333,12 @@ fn compute_h_q_pow_product(setup: &ClSetup, q: &BigUint, exponents: &[Vec<u8>]) 
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
-
     use super::*;
     use crate::cl::ClSetup;
 
     /// Helper: compute the Pedersen commitment PC = h^{chi'} * prod_l h^{q^l * chi_l}
     fn compute_pc(setup: &ClSetup, chi_prime: &[u8], chi_chunks: &[Vec<u8>]) -> ClResult<Qfi> {
-        let q_bytes = setup.q_bytes()?;
-        let q = BigUint::from_bytes_be(&q_bytes);
-
+        let q = setup.cl().q();
         let h_chi_prime = setup.power_of_h_bytes(chi_prime)?;
         let product = compute_h_q_pow_product(setup, &q, chi_chunks)?;
         setup.compose(&h_chi_prime, &product)
@@ -362,8 +353,7 @@ mod tests {
         chi_chunks: &[Vec<u8>],
         r_agg: &[u8],
     ) -> ClResult<(Qfi, Qfi)> {
-        let q_bytes = setup.q_bytes()?;
-        let q = BigUint::from_bytes_be(&q_bytes);
+        let q = setup.cl().q();
 
         let product = compute_h_q_pow_product(setup, &q, chi_chunks)?;
 
@@ -397,14 +387,11 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("90001").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let q_bytes = setup.q_bytes().expect("q");
-        let _q = BigUint::from_bytes_be(&q_bytes);
-
         // Use 2 chunks for testing.
         let num_chunks = 2;
         let chi_chunks: Vec<Vec<u8>> = vec![
-            BigUint::from(42u32).to_bytes_be(),
-            BigUint::from(77u32).to_bytes_be(),
+            Mpz::from(42u32).to_bytes_be(),
+            Mpz::from(77u32).to_bytes_be(),
         ];
 
         // chi' (commitment randomness)
@@ -465,7 +452,7 @@ mod tests {
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         // Single chunk.
-        let chi_chunks: Vec<Vec<u8>> = vec![BigUint::from(100u32).to_bytes_be()];
+        let chi_chunks: Vec<Vec<u8>> = vec![Mpz::from(100u32).to_bytes_be()];
 
         let chi_prime = {
             let (sk2, _) = setup.keygen().expect("kg");
@@ -515,8 +502,8 @@ mod tests {
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         let chi_chunks: Vec<Vec<u8>> = vec![
-            BigUint::from(42u32).to_bytes_be(),
-            BigUint::from(77u32).to_bytes_be(),
+            Mpz::from(42u32).to_bytes_be(),
+            Mpz::from(77u32).to_bytes_be(),
         ];
 
         let chi_prime = {
@@ -552,8 +539,8 @@ mod tests {
 
         // Prove with WRONG chi_chunks.
         let wrong_chi: Vec<Vec<u8>> = vec![
-            BigUint::from(99u32).to_bytes_be(),
-            BigUint::from(77u32).to_bytes_be(),
+            Mpz::from(99u32).to_bytes_be(),
+            Mpz::from(77u32).to_bytes_be(),
         ];
 
         let proof = RBlntProof::prove(

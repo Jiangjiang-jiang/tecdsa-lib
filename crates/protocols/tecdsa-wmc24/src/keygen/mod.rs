@@ -52,6 +52,7 @@
 use std::{collections::BTreeMap, str::FromStr};
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use rug::{integer::Order, Integer};
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSecretKey, ClSetup, Mpz, Qfi},
     dkg_cl::{self, DkgClGenOutput, DkgClGenPerRecipient, DkgClRevealOutput},
@@ -1171,34 +1172,32 @@ pub fn shamir_share_delta(
     n: usize,
     t: usize,
 ) -> Result<Vec<Vec<u8>>, Wmc24Error> {
-    use num_bigint::{BigInt, BigUint};
+    let sk = Integer::from_digits(sk_bytes, Order::Msf);
 
-    let sk = BigUint::from_bytes_be(sk_bytes);
-
-    let mut delta = BigUint::from(1u32);
+    let mut delta = Integer::from(1);
     for i in 2..=n {
-        delta *= BigUint::from(i as u64);
+        delta *= Integer::from(i as u64);
     }
-    let delta_sk = &delta * &sk;
+    let delta_sk = Integer::from(&delta * &sk);
 
-    let mut coeffs: Vec<BigInt> = vec![BigInt::from(delta_sk)];
+    let mut coeffs: Vec<Integer> = vec![delta_sk];
     for _ in 1..t {
         let (rsk, _) = setup.keygen()?;
         let r = setup.sk_to_bytes(&rsk)?;
-        let r_val = BigInt::from(BigUint::from_bytes_be(&r));
+        let r_val = Integer::from_digits(&r, Order::Msf);
         coeffs.push(r_val);
     }
 
     let mut shares = Vec::with_capacity(n);
     for i in 1..=n {
-        let x = BigInt::from(i as i64);
-        let mut val = BigInt::from(0);
-        let mut x_pow = BigInt::from(1);
+        let x = Integer::from(i as i64);
+        let mut val = Integer::from(0);
+        let mut x_pow = Integer::from(1);
         for coeff in &coeffs {
-            val += coeff * &x_pow;
+            val += Integer::from(coeff * &x_pow);
             x_pow *= &x;
         }
-        let (_, val_bytes) = val.to_bytes_be();
+        let val_bytes = val.to_digits::<u8>(Order::Msf);
         shares.push(val_bytes);
     }
 

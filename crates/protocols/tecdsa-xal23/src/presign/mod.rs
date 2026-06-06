@@ -26,10 +26,9 @@ use elliptic_curve::{
 };
 pub use machine::Xal23PresignMachine;
 pub use msg::Xal23PresignMsg;
-use num_bigint::BigUint;
-use num_traits::Zero;
+use rug::{integer::Order, Integer};
 use tecdsa_curve::{
-    conv::{biguint_to_scalar, curve_order, scalar_to_biguint},
+    conv::{integer_to_scalar, curve_order, scalar_to_integer},
     TecdsaCurve,
 };
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSetup};
@@ -132,7 +131,7 @@ where
 {
     let n = signer_indices.len();
     let q = curve_order::<C>();
-    let q_bytes = q.to_bytes_be();
+    let q_bytes = q.to_digits::<u8>(Order::Msf);
 
     // -----------------------------------------------------------------------
     // Round 1: Sample k_i, gamma_i, compute G_gamma_i = gamma_i * G
@@ -173,12 +172,12 @@ where
         .collect();
 
     // alpha_ij, beta_ij for k_i * gamma_j
-    let mut alpha_kg = vec![vec![BigUint::zero(); n]; n];
-    let mut beta_kg = vec![vec![BigUint::zero(); n]; n];
+    let mut alpha_kg = vec![vec![Integer::new(); n]; n];
+    let mut beta_kg = vec![vec![Integer::new(); n]; n];
 
     // mu_ij, nu_ij for k_i * w_j
-    let mut mu_kw = vec![vec![BigUint::zero(); n]; n];
-    let mut nu_kw = vec![vec![BigUint::zero(); n]; n];
+    let mut mu_kw = vec![vec![Integer::new(); n]; n];
+    let mut nu_kw = vec![vec![Integer::new(); n]; n];
 
     for i in 0..n {
         for j in 0..n {
@@ -193,8 +192,8 @@ where
             //   Trait "receiver" (P1) does affine with k_i, gets alpha (step 2)
             //   Trait "sender" (P2) decrypts, gets beta (step 3)
             {
-                let k_i_bytes = scalar_to_biguint::<C>(&k_vec[i]).to_bytes_be();
-                let gamma_j_bytes = scalar_to_biguint::<C>(&gamma_vec[j]).to_bytes_be();
+                let k_i_bytes = scalar_to_integer::<C>(&k_vec[i]).to_digits::<u8>(Order::Msf);
+                let gamma_j_bytes = scalar_to_integer::<C>(&gamma_vec[j]).to_digits::<u8>(Order::Msf);
 
                 // Step 1: encrypt gamma_j
                 let (sender_msg, sender_state) =
@@ -210,14 +209,14 @@ where
                 let beta_bytes = M::sender_decrypt(setup_j, &sender_state, &q_bytes, &receiver_msg)
                     .expect("MtA sender_decrypt failed");
 
-                alpha_kg[i][j] = BigUint::from_bytes_be(&alpha_bytes);
-                beta_kg[i][j] = BigUint::from_bytes_be(&beta_bytes);
+                alpha_kg[i][j] = Integer::from_digits(&alpha_bytes, Order::Msf);
+                beta_kg[i][j] = Integer::from_digits(&beta_bytes, Order::Msf);
             }
 
             // MtA for k_i * w_j:
             {
-                let k_i_bytes = scalar_to_biguint::<C>(&k_vec[i]).to_bytes_be();
-                let w_j_bytes = scalar_to_biguint::<C>(&w_vec[j]).to_bytes_be();
+                let k_i_bytes = scalar_to_integer::<C>(&k_vec[i]).to_digits::<u8>(Order::Msf);
+                let w_j_bytes = scalar_to_integer::<C>(&w_vec[j]).to_digits::<u8>(Order::Msf);
 
                 let (sender_msg, sender_state) =
                     M::sender_encrypt(setup_j, &w_j_bytes, &q_bytes, rng)
@@ -230,8 +229,8 @@ where
                 let nu_bytes = M::sender_decrypt(setup_j, &sender_state, &q_bytes, &receiver_msg)
                     .expect("MtA sender_decrypt failed");
 
-                mu_kw[i][j] = BigUint::from_bytes_be(&mu_bytes);
-                nu_kw[i][j] = BigUint::from_bytes_be(&nu_bytes);
+                mu_kw[i][j] = Integer::from_digits(&mu_bytes, Order::Msf);
+                nu_kw[i][j] = Integer::from_digits(&nu_bytes, Order::Msf);
             }
         }
     }
@@ -251,9 +250,9 @@ where
                 continue;
             }
             // i's alpha from MtA(k_i, gamma_j) — i was sender
-            delta_i += biguint_to_scalar::<C>(&alpha_kg[i][j]);
+            delta_i += integer_to_scalar::<C>(&alpha_kg[i][j]);
             // i's beta from MtA(k_j, gamma_i) — i was receiver
-            delta_i += biguint_to_scalar::<C>(&beta_kg[j][i]);
+            delta_i += integer_to_scalar::<C>(&beta_kg[j][i]);
         }
         delta_vec.push(delta_i);
     }
@@ -289,9 +288,9 @@ where
                 continue;
             }
             // i's mu from MtA(k_i, w_j) — i was sender
-            sigma_i += biguint_to_scalar::<C>(&mu_kw[i][j]);
+            sigma_i += integer_to_scalar::<C>(&mu_kw[i][j]);
             // i's nu from MtA(k_j, w_i) — i was receiver
-            sigma_i += biguint_to_scalar::<C>(&nu_kw[j][i]);
+            sigma_i += integer_to_scalar::<C>(&nu_kw[j][i]);
         }
         sigma_vec.push(sigma_i);
     }

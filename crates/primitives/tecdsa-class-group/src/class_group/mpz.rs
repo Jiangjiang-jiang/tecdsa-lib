@@ -26,11 +26,14 @@ impl Mpz {
         Mpz(Integer::new())
     }
 
-    pub(crate) fn from_inner(i: Integer) -> Self {
+    pub fn from_inner(i: Integer) -> Self {
         Mpz(i)
     }
-    pub(crate) fn inner(&self) -> &Integer {
+    pub fn inner(&self) -> &Integer {
         &self.0
+    }
+    pub fn into_inner(self) -> Integer {
+        self.0
     }
 
     /// Parse with GMP base-0 semantics: `0x`/`0X` hex, `0b`/`0B` binary,

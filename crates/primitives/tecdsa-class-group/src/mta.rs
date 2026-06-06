@@ -25,9 +25,8 @@ use std::cell::RefCell;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use k256::Secp256k1;
-use num_bigint::BigUint;
-use num_traits::Zero;
 use rand_core::CryptoRngCore;
+use rug::{integer::Order, Integer};
 use subtle::ConstantTimeEq;
 use tecdsa_curve::conv;
 use tecdsa_protocol::{MtA, MtAWithCheck};
@@ -147,7 +146,7 @@ impl MtA for ClMtA {
         sender_msg: &Self::SenderMsg,
         _rng: &mut impl CryptoRngCore,
     ) -> Result<(Self::ReceiverMsg, Vec<u8>), Self::Error> {
-        let q = BigUint::from_bytes_be(q_bytes);
+        let q = Integer::from_digits(q_bytes, Order::Msf);
 
         let mut cl_setup = setup.setup.borrow_mut();
 
@@ -159,9 +158,9 @@ impl MtA for ClMtA {
         // Use the CL setup's own keygen to generate randomness, then reduce
         let (sk_tmp, _pk_tmp) = cl_setup.keygen()?;
         let r_bytes = cl_setup.sk_to_bytes(&sk_tmp)?;
-        let r_big = BigUint::from_bytes_be(&r_bytes);
-        let alpha_prime = &r_big % &q;
-        let alpha_prime_bytes = alpha_prime.to_bytes_be();
+        let r_big = Integer::from_digits(&r_bytes, Order::Msf);
+        let alpha_prime = r_big % &q;
+        let alpha_prime_bytes = alpha_prime.to_digits::<u8>(Order::Msf);
 
         // 3. Encrypt alpha': c_alpha = Enc(pk, alpha')
         let c_alpha = cl_setup.encrypt_bytes(&setup.pk, &alpha_prime_bytes)?;
@@ -170,13 +169,13 @@ impl MtA for ClMtA {
         let c_a = cl_setup.add_ciphertexts(&setup.pk, &c_scaled, &c_alpha)?;
 
         // 5. Compute receiver's output: alpha = -alpha' mod q = q - (alpha' mod q)
-        let alpha_mod_q = &alpha_prime % &q;
-        let alpha = if alpha_mod_q.is_zero() {
-            BigUint::zero()
+        let alpha_mod_q = Integer::from(&alpha_prime % &q);
+        let alpha = if alpha_mod_q == 0 {
+            Integer::new()
         } else {
-            &q - &alpha_mod_q
+            Integer::from(&q - &alpha_mod_q)
         };
-        let alpha_bytes = alpha.to_bytes_be();
+        let alpha_bytes = alpha.to_digits::<u8>(Order::Msf);
 
         let msg = ClReceiverMsg { ciphertext: c_a };
 
@@ -192,17 +191,17 @@ impl MtA for ClMtA {
         q_bytes: &[u8],
         receiver_msg: &Self::ReceiverMsg,
     ) -> Result<Vec<u8>, Self::Error> {
-        let q = BigUint::from_bytes_be(q_bytes);
+        let q = Integer::from_digits(q_bytes, Order::Msf);
 
         let cl_setup = setup.setup.borrow();
 
         // Decrypt the affine ciphertext
         let plaintext_bytes = cl_setup.decrypt_bytes(&setup.sk, &receiver_msg.ciphertext)?;
-        let plaintext = BigUint::from_bytes_be(&plaintext_bytes);
+        let plaintext = Integer::from_digits(&plaintext_bytes, Order::Msf);
 
         // Reduce mod q
-        let beta = &plaintext % &q;
-        let beta_bytes = beta.to_bytes_be();
+        let beta = plaintext % &q;
+        let beta_bytes = beta.to_digits::<u8>(Order::Msf);
 
         Ok(beta_bytes)
     }
@@ -264,9 +263,9 @@ impl MtAWithCheck for ClMtA {
             Self::receiver_compute(setup, a_bytes, q_bytes, sender_msg, rng)?;
 
         // Compute g^alpha as an EC point for the consistency check.
-        let alpha = BigUint::from_bytes_be(&alpha_bytes);
-        let q = BigUint::from_bytes_be(q_bytes);
-        let alpha_scalar = conv::biguint_to_scalar::<Secp256k1>(&(&alpha % &q));
+        let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
+        let q = Integer::from_digits(q_bytes, Order::Msf);
+        let alpha_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&alpha % &q));
 
         let g_alpha = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * alpha_scalar;
         let g_alpha_bytes = g_alpha.to_bytes().to_vec();
@@ -295,7 +294,7 @@ impl MtAWithCheck for ClMtA {
         check_proof: &Self::CheckProof,
         aux_bytes: &[u8],
     ) -> Result<bool, Self::Error> {
-        let q = BigUint::from_bytes_be(q_bytes);
+        let q = Integer::from_digits(q_bytes, Order::Msf);
 
         // Parse g^alpha from the check proof.
         let g_alpha_repr = k256::CompressedPoint::try_from(check_proof.g_alpha_bytes.as_slice())
@@ -312,13 +311,13 @@ impl MtAWithCheck for ClMtA {
                 .ok_or_else(|| ClMtaError::InvalidParam("invalid g_a EC point".into()))?;
 
         // Compute g^beta from beta_bytes.
-        let beta = BigUint::from_bytes_be(beta_bytes);
-        let beta_scalar = conv::biguint_to_scalar::<Secp256k1>(&(&beta % &q));
+        let beta = Integer::from_digits(beta_bytes, Order::Msf);
+        let beta_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&beta % &q));
         let g_beta = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * beta_scalar;
 
         // Compute b as scalar.
-        let b = BigUint::from_bytes_be(&state.b_bytes);
-        let b_scalar = conv::biguint_to_scalar::<Secp256k1>(&(&b % &q));
+        let b = Integer::from_digits(&state.b_bytes, Order::Msf);
+        let b_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&b % &q));
 
         // Check: g^alpha * g^beta == (g^a)^b
         let lhs = g_alpha + g_beta;
@@ -334,9 +333,8 @@ impl MtAWithCheck for ClMtA {
 
 #[cfg(test)]
 mod tests {
-    use num_traits::Num;
-
     use super::*;
+    use tecdsa_bigint::mul_mod;
 
     /// Helper: create a ClMtaSetup for testing with secp256k1 parameters.
     fn test_setup(seed: &str) -> ClMtaSetup {
@@ -350,9 +348,9 @@ mod tests {
         }
     }
 
-    /// Helper: secp256k1 curve order as BigUint.
-    fn curve_order() -> BigUint {
-        BigUint::from_str_radix(
+    /// Helper: secp256k1 curve order as an integer.
+    fn curve_order() -> Integer {
+        Integer::from_str_radix(
             "115792089237316195423570985008687907852837564279074904382605163141518161494337",
             10,
         )
@@ -364,15 +362,15 @@ mod tests {
         let setup = test_setup("2001");
 
         let q = curve_order();
-        let q_bytes = q.to_bytes_be();
+        let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Sender's input b
-        let b = BigUint::from(12345u32);
-        let b_bytes = b.to_bytes_be();
+        let b = Integer::from(12345u32);
+        let b_bytes = b.to_digits::<u8>(Order::Msf);
 
         // Receiver's input a
-        let a = BigUint::from(67890u32);
-        let a_bytes = a.to_bytes_be();
+        let a = Integer::from(67890u32);
+        let a_bytes = a.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();
 
@@ -391,10 +389,10 @@ mod tests {
             .expect("sender_decrypt should succeed");
 
         // Verify: alpha + beta = a * b mod q
-        let alpha = BigUint::from_bytes_be(&alpha_bytes);
-        let beta = BigUint::from_bytes_be(&beta_bytes);
-        let sum = (&alpha + &beta) % &q;
-        let expected = (&a * &b) % &q;
+        let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
+        let beta = Integer::from_digits(&beta_bytes, Order::Msf);
+        let sum = Integer::from(&alpha + &beta) % &q;
+        let expected = mul_mod(&a, &b, &q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -405,31 +403,36 @@ mod tests {
         let setup = test_setup("2002");
 
         let q = curve_order();
-        let q_bytes = q.to_bytes_be();
+        let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();
 
         let test_values: &[(u32, u32)] = &[(100, 200), (42, 99), (1, 1)];
 
         for &(a_val, b_val) in test_values {
-            let a = BigUint::from(a_val);
-            let b = BigUint::from(b_val);
+            let a = Integer::from(a_val);
+            let b = Integer::from(b_val);
 
             let (sender_msg, sender_state) =
-                ClMtA::sender_encrypt(&setup, &b.to_bytes_be(), &q_bytes, &mut rng)
+                ClMtA::sender_encrypt(&setup, &b.to_digits::<u8>(Order::Msf), &q_bytes, &mut rng)
                     .expect("sender_encrypt");
 
-            let (receiver_msg, alpha_bytes) =
-                ClMtA::receiver_compute(&setup, &a.to_bytes_be(), &q_bytes, &sender_msg, &mut rng)
-                    .expect("receiver_compute");
+            let (receiver_msg, alpha_bytes) = ClMtA::receiver_compute(
+                &setup,
+                &a.to_digits::<u8>(Order::Msf),
+                &q_bytes,
+                &sender_msg,
+                &mut rng,
+            )
+            .expect("receiver_compute");
 
             let beta_bytes = ClMtA::sender_decrypt(&setup, &sender_state, &q_bytes, &receiver_msg)
                 .expect("sender_decrypt");
 
-            let alpha = BigUint::from_bytes_be(&alpha_bytes);
-            let beta = BigUint::from_bytes_be(&beta_bytes);
-            let sum = (&alpha + &beta) % &q;
-            let expected = (&a * &b) % &q;
+            let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
+            let beta = Integer::from_digits(&beta_bytes, Order::Msf);
+            let sum = Integer::from(&alpha + &beta) % &q;
+            let expected = mul_mod(&a, &b, &q);
 
             assert_eq!(
                 sum, expected,
@@ -444,29 +447,34 @@ mod tests {
         let setup = test_setup("2003");
 
         let q = curve_order();
-        let q_bytes = q.to_bytes_be();
+        let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Use values that are close to (but less than) q
-        let a = &q - BigUint::from(1u32);
-        let b = BigUint::from(2u32);
+        let a = Integer::from(&q - 1);
+        let b = Integer::from(2u32);
 
         let mut rng = rand::thread_rng();
 
         let (sender_msg, sender_state) =
-            ClMtA::sender_encrypt(&setup, &b.to_bytes_be(), &q_bytes, &mut rng)
+            ClMtA::sender_encrypt(&setup, &b.to_digits::<u8>(Order::Msf), &q_bytes, &mut rng)
                 .expect("sender_encrypt");
 
-        let (receiver_msg, alpha_bytes) =
-            ClMtA::receiver_compute(&setup, &a.to_bytes_be(), &q_bytes, &sender_msg, &mut rng)
-                .expect("receiver_compute");
+        let (receiver_msg, alpha_bytes) = ClMtA::receiver_compute(
+            &setup,
+            &a.to_digits::<u8>(Order::Msf),
+            &q_bytes,
+            &sender_msg,
+            &mut rng,
+        )
+        .expect("receiver_compute");
 
         let beta_bytes = ClMtA::sender_decrypt(&setup, &sender_state, &q_bytes, &receiver_msg)
             .expect("sender_decrypt");
 
-        let alpha = BigUint::from_bytes_be(&alpha_bytes);
-        let beta = BigUint::from_bytes_be(&beta_bytes);
-        let sum = (&alpha + &beta) % &q;
-        let expected = (&a * &b) % &q;
+        let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
+        let beta = Integer::from_digits(&beta_bytes, Order::Msf);
+        let sum = Integer::from(&alpha + &beta) % &q;
+        let expected = mul_mod(&a, &b, &q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -476,19 +484,19 @@ mod tests {
         let setup = test_setup("3001");
 
         let q = curve_order();
-        let q_bytes = q.to_bytes_be();
+        let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Sender's input b
-        let b = BigUint::from(12345u32);
-        let b_bytes = b.to_bytes_be();
+        let b = Integer::from(12345u32);
+        let b_bytes = b.to_digits::<u8>(Order::Msf);
 
         // Receiver's input a
-        let a = BigUint::from(67890u32);
-        let a_bytes = a.to_bytes_be();
+        let a = Integer::from(67890u32);
+        let a_bytes = a.to_digits::<u8>(Order::Msf);
 
         // Compute g^a for the auxiliary data (receiver's public point).
-        let a_mod_q = &a % &q;
-        let a_mod_bytes = a_mod_q.to_bytes_be();
+        let a_mod_q = Integer::from(&a % &q);
+        let a_mod_bytes = a_mod_q.to_digits::<u8>(Order::Msf);
         let mut a_padded = [0u8; 32];
         let a_len = a_mod_bytes.len().min(32);
         a_padded[32 - a_len..].copy_from_slice(&a_mod_bytes[..a_len]);
@@ -529,10 +537,10 @@ mod tests {
         assert!(check_ok, "MtAwc consistency check must pass");
 
         // Also verify MtA correctness: alpha + beta = a * b mod q
-        let alpha = BigUint::from_bytes_be(&alpha_bytes);
-        let beta = BigUint::from_bytes_be(&beta_bytes);
-        let sum = (&alpha + &beta) % &q;
-        let expected = (&a * &b) % &q;
+        let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
+        let beta = Integer::from_digits(&beta_bytes, Order::Msf);
+        let sum = Integer::from(&alpha + &beta) % &q;
+        let expected = mul_mod(&a, &b, &q);
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
 
@@ -542,18 +550,18 @@ mod tests {
         let setup = test_setup("3002");
 
         let q = curve_order();
-        let q_bytes = q.to_bytes_be();
+        let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();
         let test_values: &[(u32, u32)] = &[(7, 11), (100, 200), (1, 1)];
 
         for &(a_val, b_val) in test_values {
-            let a = BigUint::from(a_val);
-            let b = BigUint::from(b_val);
+            let a = Integer::from(a_val);
+            let b = Integer::from(b_val);
 
             // Compute g^a
-            let a_mod_q = &a % &q;
-            let a_mod_bytes = a_mod_q.to_bytes_be();
+            let a_mod_q = Integer::from(&a % &q);
+            let a_mod_bytes = a_mod_q.to_digits::<u8>(Order::Msf);
             let mut a_padded = [0u8; 32];
             let a_len = a_mod_bytes.len().min(32);
             a_padded[32 - a_len..].copy_from_slice(&a_mod_bytes[..a_len]);
@@ -566,12 +574,12 @@ mod tests {
             let g_a_bytes = g_a.to_bytes().to_vec();
 
             let (sender_msg, sender_state) =
-                ClMtA::sender_encrypt(&setup, &b.to_bytes_be(), &q_bytes, &mut rng)
+                ClMtA::sender_encrypt(&setup, &b.to_digits::<u8>(Order::Msf), &q_bytes, &mut rng)
                     .expect("sender_encrypt");
 
             let (receiver_msg, alpha_bytes, check_proof) = ClMtA::receiver_compute_with_check(
                 &setup,
-                &a.to_bytes_be(),
+                &a.to_digits::<u8>(Order::Msf),
                 &q_bytes,
                 &sender_msg,
                 &mut rng,
@@ -593,10 +601,10 @@ mod tests {
             assert!(check_ok, "MtAwc check must pass for a={a_val}, b={b_val}");
 
             // Correctness check.
-            let alpha = BigUint::from_bytes_be(&alpha_bytes);
-            let beta = BigUint::from_bytes_be(&beta_bytes);
-            let sum = (&alpha + &beta) % &q;
-            let expected = (&a * &b) % &q;
+            let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
+            let beta = Integer::from_digits(&beta_bytes, Order::Msf);
+            let sum = Integer::from(&alpha + &beta) % &q;
+            let expected = mul_mod(&a, &b, &q);
             assert_eq!(sum, expected, "MtA correctness for a={a_val}, b={b_val}");
         }
     }

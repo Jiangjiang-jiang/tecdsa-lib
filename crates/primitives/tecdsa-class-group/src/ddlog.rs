@@ -9,7 +9,7 @@
 //! full `DDLog` proof (`Pi_DDLog`) will be implemented in the ZK proofs
 //! task (Task 17).
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 
 use crate::cl::{ClResult, ClSetup, Qfi};
 
@@ -34,17 +34,17 @@ impl DdLogLabel {
         &self.value
     }
 
-    /// Converts the label to a `BigUint`.
+    /// Converts the label to an `Integer`.
     #[must_use]
-    pub fn to_biguint(&self) -> BigUint {
-        BigUint::from_bytes_be(&self.value)
+    pub fn to_integer(&self) -> Integer {
+        Integer::from_digits(&self.value, Order::Msf)
     }
 
-    /// Creates a label from a `BigUint`.
+    /// Creates a label from an `Integer`.
     #[must_use]
-    pub fn from_biguint(v: &BigUint) -> Self {
+    pub fn from_integer(v: &Integer) -> Self {
         Self {
-            value: v.to_bytes_be(),
+            value: v.to_digits::<u8>(Order::Msf),
         }
     }
 
@@ -90,7 +90,7 @@ pub fn ddlog_label(setup: &ClSetup, element: &Qfi) -> ClResult<DdLogLabel> {
 pub fn ddlog_verify_power_of_f(setup: &ClSetup, m_bytes: &[u8]) -> ClResult<bool> {
     let fm = setup.power_of_f_bytes(m_bytes)?;
     let label = ddlog_label(setup, &fm)?;
-    let label_val = BigUint::from_bytes_be(label.as_bytes());
-    let m_val = BigUint::from_bytes_be(m_bytes);
+    let label_val = Integer::from_digits(label.as_bytes(), Order::Msf);
+    let m_val = Integer::from_digits(m_bytes, Order::Msf);
     Ok(label_val == m_val)
 }

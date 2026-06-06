@@ -3,8 +3,20 @@ use rand_core::CryptoRngCore;
 use rug::{
     integer::IsPrime,
     rand::{MutRandState, ThreadRandGen},
-    Integer,
+    Complete, Integer,
 };
+
+/// Returns a uniformly random integer in `[0, bound)` drawn from `rng`.
+///
+/// # Panics
+///
+/// Panics if `bound` is not strictly positive.
+#[must_use]
+pub fn random_below(bound: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
+    let mut sync = SyncRng(rng);
+    let mut state = rug::rand::ThreadRandState::new_custom(&mut sync);
+    bound.random_below_ref(&mut state).complete()
+}
 
 /// Returns `true` if `p` is a safe prime, i.e. both `p` and `(p-1)/2` are
 /// (probably) prime.

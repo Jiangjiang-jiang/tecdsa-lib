@@ -15,10 +15,10 @@
 //!   if e_i = 1: z_i = r_i * x  (i.e. z_i^{2^k} = a_i * h mod N)
 //! Verify: z_i^{2^k} == a_i * h^{e_i} mod N
 
-use num_bigint::{BigUint, RandBigInt};
-use num_traits::One;
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -27,15 +27,15 @@ const REPEAT: usize = 80;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkQr2kProof {
     /// Public: the element `h` being proven to be a QR_{2^k}
-    pub h: BigUint,
+    pub h: Integer,
     /// Public: modulus N
-    pub n: BigUint,
+    pub n: Integer,
     /// Public: parameter k
     pub k: u32,
     /// Commitment values: a_i = r_i^{2^k} mod N
-    a_vec: Vec<BigUint>,
+    a_vec: Vec<Integer>,
     /// Response values: z_i = r_i * x^{e_i} (plain product, not reduced)
-    z_vec: Vec<BigUint>,
+    z_vec: Vec<Integer>,
 }
 
 impl ZkQr2kProof {
@@ -48,21 +48,21 @@ impl ZkQr2kProof {
     /// * `x` - the 2^k-th root witness (h = x^{2^k} mod N)
     /// * `h` - the element to prove is a QR_{2^k}
     pub fn prove(
-        n: &BigUint,
+        n: &Integer,
         k: u32,
-        x: &BigUint,
-        h: &BigUint,
+        x: &Integer,
+        h: &Integer,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let two_pow_k = BigUint::one() << k;
+        let two_pow_k = Integer::from(1) << k;
 
         // Step 1: Generate commitments
         let mut a_vec = Vec::with_capacity(REPEAT);
         let mut r_vec = Vec::with_capacity(REPEAT);
 
         for _ in 0..REPEAT {
-            let r = rng.gen_biguint_below(n);
-            let a = r.modpow(&two_pow_k, n);
+            let r = random_below(n, rng);
+            let a = pow_mod(&r, &two_pow_k, n);
             a_vec.push(a);
             r_vec.push(r);
         }
@@ -73,10 +73,9 @@ impl ZkQr2kProof {
         // Step 3: Compute responses
         let mut z_vec = Vec::with_capacity(REPEAT);
         for i in 0..REPEAT {
-            let e_bit = (&e >> i) & BigUint::one();
-            if e_bit.is_one() {
+            if e.get_bit(i as u32) {
                 // z_i = r_i * x mod N
-                let z = (&r_vec[i] * x) % n;
+                let z = mul_mod(&r_vec[i], x, n);
                 z_vec.push(z);
             } else {
                 z_vec.push(r_vec[i].clone());
@@ -97,17 +96,16 @@ impl ZkQr2kProof {
     /// Checks: for each i, z_i^{2^k} == a_i * h^{e_i} mod N.
     #[must_use]
     pub fn verify(&self) -> bool {
-        let two_pow_k = BigUint::one() << self.k;
+        let two_pow_k = Integer::from(1) << self.k;
 
         // Recompute challenge
         let e = compute_challenge(&self.a_vec);
 
         for i in 0..REPEAT {
-            let e_bit = (&e >> i) & BigUint::one();
-            let z_pow = self.z_vec[i].modpow(&two_pow_k, &self.n);
+            let z_pow = pow_mod(&self.z_vec[i], &two_pow_k, &self.n);
 
-            let expected = if e_bit.is_one() {
-                (&self.a_vec[i] * &self.h) % &self.n
+            let expected = if e.get_bit(i as u32) {
+                mul_mod(&self.a_vec[i], &self.h, &self.n)
             } else {
                 self.a_vec[i].clone()
             };
@@ -122,13 +120,13 @@ impl ZkQr2kProof {
 }
 
 /// Computes the Fiat-Shamir challenge from the commitment vector.
-fn compute_challenge(a_vec: &[BigUint]) -> BigUint {
+fn compute_challenge(a_vec: &[Integer]) -> Integer {
     // Hash each a_i individually, then hash the concatenation
     let mut fs_vec = Vec::with_capacity(a_vec.len());
     for a in a_vec {
         let mut h = Sha256::new();
         h.update(b"ZkQr2k-a");
-        h.update(a.to_bytes_be());
+        h.update(a.to_digits::<u8>(Order::Msf));
         fs_vec.push(h.finalize());
     }
 
@@ -138,7 +136,7 @@ fn compute_challenge(a_vec: &[BigUint]) -> BigUint {
         hasher.update(fs);
     }
     let hash = hasher.finalize();
-    BigUint::from_bytes_be(&hash)
+    Integer::from_digits(&hash, Order::Msf)
 }
 
 #[cfg(test)]
@@ -154,9 +152,9 @@ mod tests {
         // We need the original x to prove h = x^{2^k} mod N.
         // Since generate_keypair_with_params does not expose x, we construct
         // our own test case.
-        let x = rng.gen_biguint_below(&pk.n);
-        let two_pow_k = BigUint::one() << pk.k;
-        let h = x.modpow(&two_pow_k, &pk.n);
+        let x = random_below(&pk.n, &mut rng);
+        let two_pow_k = Integer::from(1) << pk.k;
+        let h = pow_mod(&x, &two_pow_k, &pk.n);
 
         let proof = ZkQr2kProof::prove(&pk.n, pk.k, &x, &h, &mut rng);
         assert!(proof.verify());
@@ -171,13 +169,13 @@ mod tests {
         let n_bits: u64 = 256;
         let k: u32 = 32;
 
-        let x = rng.gen_biguint(n_bits);
-        let n = rng.gen_biguint(n_bits * 2);
+        let x = random_below(&(Integer::from(1) << n_bits as u32), &mut rng);
+        let mut n = random_below(&(Integer::from(1) << (n_bits as u32 * 2)), &mut rng);
         // Ensure n is odd (approximate modulus)
-        let n = n | BigUint::one();
+        n.set_bit(0, true);
 
-        let two_pow_k = BigUint::one() << k;
-        let h = x.modpow(&two_pow_k, &n);
+        let two_pow_k = Integer::from(1) << k;
+        let h = pow_mod(&x, &two_pow_k, &n);
 
         let proof = ZkQr2kProof::prove(&n, k, &x, &h, &mut rng);
         assert!(proof.verify());

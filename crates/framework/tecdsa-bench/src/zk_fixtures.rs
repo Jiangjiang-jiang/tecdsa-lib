@@ -91,7 +91,7 @@ pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integ
 pub fn jl_keys() -> (
     tecdsa_joye_libert::kgen::JlPublicKey,
     tecdsa_joye_libert::kgen::JlSecretKey,
-    num_bigint::BigUint,
+    rug::Integer,
 ) {
     tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng)
 }
@@ -147,7 +147,7 @@ impl PedersenFixture {
 pub struct JlFixture {
     pub pk: tecdsa_joye_libert::kgen::JlPublicKey,
     pub sk: tecdsa_joye_libert::kgen::JlSecretKey,
-    pub x: num_bigint::BigUint,
+    pub x: rug::Integer,
 }
 
 impl JlFixture {

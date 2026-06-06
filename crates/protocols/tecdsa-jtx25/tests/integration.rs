@@ -533,7 +533,8 @@ fn test_threshold_subset_signing() {
 /// Minimal inline test to verify the CL homomorphic math.
 #[test]
 fn test_cl_homomorphic_math() {
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
+    use tecdsa_bigint::{mul_mod, pow_mod};
     use tecdsa_class_group::{cl::ClSetup, t_cl};
 
     let seed = "70001";
@@ -568,10 +569,10 @@ fn test_cl_homomorphic_math() {
     let pd2 = t_cl::partial_decrypt(&setup, &ct_phi_k, 2, &sk_shares[1]).unwrap();
     let p0 = t_cl::final_decrypt(&setup, &ct_phi_k, n, &[pd1, pd2]).unwrap();
 
-    let p0_bu = BigUint::from_bytes_be(&p0);
+    let p0_bu = Integer::from_digits(&p0, Order::Msf);
     eprintln!(
         "[test_cl_homo] p0 (should be phi*k=77) = {}",
-        p0_bu.to_str_radix(10)
+        p0_bu.to_string_radix(10)
     );
 
     // Also test addition: Enc(phi*m) = Enc(phi)^m
@@ -596,18 +597,18 @@ fn test_cl_homomorphic_math() {
     let p1 = t_cl::final_decrypt(&setup, &ct_sum, n, &[pd1_sum, pd2_sum]).unwrap();
 
     // Expected: phi * (m + x * r_x) = 7 * (13 + 17*19) = 7 * (13 + 323) = 7 * 336 = 2352
-    let p1_bu = BigUint::from_bytes_be(&p1);
+    let p1_bu = Integer::from_digits(&p1, Order::Msf);
     eprintln!(
         "[test_cl_homo] p1 (should be 2352) = {}",
-        p1_bu.to_str_radix(10)
+        p1_bu.to_string_radix(10)
     );
 
     // s = p1 / p0 mod q = 2352 / 77 mod q
     let q_bytes = setup.q_bytes().unwrap();
-    let q = BigUint::from_bytes_be(&q_bytes);
-    let q_minus_2 = &q - BigUint::from(2u32);
-    let p0_inv = p0_bu.modpow(&q_minus_2, &q);
-    let s = (&p1_bu * &p0_inv) % &q;
+    let q = Integer::from_digits(&q_bytes, Order::Msf);
+    let q_minus_2 = Integer::from(&q - 2);
+    let p0_inv = pow_mod(&p0_bu, &q_minus_2, &q);
+    let s = mul_mod(&p1_bu, &p0_inv, &q);
 
     // Expected: 2352 / 77 = 2352 * 77^(-1) mod q
     // 2352 / 77 = 30.545... but mod q: 77^{-1} mod q * 2352 mod q
@@ -615,25 +616,25 @@ fn test_cl_homomorphic_math() {
     // Wait: phi*k = 7*11 = 77, phi*(m+x*r) = 7*(13+323) = 7*336 = 2352
     // s = 2352/77 = (m+x*r)/k = (13+323)/11 = 336/11 = 30.545...
     // This is NOT an integer! So s mod q = 336 * 11^(-1) mod q.
-    eprintln!("[test_cl_homo] s = {}", s.to_str_radix(10));
+    eprintln!("[test_cl_homo] s = {}", s.to_string_radix(10));
 
     // The correct s should be: (m + x * r_x) * k^{-1} mod q
-    let m_bu = BigUint::from(13u32);
-    let x_bu = BigUint::from(17u32);
-    let rx_bu = BigUint::from(19u32);
-    let k_bu = BigUint::from(11u32);
-    let k_inv = k_bu.modpow(&q_minus_2, &q);
-    let expected_s = ((&m_bu + &x_bu * &rx_bu) * &k_inv) % &q;
+    let m_bu = Integer::from(13u32);
+    let x_bu = Integer::from(17u32);
+    let rx_bu = Integer::from(19u32);
+    let k_bu = Integer::from(11u32);
+    let k_inv = pow_mod(&k_bu, &q_minus_2, &q);
+    let expected_s = ((&m_bu + Integer::from(&x_bu * &rx_bu)) * &k_inv) % &q;
     eprintln!(
         "[test_cl_homo] expected s = {}",
-        expected_s.to_str_radix(10)
+        expected_s.to_string_radix(10)
     );
 
     assert_eq!(s, expected_s, "s must match expected");
-    assert_eq!(p0_bu, BigUint::from(77u32), "p0 must be phi*k = 77");
+    assert_eq!(p0_bu, Integer::from(77u32), "p0 must be phi*k = 77");
     assert_eq!(
         p1_bu,
-        BigUint::from(2352u32),
+        Integer::from(2352u32),
         "p1 must be phi*(m+x*r) = 2352"
     );
 }

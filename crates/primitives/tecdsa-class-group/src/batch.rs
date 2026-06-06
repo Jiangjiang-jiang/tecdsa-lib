@@ -16,7 +16,7 @@
 //! This module provides a generic batch verification framework for
 //! Schnorr-like Sigma protocols over CL groups.
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 
 use crate::{
     cl::{ClResult, ClSetup, Qfi},
@@ -76,18 +76,18 @@ pub fn batch_verify(setup: &ClSetup, instances: &[BatchInstance]) -> ClResult<bo
         let mut idx_extras: Vec<&[u8]> = extra_refs.clone();
         idx_extras.push(&idx_bytes);
         let w_bytes = challenge_from_qfi(setup, b"R_batch", &weight_qfi_refs, &idx_extras)?;
-        let w = BigUint::from_bytes_be(&w_bytes);
+        let w = Integer::from_digits(&w_bytes, Order::Msf);
 
         // lhs += base^{w * z}
-        let resp = BigUint::from_bytes_be(&inst.response);
-        let wz = (&w * &resp).to_bytes_be();
+        let resp = Integer::from_digits(&inst.response, Order::Msf);
+        let wz = Integer::from(&w * &resp).to_digits::<u8>(Order::Msf);
         let base_wz = setup.exp_bytes(&inst.base, &wz)?;
         lhs = setup.compose(&lhs, &base_wz)?;
 
         // rhs += commit^w * target^{w*e}
         let commit_w = setup.exp_bytes(&inst.commitment, &w_bytes)?;
-        let chal = BigUint::from_bytes_be(&inst.challenge);
-        let we = (&w * &chal).to_bytes_be();
+        let chal = Integer::from_digits(&inst.challenge, Order::Msf);
+        let we = Integer::from(&w * &chal).to_digits::<u8>(Order::Msf);
         let target_we = setup.exp_bytes(&inst.target, &we)?;
         let rhs_part = setup.compose(&commit_w, &target_we)?;
         rhs = setup.compose(&rhs, &rhs_part)?;

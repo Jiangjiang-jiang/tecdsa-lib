@@ -20,8 +20,8 @@
 
 use std::cell::RefCell;
 
-use num_bigint::BigUint;
 use rand_core::CryptoRngCore;
+use rug::{integer::Order, Integer};
 
 use crate::{
     cl::{Ciphertext as ClHsmqkCiphertext, ClError, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
@@ -206,20 +206,20 @@ impl tecdsa_protocol::MtABroadcast for NimMtA {
         let mut cl_setup = setup.setup.borrow_mut();
         let nim = Nim::new(&mut cl_setup);
 
-        let q = BigUint::from_bytes_be(q_bytes);
+        let q = Integer::from_digits(q_bytes, Order::Msf);
 
         match (my_state, other_encoding) {
             (NimState::RoleA(state_a), NimEncoding::RoleB(pe_b)) => {
                 let share_bytes = nim.decode_a(pe_b, state_a)?;
-                let share = BigUint::from_bytes_be(&share_bytes);
+                let share = Integer::from_digits(&share_bytes, Order::Msf);
                 let share_mod_q = share % &q;
-                Ok(share_mod_q.to_bytes_be())
+                Ok(share_mod_q.to_digits::<u8>(Order::Msf))
             }
             (NimState::RoleB(state_b), NimEncoding::RoleA(pe_a)) => {
                 let share_bytes = nim.decode_b(pe_a, state_b)?;
-                let share = BigUint::from_bytes_be(&share_bytes);
+                let share = Integer::from_digits(&share_bytes, Order::Msf);
                 let share_mod_q = share % &q;
-                Ok(share_mod_q.to_bytes_be())
+                Ok(share_mod_q.to_digits::<u8>(Order::Msf))
             }
             (NimState::RoleA(_), NimEncoding::RoleA(_)) => Err(NimMtaError::RoleMismatch {
                 expected: "B",
@@ -502,7 +502,7 @@ impl ScaledDecryptMtA {
 
 #[cfg(test)]
 mod tests {
-    use num_traits::Num;
+    use tecdsa_bigint::mul_mod;
     use tecdsa_protocol::MtABroadcast;
 
     use super::*;
@@ -521,22 +521,22 @@ mod tests {
     }
 
     fn secp256k1_order_bytes() -> Vec<u8> {
-        let q = BigUint::from_str_radix(
+        let q = Integer::from_str_radix(
             "115792089237316195423570985008687907852837564279074904382605163141518161494337",
             10,
         )
         .unwrap();
-        q.to_bytes_be()
+        q.to_digits::<u8>(Order::Msf)
     }
 
     #[test]
     fn nim_mta_roundtrip() {
         // Party A (x=7) and Party B (y=11) should get shares summing to 77.
         let q_bytes = secp256k1_order_bytes();
-        let q = BigUint::from_bytes_be(&q_bytes);
+        let q = Integer::from_digits(&q_bytes, Order::Msf);
 
-        let x = BigUint::from(7u32);
-        let y = BigUint::from(11u32);
+        let x = Integer::from(7u32);
+        let y = Integer::from(11u32);
 
         // Both parties share the same CL setup (same seed = same CRS).
         // In a real protocol they would share the CRS parameters.
@@ -548,11 +548,13 @@ mod tests {
 
         // Party A encodes
         let (enc_a, state_a) =
-            NimMtA::encode(&setup_a, &x.to_bytes_be(), &q_bytes, &mut rng).expect("encode A");
+            NimMtA::encode(&setup_a, &x.to_digits::<u8>(Order::Msf), &q_bytes, &mut rng)
+                .expect("encode A");
 
         // Party B encodes
         let (enc_b, state_b) =
-            NimMtA::encode(&setup_b, &y.to_bytes_be(), &q_bytes, &mut rng).expect("encode B");
+            NimMtA::encode(&setup_b, &y.to_digits::<u8>(Order::Msf), &q_bytes, &mut rng)
+                .expect("encode B");
 
         // Party A decodes using B's encoding
         let share_a_bytes = NimMtA::decode(&setup_a, &enc_b, &state_a, &q_bytes).expect("decode A");
@@ -560,10 +562,10 @@ mod tests {
         // Party B decodes using A's encoding
         let share_b_bytes = NimMtA::decode(&setup_b, &enc_a, &state_b, &q_bytes).expect("decode B");
 
-        let z_a = BigUint::from_bytes_be(&share_a_bytes);
-        let z_b = BigUint::from_bytes_be(&share_b_bytes);
-        let sum = (&z_a + &z_b) % &q;
-        let expected = (&x * &y) % &q;
+        let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
+        let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
+        let sum = Integer::from(&z_a + &z_b) % &q;
+        let expected = mul_mod(&x, &y, &q);
 
         assert_eq!(sum, expected, "NIM MtABroadcast: z_A + z_B != x*y mod q");
     }
@@ -572,28 +574,30 @@ mod tests {
     #[ignore = "redundant broadcast MtA variant"]
     fn nim_mta_larger_values() {
         let q_bytes = secp256k1_order_bytes();
-        let q = BigUint::from_bytes_be(&q_bytes);
+        let q = Integer::from_digits(&q_bytes, Order::Msf);
 
         // Use values closer to the field order.
-        let x = &q - BigUint::from(3u32);
-        let y = BigUint::from(1000u32);
+        let x = Integer::from(&q - 3);
+        let y = Integer::from(1000u32);
 
         let setup_a = nim_setup("100", NimRole::A);
         let setup_b = nim_setup("100", NimRole::B);
         let mut rng = rand::thread_rng();
 
         let (enc_a, state_a) =
-            NimMtA::encode(&setup_a, &x.to_bytes_be(), &q_bytes, &mut rng).expect("encode A");
+            NimMtA::encode(&setup_a, &x.to_digits::<u8>(Order::Msf), &q_bytes, &mut rng)
+                .expect("encode A");
         let (enc_b, state_b) =
-            NimMtA::encode(&setup_b, &y.to_bytes_be(), &q_bytes, &mut rng).expect("encode B");
+            NimMtA::encode(&setup_b, &y.to_digits::<u8>(Order::Msf), &q_bytes, &mut rng)
+                .expect("encode B");
 
         let share_a_bytes = NimMtA::decode(&setup_a, &enc_b, &state_a, &q_bytes).expect("decode A");
         let share_b_bytes = NimMtA::decode(&setup_b, &enc_a, &state_b, &q_bytes).expect("decode B");
 
-        let z_a = BigUint::from_bytes_be(&share_a_bytes);
-        let z_b = BigUint::from_bytes_be(&share_b_bytes);
-        let sum = (&z_a + &z_b) % &q;
-        let expected = (&x * &y) % &q;
+        let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
+        let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
+        let sum = Integer::from(&z_a + &z_b) % &q;
+        let expected = mul_mod(&x, &y, &q);
 
         assert_eq!(
             sum, expected,
@@ -630,7 +634,7 @@ mod tests {
     #[test]
     fn scaled_decrypt_mta_roundtrip() {
         let q_bytes = secp256k1_order_bytes();
-        let q = BigUint::from_bytes_be(&q_bytes);
+        let q = Integer::from_digits(&q_bytes, Order::Msf);
 
         // 3 parties, each with shares a_i and b_i
         let n = 3usize;
@@ -653,18 +657,18 @@ mod tests {
             let mut buf = [0u8; 32];
             rng.fill_bytes(&mut buf);
             // Ensure they are valid scalars by reducing mod q
-            let val = BigUint::from_bytes_be(&buf) % &q;
+            let val = Integer::from_digits(&buf, Order::Msf) % &q;
             a_scalars.push(val);
 
             rng.fill_bytes(&mut buf);
-            let val = BigUint::from_bytes_be(&buf) % &q;
+            let val = Integer::from_digits(&buf, Order::Msf) % &q;
             b_scalars.push(val);
         }
 
         // Compute expected product: (sum a_i) * (sum b_i) mod q
-        let a_sum: BigUint = a_scalars.iter().fold(BigUint::from(0u32), |acc, v| acc + v) % &q;
-        let b_sum: BigUint = b_scalars.iter().fold(BigUint::from(0u32), |acc, v| acc + v) % &q;
-        let expected = (&a_sum * &b_sum) % &q;
+        let a_sum: Integer = a_scalars.iter().fold(Integer::from(0u32), |acc, v| acc + v) % &q;
+        let b_sum: Integer = b_scalars.iter().fold(Integer::from(0u32), |acc, v| acc + v) % &q;
+        let expected = mul_mod(&a_sum, &b_sum, &q);
 
         // Each party encodes
         let mut encodings = Vec::new();
@@ -673,8 +677,8 @@ mod tests {
         for i in 0..n {
             // Pack a_i || b_i into 64 bytes
             let mut input = vec![0u8; 64];
-            let a_bytes = a_scalars[i].to_bytes_be();
-            let b_bytes = b_scalars[i].to_bytes_be();
+            let a_bytes = a_scalars[i].to_digits::<u8>(Order::Msf);
+            let b_bytes = b_scalars[i].to_digits::<u8>(Order::Msf);
             // Right-align into 32-byte slots
             let a_offset = 32 - a_bytes.len().min(32);
             input[a_offset..32].copy_from_slice(&a_bytes[..a_bytes.len().min(32)]);
@@ -704,8 +708,8 @@ mod tests {
         // Aggregate F-shares and extract the product
         let result_bytes =
             ScaledDecryptMtA::aggregate_f_shares(&setup, &f_shares).expect("aggregate_f_shares");
-        let result = BigUint::from_bytes_be(&result_bytes);
-        let result_mod_q = &result % &q;
+        let result = Integer::from_digits(&result_bytes, Order::Msf);
+        let result_mod_q = Integer::from(&result % &q);
 
         assert_eq!(
             result_mod_q, expected,

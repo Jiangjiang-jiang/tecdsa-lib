@@ -4,8 +4,7 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::CurveArithmetic;
-use num_bigint::BigUint;
-use num_traits::Num as _;
+use rug::Integer;
 use tecdsa_class_group::{
     cl::{ClSetup, Qfi},
     zk::r_enc::REncProof,
@@ -75,12 +74,12 @@ impl Wmc24PresignMachine {
             let (sk, _) = setup.keygen()?;
             let sk_dec = sk.to_string();
             let q_dec = setup.cl().q().to_string();
-            let q = BigUint::from_str_radix(&q_dec, 10)
+            let q = Integer::from_str_radix(&q_dec, 10)
                 .map_err(|e| Wmc24Error::ScalarConversion(format!("parse q: {e}")))?;
-            let bu = BigUint::from_str_radix(&sk_dec, 10)
+            let bu = Integer::from_str_radix(&sk_dec, 10)
                 .map_err(|e| Wmc24Error::ScalarConversion(format!("parse sk: {e}")))?;
             let reduced = bu % &q;
-            tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&reduced)
+            tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
         };
         let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&k_i);
 

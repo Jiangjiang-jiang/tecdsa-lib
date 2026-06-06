@@ -145,7 +145,7 @@ pub fn verify_matrix(
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::ClSetup;
@@ -155,7 +155,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("17001").expect("setup");
 
         // Single row: h^w = target, where w = 42.
-        let w = BigUint::from(42u32).to_bytes_be();
+        let w = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let h = setup.cl().h().clone();
         let target = setup.exp(&h, "42").expect("h^w");
 
@@ -172,8 +172,8 @@ mod tests {
     fn matrix_relation_multi_row() {
         let mut setup = ClSetup::new_secp256k1("17002").expect("setup");
 
-        let w1 = BigUint::from(7u32).to_bytes_be();
-        let w2 = BigUint::from(13u32).to_bytes_be();
+        let w1 = Integer::from(7u32).to_digits::<u8>(Order::Msf);
+        let w2 = Integer::from(13u32).to_digits::<u8>(Order::Msf);
         let h = setup.cl().h().clone();
 
         let target1 = setup.exp(&h, "7").expect("h^w1");

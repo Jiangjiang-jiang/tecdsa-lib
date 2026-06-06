@@ -6,8 +6,8 @@
 mod arith;
 mod prime;
 
-pub use arith::{gcd, jacobi, tonelli_shanks};
+pub use arith::{gcd, jacobi, mul_mod, pow_mod, tonelli_shanks};
 pub use prime::{
     default_sieve_limit, gen_pair, generate_blum_prime, generate_safe_prime, is_safe_prime,
-    small_odd_primes, SyncRng,
+    random_below, small_odd_primes, SyncRng,
 };

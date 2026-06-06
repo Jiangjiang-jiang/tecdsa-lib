@@ -148,8 +148,7 @@ impl RMAffDlProof {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigUint;
-    use num_traits::Num;
+    use rug::{integer::Order, Integer};
 
     use super::*;
     use crate::cl::{ClSetup, SECP256K1_ORDER};
@@ -159,8 +158,8 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("8001").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x_bytes = BigUint::from(3u32).to_bytes_be();
-        let y_bytes = BigUint::from(7u32).to_bytes_be();
+        let x_bytes = Integer::from(3u32).to_digits::<u8>(Order::Msf);
+        let y_bytes = Integer::from(7u32).to_digits::<u8>(Order::Msf);
         let r_base = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -170,18 +169,18 @@ mod tests {
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
 
-        let r_base_dec = BigUint::from_bytes_be(&r_base).to_str_radix(10);
+        let r_base_dec = Integer::from_digits(&r_base, Order::Msf).to_string_radix(10);
         let ct_in = setup
             .encrypt_with_r(&pk, "100", &r_base_dec)
             .expect("enc_in");
 
-        let q = BigUint::from_str_radix(SECP256K1_ORDER, 10).unwrap();
-        let m_out = (BigUint::from(3u32) * BigUint::from(100u32) + BigUint::from(7u32)) % &q;
-        let m_out_dec = m_out.to_str_radix(10);
+        let q = Integer::from_str_radix(SECP256K1_ORDER, 10).unwrap();
+        let m_out = (Integer::from(3u32) * Integer::from(100u32) + Integer::from(7u32)) % &q;
+        let m_out_dec = m_out.to_string_radix(10);
 
-        let r_base_val = BigUint::from_bytes_be(&r_base);
-        let r_enc_val = BigUint::from_bytes_be(&r_enc);
-        let r_out = (BigUint::from(3u32) * r_base_val + r_enc_val).to_str_radix(10);
+        let r_base_val = Integer::from_digits(&r_base, Order::Msf);
+        let r_enc_val = Integer::from_digits(&r_enc, Order::Msf);
+        let r_out = (Integer::from(3u32) * r_base_val + r_enc_val).to_string_radix(10);
 
         let ct_out = setup
             .encrypt_with_r(&pk, &m_out_dec, &r_out)
@@ -203,7 +202,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("8002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x_bytes = BigUint::from(3u32).to_bytes_be();
+        let x_bytes = Integer::from(3u32).to_digits::<u8>(Order::Msf);
         let r_base = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -213,18 +212,18 @@ mod tests {
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
 
-        let r_base_dec = BigUint::from_bytes_be(&r_base).to_str_radix(10);
+        let r_base_dec = Integer::from_digits(&r_base, Order::Msf).to_string_radix(10);
         let ct_in = setup
             .encrypt_with_r(&pk, "100", &r_base_dec)
             .expect("enc_in");
 
-        let q = BigUint::from_str_radix(SECP256K1_ORDER, 10).unwrap();
-        let m_out = (BigUint::from(3u32) * BigUint::from(100u32) + BigUint::from(7u32)) % &q;
-        let m_out_dec = m_out.to_str_radix(10);
+        let q = Integer::from_str_radix(SECP256K1_ORDER, 10).unwrap();
+        let m_out = (Integer::from(3u32) * Integer::from(100u32) + Integer::from(7u32)) % &q;
+        let m_out_dec = m_out.to_string_radix(10);
 
-        let r_base_val = BigUint::from_bytes_be(&r_base);
-        let r_enc_val = BigUint::from_bytes_be(&r_enc);
-        let r_out = (BigUint::from(3u32) * r_base_val + r_enc_val).to_str_radix(10);
+        let r_base_val = Integer::from_digits(&r_base, Order::Msf);
+        let r_enc_val = Integer::from_digits(&r_enc, Order::Msf);
+        let r_out = (Integer::from(3u32) * r_base_val + r_enc_val).to_string_radix(10);
 
         let ct_out = setup
             .encrypt_with_r(&pk, &m_out_dec, &r_out)
@@ -232,7 +231,7 @@ mod tests {
         let y_point = setup.power_of_f("7").expect("f^y");
 
         // Prove with wrong y.
-        let wrong_y_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_y_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RMAffDlProof::prove(
             &mut setup,
             &pk,

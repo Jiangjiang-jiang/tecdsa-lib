@@ -21,7 +21,7 @@
 
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 use tecdsa_curve::conv;
 
 use super::{
@@ -80,13 +80,13 @@ fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
 
 /// Negates a byte value modulo `q`, returning `(q - val) mod q` as big-endian bytes.
 fn negate_mod_q_bytes(val: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
-    let val_big = BigUint::from_bytes_be(val);
-    let q_big = BigUint::from_bytes_be(q);
-    let val_mod = &val_big % &q_big;
-    if val_mod == BigUint::ZERO {
+    let val_big = Integer::from_digits(val, Order::Msf);
+    let q_big = Integer::from_digits(q, Order::Msf);
+    let val_mod = Integer::from(&val_big % &q_big);
+    if val_mod == 0 {
         Ok(vec![0])
     } else {
-        Ok((&q_big - &val_mod).to_bytes_be())
+        Ok(Integer::from(&q_big - &val_mod).to_digits::<u8>(Order::Msf))
     }
 }
 
@@ -236,7 +236,7 @@ mod tests {
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         // Encrypt a random value gamma.
-        let gamma_bytes = BigUint::from(42u32).to_bytes_be();
+        let gamma_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let r_gamma = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -251,7 +251,7 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let beta_bytes = BigUint::from(17u32).to_bytes_be();
+        let beta_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let q_bytes = setup.q_bytes().expect("q");
 
         // Compute the affine output.
@@ -291,7 +291,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("9002").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let gamma_bytes = BigUint::from(42u32).to_bytes_be();
+        let gamma_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let r_gamma = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -305,7 +305,7 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let beta_bytes = BigUint::from(17u32).to_bytes_be();
+        let beta_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let q_bytes = setup.q_bytes().expect("q");
 
         let d1 = setup.exp_bytes(&c1, &k_star).expect("exp c1");
@@ -349,7 +349,7 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("9003").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let gamma_bytes = BigUint::from(42u32).to_bytes_be();
+        let gamma_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let r_gamma = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -363,7 +363,7 @@ mod tests {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
-        let beta_bytes = BigUint::from(17u32).to_bytes_be();
+        let beta_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let q_bytes = setup.q_bytes().expect("q");
 
         let d1 = setup.exp_bytes(&c1, &k_star).expect("exp c1");
@@ -378,7 +378,7 @@ mod tests {
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
         // Prove with WRONG beta.
-        let wrong_beta_bytes = BigUint::from(999u32).to_bytes_be();
+        let wrong_beta_bytes = Integer::from(999u32).to_digits::<u8>(Order::Msf);
         let proof = RMAffDlEcProof::prove(
             &mut setup,
             &c1,

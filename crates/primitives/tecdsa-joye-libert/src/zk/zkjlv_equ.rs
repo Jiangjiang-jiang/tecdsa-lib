@@ -12,10 +12,10 @@
 //!   c'_i = y0^{2^k * m_i} * h0^{2^k * r0_i} mod N0  for all i
 //!   m_i in [0, B_i]}
 
-use num_bigint::{BigUint, RandBigInt};
-use num_traits::One;
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 
 use crate::kgen::JlPublicKey;
 
@@ -23,15 +23,15 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlvEquProof {
     /// Commitment under pk: d
-    pub d: BigUint,
+    pub d: Integer,
     /// Commitments under pk0: d'_i
-    pub d_prime_vec: Vec<BigUint>,
+    pub d_prime_vec: Vec<Integer>,
     /// Response for each message: z_m_i = e*m_i + v_i
-    pub z_m_vec: Vec<BigUint>,
+    pub z_m_vec: Vec<Integer>,
     /// Response for randomness under pk: z_r = e*r + w
-    pub z_r: BigUint,
+    pub z_r: Integer,
     /// Responses for randomness under pk0: z_r0_i = e*r0_i + w0_i
-    pub z_r0_vec: Vec<BigUint>,
+    pub z_r0_vec: Vec<Integer>,
 }
 
 /// Statistical security parameter (in bits).
@@ -57,12 +57,12 @@ impl ZkJlvEquProof {
     pub fn prove(
         pk: &JlPublicKey,
         pk0: &JlPublicKey,
-        y_vec: &[BigUint],
-        c: &BigUint,
-        c_prime_vec: &[BigUint],
-        m_vec: &[BigUint],
-        r: &BigUint,
-        r0_vec: &[BigUint],
+        y_vec: &[Integer],
+        c: &Integer,
+        c_prime_vec: &[Integer],
+        m_vec: &[Integer],
+        r: &Integer,
+        r0_vec: &[Integer],
         b_bits_vec: &[u32],
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
@@ -72,12 +72,12 @@ impl ZkJlvEquProof {
         assert_eq!(r0_vec.len(), ell);
         assert_eq!(b_bits_vec.len(), ell);
 
-        let two_pow_k = BigUint::one() << pk.k;
-        let two_pow_k0 = BigUint::one() << pk0.k;
+        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k0 = Integer::from(1) << pk0.k;
 
         // Sample blinding values
-        let w_bound = &pk.n << (STAT_SEC + CHALLENGE_BITS);
-        let w = rng.gen_biguint_below(&w_bound);
+        let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
+        let w = random_below(&w_bound, rng);
 
         let mut v_vec = Vec::with_capacity(ell);
         let mut w0_vec = Vec::with_capacity(ell);
@@ -85,22 +85,22 @@ impl ZkJlvEquProof {
         let mut y_items = Vec::with_capacity(ell);
 
         for i in 0..ell {
-            let v_bound = BigUint::one() << (STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
-            let w0_bound = &pk0.n << (STAT_SEC + CHALLENGE_BITS);
+            let v_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
+            let w0_bound = Integer::from(&pk0.n << (STAT_SEC + CHALLENGE_BITS));
 
-            let v = rng.gen_biguint_below(&v_bound);
-            let w0 = rng.gen_biguint_below(&w0_bound);
+            let v = random_below(&v_bound, rng);
+            let w0 = random_below(&w0_bound, rng);
 
             // d'_i = y0^{2^k0 * v} * h0^{2^k0 * w0} mod N0
-            let exp_y0 = &two_pow_k0 * &v;
-            let exp_h0 = &two_pow_k0 * &w0;
-            let y0_v = pk0.y.modpow(&exp_y0, &pk0.n);
-            let h0_w = pk0.h.modpow(&exp_h0, &pk0.n);
-            let d_prime = (&y0_v * &h0_w) % &pk0.n;
+            let exp_y0 = Integer::from(&two_pow_k0 * &v);
+            let exp_h0 = Integer::from(&two_pow_k0 * &w0);
+            let y0_v = pow_mod(&pk0.y, &exp_y0, &pk0.n);
+            let h0_w = pow_mod(&pk0.h, &exp_h0, &pk0.n);
+            let d_prime = mul_mod(&y0_v, &h0_w, &pk0.n);
 
             // y_i item for commitment d
-            let exp_y = &two_pow_k * &v;
-            let y_item = y_vec[i].modpow(&exp_y, &pk.n);
+            let exp_y = Integer::from(&two_pow_k * &v);
+            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
 
             v_vec.push(v);
             w0_vec.push(w0);
@@ -109,21 +109,25 @@ impl ZkJlvEquProof {
         }
 
         // d = prod y_i^{2^k * v_i} * h^{2^k * w} mod N
-        let mut d = BigUint::one();
+        let mut d = Integer::from(1);
         for y_item in &y_items {
-            d = (&d * y_item) % &pk.n;
+            d = mul_mod(&d, y_item, &pk.n);
         }
-        let exp_h = &two_pow_k * &w;
-        let h_w = pk.h.modpow(&exp_h, &pk.n);
-        d = (&d * &h_w) % &pk.n;
+        let exp_h = Integer::from(&two_pow_k * &w);
+        let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
+        d = mul_mod(&d, &h_w, &pk.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, pk0, y_vec, c, c_prime_vec, &d, &d_prime_vec);
 
         // Responses
-        let z_m_vec: Vec<BigUint> = (0..ell).map(|i| &e * &m_vec[i] + &v_vec[i]).collect();
-        let z_r = &e * r + &w;
-        let z_r0_vec: Vec<BigUint> = (0..ell).map(|i| &e * &r0_vec[i] + &w0_vec[i]).collect();
+        let z_m_vec: Vec<Integer> = (0..ell)
+            .map(|i| Integer::from(&e * &m_vec[i]) + &v_vec[i])
+            .collect();
+        let z_r = Integer::from(&e * r) + &w;
+        let z_r0_vec: Vec<Integer> = (0..ell)
+            .map(|i| Integer::from(&e * &r0_vec[i]) + &w0_vec[i])
+            .collect();
 
         Self {
             d,
@@ -141,9 +145,9 @@ impl ZkJlvEquProof {
         &self,
         pk: &JlPublicKey,
         pk0: &JlPublicKey,
-        y_vec: &[BigUint],
-        c: &BigUint,
-        c_prime_vec: &[BigUint],
+        y_vec: &[Integer],
+        c: &Integer,
+        c_prime_vec: &[Integer],
     ) -> bool {
         let ell = self.z_m_vec.len();
         assert_eq!(y_vec.len(), ell);
@@ -151,25 +155,25 @@ impl ZkJlvEquProof {
         assert_eq!(self.d_prime_vec.len(), ell);
         assert_eq!(self.z_r0_vec.len(), ell);
 
-        let two_pow_k = BigUint::one() << pk.k;
-        let two_pow_k0 = BigUint::one() << pk0.k;
+        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k0 = Integer::from(1) << pk0.k;
 
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, pk0, y_vec, c, c_prime_vec, &self.d, &self.d_prime_vec);
 
         // Check 1: prod y_i^{2^k * z_m_i} * h^{2^k * z_r} == c^e * d mod N
-        let mut lhs1 = BigUint::one();
+        let mut lhs1 = Integer::from(1);
         for i in 0..ell {
-            let exp_y = &two_pow_k * &self.z_m_vec[i];
-            let y_item = y_vec[i].modpow(&exp_y, &pk.n);
-            lhs1 = (&lhs1 * &y_item) % &pk.n;
+            let exp_y = Integer::from(&two_pow_k * &self.z_m_vec[i]);
+            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
+            lhs1 = mul_mod(&lhs1, &y_item, &pk.n);
         }
-        let exp_h = &two_pow_k * &self.z_r;
-        let h_item = pk.h.modpow(&exp_h, &pk.n);
-        lhs1 = (&lhs1 * &h_item) % &pk.n;
+        let exp_h = Integer::from(&two_pow_k * &self.z_r);
+        let h_item = pow_mod(&pk.h, &exp_h, &pk.n);
+        lhs1 = mul_mod(&lhs1, &h_item, &pk.n);
 
-        let c_e = c.modpow(&e, &pk.n);
-        let rhs1 = (&c_e * &self.d) % &pk.n;
+        let c_e = pow_mod(c, &e, &pk.n);
+        let rhs1 = mul_mod(&c_e, &self.d, &pk.n);
 
         if lhs1 != rhs1 {
             return false;
@@ -177,14 +181,14 @@ impl ZkJlvEquProof {
 
         // Check 2: for each i, y0^{2^k0 * z_m_i} * h0^{2^k0 * z_r0_i} == c'_i^e * d'_i mod N0
         for i in 0..ell {
-            let exp_y0 = &two_pow_k0 * &self.z_m_vec[i];
-            let exp_h0 = &two_pow_k0 * &self.z_r0_vec[i];
-            let y0_z = pk0.y.modpow(&exp_y0, &pk0.n);
-            let h0_z = pk0.h.modpow(&exp_h0, &pk0.n);
-            let lhs2 = (&y0_z * &h0_z) % &pk0.n;
+            let exp_y0 = Integer::from(&two_pow_k0 * &self.z_m_vec[i]);
+            let exp_h0 = Integer::from(&two_pow_k0 * &self.z_r0_vec[i]);
+            let y0_z = pow_mod(&pk0.y, &exp_y0, &pk0.n);
+            let h0_z = pow_mod(&pk0.h, &exp_h0, &pk0.n);
+            let lhs2 = mul_mod(&y0_z, &h0_z, &pk0.n);
 
-            let c_prime_e = c_prime_vec[i].modpow(&e, &pk0.n);
-            let rhs2 = (&c_prime_e * &self.d_prime_vec[i]) % &pk0.n;
+            let c_prime_e = pow_mod(&c_prime_vec[i], &e, &pk0.n);
+            let rhs2 = mul_mod(&c_prime_e, &self.d_prime_vec[i], &pk0.n);
 
             if lhs2 != rhs2 {
                 return false;
@@ -199,39 +203,37 @@ impl ZkJlvEquProof {
 fn fiat_shamir_challenge(
     pk: &JlPublicKey,
     pk0: &JlPublicKey,
-    y_vec: &[BigUint],
-    c: &BigUint,
-    c_prime_vec: &[BigUint],
-    d: &BigUint,
-    d_prime_vec: &[BigUint],
-) -> BigUint {
+    y_vec: &[Integer],
+    c: &Integer,
+    c_prime_vec: &[Integer],
+    d: &Integer,
+    d_prime_vec: &[Integer],
+) -> Integer {
     let mut hasher = Sha256::new();
     hasher.update(b"ZkJlvEqu");
-    hasher.update(pk.n.to_bytes_be());
-    hasher.update(pk.h.to_bytes_be());
+    hasher.update(pk.n.to_digits::<u8>(Order::Msf));
+    hasher.update(pk.h.to_digits::<u8>(Order::Msf));
     hasher.update(pk.k.to_be_bytes());
-    hasher.update(pk0.n.to_bytes_be());
-    hasher.update(pk0.y.to_bytes_be());
-    hasher.update(pk0.h.to_bytes_be());
+    hasher.update(pk0.n.to_digits::<u8>(Order::Msf));
+    hasher.update(pk0.y.to_digits::<u8>(Order::Msf));
+    hasher.update(pk0.h.to_digits::<u8>(Order::Msf));
     hasher.update(pk0.k.to_be_bytes());
     hasher.update((y_vec.len() as u32).to_be_bytes());
     for y in y_vec {
-        hasher.update(y.to_bytes_be());
+        hasher.update(y.to_digits::<u8>(Order::Msf));
     }
-    hasher.update(c.to_bytes_be());
+    hasher.update(c.to_digits::<u8>(Order::Msf));
     for cp in c_prime_vec {
-        hasher.update(cp.to_bytes_be());
+        hasher.update(cp.to_digits::<u8>(Order::Msf));
     }
-    hasher.update(d.to_bytes_be());
+    hasher.update(d.to_digits::<u8>(Order::Msf));
     // Hash d_prime_vec as a sum (following reference pattern) for simpler hashing
     for dp in d_prime_vec {
-        hasher.update(dp.to_bytes_be());
+        hasher.update(dp.to_digits::<u8>(Order::Msf));
     }
     let hash = hasher.finalize();
 
-    let full = BigUint::from_bytes_be(&hash);
-    let mask = (BigUint::one() << CHALLENGE_BITS) - BigUint::one();
-    full & mask
+    Integer::from_digits(&hash, Order::Msf).keep_bits(CHALLENGE_BITS)
 }
 
 #[cfg(test)]
@@ -251,14 +253,14 @@ mod tests {
         let ell = 2;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = rng.gen_biguint_below(&pk.n);
-            let y_i = x.modpow(&alpha_i, &pk.n);
+            let alpha_i = random_below(&pk.n, &mut rng);
+            let y_i = pow_mod(&x, &alpha_i, &pk.n);
             y_vec.push(y_i);
         }
 
-        let m_vec = vec![BigUint::from(42u32), BigUint::from(17u32)];
+        let m_vec = vec![Integer::from(42u32), Integer::from(17u32)];
         let b_bits_vec = vec![32u32, 32];
-        let r = rng.gen_biguint_below(&pk.n);
+        let r = random_below(&pk.n, &mut rng);
 
         // Vector commitment under pk
         let c = jl_vec_commit(&pk, &y_vec, &m_vec, &r);
@@ -267,7 +269,7 @@ mod tests {
         let mut c_prime_vec = Vec::with_capacity(ell);
         let mut r0_vec = Vec::with_capacity(ell);
         for i in 0..ell {
-            let r0 = rng.gen_biguint_below(&pk0.n);
+            let r0 = random_below(&pk0.n, &mut rng);
             let cp = jl_commit(&pk0, &m_vec[i], &r0);
             c_prime_vec.push(cp);
             r0_vec.push(r0);

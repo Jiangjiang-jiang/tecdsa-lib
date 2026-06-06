@@ -5,7 +5,8 @@
 //! - `Enc(a) * Enc(b) mod N = Enc(a + b mod 2^k)`
 //! - `Enc(a)^s mod N = Enc(a * s mod 2^k)`
 
-use num_bigint::BigUint;
+use rug::Integer;
+use tecdsa_bigint::{mul_mod, pow_mod};
 
 use crate::{enc_dec::JlCiphertext, kgen::JlPublicKey};
 
@@ -14,7 +15,7 @@ use crate::{enc_dec::JlCiphertext, kgen::JlPublicKey};
 /// `HAdd(c1, c2) = c1 * c2 mod N`
 #[must_use]
 pub fn hadd(pk: &JlPublicKey, c1: &JlCiphertext, c2: &JlCiphertext) -> JlCiphertext {
-    let c = (&c1.c * &c2.c) % &pk.n;
+    let c = mul_mod(&c1.c, &c2.c, &pk.n);
     JlCiphertext { c }
 }
 
@@ -22,7 +23,7 @@ pub fn hadd(pk: &JlPublicKey, c1: &JlCiphertext, c2: &JlCiphertext) -> JlCiphert
 ///
 /// `HScMul(ct, s) = ct^s mod N`
 #[must_use]
-pub fn hscmul(pk: &JlPublicKey, ct: &JlCiphertext, scalar: &BigUint) -> JlCiphertext {
-    let c = ct.c.modpow(scalar, &pk.n);
+pub fn hscmul(pk: &JlPublicKey, ct: &JlCiphertext, scalar: &Integer) -> JlCiphertext {
+    let c = pow_mod(&ct.c, scalar, &pk.n);
     JlCiphertext { c }
 }

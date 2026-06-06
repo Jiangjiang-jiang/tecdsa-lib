@@ -35,7 +35,7 @@ pub mod r_pc_dl;
 pub mod r_ped_ec;
 pub mod r_sh;
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
 
 use crate::cl::{ClResult, ClSetup, Qfi};
@@ -69,11 +69,11 @@ pub(crate) fn challenge_from_qfi(
     }
 
     let hash = hasher.finalize();
-    let hash_uint = BigUint::from_bytes_be(&hash);
+    let hash_uint = Integer::from_digits(&hash, Order::Msf);
     let q_bytes = setup.q_bytes()?;
-    let q = BigUint::from_bytes_be(&q_bytes);
+    let q = Integer::from_digits(&q_bytes, Order::Msf);
     let e = hash_uint % &q;
-    Ok(e.to_bytes_be())
+    Ok(e.to_digits::<u8>(Order::Msf))
 }
 
 /// Like [`challenge_from_qfi`], but prepends an opaque context prefix before
@@ -101,11 +101,11 @@ pub(crate) fn challenge_from_qfi_with_prefix(
     }
 
     let hash = hasher.finalize();
-    let hash_uint = BigUint::from_bytes_be(&hash);
+    let hash_uint = Integer::from_digits(&hash, Order::Msf);
     let q_bytes = setup.q_bytes()?;
-    let q = BigUint::from_bytes_be(&q_bytes);
+    let q = Integer::from_digits(&q_bytes, Order::Msf);
     let e = hash_uint % &q;
-    Ok(e.to_bytes_be())
+    Ok(e.to_digits::<u8>(Order::Msf))
 }
 
 /// Samples a random value in `[0, secretkey_bound)` by generating a
@@ -119,31 +119,31 @@ pub(crate) fn sample_random(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
 /// reducing modulo q, returned as big-endian bytes.
 pub(crate) fn sample_random_mod_q(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
     let r = sample_random(setup)?;
-    let r_uint = BigUint::from_bytes_be(&r);
+    let r_uint = Integer::from_digits(&r, Order::Msf);
     let q_bytes = setup.q_bytes()?;
-    let q = BigUint::from_bytes_be(&q_bytes);
+    let q = Integer::from_digits(&q_bytes, Order::Msf);
     let reduced = r_uint % &q;
-    Ok(reduced.to_bytes_be())
+    Ok(reduced.to_digits::<u8>(Order::Msf))
 }
 
 /// Computes `(a + e * w) mod q` for big-integer big-endian byte slices.
 pub(crate) fn response_mod_q(a: &[u8], e: &[u8], w: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
-    let a = BigUint::from_bytes_be(a);
-    let e = BigUint::from_bytes_be(e);
-    let w = BigUint::from_bytes_be(w);
-    let q = BigUint::from_bytes_be(q);
-    let resp = (&a + &e * &w) % &q;
-    Ok(resp.to_bytes_be())
+    let a = Integer::from_digits(a, Order::Msf);
+    let e = Integer::from_digits(e, Order::Msf);
+    let w = Integer::from_digits(w, Order::Msf);
+    let q = Integer::from_digits(q, Order::Msf);
+    let resp = (&a + Integer::from(&e * &w)) % &q;
+    Ok(resp.to_digits::<u8>(Order::Msf))
 }
 
 /// Computes `a + e * w` (unbounded, for class-group exponents),
 /// returned as big-endian bytes.
 pub(crate) fn response_unbounded(a: &[u8], e: &[u8], w: &[u8]) -> ClResult<Vec<u8>> {
-    let a = BigUint::from_bytes_be(a);
-    let e = BigUint::from_bytes_be(e);
-    let w = BigUint::from_bytes_be(w);
-    let resp = &a + &e * &w;
-    Ok(resp.to_bytes_be())
+    let a = Integer::from_digits(a, Order::Msf);
+    let e = Integer::from_digits(e, Order::Msf);
+    let w = Integer::from_digits(w, Order::Msf);
+    let resp = &a + Integer::from(&e * &w);
+    Ok(resp.to_digits::<u8>(Order::Msf))
 }
 
 /// Verifies an F-subgroup Schnorr check in scalar arithmetic:
@@ -163,14 +163,14 @@ pub(crate) fn verify_f_check(
     let dlog_y = setup.dlog_in_F_bytes(y_qfi)?;
 
     let q_bytes = setup.q_bytes()?;
-    let q = BigUint::from_bytes_be(&q_bytes);
-    let dt = BigUint::from_bytes_be(&dlog_t);
-    let dy = BigUint::from_bytes_be(&dlog_y);
-    let ev = BigUint::from_bytes_be(e_bytes);
-    let zv = BigUint::from_bytes_be(z_bytes);
+    let q = Integer::from_digits(&q_bytes, Order::Msf);
+    let dt = Integer::from_digits(&dlog_t, Order::Msf);
+    let dy = Integer::from_digits(&dlog_y, Order::Msf);
+    let ev = Integer::from_digits(e_bytes, Order::Msf);
+    let zv = Integer::from_digits(z_bytes, Order::Msf);
 
-    let expected = (&dt + &ev * &dy) % &q;
-    let z_mod = &zv % &q;
+    let expected = (&dt + Integer::from(&ev * &dy)) % &q;
+    let z_mod = zv % &q;
 
     Ok(expected == z_mod)
 }

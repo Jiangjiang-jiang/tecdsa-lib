@@ -4,8 +4,7 @@
 //! Uses small (256-bit) modulus for fast testing. Full-size key generation
 //! tests are marked `#[ignore]` due to their runtime.
 
-use num_bigint::BigUint;
-use num_traits::{One, Zero};
+use rug::Integer;
 use tecdsa_joye_libert::{
     enc_dec::{decrypt, encrypt},
     hom::{hadd, hscmul},
@@ -27,14 +26,14 @@ fn jl_kgen_produces_valid_key() {
     let (pk, sk) = small_keypair();
 
     // N should be non-zero and composite
-    assert!(!pk.n.is_zero());
+    assert!(pk.n != 0);
     // p should divide N
-    assert!((&pk.n % &sk.p).is_zero());
+    assert!(pk.n.is_divisible(&sk.p));
     // k should match
     assert_eq!(pk.k, 32);
     // y, h should be non-zero and less than N
-    assert!(!pk.y.is_zero());
-    assert!(!pk.h.is_zero());
+    assert!(pk.y != 0);
+    assert!(pk.h != 0);
     assert!(pk.y < pk.n);
     assert!(pk.h < pk.n);
 }
@@ -46,7 +45,7 @@ fn jl_enc_dec_roundtrip() {
 
     // Test several values including 0, 1, and a larger value
     for m_val in [0u64, 1, 42, 255, 1000, (1u64 << 31) - 1] {
-        let m = BigUint::from(m_val);
+        let m = Integer::from(m_val);
         let (ct, _r) = encrypt(&pk, &m, &mut rng);
         let recovered = decrypt(&sk, &pk, &ct);
         assert_eq!(recovered, m, "roundtrip failed for m = {m_val}");
@@ -57,11 +56,11 @@ fn jl_enc_dec_roundtrip() {
 fn jl_hadd_correctness() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = BigUint::one() << pk.k;
+    let two_pow_k = Integer::from(1) << pk.k;
 
-    let a = BigUint::from(123u32);
-    let b = BigUint::from(456u32);
-    let expected = (&a + &b) % &two_pow_k;
+    let a = Integer::from(123u32);
+    let b = Integer::from(456u32);
+    let expected = Integer::from(&a + &b) % &two_pow_k;
 
     let (ct_a, _) = encrypt(&pk, &a, &mut rng);
     let (ct_b, _) = encrypt(&pk, &b, &mut rng);
@@ -79,12 +78,12 @@ fn jl_hadd_correctness() {
 fn jl_hadd_wraps_mod_2k() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = BigUint::one() << pk.k;
+    let two_pow_k = Integer::from(1) << pk.k;
 
     // Choose values that will overflow 2^k when added
-    let a = &two_pow_k - BigUint::from(10u32);
-    let b = BigUint::from(20u32);
-    let expected = (&a + &b) % &two_pow_k; // Should be 10
+    let a = Integer::from(&two_pow_k - 10);
+    let b = Integer::from(20u32);
+    let expected = Integer::from(&a + &b) % &two_pow_k; // Should be 10
 
     let (ct_a, _) = encrypt(&pk, &a, &mut rng);
     let (ct_b, _) = encrypt(&pk, &b, &mut rng);
@@ -98,11 +97,11 @@ fn jl_hadd_wraps_mod_2k() {
 fn jl_hscmul_correctness() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = BigUint::one() << pk.k;
+    let two_pow_k = Integer::from(1) << pk.k;
 
-    let a = BigUint::from(7u32);
-    let s = BigUint::from(6u32);
-    let expected = (&a * &s) % &two_pow_k;
+    let a = Integer::from(7u32);
+    let s = Integer::from(6u32);
+    let expected = Integer::from(&a * &s) % &two_pow_k;
 
     let (ct_a, _) = encrypt(&pk, &a, &mut rng);
     let ct_prod = hscmul(&pk, &ct_a, &s);
@@ -116,11 +115,11 @@ fn jl_hscmul_correctness() {
 fn jl_hscmul_wraps_mod_2k() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = BigUint::one() << pk.k;
+    let two_pow_k = Integer::from(1) << pk.k;
 
-    let a = BigUint::from(1_000_000u32);
-    let s = BigUint::from(5_000u32);
-    let expected = (&a * &s) % &two_pow_k;
+    let a = Integer::from(1_000_000u32);
+    let s = Integer::from(5_000u32);
+    let expected = Integer::from(&a * &s) % &two_pow_k;
 
     let (ct_a, _) = encrypt(&pk, &a, &mut rng);
     let ct_prod = hscmul(&pk, &ct_a, &s);
@@ -134,7 +133,7 @@ fn jl_zkjl_enc_proof_roundtrip() {
     let (pk, _sk) = small_keypair();
     let mut rng = rand::thread_rng();
 
-    let m = BigUint::from(42u32);
+    let m = Integer::from(42u32);
     let (ct, r) = encrypt(&pk, &m, &mut rng);
 
     let proof = ZkJlEncProof::prove(&pk, &ct.c, &m, &r, pk.k, &mut rng);
@@ -147,12 +146,12 @@ fn jl_keygen_128bit_security() {
     let mut rng = rand::thread_rng();
     let (pk, sk) = generate_keypair(SecurityLevel::Sec128, &mut rng);
 
-    assert!(!pk.n.is_zero());
-    assert!((&pk.n % &sk.p).is_zero());
+    assert!(pk.n != 0);
+    assert!(pk.n.is_divisible(&sk.p));
     assert_eq!(pk.k, 256);
 
     // Enc/Dec roundtrip with production-size keys
-    let m = BigUint::from(12345u32);
+    let m = Integer::from(12345u32);
     let (ct, _) = encrypt(&pk, &m, &mut rng);
     let recovered = decrypt(&sk, &pk, &ct);
     assert_eq!(recovered, m);

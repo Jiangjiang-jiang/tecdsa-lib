@@ -47,6 +47,7 @@
 
 pub mod machine;
 
+use rug::{integer::Order, Integer};
 use tecdsa_class_group::{
     cl::ClSetup,
     scaled_decrypt::{
@@ -236,12 +237,12 @@ pub fn sign_round2(
     let sd2_inputs: Vec<ScaledDecryptPartyInput> = all_presigns
         .iter()
         .map(|p| {
-            use num_bigint::BigUint;
-            let r_val = BigUint::from_bytes_be(&tecdsa_curve::conv::scalar_to_bytes::<
-                k256::Secp256k1,
-            >(&r_scalar));
-            let lid_val = BigUint::from_bytes_be(&p.l_i_delta_i);
-            let alpha_z = (&r_val * &lid_val).to_bytes_be();
+            let r_val = Integer::from_digits(
+                &tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_scalar),
+                Order::Msf,
+            );
+            let lid_val = Integer::from_digits(&p.l_i_delta_i, Order::Msf);
+            let alpha_z = Integer::from(&r_val * &lid_val).to_digits::<u8>(Order::Msf);
 
             ScaledDecryptPartyInput {
                 alpha_i: alpha_z,

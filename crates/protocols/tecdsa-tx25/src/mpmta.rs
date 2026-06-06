@@ -67,9 +67,8 @@
 //! Reference: Tang & Xue. "Robust Threshold ECDSA." S&P 2025, Section 3.3.
 
 use elliptic_curve::CurveArithmetic;
-use num_bigint::BigUint;
-use num_traits::Num;
 use rand_core::CryptoRngCore;
+use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSecretKey, ClSetup, Qfi},
@@ -186,11 +185,11 @@ fn fiat_shamir_challenge(
     }
 
     let hash = hasher.finalize();
-    let hash_uint = BigUint::from_bytes_be(&hash);
-    let q = BigUint::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10)
+    let hash_uint = Integer::from_digits(&hash, Order::Msf);
+    let q = Integer::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10)
         .map_err(|e| Tx25Error::InvalidInput(format!("parse q: {e}")))?;
     let e = hash_uint % &q;
-    Ok(e.to_bytes_be())
+    Ok(e.to_digits::<u8>(Order::Msf))
 }
 
 // ---------------------------------------------------------------------------
@@ -281,17 +280,17 @@ pub fn mpmta_round2(
     let q_bytes = setup
         .q_bytes()
         .map_err(|e| Tx25Error::InvalidInput(format!("q_bytes: {e}")))?;
-    let q = BigUint::from_bytes_be(&q_bytes);
+    let q = Integer::from_digits(&q_bytes, Order::Msf);
 
     // Step 1: Lift k to CL domain: k* = k + e*q.
     // Sample e from the encrypt randomness domain (secret-key range).
     let (e_sk, _) = setup.keygen()?;
     let e_bytes_raw = setup.sk_to_bytes(&e_sk)?;
 
-    let k_bu = BigUint::from_bytes_be(k_bytes);
-    let e_bu = BigUint::from_bytes_be(&e_bytes_raw);
-    let k_star_bu = &k_bu + &e_bu * &q;
-    let k_star_bytes = k_star_bu.to_bytes_be();
+    let k_bu = Integer::from_digits(k_bytes, Order::Msf);
+    let e_bu = Integer::from_digits(&e_bytes_raw, Order::Msf);
+    let k_star_bu = &k_bu + Integer::from(&e_bu * &q);
+    let k_star_bytes = k_star_bu.to_digits::<u8>(Order::Msf);
 
     // Compute R_i = (k mod q) * G.
     let k_scalar = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(k_bytes);

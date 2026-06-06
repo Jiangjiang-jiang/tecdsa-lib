@@ -15,7 +15,7 @@
 //! `Cl(Delta)` operations, verification uses `dlog_in_F` to work
 //! in scalar arithmetic modulo `q`.
 
-use num_bigint::BigUint;
+use rug::{integer::Order, Integer};
 
 use super::{challenge_from_qfi, sample_random_mod_q};
 use crate::cl::{ClResult, ClSetup, Qfi};
@@ -36,15 +36,15 @@ impl RPcDlProof {
         let e = challenge_from_qfi(setup, b"R_pc_dl", &[y, &t], &[])?;
 
         let q_bytes = setup.q_bytes()?;
-        let q = BigUint::from_bytes_be(&q_bytes);
-        let a_val = BigUint::from_bytes_be(&a);
-        let e_val = BigUint::from_bytes_be(&e);
-        let x_val = BigUint::from_bytes_be(x_bytes);
-        let z_val = (&a_val + &e_val * &x_val) % &q;
+        let q = Integer::from_digits(&q_bytes, Order::Msf);
+        let a_val = Integer::from_digits(&a, Order::Msf);
+        let e_val = Integer::from_digits(&e, Order::Msf);
+        let x_val = Integer::from_digits(x_bytes, Order::Msf);
+        let z_val = (&a_val + Integer::from(&e_val * &x_val)) % &q;
 
         Ok(Self {
             t,
-            z: z_val.to_bytes_be(),
+            z: z_val.to_digits::<u8>(Order::Msf),
             e,
         })
     }
@@ -63,14 +63,14 @@ impl RPcDlProof {
         let dlog_y = setup.dlog_in_F_bytes(y)?;
 
         let q_bytes = setup.q_bytes()?;
-        let q = BigUint::from_bytes_be(&q_bytes);
-        let dt = BigUint::from_bytes_be(&dlog_t);
-        let dy = BigUint::from_bytes_be(&dlog_y);
-        let ev = BigUint::from_bytes_be(&self.e);
-        let zv = BigUint::from_bytes_be(&self.z);
+        let q = Integer::from_digits(&q_bytes, Order::Msf);
+        let dt = Integer::from_digits(&dlog_t, Order::Msf);
+        let dy = Integer::from_digits(&dlog_y, Order::Msf);
+        let ev = Integer::from_digits(&self.e, Order::Msf);
+        let zv = Integer::from_digits(&self.z, Order::Msf);
 
-        let expected = (&dt + &ev * &dy) % &q;
-        let z_mod = &zv % &q;
+        let expected = (&dt + Integer::from(&ev * &dy)) % &q;
+        let z_mod = zv % &q;
 
         Ok(expected == z_mod)
     }
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn r_pc_dl_honest_verifies() {
         let mut setup = ClSetup::new_secp256k1("9001").expect("setup");
-        let x_bytes = BigUint::from(42u32).to_bytes_be();
+        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let y = setup.power_of_f("42").expect("f^x");
         let proof = RPcDlProof::prove(&mut setup, &y, &x_bytes).expect("prove");
         assert!(proof.verify(&setup, &y).expect("verify"));
@@ -95,7 +95,7 @@ mod tests {
     fn r_pc_dl_rejects_wrong_x() {
         let mut setup = ClSetup::new_secp256k1("9002").expect("setup");
         let y = setup.power_of_f("42").expect("f^x");
-        let wrong_x_bytes = BigUint::from(99u32).to_bytes_be();
+        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RPcDlProof::prove(&mut setup, &y, &wrong_x_bytes).expect("prove");
         assert!(!proof.verify(&setup, &y).expect("verify"));
     }
