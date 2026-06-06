@@ -623,7 +623,7 @@ fn class_group_zk(c: &mut Criterion) {
         let r1 = setup.sk_to_bytes(&r_sk3).expect("bytes");
         let q_bu = Mpz::from_str(SECP256K1_ORDER).unwrap();
         let m_out = (Mpz::from(5u32) * Mpz::from(100u32) + Mpz::from(10u32)).modulo(&q_bu);
-        let r_out = (Mpz::from(5u32) * r_sk2.as_mpz() + r_sk3.as_mpz());
+        let r_out = Mpz::from(5u32) * r_sk2.as_mpz() + r_sk3.as_mpz();
         let ct_out = setup.cl().encrypt_with_randomness(
             &pk,
             &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),
@@ -690,7 +690,7 @@ fn class_group_zk(c: &mut Criterion) {
         );
         let q_bu = Mpz::from_str(tecdsa_class_group::cl::SECP256K1_ORDER).unwrap();
         let m_out = (Mpz::from(3u32) * Mpz::from(100u32) + Mpz::from(7u32)).modulo(&q_bu);
-        let r_out = (Mpz::from(3u32) * Mpz::from_bytes_be(&r_base) + Mpz::from_bytes_be(&r_enc));
+        let r_out = Mpz::from(3u32) * Mpz::from_bytes_be(&r_base) + Mpz::from_bytes_be(&r_enc);
         let ct_out = setup.cl().encrypt_with_randomness(
             &pk,
             &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),
@@ -1761,12 +1761,12 @@ fn evrf_zk(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    // curve_zk,
-    // pedersen_mod_zk,
-    // class_group_zk,
-    // paillier_zk,
-    // paillier_zk_facade,
+    curve_zk,
+    pedersen_mod_zk,
+    class_group_zk,
+    paillier_zk,
+    paillier_zk_facade,
     joye_libert_zk,
-    // evrf_zk,
+    evrf_zk,
 );
 criterion_main!(benches);
