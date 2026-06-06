@@ -25,9 +25,7 @@ pub use interactive::{
 pub use machine::{TwoPartyRole, Xal21KeyShare, Xal21KeygenMachine, Xal21KeygenMsg};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
-
-use tecdsa_paillier::backend::Integer;
-use tecdsa_paillier::zk::mta_range::NTildeParams;
+use tecdsa_paillier::{backend::Integer, zk::mta_range::NTildeParams};
 
 use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
 

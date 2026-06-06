@@ -83,6 +83,7 @@ fn paillier_mta(c: &mut Criterion) {
 
 fn cl_mta(c: &mut Criterion) {
     use std::cell::RefCell;
+
     use tecdsa_class_group::mta::{ClMtA, ClMtaSetup};
     type M = ClMtA;
 

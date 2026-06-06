@@ -147,7 +147,7 @@ pub fn gen_pair(
 
         // Safe-prime case (a = 2): f = 2r+1 with r = (f-1)/2 a known prime > sqrt(f),
         // so by Pocklington a single base-2 Fermat test proves f prime given r prime.
-        let pocklington = *a == Integer::from(2);
+        let pocklington = *a == 2;
         for j in 0..w {
             if sieve[j] {
                 continue;
@@ -162,8 +162,10 @@ pub fn gen_pair(
             let f_is_prime = if pocklington {
                 // gcd(2^2-1, f) = gcd(3, f) = 1 (3 is sieved); then f prime <=> 2^(f-1) == 1 (mod f).
                 f.mod_u(3) != 0
-                    && Integer::from(2).pow_mod(&Integer::from(&f - 1), &f).unwrap()
-                        == Integer::from(1)
+                    && Integer::from(2)
+                        .pow_mod(&Integer::from(&f - 1), &f)
+                        .unwrap()
+                        == 1
             } else {
                 f.is_probably_prime(mr_rounds) != IsPrime::No
             };

@@ -9,11 +9,12 @@
 //!
 //! Format: name<TAB>elapsed_ns<TAB>elapsed_human
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use elliptic_curve::ops::Reduce;
-use elliptic_curve::PrimeField;
+use elliptic_curve::{ops::Reduce, PrimeField};
 use k256::Secp256k1;
 use sha2::{Digest, Sha256};
 use tecdsa_bench::per_party;
@@ -193,6 +194,7 @@ fn mta_once() {
     // ── 3. CL MtA ──
     {
         use std::cell::RefCell;
+
         use tecdsa_class_group::mta::{ClMtA, ClMtaSetup};
         type M = ClMtA;
         let setup = ClMtaSetup {
@@ -742,6 +744,7 @@ fn ggn16_once() {
 
 fn ln18_once() {
     use std::collections::BTreeMap;
+
     use tecdsa_ln18::{
         f_mult::{
             init::InitState,

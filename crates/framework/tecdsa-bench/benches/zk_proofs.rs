@@ -549,8 +549,7 @@ fn class_group_zk(c: &mut Criterion) {
     // R_ped_ec — Pedersen CL commitment + EC point
     {
         use elliptic_curve::group::GroupEncoding as _;
-        use tecdsa_class_group::nim::Nim;
-        use tecdsa_class_group::zk::r_ped_ec::RPedEcProof;
+        use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
         let x_bytes = 42u32.to_be_bytes().to_vec();
         let mut nim = Nim::new(&mut setup);
         let encode_out = nim.encode_a(&x_bytes, &pk).expect("encode_a");
@@ -1214,8 +1213,7 @@ fn paillier_zk(c: &mut Criterion) {
 
 fn paillier_zk_facade(c: &mut Criterion) {
     use sha2::Sha256;
-    use tecdsa_paillier::zk::bridge::pedersen_to_aux;
-    use tecdsa_paillier::zk::paillier_zk;
+    use tecdsa_paillier::zk::{bridge::pedersen_to_aux, paillier_zk};
 
     #[derive(udigest::Digestable)]
     struct BenchTag(&'static str);
@@ -1428,8 +1426,9 @@ fn paillier_zk_facade(c: &mut Criterion) {
 
     // Pi_enc_elg — encryption in range with ElGamal
     {
-        use paillier_zk::paillier_encryption_in_range_with_el_gamal as pi_enc_elg;
-        use paillier_zk::IntegerExt as _;
+        use paillier_zk::{
+            paillier_encryption_in_range_with_el_gamal as pi_enc_elg, IntegerExt as _,
+        };
         type GE = generic_ec::curves::Secp256k1;
         let security = pi_enc_elg::SecurityParams {
             l: 256,
@@ -1575,8 +1574,7 @@ fn joye_libert_zk(c: &mut Criterion) {
     // zkjl_equ — proves two commitments under different PKs encrypt the same value
     {
         use num_bigint::{BigUint, RandBigInt};
-        use tecdsa_joye_libert::zk::zkjl_com::jl_commit;
-        use tecdsa_joye_libert::zk::zkjl_equ::ZkJlEquProof;
+        use tecdsa_joye_libert::zk::{zkjl_com::jl_commit, zkjl_equ::ZkJlEquProof};
         let jl_ex = &*JL_EXTRA;
         let pk0 = &jl_ex.pk0;
         let m = BigUint::from(42u32);
@@ -1670,9 +1668,9 @@ fn joye_libert_zk(c: &mut Criterion) {
     // zkjlv_equ — vector commitment + individual commitment equality
     {
         use num_bigint::{BigUint, RandBigInt};
-        use tecdsa_joye_libert::zk::zkjl_com::jl_commit;
-        use tecdsa_joye_libert::zk::zkjlv_com::jl_vec_commit;
-        use tecdsa_joye_libert::zk::zkjlv_equ::ZkJlvEquProof;
+        use tecdsa_joye_libert::zk::{
+            zkjl_com::jl_commit, zkjlv_com::jl_vec_commit, zkjlv_equ::ZkJlvEquProof,
+        };
         let jl_ex = &*JL_EXTRA;
         let pk0 = &jl_ex.pk0;
         let ell = 2;

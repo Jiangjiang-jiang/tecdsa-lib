@@ -1355,8 +1355,8 @@ fn tx25_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 (
                     pid,
                     Tx25PresignMachine::new(
@@ -1388,8 +1388,8 @@ fn tx25_benchmarks(c: &mut Criterion) {
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
-                    let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                        .expect("cl");
+                    let setup =
+                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                     (
                         pid,
                         Tx25PresignMachine::new(
@@ -1417,14 +1417,8 @@ fn tx25_benchmarks(c: &mut Criterion) {
                 let pid = PartyId(s);
                 (
                     pid,
-                    Tx25OnlineSignMachine::new(
-                        pid,
-                        signer_parties.clone(),
-                        presig,
-                        &msg_bytes,
-                        pk,
-                    )
-                    .expect("tx25 sign"),
+                    Tx25OnlineSignMachine::new(pid, signer_parties.clone(), presig, &msg_bytes, pk)
+                        .expect("tx25 sign"),
                 )
             })
             .collect();
@@ -1507,8 +1501,8 @@ fn jtx25_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 (
                     pid,
                     Jtx25PresignMachine::new(
@@ -1539,8 +1533,8 @@ fn jtx25_benchmarks(c: &mut Criterion) {
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
-                    let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                        .expect("cl");
+                    let setup =
+                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                     (
                         pid,
                         Jtx25PresignMachine::new(
@@ -1661,8 +1655,8 @@ fn wmy23_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let config = PresignConfig {
                     key_share: key_shares[(s - 1) as usize].clone(),
                     my_id: pid,
@@ -1693,8 +1687,8 @@ fn wmy23_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let config = PresignConfig {
                     key_share: key_shares[(s - 1) as usize].clone(),
                     my_id: pid,
@@ -1812,8 +1806,8 @@ fn wmc24_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 (
                     pid,
                     Wmc24PresignMachine::new(
@@ -1844,8 +1838,8 @@ fn wmc24_benchmarks(c: &mut Criterion) {
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
-                    let setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                        .expect("cl");
+                    let setup =
+                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                     (
                         pid,
                         Wmc24PresignMachine::new(
@@ -1988,8 +1982,8 @@ fn llz25_benchmarks(c: &mut Criterion) {
             .enumerate()
             .map(|(pos, &s)| {
                 let pid = PartyId(s);
-                let local_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let local_setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let (_, local_pk_crs) = {
                     let mut tmp =
                         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
@@ -2029,8 +2023,8 @@ fn llz25_benchmarks(c: &mut Criterion) {
             .enumerate()
             .map(|(pos, &s)| {
                 let pid = PartyId(s);
-                let local_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let local_setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let (_, local_pk_crs) = {
                     let mut tmp =
                         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
@@ -2152,8 +2146,8 @@ fn trout_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let local_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let local_setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let (_, local_pk) = {
                     let mut tmp =
                         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
@@ -2192,8 +2186,8 @@ fn trout_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let local_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let local_setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let (_, local_pk) = {
                     let mut tmp =
                         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
@@ -2227,8 +2221,8 @@ fn trout_benchmarks(c: &mut Criterion) {
             .zip(presigs)
             .map(|(&s, presig)| {
                 let pid = PartyId(s);
-                let local_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed)
-                    .expect("cl");
+                let local_setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let (_, local_pk) = {
                     let mut tmp =
                         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");

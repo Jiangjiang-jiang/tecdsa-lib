@@ -96,7 +96,10 @@ pub fn active_map(timings: BTreeMap<PartyId, PartyTiming>) -> BTreeMap<PartyId, 
 
 /// Run one protocol from builder closures (timing init) and return each
 /// party's total active time. See [`run_timed_with_init`].
-pub fn active_with_init<M, F>(builders: Vec<(PartyId, F)>, max_rounds: u16) -> BTreeMap<PartyId, Duration>
+pub fn active_with_init<M, F>(
+    builders: Vec<(PartyId, F)>,
+    max_rounds: u16,
+) -> BTreeMap<PartyId, Duration>
 where
     M: tecdsa_protocol::StateMachine,
     M::Outbound: Clone + Into<M::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
@@ -108,7 +111,10 @@ where
 
 /// Run one protocol from pre-constructed machines (init NOT timed) and return
 /// each party's total active time. See [`run_timed_without_init`].
-pub fn active_without_init<M>(machines: Vec<(PartyId, M)>, max_rounds: u16) -> BTreeMap<PartyId, Duration>
+pub fn active_without_init<M>(
+    machines: Vec<(PartyId, M)>,
+    max_rounds: u16,
+) -> BTreeMap<PartyId, Duration>
 where
     M: tecdsa_protocol::StateMachine,
     M::Outbound: Clone + Into<M::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
@@ -164,7 +170,10 @@ pub fn bench_party_replay(
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                total += runs[next % runs.len()].get(&pid).copied().unwrap_or_default();
+                total += runs[next % runs.len()]
+                    .get(&pid)
+                    .copied()
+                    .unwrap_or_default();
                 next += 1;
             }
             total

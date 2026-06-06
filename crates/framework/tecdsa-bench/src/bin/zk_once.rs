@@ -444,8 +444,7 @@ fn class_group_zk_once(
 
     {
         use elliptic_curve::group::GroupEncoding as _;
-        use tecdsa_class_group::nim::Nim;
-        use tecdsa_class_group::zk::r_ped_ec::RPedEcProof;
+        use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
         let x_bytes = 42u32.to_be_bytes().to_vec();
         let mut nim = Nim::new(&mut setup);
         let encode_out = nim.encode_a(&x_bytes, &pk).expect("encode_a");
@@ -946,8 +945,10 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
 
 fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     use sha2::Sha256;
-    use tecdsa_paillier::zk::bridge::{pedersen_to_aux, point_to_ge, scalar_to_ge};
-    use tecdsa_paillier::zk::paillier_zk;
+    use tecdsa_paillier::zk::{
+        bridge::{pedersen_to_aux, point_to_ge, scalar_to_ge},
+        paillier_zk,
+    };
 
     #[derive(udigest::Digestable)]
     struct BenchTag(&'static str);
@@ -1106,8 +1107,9 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     }
 
     {
-        use paillier_zk::paillier_encryption_in_range_with_el_gamal as pi_enc_elg;
-        use paillier_zk::IntegerExt as _;
+        use paillier_zk::{
+            paillier_encryption_in_range_with_el_gamal as pi_enc_elg, IntegerExt as _,
+        };
         type GE = generic_ec::curves::Secp256k1;
         let security = pi_enc_elg::SecurityParams {
             l: 256,
@@ -1210,8 +1212,7 @@ fn joye_libert_zk_once(jl: &JlFixture, jl_ex: &JlExtraFixture) {
 
     {
         use num_bigint::BigUint;
-        use tecdsa_joye_libert::zk::zkjl_com::jl_commit;
-        use tecdsa_joye_libert::zk::zkjl_equ::ZkJlEquProof;
+        use tecdsa_joye_libert::zk::{zkjl_com::jl_commit, zkjl_equ::ZkJlEquProof};
         let pk0 = &jl_ex.pk0;
         let m = BigUint::from(42u32);
         let r1 = OsRng.gen_biguint_below(&jl_pk.n);
@@ -1276,9 +1277,9 @@ fn joye_libert_zk_once(jl: &JlFixture, jl_ex: &JlExtraFixture) {
 
     {
         use num_bigint::BigUint;
-        use tecdsa_joye_libert::zk::zkjl_com::jl_commit;
-        use tecdsa_joye_libert::zk::zkjlv_com::jl_vec_commit;
-        use tecdsa_joye_libert::zk::zkjlv_equ::ZkJlvEquProof;
+        use tecdsa_joye_libert::zk::{
+            zkjl_com::jl_commit, zkjlv_com::jl_vec_commit, zkjlv_equ::ZkJlvEquProof,
+        };
         let pk0 = &jl_ex.pk0;
         let ell = 2;
         let mut y_vec = Vec::with_capacity(ell);

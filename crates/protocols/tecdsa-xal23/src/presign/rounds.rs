@@ -28,11 +28,13 @@ use tecdsa_curve::{
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSenderState, JlMtaSetup};
 use tecdsa_protocol::{state_machine::Outgoing, MtA, PartyId, Recipient};
 
-use super::msg::{
-    R1BroadcastPayload, R1P2pPayload, R2BroadcastPayload, R2P2pPayload, R3BroadcastPayload,
-    Xal23PresignMsg,
+use super::{
+    msg::{
+        R1BroadcastPayload, R1P2pPayload, R2BroadcastPayload, R2P2pPayload, R3BroadcastPayload,
+        Xal23PresignMsg,
+    },
+    Xal23Presignature,
 };
-use super::Xal23Presignature;
 use crate::key_share::Xal23KeyShare;
 
 // ---------------------------------------------------------------------------

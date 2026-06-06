@@ -12,8 +12,7 @@
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::zk::mta_range::NTildeParams;
-use tecdsa_paillier::{DecryptionKey, EncryptionKey};
+use tecdsa_paillier::{zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey};
 use zeroize::Zeroize;
 
 /// Party 1 (server) key share.

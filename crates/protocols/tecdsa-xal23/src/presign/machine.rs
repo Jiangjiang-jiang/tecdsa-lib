@@ -26,15 +26,17 @@ use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
-use super::msg::{
-    R1BroadcastPayload, R1P2pPayload, R2BroadcastPayload, R2P2pPayload, R3BroadcastPayload,
-    Xal23PresignMsg,
+use super::{
+    msg::{
+        R1BroadcastPayload, R1P2pPayload, R2BroadcastPayload, R2P2pPayload, R3BroadcastPayload,
+        Xal23PresignMsg,
+    },
+    rounds::{
+        build_round1, finalize_r3, transition_r1_to_r2, transition_r2_to_r3, PresignRound,
+        Round1State, Round2State, Round3State,
+    },
+    Xal23Presignature,
 };
-use super::rounds::{
-    build_round1, finalize_r3, transition_r1_to_r2, transition_r2_to_r3, PresignRound, Round1State,
-    Round2State, Round3State,
-};
-use super::Xal23Presignature;
 use crate::key_share::Xal23KeyShare;
 
 // ---------------------------------------------------------------------------
