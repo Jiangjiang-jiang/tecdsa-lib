@@ -1403,12 +1403,7 @@ fn wmy23_once() {
     let public_key = key_shares[0].public_key;
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-    // Presign (uses PresignConfig with CL setup; key_shares consumed by move)
-    let mut key_share_map: std::collections::BTreeMap<u16, _> = key_shares
-        .into_iter()
-        .enumerate()
-        .map(|(i, s)| ((i + 1) as u16, s))
-        .collect();
+    // Presign (uses PresignConfig with CL setup)
     let presign_out = time_once("wmy23/presign/n3_t1/wall", || {
         let machines: Vec<_> = signers
             .iter()
@@ -1417,7 +1412,7 @@ fn wmy23_once() {
                 let setup =
                     tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
                 let config = PresignConfig {
-                    key_share: key_share_map.remove(&s).expect("key share"),
+                    key_share: key_shares[(s - 1) as usize].clone(),
                     my_id: pid,
                     signer_parties: signer_parties.clone(),
                     cl_setup: setup,
@@ -1552,12 +1547,7 @@ fn llz25_once() {
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     let quorum_indices: Vec<u16> = signers.to_vec();
 
-    // Presign (key_shares consumed by move)
-    let mut ks_map: std::collections::BTreeMap<u16, _> = key_shares
-        .into_iter()
-        .enumerate()
-        .map(|(i, s)| ((i + 1) as u16, s))
-        .collect();
+    // Presign
     let presign_out = time_once("llz25/presign/n3_t1/wall", || {
         let machines: Vec<_> = signers
             .iter()
@@ -1576,7 +1566,7 @@ fn llz25_once() {
                     Llz25PresignMachine::new(
                         pid,
                         signer_parties.clone(),
-                        ks_map.remove(&s).expect("key share"),
+                        key_shares[(s - 1) as usize].clone(),
                         quorum_indices.clone(),
                         pos,
                         local_setup,
@@ -1653,28 +1643,7 @@ fn trout_once() {
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     let signing_1based: Vec<u16> = signers.to_vec();
 
-    // Second DKG for sign (presign consumes shares, sign needs a reference)
-    let sign_keygen_out = {
-        let machines: Vec<_> = all_parties
-            .iter()
-            .map(|&pid| {
-                (
-                    pid,
-                    TroutKeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("trout keygen machine"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    };
-    let sign_shares: Vec<_> = sign_keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-
-    // Presign (key_shares consumed by move)
-    let mut ks_map: std::collections::BTreeMap<u16, _> = key_shares
-        .into_iter()
-        .enumerate()
-        .map(|(i, s)| ((i + 1) as u16, s))
-        .collect();
+    // Presign (clone key shares)
     let presign_out = time_once("trout/presign/n3_t1/wall", || {
         let machines: Vec<_> = signers
             .iter()
@@ -1692,7 +1661,7 @@ fn trout_once() {
                     TroutPresignMachine::new(
                         pid,
                         signer_parties.clone(),
-                        ks_map.remove(&s).expect("key share"),
+                        key_shares[(s - 1) as usize].clone(),
                         signing_1based.clone(),
                         b"bench-session",
                         local_setup,
@@ -1709,22 +1678,40 @@ fn trout_once() {
         print_timing("trout/presign/n3_t1", pid, timing.total_active());
     }
 
-    // Sign (local computation, uses sign_share kept from keygen)
-    let sign_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
-    let (_, sign_cl_pk) = {
-        let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
-        tmp.keygen().expect("cl keygen")
-    };
-    time_once("trout/online_sign/n3_t1/local", || {
-        TroutSignMachine::new(
-            &presigs,
-            &message,
-            &sign_shares[0],
-            &sign_setup,
-            &sign_cl_pk,
-        )
-        .expect("trout sign")
+    // Sign via Orchestrator (1-round: broadcast F_i shares, aggregate, compute signature)
+    let sign_out = time_once("trout/online_sign/n3_t1/wall", || {
+        let machines: Vec<_> = signers
+            .iter()
+            .zip(presigs)
+            .map(|(&s, presig)| {
+                let pid = PartyId(s);
+                let local_setup =
+                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+                let (_, local_pk) = {
+                    let mut tmp =
+                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+                    tmp.keygen().expect("cl keygen")
+                };
+                (
+                    pid,
+                    TroutSignMachine::new(
+                        pid,
+                        signer_parties.clone(),
+                        presig,
+                        &message,
+                        &key_shares[(s - 1) as usize],
+                        local_setup,
+                        &local_pk,
+                    )
+                    .expect("trout sign"),
+                )
+            })
+            .collect();
+        per_party::run_timed_without_init(machines, 10)
     });
+    for (&pid, timing) in &sign_out.1 {
+        print_timing("trout/online_sign/n3_t1", pid, timing.total_active());
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
