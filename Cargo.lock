@@ -591,11 +591,6 @@ version = "0.3.2"
 dependencies = [
  "bytemuck",
  "glass_pumpkin",
- "num-bigint",
- "num-integer",
- "num-traits",
- "rand 0.8.6",
- "rand_core 0.10.1",
  "rand_core 0.6.4",
  "rug",
  "serde",

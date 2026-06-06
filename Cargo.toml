@@ -108,7 +108,10 @@ tecdsa-abc24 = { path = "crates/protocols/tecdsa-abc24" }
 # External Paillier ecosystem (LFDT-Lockness, MIT/Apache-2.0)
 # Vendored: crates.io 0.3.2 broken (glass_pumpkin 1.10 rand_core 0.10 mismatch, upstream issue #23)
 fast-paillier = { version = "0.3", default-features = true }
-paillier-zk = { version = "0.7.0-alpha", default-features = true, features = ["serde"] }
+# Force the rug/GMP backend (the rest of the workspace already uses rug). paillier-zk's
+# default pulls fast-paillier/backend-num-bigint; with both backend features on, fast-paillier
+# selects num-bigint (glass_pumpkin) which is far slower than GMP for big-int/primality work.
+paillier-zk = { version = "0.7.0-alpha", default-features = false, features = ["std", "serde", "backend-rug"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
