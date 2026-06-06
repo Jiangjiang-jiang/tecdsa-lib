@@ -565,7 +565,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
         security_level::SecurityLevel128, sign::types::PartialSignature,
     };
 
-    let mut group = c.benchmark_group("cggmp20");
+    let mut group = c.benchmark_group("multiparty/cggmp20");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     // --- DKG: one execution per sample, every party reported separately ---
@@ -668,7 +668,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
     // --- Online Sign: local partial_sign + combine (not a StateMachine) ---
     // Kept in a separate group so they use normal Criterion timing; the replay
     // group above sets measurement_time to ~0 which would break real timing.
-    let mut sign_group = c.benchmark_group("cggmp20_sign");
+    let mut sign_group = c.benchmark_group("multiparty/cggmp20_sign");
     sign_group.sample_size(10);
     let presigs = cggmp20_helpers::run_presign(&core_shares, &aux_infos, &signers);
     let message = make_data_to_sign(b"benchmark message");
@@ -702,7 +702,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
         sign::{Dkls23OnlineSignMachine, OnlineSignConfig},
     };
 
-    let mut group = c.benchmark_group("dkls23");
+    let mut group = c.benchmark_group("multiparty/dkls23");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
@@ -863,7 +863,7 @@ fn gg18_benchmarks(c: &mut Criterion) {
         sign::{Gg18OnlineSignMachine, OnlineSignConfig},
     };
 
-    let mut group = c.benchmark_group("gg18");
+    let mut group = c.benchmark_group("multiparty/gg18");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
@@ -1024,7 +1024,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     use tecdsa_ggn16::{
         keygen::Ggn16KeygenMachine, presign::Ggn16PresignMachine, sign::Ggn16OnlineSignMachine,
     };
-    let mut group = c.benchmark_group("ggn16");
+    let mut group = c.benchmark_group("multiparty/ggn16");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
@@ -1174,7 +1174,7 @@ fn ln18_benchmarks(c: &mut Criterion) {
         sign::{ln18_full_sign_parallel, Ln18PresignParams},
     };
 
-    let mut group = c.benchmark_group("ln18");
+    let mut group = c.benchmark_group("multiparty/ln18");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
@@ -1413,7 +1413,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
         keygen::Tx25KeygenMachine, presign::Tx25PresignMachine, sign::Tx25OnlineSignMachine,
     };
 
-    let mut group = c.benchmark_group("tx25");
+    let mut group = c.benchmark_group("multiparty/tx25");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
@@ -1555,7 +1555,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
         keygen::Jtx25KeygenMachine, presign::Jtx25PresignMachine, sign::Jtx25OnlineSignMachine,
     };
 
-    let mut group = c.benchmark_group("jtx25");
+    let mut group = c.benchmark_group("multiparty/jtx25");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
@@ -1711,7 +1711,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
         sign::Wmy23OnlineSignMachine,
     };
 
-    let mut group = c.benchmark_group("wmy23");
+    let mut group = c.benchmark_group("multiparty/wmy23");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
@@ -1866,7 +1866,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
         keygen::Wmc24KeygenMachine, presign::Wmc24PresignMachine, sign::Wmc24OnlineSignMachine,
     };
 
-    let mut group = c.benchmark_group("wmc24");
+    let mut group = c.benchmark_group("multiparty/wmc24");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
@@ -2021,7 +2021,7 @@ fn llz25_benchmarks(c: &mut Criterion) {
         sign::machine::Llz25SignMachine,
     };
 
-    let mut group = c.benchmark_group("llz25");
+    let mut group = c.benchmark_group("multiparty/llz25");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
@@ -2208,7 +2208,7 @@ fn trout_benchmarks(c: &mut Criterion) {
         sign::machine::TroutSignMachine,
     };
 
-    let mut group = c.benchmark_group("trout");
+    let mut group = c.benchmark_group("multiparty/trout");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
@@ -2392,7 +2392,7 @@ fn xal23_benchmarks(c: &mut Criterion) {
         keygen::Xal23KeygenMachine, presign::Xal23PresignMachine, sign::Xal23SignMachine,
     };
 
-    let mut group = c.benchmark_group("xal23");
+    let mut group = c.benchmark_group("multiparty/xal23");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;

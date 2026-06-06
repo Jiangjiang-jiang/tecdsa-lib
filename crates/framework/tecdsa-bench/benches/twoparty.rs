@@ -56,7 +56,7 @@ fn lin17_benchmarks(c: &mut Criterion) {
         sign,
     };
 
-    let mut group = c.benchmark_group("lin17");
+    let mut group = c.benchmark_group("twoparty/lin17");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
@@ -161,7 +161,7 @@ fn kgg24_benchmarks(c: &mut Criterion) {
         sign,
     };
 
-    let mut group = c.benchmark_group("kgg24");
+    let mut group = c.benchmark_group("twoparty/kgg24");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
@@ -272,7 +272,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
         offline_sign, online_sign,
     };
 
-    let mut group = c.benchmark_group("xal21");
+    let mut group = c.benchmark_group("twoparty/xal21");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
@@ -313,7 +313,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
     // future SignMachine implementation. These are kept in a separate group
     // so they use normal Criterion timing (the replay group sets
     // measurement_time to ~0).
-    let mut sign_group = c.benchmark_group("xal21_sign");
+    let mut sign_group = c.benchmark_group("twoparty/xal21_sign");
     sign_group.sample_size(10);
 
     let mut rng = rand_core::OsRng;
@@ -364,7 +364,7 @@ fn abc24_benchmarks(c: &mut Criterion) {
         sign,
     };
 
-    let mut group = c.benchmark_group("abc24");
+    let mut group = c.benchmark_group("twoparty/abc24");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
