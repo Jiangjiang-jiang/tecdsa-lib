@@ -11,7 +11,7 @@
 use rand_core::CryptoRngCore;
 use rug::{
     rand::{MutRandState, ThreadRandState},
-    Integer,
+    Complete, Integer,
 };
 use serde::{Deserialize, Serialize};
 use tecdsa_bigint::{gen_pair, pow_mod, small_odd_primes, SyncRng};
@@ -35,6 +35,7 @@ pub struct JlPublicKey {
 pub struct JlSecretKey {
     /// Prime factor p of N, where p = 2^k * p' + 1.
     pub p: Integer,
+    pub y_to_neg_pp: Integer,
     /// Discrete log alpha such that y = x^alpha mod N.
     pub alpha: Integer,
 }
@@ -133,7 +134,7 @@ pub fn generate_keypair_with_qnr(
     let b = p_bits as u32;
     let k = msg_space_bits;
     // Step 1: p = 2^k*p'+1
-    let (_, p) = gen_pair(b - k, &(Integer::ONE << k).into(), 25, 15, &primes, rng);
+    let (pp, p) = gen_pair(b - k, &(Integer::ONE << k).into(), 25, 15, &primes, rng);
     // Step 2: q = 2*q'+1
     let (_, q) = gen_pair(b - 1, &Integer::from(2), 25, 15, &primes, rng);
 
@@ -153,13 +154,20 @@ pub fn generate_keypair_with_qnr(
     let two_pow_k = Integer::from(1) << msg_space_bits;
     let elem_h = pow_mod(&qnr, &two_pow_k, &n);
 
+    let y_to_neg_pp = gen_y
+        .pow_mod_ref(&pp, &p)
+        .unwrap()
+        .complete()
+        .invert(&p)
+        .unwrap();
+
     let pk = JlPublicKey {
         n,
         y: gen_y,
         h: elem_h,
         k: msg_space_bits,
     };
-    let sk = JlSecretKey { p, alpha };
+    let sk = JlSecretKey { p, y_to_neg_pp, alpha };
 
     (pk, sk, qnr)
 }

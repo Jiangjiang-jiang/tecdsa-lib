@@ -12,7 +12,7 @@
 //! of a certain power residue symbol, bit by bit.
 
 use rand_core::CryptoRngCore;
-use rug::Integer;
+use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
 use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 
@@ -79,31 +79,26 @@ pub fn encrypt_with_randomness(pk: &JlPublicKey, m: &Integer, r: &Integer) -> Jl
 /// This is the standard Joye-Libert decryption from the original paper.
 #[must_use]
 pub fn decrypt(sk: &JlSecretKey, pk: &JlPublicKey, ct: &JlCiphertext) -> Integer {
-    let p = &sk.p;
-    let p_minus_1 = Integer::from(p - 1);
+    let mut d =
+        ct.c.pow_mod_ref(&Integer::from(&sk.p >> pk.k), &sk.p)
+            .unwrap()
+            .complete();
+    let mut t = sk.y_to_neg_pp.clone();
 
     let mut m = Integer::new();
-    let mut bit_value = Integer::from(1); // Tracks 2^(i-1)
 
-    for i in 1..pk.k {
-        // Compute exponent e_i = (p-1) / 2^i
-        let exp_i = Integer::from(&p_minus_1 >> i);
-
-        // z = c^{(p-1)/2^i} mod p — the power residue symbol of the ciphertext
-        let z = pow_mod(&ct.c, &exp_i, p);
-
-        // t = y^{(p-1)/2^i} mod p — the power residue symbol of the generator
-        let t_base = pow_mod(&pk.y, &exp_i, p);
-
-        // t_m = t_base^m mod p — accounts for known bits of m
-        let t_m = pow_mod(&t_base, &m, p);
-
-        // If z != t_m, then bit (i-1) of m is 1
-        if z != t_m {
-            m += &bit_value;
+    for i in 0..pk.k {
+        if d.pow_mod_ref(&(Integer::ONE << (pk.k - i - 1)).complete(), &sk.p)
+            .unwrap()
+            .complete()
+            != *Integer::ONE
+        {
+            m.set_bit(i, true);
+            d *= &t;
+            d.modulo_mut(&sk.p);
         }
-
-        bit_value <<= 1u32;
+        t.square_mut();
+        t.modulo_mut(&sk.p);
     }
 
     m
@@ -117,11 +112,12 @@ mod tests {
     #[test]
     fn encrypt_produces_nonzero_ciphertext() {
         let mut rng = rand::thread_rng();
-        let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
+        let (pk, sk) = generate_keypair_with_params(256, 32, &mut rng);
 
         let m = Integer::from(42u32);
         let (ct, _r) = encrypt(&pk, &m, &mut rng);
+        let mm = decrypt(&sk, &pk, &ct);
 
-        assert!(!ct.c.is_zero());
+        assert_eq!(m, mm);
     }
 }
