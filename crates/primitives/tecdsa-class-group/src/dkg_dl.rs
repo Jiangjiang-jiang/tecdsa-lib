@@ -40,11 +40,10 @@ use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 
-use crate::cl::{
-    Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey,
+use crate::{
+    cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey},
+    zk::{r_dec_dl::RDecDlProof, r_enc_pc::REncPcProof},
 };
-use crate::zk::r_dec_dl::RDecDlProof;
-use crate::zk::r_enc_pc::REncPcProof;
 
 // ---------------------------------------------------------------------------
 // Pedersen VSS (reuses the same pattern as drg.rs)
@@ -548,9 +547,10 @@ fn bytes_to_scalar(bytes: &[u8]) -> k256::Scalar {
 
 #[cfg(test)]
 mod tests {
+    use rand_core::OsRng;
+
     use super::*;
     use crate::cl::ClSetup;
-    use rand_core::OsRng;
 
     /// Full DKG-DL protocol: Gen + GenVf + Reveal + RevealVf + Aggregate.
     /// 3 parties, threshold t=1 (2-of-3 reconstruction).

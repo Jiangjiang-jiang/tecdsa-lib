@@ -24,8 +24,10 @@ fn cl_enc_dec_roundtrip() {
     let ct = setup
         .encrypt_bytes(&pk, &plaintext.to_digits::<u8>(Order::Msf))
         .expect("encrypt failed");
-    let decrypted =
-        Integer::from_digits(&setup.decrypt_bytes(&sk, &ct).expect("decrypt failed"), Order::Msf);
+    let decrypted = Integer::from_digits(
+        &setup.decrypt_bytes(&sk, &ct).expect("decrypt failed"),
+        Order::Msf,
+    );
     assert_eq!(decrypted, plaintext, "roundtrip failed for plaintext=42");
 
     // Encrypt and decrypt zero.
@@ -71,8 +73,10 @@ fn cl_homomorphic_add() {
         .expect("encrypt b");
 
     let ct_sum = setup.add_ciphertexts(&pk, &ct_a, &ct_b).expect("hadd");
-    let sum =
-        Integer::from_digits(&setup.decrypt_bytes(&sk, &ct_sum).expect("decrypt sum"), Order::Msf);
+    let sum = Integer::from_digits(
+        &setup.decrypt_bytes(&sk, &ct_sum).expect("decrypt sum"),
+        Order::Msf,
+    );
 
     let expected = Integer::from(&a + &b) % q();
     assert_eq!(sum, expected, "homomorphic add failed: {sum} != {expected}");

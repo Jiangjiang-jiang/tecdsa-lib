@@ -213,8 +213,10 @@ pub fn pvss_share_distribute_with_secret(
         &rho_bytes,
     )?;
 
-    let polynomial_coeffs_bytes: Vec<Vec<u8>> =
-        coeffs.iter().map(|c| c.to_digits::<u8>(Order::Msf)).collect();
+    let polynomial_coeffs_bytes: Vec<Vec<u8>> = coeffs
+        .iter()
+        .map(|c| c.to_digits::<u8>(Order::Msf))
+        .collect();
 
     Ok(PvssShareWithCoeffsOutput {
         c1,

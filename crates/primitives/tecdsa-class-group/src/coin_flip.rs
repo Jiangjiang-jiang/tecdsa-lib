@@ -128,8 +128,9 @@ fn compute_commitment_hash(nonce: &[u8; 32], value: &[u8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand::rngs::OsRng;
+
+    use super::*;
 
     #[test]
     fn commit_and_verify() {

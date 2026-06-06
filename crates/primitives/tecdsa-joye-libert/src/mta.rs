@@ -16,8 +16,8 @@
 //! so the message space parameter k must be sufficiently larger than the curve
 //! order bit-length.
 
-use rug::{integer::Order, Integer};
 use rand_core::CryptoRngCore;
+use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 use zeroize::Zeroize;

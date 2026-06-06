@@ -251,7 +251,7 @@ impl RBlntProof {
         let q = setup.cl().q();
 
         // Compute the shared product term: prod_l h^{q^l * z_{1l}}
-        let h_q_pow_z1_product = compute_h_q_pow_product(setup, &q, &self.z1_chunks)?;
+        let h_q_pow_z1_product = compute_h_q_pow_product(setup, q, &self.z1_chunks)?;
 
         // Check per-chunk equations (4) and (5).
         for (idx, (c_l_0, c_l_1)) in chunk_cts.iter().enumerate() {

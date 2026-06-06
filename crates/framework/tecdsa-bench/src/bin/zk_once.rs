@@ -493,17 +493,16 @@ fn class_group_zk_once(
         let x_bytes = 5u32.to_be_bytes().to_vec();
         let y_bytes = 10u32.to_be_bytes().to_vec();
         let (r_sk2, _) = setup.keygen().expect("kg");
-        let r_base = setup.sk_to_bytes(&r_sk2).expect("bytes");
         let ct_in = setup.cl().encrypt_with_randomness(
             &pk,
             &Cleartext::from_mpz(setup.cl(), Mpz::from_str("100").expect("enc")).expect("enc"),
-            &Mpz::from_bytes_be(&r_base),
+            r_sk2.as_mpz(),
         );
         let (r_sk3, _) = setup.keygen().expect("kg");
         let r1 = setup.sk_to_bytes(&r_sk3).expect("bytes");
         let q_bu = Mpz::from_str(SECP256K1_ORDER).unwrap();
         let m_out = (Mpz::from(5u32) * Mpz::from(100u32) + Mpz::from(10u32)).modulo(&q_bu);
-        let r_out = (Mpz::from(5u32) * Mpz::from_bytes_be(&r_base) + Mpz::from_bytes_be(&r1));
+        let r_out = Mpz::from(5u32) * r_sk2.as_mpz() + r_sk3.as_mpz();
         let ct_out = setup.cl().encrypt_with_randomness(
             &pk,
             &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),
@@ -552,7 +551,7 @@ fn class_group_zk_once(
         );
         let q_bu = Mpz::from_str(tecdsa_class_group::cl::SECP256K1_ORDER).unwrap();
         let m_out = (Mpz::from(3u32) * Mpz::from(100u32) + Mpz::from(7u32)).modulo(&q_bu);
-        let r_out = (Mpz::from(3u32) * Mpz::from_bytes_be(&r_base) + Mpz::from_bytes_be(&r_enc));
+        let r_out = Mpz::from(3u32) * Mpz::from_bytes_be(&r_base) + Mpz::from_bytes_be(&r_enc);
         let ct_out = setup.cl().encrypt_with_randomness(
             &pk,
             &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),

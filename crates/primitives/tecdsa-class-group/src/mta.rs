@@ -333,8 +333,9 @@ impl MtAWithCheck for ClMtA {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tecdsa_bigint::mul_mod;
+
+    use super::*;
 
     /// Helper: create a ClMtaSetup for testing with secp256k1 parameters.
     fn test_setup(seed: &str) -> ClMtaSetup {

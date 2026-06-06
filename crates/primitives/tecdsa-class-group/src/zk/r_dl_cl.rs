@@ -270,8 +270,11 @@ mod tests {
         let proof =
             RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &x_bytes).expect("prove");
 
-        let wrong_ct_out =
-            scalar_mul_components(&setup, &ct_in, &Integer::from(3u32).to_digits::<u8>(Order::Msf));
+        let wrong_ct_out = scalar_mul_components(
+            &setup,
+            &ct_in,
+            &Integer::from(3u32).to_digits::<u8>(Order::Msf),
+        );
 
         assert!(!proof
             .verify(&setup, &x_point, &ct_in, &wrong_ct_out)

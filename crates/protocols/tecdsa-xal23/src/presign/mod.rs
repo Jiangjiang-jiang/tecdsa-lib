@@ -28,7 +28,7 @@ pub use machine::Xal23PresignMachine;
 pub use msg::Xal23PresignMsg;
 use rug::{integer::Order, Integer};
 use tecdsa_curve::{
-    conv::{integer_to_scalar, curve_order, scalar_to_integer},
+    conv::{curve_order, integer_to_scalar, scalar_to_integer},
     TecdsaCurve,
 };
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSetup};
@@ -193,7 +193,8 @@ where
             //   Trait "sender" (P2) decrypts, gets beta (step 3)
             {
                 let k_i_bytes = scalar_to_integer::<C>(&k_vec[i]).to_digits::<u8>(Order::Msf);
-                let gamma_j_bytes = scalar_to_integer::<C>(&gamma_vec[j]).to_digits::<u8>(Order::Msf);
+                let gamma_j_bytes =
+                    scalar_to_integer::<C>(&gamma_vec[j]).to_digits::<u8>(Order::Msf);
 
                 // Step 1: encrypt gamma_j
                 let (sender_msg, sender_state) =

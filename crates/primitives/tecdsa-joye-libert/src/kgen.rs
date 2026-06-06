@@ -167,7 +167,11 @@ pub fn generate_keypair_with_qnr(
         h: elem_h,
         k: msg_space_bits,
     };
-    let sk = JlSecretKey { p, y_to_neg_pp, alpha };
+    let sk = JlSecretKey {
+        p,
+        y_to_neg_pp,
+        alpha,
+    };
 
     (pk, sk, qnr)
 }
