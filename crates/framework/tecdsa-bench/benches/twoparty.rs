@@ -11,7 +11,7 @@
 //! per-party timing through the Orchestrator. Sign phases use per-party
 //! round functions timed individually.
 
-use std::time::{Duration, Instant};
+use std::{collections::BTreeMap, time::Instant};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use elliptic_curve::ops::Reduce;
@@ -21,6 +21,11 @@ use tecdsa_bench::per_party;
 use tecdsa_protocol::{DataToSign, PartyId};
 
 type C = Secp256k1;
+
+/// Number of Criterion samples per party benchmark. Also the number of real
+/// protocol executions per phase (plus one warm-up run). A single execution
+/// produces every party's timing, which is then replayed per party.
+const SAMPLES: usize = 10;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,120 +57,96 @@ fn lin17_benchmarks(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("lin17");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(60));
+    per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
 
-    // --- DKG: per-party active time ---
+    // --- DKG: one execution per sample, every party reported separately ---
+    let dkg_runs = per_party::precompute_runs(SAMPLES, || {
+        let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
+        let builders: Vec<(PartyId, _)> = specs
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, my_id, peer_id))| {
+                let role = roles[i];
+                (my_id, move || {
+                    let mut rng = tecdsa_core::Csprng::new();
+                    Lin17KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
+                        .expect("keygen machine init")
+                })
+            })
+            .collect();
+        per_party::active_with_init(builders, 10)
+    });
     for party_idx in 1..=2u16 {
-        let pid = PartyId(party_idx);
-        group.bench_function(format!("dkg/lin17/n2_t1/party{party_idx}"), |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
-                    let builders: Vec<(PartyId, _)> = specs
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &(_, my_id, peer_id))| {
-                            let role = roles[i];
-                            (my_id, move || {
-                                let mut rng = tecdsa_core::Csprng::new();
-                                Lin17KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
-                                    .expect("keygen machine init")
-                            })
-                        })
-                        .collect();
-                    let (_, timings) = per_party::run_timed_with_init(builders, 10);
-                    total += per_party::party_active_time(&timings, pid);
-                }
-                total
-            });
-        });
+        per_party::bench_party_replay(
+            &mut group,
+            format!("dkg/lin17/n2_t1/party{party_idx}"),
+            &dkg_runs,
+            PartyId(party_idx),
+        );
     }
 
-    // --- Sign: per-party timing via round functions ---
+    // --- Sign: one execution per sample, both parties timed via round functions ---
     // Untimed setup: generate key shares via trusted dealer
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = tecdsa_lin17::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
 
-    // Party 1 active time: round1 + round3 + finalize
-    group.bench_function("full_sign/lin17/n2_t1/party1", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let mut rng = rand_core::OsRng;
+    let sign_runs = per_party::precompute_runs(SAMPLES, || {
+        let mut rng = rand_core::OsRng;
 
-                // P1 Round 1
-                let t0 = Instant::now();
-                let (p1_r1_msg, p1_state, p1_decommit) = sign::party1_round1::<C>(&mut rng);
-                total += t0.elapsed();
+        // P1 Round 1
+        let t0 = Instant::now();
+        let (p1_r1_msg, p1_state, p1_decommit) = sign::party1_round1::<C>(&mut rng);
+        let p1_r1 = t0.elapsed();
 
-                // P2 Round 2 (untimed for party 1)
-                let (p2_r2_msg, p2_state) = sign::party2_round2::<C>(&mut rng);
+        // P2 Round 2
+        let t0 = Instant::now();
+        let (p2_r2_msg, p2_state) = sign::party2_round2::<C>(&mut rng);
+        let p2_r2 = t0.elapsed();
 
-                // P1 Round 3
-                let t0 = Instant::now();
-                sign::party1_round3::<C>(&p2_r2_msg).expect("round3");
-                total += t0.elapsed();
+        // P1 Round 3
+        let t0 = Instant::now();
+        sign::party1_round3::<C>(&p2_r2_msg).expect("round3");
+        let p1_r3 = t0.elapsed();
 
-                // P2 Round 4 (untimed for party 1)
-                let p2_r4_msg = sign::party2_round4::<C>(
-                    &p2_key,
-                    &p2_state,
-                    &p1_r1_msg,
-                    &p1_decommit,
-                    &message,
-                    &mut rng,
-                )
-                .expect("round4");
+        // P2 Round 4
+        let t0 = Instant::now();
+        let p2_r4_msg = sign::party2_round4::<C>(
+            &p2_key,
+            &p2_state,
+            &p1_r1_msg,
+            &p1_decommit,
+            &message,
+            &mut rng,
+        )
+        .expect("round4");
+        let p2_r4 = t0.elapsed();
 
-                // P1 Finalize
-                let t0 = Instant::now();
-                sign::party1_finalize::<C>(&p1_key, &p1_state, &p2_state.r2, &p2_r4_msg, &message)
-                    .expect("finalize");
-                total += t0.elapsed();
-            }
-            total
-        });
+        // P1 Finalize
+        let t0 = Instant::now();
+        sign::party1_finalize::<C>(&p1_key, &p1_state, &p2_state.r2, &p2_r4_msg, &message)
+            .expect("finalize");
+        let p1_fin = t0.elapsed();
+
+        BTreeMap::from([
+            (PartyId(1), p1_r1 + p1_r3 + p1_fin),
+            (PartyId(2), p2_r2 + p2_r4),
+        ])
     });
-
-    // Party 2 active time: round2 + round4
-    group.bench_function("full_sign/lin17/n2_t1/party2", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let mut rng = rand_core::OsRng;
-
-                // P1 Round 1 (untimed for party 2)
-                let (p1_r1_msg, _p1_state, p1_decommit) = sign::party1_round1::<C>(&mut rng);
-
-                // P2 Round 2
-                let t0 = Instant::now();
-                let (p2_r2_msg, p2_state) = sign::party2_round2::<C>(&mut rng);
-                total += t0.elapsed();
-
-                // P1 Round 3 (untimed for party 2)
-                sign::party1_round3::<C>(&p2_r2_msg).expect("round3");
-
-                // P2 Round 4
-                let t0 = Instant::now();
-                let _p2_r4_msg = sign::party2_round4::<C>(
-                    &p2_key,
-                    &p2_state,
-                    &p1_r1_msg,
-                    &p1_decommit,
-                    &message,
-                    &mut rng,
-                )
-                .expect("round4");
-                total += t0.elapsed();
-            }
-            total
-        });
-    });
+    per_party::bench_party_replay(
+        &mut group,
+        "full_sign/lin17/n2_t1/party1",
+        &sign_runs,
+        PartyId(1),
+    );
+    per_party::bench_party_replay(
+        &mut group,
+        "full_sign/lin17/n2_t1/party2",
+        &sign_runs,
+        PartyId(2),
+    );
 
     group.finish();
 }
@@ -181,126 +162,102 @@ fn kgg24_benchmarks(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("kgg24");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(60));
+    per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
 
-    // --- DKG: per-party active time ---
+    // --- DKG: one execution per sample, every party reported separately ---
+    let dkg_runs = per_party::precompute_runs(SAMPLES, || {
+        let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
+        let builders: Vec<(PartyId, _)> = specs
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, my_id, peer_id))| {
+                let role = roles[i];
+                (my_id, move || {
+                    let mut rng = tecdsa_core::Csprng::new();
+                    Kgg24KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
+                        .expect("keygen machine init")
+                })
+            })
+            .collect();
+        per_party::active_with_init(builders, 10)
+    });
     for party_idx in 1..=2u16 {
-        let pid = PartyId(party_idx);
-        group.bench_function(format!("dkg/kgg24/n2_t1/party{party_idx}"), |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
-                    let builders: Vec<(PartyId, _)> = specs
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &(_, my_id, peer_id))| {
-                            let role = roles[i];
-                            (my_id, move || {
-                                let mut rng = tecdsa_core::Csprng::new();
-                                Kgg24KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
-                                    .expect("keygen machine init")
-                            })
-                        })
-                        .collect();
-                    let (_, timings) = per_party::run_timed_with_init(builders, 10);
-                    total += per_party::party_active_time(&timings, pid);
-                }
-                total
-            });
-        });
+        per_party::bench_party_replay(
+            &mut group,
+            format!("dkg/kgg24/n2_t1/party{party_idx}"),
+            &dkg_runs,
+            PartyId(party_idx),
+        );
     }
 
-    // --- Sign: per-party timing via round functions ---
+    // --- Sign: one execution per sample, both parties timed via round functions ---
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = tecdsa_kgg24::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
 
-    // Party 1 active time: round1 + round3 + finalize
-    group.bench_function("full_sign/kgg24/n2_t1/party1", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let mut rng = rand_core::OsRng;
+    let sign_runs = per_party::precompute_runs(SAMPLES, || {
+        let mut rng = rand_core::OsRng;
 
-                // P1 Round 1
-                let t0 = Instant::now();
-                let (p1_r1_msg, p1_state, p1_decommit) = sign::party1_round1::<C>(&mut rng);
-                total += t0.elapsed();
+        // P1 Round 1
+        let t0 = Instant::now();
+        let (p1_r1_msg, p1_state, p1_decommit) = sign::party1_round1::<C>(&mut rng);
+        let p1_r1 = t0.elapsed();
 
-                // P2 Round 2 (untimed)
-                let (p2_r2_msg, p2_state) = sign::party2_round2::<C>(&mut rng);
+        // P2 Round 2
+        let t0 = Instant::now();
+        let (p2_r2_msg, p2_state) = sign::party2_round2::<C>(&mut rng);
+        let p2_r2 = t0.elapsed();
 
-                // P1 Round 3
-                let t0 = Instant::now();
-                sign::party1_round3::<C>(&p2_r2_msg).expect("round3");
-                total += t0.elapsed();
+        // P1 Round 3
+        let t0 = Instant::now();
+        sign::party1_round3::<C>(&p2_r2_msg).expect("round3");
+        let p1_r3 = t0.elapsed();
 
-                // P2 compute partial sig (untimed)
-                let p2_partial = sign::party2_compute_partial_sig::<C>(
-                    &p2_key,
-                    &p2_state,
-                    &p1_r1_msg,
-                    &p1_decommit,
-                    &message,
-                    &mut rng,
-                )
-                .expect("partial_sig");
+        // P2 compute partial sig
+        let t0 = Instant::now();
+        let p2_partial = sign::party2_compute_partial_sig::<C>(
+            &p2_key,
+            &p2_state,
+            &p1_r1_msg,
+            &p1_decommit,
+            &message,
+            &mut rng,
+        )
+        .expect("partial_sig");
+        let p2_partial_dur = t0.elapsed();
 
-                // P1 Finalize
-                let t0 = Instant::now();
-                sign::party1_finalize::<C>(
-                    &p1_key,
-                    &p1_state,
-                    &p2_state.r2,
-                    &p2_partial,
-                    &message,
-                    &mut rng,
-                )
-                .expect("finalize");
-                total += t0.elapsed();
-            }
-            total
-        });
+        // P1 Finalize
+        let t0 = Instant::now();
+        sign::party1_finalize::<C>(
+            &p1_key,
+            &p1_state,
+            &p2_state.r2,
+            &p2_partial,
+            &message,
+            &mut rng,
+        )
+        .expect("finalize");
+        let p1_fin = t0.elapsed();
+
+        BTreeMap::from([
+            (PartyId(1), p1_r1 + p1_r3 + p1_fin),
+            (PartyId(2), p2_r2 + p2_partial_dur),
+        ])
     });
-
-    // Party 2 active time: round2 + compute_partial_sig
-    group.bench_function("full_sign/kgg24/n2_t1/party2", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let mut rng = rand_core::OsRng;
-
-                // P1 Round 1 (untimed)
-                let (p1_r1_msg, _p1_state, p1_decommit) = sign::party1_round1::<C>(&mut rng);
-
-                // P2 Round 2
-                let t0 = Instant::now();
-                let (p2_r2_msg, p2_state) = sign::party2_round2::<C>(&mut rng);
-                total += t0.elapsed();
-
-                // P1 Round 3 (untimed)
-                sign::party1_round3::<C>(&p2_r2_msg).expect("round3");
-
-                // P2 compute partial sig
-                let t0 = Instant::now();
-                let _p2_partial = sign::party2_compute_partial_sig::<C>(
-                    &p2_key,
-                    &p2_state,
-                    &p1_r1_msg,
-                    &p1_decommit,
-                    &message,
-                    &mut rng,
-                )
-                .expect("partial_sig");
-                total += t0.elapsed();
-            }
-            total
-        });
-    });
+    per_party::bench_party_replay(
+        &mut group,
+        "full_sign/kgg24/n2_t1/party1",
+        &sign_runs,
+        PartyId(1),
+    );
+    per_party::bench_party_replay(
+        &mut group,
+        "full_sign/kgg24/n2_t1/party2",
+        &sign_runs,
+        PartyId(2),
+    );
 
     group.finish();
 }
@@ -316,51 +273,54 @@ fn xal21_benchmarks(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("xal21");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(60));
+    per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
 
-    // --- DKG: per-party active time ---
+    // --- DKG: one execution per sample, every party reported separately ---
+    let dkg_runs = per_party::precompute_runs(SAMPLES, || {
+        let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
+        let builders: Vec<(PartyId, _)> = specs
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, my_id, peer_id))| {
+                let role = roles[i];
+                (my_id, move || {
+                    let mut rng = tecdsa_core::Csprng::new();
+                    Xal21KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
+                        .expect("keygen machine init")
+                })
+            })
+            .collect();
+        per_party::active_with_init(builders, 10)
+    });
     for party_idx in 1..=2u16 {
-        let pid = PartyId(party_idx);
-        group.bench_function(format!("dkg/xal21/n2_t1/party{party_idx}"), |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
-                    let builders: Vec<(PartyId, _)> = specs
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &(_, my_id, peer_id))| {
-                            let role = roles[i];
-                            (my_id, move || {
-                                let mut rng = tecdsa_core::Csprng::new();
-                                Xal21KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
-                                    .expect("keygen machine init")
-                            })
-                        })
-                        .collect();
-                    let (_, timings) = per_party::run_timed_with_init(builders, 10);
-                    total += per_party::party_active_time(&timings, pid);
-                }
-                total
-            });
-        });
+        per_party::bench_party_replay(
+            &mut group,
+            format!("dkg/xal21/n2_t1/party{party_idx}"),
+            &dkg_runs,
+            PartyId(party_idx),
+        );
     }
+    group.finish();
 
-    // --- Offline Sign (presign): combined total ---
+    // --- Offline/Online sign: local single-op benchmarks ---
     // XAL21's offline_sign simulates both parties sequentially via step
     // functions (step1_p2, step2_p2/p1, step3_p2/p1). The step functions
     // are generic over M: MtA with complex intermediate state types,
     // making per-party round-level timing impractical without a dedicated
     // test harness. Report combined total; per-party separation requires
-    // future SignMachine implementation.
+    // future SignMachine implementation. These are kept in a separate group
+    // so they use normal Criterion timing (the replay group sets
+    // measurement_time to ~0).
+    let mut sign_group = c.benchmark_group("xal21_sign");
+    sign_group.sample_size(10);
+
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = tecdsa_xal21::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
 
-    group.bench_function("presign/xal21/n2_t1/combined", |b| {
+    sign_group.bench_function("presign/xal21/n2_t1/combined", |b| {
         b.iter(|| {
             let mut rng = rand_core::OsRng;
             offline_sign::offline_sign::<C>(&p1_key, &p2_key, &mut rng).expect("offline_sign");
@@ -374,7 +334,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
         offline_sign::offline_sign::<C>(&p1_key, &p2_key, &mut rng).expect("offline_sign");
 
     // Party 2: compute s2
-    group.bench_function("online_sign/xal21/n2_t1/party2", |b| {
+    sign_group.bench_function("online_sign/xal21/n2_t1/party2", |b| {
         b.iter(|| {
             online_sign::party2_compute_s2::<C>(&p2_presig, &message).expect("s2");
         });
@@ -383,7 +343,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
     // Party 1: combine and verify
     {
         let p2_msg = online_sign::party2_compute_s2::<C>(&p2_presig, &message).expect("s2");
-        group.bench_function("online_sign/xal21/n2_t1/party1", |b| {
+        sign_group.bench_function("online_sign/xal21/n2_t1/party1", |b| {
             b.iter(|| {
                 online_sign::party1_compute_signature::<C>(&p1_key, &p1_presig, &p2_msg, &message)
                     .expect("sig");
@@ -391,7 +351,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
         });
     }
 
-    group.finish();
+    sign_group.finish();
 }
 
 // ===========================================================================
@@ -405,91 +365,76 @@ fn abc24_benchmarks(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("abc24");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(60));
+    per_party::configure_replay_group(&mut group, SAMPLES);
 
     let specs = two_party_specs();
 
-    // --- DKG: per-party active time ---
+    // --- DKG: one execution per sample, every party reported separately ---
+    let dkg_runs = per_party::precompute_runs(SAMPLES, || {
+        let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
+        let builders: Vec<(PartyId, _)> = specs
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, my_id, peer_id))| {
+                let role = roles[i];
+                (my_id, move || {
+                    let mut rng = tecdsa_core::Csprng::new();
+                    Abc24KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
+                        .expect("keygen machine init")
+                })
+            })
+            .collect();
+        per_party::active_with_init(builders, 10)
+    });
     for party_idx in 1..=2u16 {
-        let pid = PartyId(party_idx);
-        group.bench_function(format!("dkg/abc24/n2_t1/party{party_idx}"), |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
-                    let builders: Vec<(PartyId, _)> = specs
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &(_, my_id, peer_id))| {
-                            let role = roles[i];
-                            (my_id, move || {
-                                let mut rng = tecdsa_core::Csprng::new();
-                                Abc24KeygenMachine::<C>::new(role, my_id, peer_id, &mut rng)
-                                    .expect("keygen machine init")
-                            })
-                        })
-                        .collect();
-                    let (_, timings) = per_party::run_timed_with_init(builders, 10);
-                    total += per_party::party_active_time(&timings, pid);
-                }
-                total
-            });
-        });
+        per_party::bench_party_replay(
+            &mut group,
+            format!("dkg/abc24/n2_t1/party{party_idx}"),
+            &dkg_runs,
+            PartyId(party_idx),
+        );
     }
 
-    // --- Sign: per-party timing via round functions ---
+    // --- Sign: one execution per sample, both parties timed via round functions ---
     // ABC24 uses server (P1) / client (P2) terminology.
     let mut rng = rand_core::OsRng;
     let (server_key, client_key) = tecdsa_abc24::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
 
-    // Server (Party 1) active time: server_round1 + server_finalize
-    group.bench_function("full_sign/abc24/n2_t1/party1", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let mut rng = rand_core::OsRng;
+    let sign_runs = per_party::precompute_runs(SAMPLES, || {
+        let mut rng = rand_core::OsRng;
 
-                // Server Round 1
-                let t0 = Instant::now();
-                let (server_msg, server_state) = sign::server_round1::<C>(&server_key, &mut rng);
-                total += t0.elapsed();
+        // Server (P1) Round 1
+        let t0 = Instant::now();
+        let (server_msg, server_state) = sign::server_round1::<C>(&server_key, &mut rng);
+        let p1_r1 = t0.elapsed();
 
-                // Client Round 2 (untimed for server)
-                let client_msg =
-                    sign::client_round2::<C>(&client_key, &server_msg, &message, &mut rng)
-                        .expect("client_round2");
+        // Client (P2) Round 2
+        let t0 = Instant::now();
+        let client_msg = sign::client_round2::<C>(&client_key, &server_msg, &message, &mut rng)
+            .expect("client_round2");
+        let p2_r2 = t0.elapsed();
 
-                // Server Finalize
-                let t0 = Instant::now();
-                sign::server_finalize::<C>(&server_key, &server_state, &client_msg, &message)
-                    .expect("server_finalize");
-                total += t0.elapsed();
-            }
-            total
-        });
+        // Server (P1) Finalize
+        let t0 = Instant::now();
+        sign::server_finalize::<C>(&server_key, &server_state, &client_msg, &message)
+            .expect("server_finalize");
+        let p1_fin = t0.elapsed();
+
+        BTreeMap::from([(PartyId(1), p1_r1 + p1_fin), (PartyId(2), p2_r2)])
     });
-
-    // Client (Party 2) active time: client_round2
-    group.bench_function("full_sign/abc24/n2_t1/party2", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let mut rng = rand_core::OsRng;
-
-                // Server Round 1 (untimed for client)
-                let (server_msg, _server_state) = sign::server_round1::<C>(&server_key, &mut rng);
-
-                // Client Round 2
-                let t0 = Instant::now();
-                sign::client_round2::<C>(&client_key, &server_msg, &message, &mut rng)
-                    .expect("client_round2");
-                total += t0.elapsed();
-            }
-            total
-        });
-    });
+    per_party::bench_party_replay(
+        &mut group,
+        "full_sign/abc24/n2_t1/party1",
+        &sign_runs,
+        PartyId(1),
+    );
+    per_party::bench_party_replay(
+        &mut group,
+        "full_sign/abc24/n2_t1/party2",
+        &sign_runs,
+        PartyId(2),
+    );
 
     group.finish();
 }
