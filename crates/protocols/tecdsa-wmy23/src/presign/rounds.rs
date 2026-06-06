@@ -115,6 +115,19 @@ fn point_from_bytes(
         .ok_or_else(|| format!("invalid EC point: {label}").into())
 }
 
+/// Lagrange-weighted key share `hat_x_i = lambda_i * x_i` for the full party
+/// set `{1..n}` (used by the simplified all-parties presign). With `(t+1,n)`
+/// Shamir key shares, `sum_i hat_x_i = x` (the joint key). `my_idx` is 0-based.
+fn full_set_lagrange_weighted_share(
+    my_idx: usize,
+    n: usize,
+    key_share: &Wmy23KeyShare,
+) -> k256::Scalar {
+    let signer_indices: Vec<u16> = (1..=(n as u16)).collect();
+    let lambdas = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&signer_indices);
+    lambdas[my_idx] * key_share.secret_share
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3: Share Revelation (WMY23 Figure 5, Phase 3)
 // ---------------------------------------------------------------------------
@@ -220,6 +233,10 @@ pub fn presign_round2(
     // Use our own CL public key directly from the key share
     let my_pk = &key_share.cl_pks[my_idx];
 
+    // Key shares are (t+1,n) Shamir shares; for this simplified all-parties
+    // presign, weight by the Lagrange coefficient over the full set {1..n}.
+    let hat_x_i = full_set_lagrange_weighted_share(my_idx, n, key_share);
+
     let mut c_gamma: Vec<Option<ClCiphertext>> = Vec::with_capacity(n);
     let mut c_x: Vec<Option<ClCiphertext>> = Vec::with_capacity(n);
     let mut gamma_alice_states: Vec<Option<MtAwcAliceState>> = Vec::with_capacity(n);
@@ -238,8 +255,8 @@ pub fn presign_round2(
         // (paper convention: Alice holds k, Bob holds gamma)
         let (gamma_state, gamma_ct) = mtawc::mtawc_alice_step1(setup, my_pk, &state.k_i)?;
 
-        // MtAwc step 1 for x_i: Alice (me) encrypts x_i under own key
-        let (x_state, x_ct) = mtawc::mtawc_alice_step1(setup, my_pk, &key_share.secret_share)?;
+        // MtAwc step 1 for x_i: Alice (me) encrypts hat_x_i under own key
+        let (x_state, x_ct) = mtawc::mtawc_alice_step1(setup, my_pk, &hat_x_i)?;
 
         c_gamma.push(Some(gamma_ct));
         c_x.push(Some(x_ct));
@@ -540,8 +557,10 @@ pub fn presign_round4_finalize(
         }
     }
 
-    // sigma_i = k_i * x_i + sum(mu_{ij}) + sum(nu_{ji})
-    let sigma_i = k_i * key_share.secret_share + mu_sum + nu_sum;
+    // sigma_i = k_i * hat_x_i + sum(mu_{ij}) + sum(nu_{ji}), where hat_x_i is
+    // the Lagrange-weighted key share for the full set (matches R2 encryption).
+    let hat_x_i = full_set_lagrange_weighted_share(my_idx, n, key_share);
+    let sigma_i = k_i * hat_x_i + mu_sum + nu_sum;
 
     // Reconstruct delta = sum(delta_j)
     let delta: k256::Scalar = all_delta_i.iter().copied().sum();
@@ -707,6 +726,10 @@ pub struct DrgPresignR2State {
     pub hat_k_i: k256::Scalar,
     /// Lagrange-weighted mask share: `hat_gamma_i = lambda_i * gamma_comb.combined_share`.
     pub hat_gamma_i: k256::Scalar,
+    /// Lagrange-weighted signing-key share: `hat_x_i = lambda_i * x_i`.
+    /// With threshold (Shamir) key shares this is the effective additive
+    /// contribution to the joint key `x = sum hat_x_i` over the active quorum.
+    pub hat_x_i: k256::Scalar,
     /// Decommitment nonce.
     pub nonce: [u8; 32],
     /// Gamma point bytes (for decommitment). `Gamma_i = g^{hat_gamma_i}`.
@@ -843,6 +866,9 @@ pub fn drg_presign_round2(
     // Lagrange-weighted shares
     let hat_k_i = lambda_i * k_comb.combined_share;
     let hat_gamma_i = lambda_i * gamma_comb.combined_share;
+    // The signing-key share x_i is a (t+1,n) Shamir share, so it must be
+    // Lagrange-weighted by the same lambda_i to contribute additively to x.
+    let hat_x_i = lambda_i * key_share.secret_share;
 
     // Step 3: MtAwc Alice step 1 -- encrypt hat_k_i and x_i
     // Paper convention: Alice encrypts k, Bob uses gamma.
@@ -866,8 +892,8 @@ pub fn drg_presign_round2(
         c_gamma.push(Some(gamma_ct));
         gamma_alice_states.push(Some(gamma_state));
 
-        // MtAwc step 1 for x: encrypt x_i under own key
-        let (x_state, x_ct) = mtawc::mtawc_alice_step1(setup, my_pk, &key_share.secret_share)?;
+        // MtAwc step 1 for x: encrypt the Lagrange-weighted key share hat_x_i
+        let (x_state, x_ct) = mtawc::mtawc_alice_step1(setup, my_pk, &hat_x_i)?;
         c_x.push(Some(x_ct));
         x_alice_states.push(Some(x_state));
     }
@@ -877,6 +903,7 @@ pub fn drg_presign_round2(
         gamma_comb,
         hat_k_i,
         hat_gamma_i,
+        hat_x_i,
         nonce: r1_state.nonce,
         gamma_point_bytes: r1_state.gamma_point_i.to_bytes().to_vec(),
     };
@@ -1170,8 +1197,9 @@ pub fn drg_presign_round4_finalize(
         }
     }
 
-    // sigma_i = hat_k_i * x_i + sum(mu_{ij}) + sum(nu_{ji})
-    let sigma_i = hat_k_i * key_share.secret_share + mu_sum + nu_sum;
+    // sigma_i = hat_k_i * hat_x_i + sum(mu_{ij}) + sum(nu_{ji}), where hat_x_i
+    // is the Lagrange-weighted key share (matches what was encrypted in R2).
+    let sigma_i = hat_k_i * r2_state.hat_x_i + mu_sum + nu_sum;
 
     // Reconstruct delta = sum(delta_j)
     let delta: k256::Scalar = all_delta_i.iter().copied().sum();

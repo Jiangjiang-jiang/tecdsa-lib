@@ -270,9 +270,36 @@ fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, 
         .ok_or_else(|| format!("invalid EC point: {label}"))
 }
 
-/// Get this party's index in the all_parties list.
-fn my_idx(all_parties: &[PartyId], my_id: PartyId) -> Option<usize> {
-    all_parties.iter().position(|p| *p == my_id)
+/// The 0-based *global* key-generation index of a party.
+///
+/// `cl_pks` and `public_shares` in the key share are indexed in global keygen
+/// order, and each party's Shamir evaluation point is its 1-based global index.
+/// By convention WMY23 uses `PartyId(i)` for the party whose global 1-based
+/// index is `i`, so the global 0-based index is `PartyId.0 - 1`.
+fn global_idx(party: PartyId) -> usize {
+    debug_assert!(party.0 >= 1, "WMY23 requires 1-based PartyIds");
+    (party.0 - 1) as usize
+}
+
+/// Convert this party's Shamir key share into its additive contribution for the
+/// active signing quorum: `w_i = λ_i · x_i`, where `λ_i` is the Lagrange
+/// coefficient (evaluated at 0) for this party's point within the quorum.
+///
+/// Summed over any quorum of `≥ t+1` signers, `Σ_i w_i = x` (the joint key), so
+/// the additive presign/sign machinery reconstructs the correct signature for a
+/// `t`-of-`n` subset — the same mechanism used for XAL23.
+fn lagrange_weighted_share(
+    all_parties: &[PartyId],
+    my_id: PartyId,
+    key_share: &Wmy23KeyShare,
+) -> k256::Scalar {
+    let points: Vec<u16> = all_parties.iter().map(|p| p.0).collect();
+    let lambdas = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&points);
+    let my_pos = all_parties
+        .iter()
+        .position(|p| *p == my_id)
+        .expect("my_id must be in all_parties");
+    lambdas[my_pos] * key_share.secret_share
 }
 
 /// Number of other parties (total - 1).
@@ -382,17 +409,21 @@ impl Wmy23PresignMachine {
         state: Round1State,
         setup: &mut ClSetup,
     ) -> tecdsa_core::Result<Round2State> {
-        let my_idx_val = my_idx(&state.all_parties, state.my_id)
-            .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
-        let my_pk = &state.key_share.cl_pks[my_idx_val];
+        // CL keys are indexed in global key-generation order; address them by
+        // the party's global index, not its position in the (possibly partial)
+        // signer set, so subset signing uses the correct keys.
+        let my_pk = &state.key_share.cl_pks[global_idx(state.my_id)];
 
-        // MtAwc Alice step 1: encrypt k_i (gamma MtA) and x_i (key MtA)
+        // Convert the Shamir key share into this party's additive contribution
+        // for the active quorum (w_i = λ_i · x_i); see `lagrange_weighted_share`.
+        let w_i = lagrange_weighted_share(&state.all_parties, state.my_id, &state.key_share);
+
+        // MtAwc Alice step 1: encrypt k_i (gamma MtA) and w_i (key MtA)
         // Paper convention: Alice holds k, Bob holds gamma.
         let (gamma_alice_state, ct_gamma) = mtawc::mtawc_alice_step1(setup, my_pk, &state.k_i)
             .map_err(|e| TecdsaError::Other(format!("mtawc_alice_step1 gamma: {e}")))?;
-        let (x_alice_state, ct_x) =
-            mtawc::mtawc_alice_step1(setup, my_pk, &state.key_share.secret_share)
-                .map_err(|e| TecdsaError::Other(format!("mtawc_alice_step1 x: {e}")))?;
+        let (x_alice_state, ct_x) = mtawc::mtawc_alice_step1(setup, my_pk, &w_i)
+            .map_err(|e| TecdsaError::Other(format!("mtawc_alice_step1 x: {e}")))?;
 
         // Serialise ciphertexts for the message
         let ct_gamma_ser = SerializedClCt::from_ct(&ct_gamma)
@@ -494,9 +525,7 @@ impl Wmy23PresignMachine {
                 continue;
             }
 
-            let j_idx = my_idx(&state.all_parties, party_j)
-                .ok_or_else(|| TecdsaError::Other(format!("party {party_j} not found")))?;
-            let pk_j = &state.key_share.cl_pks[j_idx];
+            let pk_j = &state.key_share.cl_pks[global_idx(party_j)];
 
             let r2_j = state.received.get(&party_j).ok_or_else(|| {
                 TecdsaError::Other(format!("missing R2 data from party {party_j}"))
@@ -568,9 +597,7 @@ impl Wmy23PresignMachine {
         state: Round3State,
         setup: &mut ClSetup,
     ) -> tecdsa_core::Result<Round4State> {
-        let my_idx_val = my_idx(&state.all_parties, state.my_id)
-            .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
-        let my_pk = &state.key_share.cl_pks[my_idx_val];
+        let my_pk = &state.key_share.cl_pks[global_idx(state.my_id)];
         let n = state.all_parties.len();
 
         // Collect per-counterparty MtAwc shares
@@ -634,8 +661,11 @@ impl Wmy23PresignMachine {
             delta_i += share;
         }
 
-        // sigma_i = k_i * x_i + sum(mu_{ij}) + sum(nu_{ji})
-        let sigma_i = state.k_i * state.key_share.secret_share + mu_sum + nu_sum;
+        // sigma_i = k_i * w_i + sum(mu_{ij}) + sum(nu_{ji}), where w_i is the
+        // Lagrange-weighted key share for the active quorum (matches the value
+        // encrypted in the key MtA during Round 2).
+        let w_i = lagrange_weighted_share(&state.all_parties, state.my_id, &state.key_share);
+        let sigma_i = state.k_i * w_i + mu_sum + nu_sum;
 
         // Broadcast delta_i (= sum of structured shares, same value as before
         // since sum(theta_{ij}) = 0)

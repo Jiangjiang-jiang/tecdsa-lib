@@ -344,17 +344,21 @@ where
     // For each peer j: receiver_compute(k_i, gamma_ct_j) and receiver_compute(k_i, w_ct_j)
     for (&peer, r1_payload) in &state.r1_p2p {
         // The sender encrypted under THEIR key, so we need their pk for receiver_compute.
+        // `jl_pks` is indexed by each party's position in `all_parties` (that is
+        // how keygen built it), and the sender encrypts/proves under
+        // `jl_pks[its own party_index]`. Use the peer's *position* here, never
+        // the raw PartyId value: those coincide only for 0-based contiguous IDs.
+        // With 1-based IDs `peer.0` selected the wrong verification key, so the
+        // sender's `ZkJlEncProof` failed to verify.
         let peer_idx = state
             .all_parties
             .iter()
             .position(|p| *p == peer)
             .ok_or_else(|| TecdsaError::Other(format!("peer {peer} not in all_parties")))?;
-        // Map party ID to key_share index. Peer's PartyId encodes their party_index.
-        let peer_ks_idx = peer.0 as usize;
 
         let setup = JlMtaSetup {
-            pk: state.key_share.jl_pks[peer_ks_idx].clone(),
-            pk0: state.key_share.jl_pks[peer_ks_idx].clone(),
+            pk: state.key_share.jl_pks[peer_idx].clone(),
+            pk0: state.key_share.jl_pks[peer_idx].clone(),
             sk: state.key_share.jl_sk.clone(), // not used in receiver_compute
             s: state.s,
             t: state.t,
@@ -380,7 +384,6 @@ where
         // Queue R2 P2P to peer: receiver messages
         // Note: we send to the SENDER of the ciphertext (= peer) since they need
         // the affine result to decrypt in R3.
-        let _ = peer_idx; // used for index lookup above
         outgoing.push(Outgoing {
             to: Recipient::Party(peer),
             msg: Xal23PresignMsg::R2P2p(R2P2pPayload {

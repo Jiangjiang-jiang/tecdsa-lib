@@ -1719,6 +1719,7 @@ dependencies = [
  "tecdsa-transport",
  "tecdsa-trout",
  "tecdsa-tx25",
+ "tecdsa-vss",
  "tecdsa-wmc24",
  "tecdsa-wmy23",
  "tecdsa-xal21",

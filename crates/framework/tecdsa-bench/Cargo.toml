@@ -21,6 +21,7 @@ tecdsa-joye-libert = { workspace = true }
 tecdsa-evrf = { workspace = true }
 tecdsa-ot = { workspace = true }
 tecdsa-fs = { workspace = true }
+tecdsa-vss = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 udigest = { workspace = true }

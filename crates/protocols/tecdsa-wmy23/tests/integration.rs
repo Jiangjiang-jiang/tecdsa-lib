@@ -11,7 +11,7 @@ use tecdsa_class_group::cl::ClSetup;
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
 use tecdsa_wmy23::{
     key_share::Wmy23KeyShare,
-    keygen::rounds::{keygen_finalize, keygen_round1, keygen_round2_bcast},
+    keygen::rounds::{keygen_finalize, keygen_round1, keygen_round2_bcast, keygen_round2_share},
     presign::rounds::{
         drg_presign_round1, drg_presign_round2, drg_presign_round3_bob, drg_presign_round4_finalize,
     },
@@ -69,9 +69,22 @@ fn run_keygen(n: usize, corrupted_t: u16, use_128bit: bool) -> Vec<Wmy23KeyShare
         r1_bcasts.push(b);
     }
     let r2_bcasts: Vec<_> = r1_states.iter().map(keygen_round2_bcast).collect();
+
+    // Feldman VSS: deal the private shares. `shares_to[i][j]` is the VSS share
+    // party `i` sends to party `j`.
+    let shares_to: Vec<Vec<k256::Scalar>> = r1_states
+        .iter()
+        .map(|s| (0..n).map(|j| keygen_round2_share(s, j)).collect())
+        .collect();
+
     r1_states
         .into_iter()
-        .map(|s| keygen_finalize(s, &r1_bcasts, &r2_bcasts, &setup).unwrap())
+        .enumerate()
+        .map(|(i, s)| {
+            // `received[j]` is the share party `j` sent to this party `i`.
+            let received: Vec<k256::Scalar> = (0..n).map(|j| shares_to[j][i]).collect();
+            keygen_finalize(s, &r1_bcasts, &r2_bcasts, &received, &setup).unwrap()
+        })
         .collect()
 }
 
@@ -171,6 +184,135 @@ fn test_wmy23_full_sign() {
     let msg = hash_message(b"WMY23 correctness test");
     let sig = run_sign(&presigs, msg, &shares[0].public_key);
     println!("WMY23 3-of-3 sign OK: r={:?}", sig.r);
+}
+
+// ---------------------------------------------------------------------------
+// Threshold (t-of-n) subset signing via the state machines.
+//
+// Demonstrates that, with Feldman-VSS key shares, a strict `t+1` quorum can
+// sign: the presign machine Lagrange-weights each signer's Shamir share for
+// the active quorum (w_i = lambda_i * x_i), so the additive MtAwc machinery
+// reconstructs the joint key from the subset alone.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_wmy23_threshold_subset_sign() {
+    use tecdsa_class_group::cl::ClSetup;
+    use tecdsa_protocol::PartyId;
+    use tecdsa_testkit::Orchestrator;
+    use tecdsa_wmy23::{
+        keygen::Wmy23KeygenMachine,
+        presign::{PresignConfig, Wmy23PresignMachine},
+        sign::Wmy23OnlineSignMachine,
+    };
+
+    let seed = "12345";
+    let n = 3u16;
+    let reconstruction_threshold = 2u16; // t+1 = 2  =>  2-of-3 signing
+    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+
+    // --- KeyGen via the Feldman-VSS state machine ---
+    let kg_machines: Vec<(PartyId, Wmy23KeygenMachine)> = all_parties
+        .iter()
+        .map(|&pid| {
+            (
+                pid,
+                Wmy23KeygenMachine::new(
+                    pid,
+                    all_parties.clone(),
+                    reconstruction_threshold,
+                    seed,
+                    false,
+                )
+                .expect("keygen machine"),
+            )
+        })
+        .collect();
+    let key_shares: Vec<Wmy23KeyShare> = Orchestrator::new(kg_machines, 10)
+        .run()
+        .expect("keygen orchestrator")
+        .outputs
+        .into_iter()
+        .map(|r| r.expect("keygen finish"))
+        .collect();
+
+    let public_key = key_shares[0].public_key;
+    for ks in &key_shares {
+        assert_eq!(ks.public_key, public_key, "parties must agree on joint PK");
+    }
+    // Shares must be distinct Shamir shares (not additive duplicates).
+    assert_ne!(key_shares[0].secret_share, key_shares[1].secret_share);
+
+    // --- Sign with the subset {1, 2} (a t+1 quorum, NOT all n) ---
+    let signers = [1u16, 2];
+    let signer_parties: Vec<PartyId> = signers.iter().map(|&s| PartyId(s)).collect();
+
+    let presign_machines: Vec<(PartyId, Wmy23PresignMachine)> = signers
+        .iter()
+        .map(|&s| {
+            let pid = PartyId(s);
+            let setup = ClSetup::new_secp256k1(seed).expect("cl setup");
+            let config = PresignConfig {
+                key_share: key_shares[(s - 1) as usize].clone(),
+                my_id: pid,
+                signer_parties: signer_parties.clone(),
+                cl_setup: setup,
+            };
+            (
+                pid,
+                Wmy23PresignMachine::new(config).expect("presign machine"),
+            )
+        })
+        .collect();
+    let presigs: Vec<_> = Orchestrator::new(presign_machines, 10)
+        .run()
+        .expect("presign orchestrator")
+        .outputs
+        .into_iter()
+        .map(|r| r.expect("presign finish"))
+        .collect();
+
+    let r_x = presigs[0].r_x;
+    for p in &presigs {
+        assert_eq!(p.r_x, r_x, "signers must agree on r");
+    }
+
+    let msg = hash_message(b"WMY23 t-of-n subset test");
+    let msg_data = DataToSign::from_digest(msg);
+
+    let sign_machines: Vec<(PartyId, Wmy23OnlineSignMachine)> = signers
+        .iter()
+        .zip(presigs)
+        .map(|(&s, presig)| {
+            let pid = PartyId(s);
+            (
+                pid,
+                Wmy23OnlineSignMachine::new(
+                    pid,
+                    signer_parties.clone(),
+                    presig,
+                    msg_data,
+                    public_key,
+                )
+                .expect("sign machine"),
+            )
+        })
+        .collect();
+    let sigs: Vec<_> = Orchestrator::new(sign_machines, 10)
+        .run()
+        .expect("sign orchestrator")
+        .outputs
+        .into_iter()
+        .map(|r| r.expect("sign finish"))
+        .collect();
+
+    for sig in &sigs {
+        assert_eq!(sig.r, sigs[0].r, "all signers produce the same r");
+        assert_eq!(sig.s, sigs[0].s, "all signers produce the same s");
+    }
+    verify_ecdsa::<k256::Secp256k1>(&sigs[0], &public_key, &msg_data)
+        .expect("ECDSA verification must pass for the 2-of-3 subset");
+    println!("WMY23 2-of-3 subset sign OK: r={:?}", sigs[0].r);
 }
 
 // ---------------------------------------------------------------------------
