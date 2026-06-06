@@ -49,8 +49,9 @@ use tecdsa_protocol::{NoOpMachine, Protocol, ProtocolMetadata};
 /// - `keygen::TroutKeygenMachine` -- 3-round interactive DKG (Protocol 3.1)
 /// - `presign::machine::TroutPresignMachine` -- collects broadcasts, verifies
 ///   ZK proofs (R_CL-EC, R_ComKwlg), produces `TroutPresignOutput`
-/// - `sign::machine::TroutSignMachine` -- wraps `sign_round2`, produces
-///   `Signature`
+/// - `sign::machine::TroutSignMachine` -- 1-round distributed sign:
+///   broadcasts F-shares, collects, aggregates, produces `Signature`.
+///   Also supports `new_simulation()` for centralized testing.
 ///
 /// ## Identifiable Abort (IA)
 /// The IA variant uses `scaled_decrypt::compute_f_share_with_proof` to generate

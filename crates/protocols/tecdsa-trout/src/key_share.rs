@@ -13,6 +13,7 @@ use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
 use zeroize::Zeroize;
 
 /// A single party's key share produced by Trout key generation.
+#[derive(Clone)]
 pub struct TroutKeyShare {
     /// This party's 1-based index.
     pub party_index: u16,

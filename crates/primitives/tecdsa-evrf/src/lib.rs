@@ -67,6 +67,7 @@ where
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Secret key for the DDH eVRF.
+#[derive(Clone)]
 pub struct EvrfSecretKey<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,

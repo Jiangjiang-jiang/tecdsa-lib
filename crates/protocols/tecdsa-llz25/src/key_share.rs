@@ -11,6 +11,7 @@
 use zeroize::Zeroize;
 
 /// A single party's key share for LLZ25.
+#[derive(Clone)]
 pub struct Llz25KeyShare {
     /// This party's 1-based index.
     pub party_index: u16,

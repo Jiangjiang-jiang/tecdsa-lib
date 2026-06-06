@@ -23,6 +23,7 @@ use zeroize::Zeroize;
 /// Contains the party's secret additive share $x_i$, the joint public key
 /// $X = g^x$, per-party CL-HSM key material for CL-based MtAwc, and the
 /// seed needed to recreate a `ClSetup` per session.
+#[derive(Clone)]
 pub struct Wmy23KeyShare {
     /// This party's index (1-based).
     pub party_index: u16,
