@@ -48,14 +48,14 @@ impl PedersenModParams {
     #[allow(clippy::similar_names, clippy::many_single_char_names)]
     pub fn generate(bits: u64, rng: &mut impl CryptoRngCore) -> (Self, PedersenModSecret) {
         use rug::rand::ThreadRandState;
-        use tecdsa_bigint::{gen_pair, small_odd_primes, SyncRng};
+        use tecdsa_bigint::{default_sieve_limit, gen_pair, small_odd_primes, SyncRng};
 
         let p;
         let q;
         {
             let mut sync_rng = SyncRng(&mut *rng);
             let rug_rng = &mut ThreadRandState::new_custom(&mut sync_rng);
-            let primes = small_odd_primes(50_000);
+            let primes = small_odd_primes(default_sieve_limit(bits));
 
             // p and q are safe primes (p = 2p' + 1), which are automatically Blum primes
             // (p = 3 mod 4) because p' is an odd prime.

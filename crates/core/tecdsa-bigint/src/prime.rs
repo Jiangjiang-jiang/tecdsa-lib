@@ -18,6 +18,21 @@ pub fn is_safe_prime(p: &Integer) -> bool {
     sophie.is_probably_prime(25) != IsPrime::No
 }
 
+/// Small-prime sieve bound used by [`generate_safe_prime`], chosen by prime size.
+///
+/// Larger candidates benefit from removing many more composites up front, while
+/// small ones would only pay the extra sieve cost. Tiers were picked by benchmark.
+#[must_use]
+pub fn default_sieve_limit(bits: u64) -> usize {
+    if bits <= 512 {
+        50_000
+    } else if bits <= 1024 {
+        200_000
+    } else {
+        500_000
+    }
+}
+
 /// Generates a random safe prime of approximately `bits` bits using `rng`.
 ///
 /// Generates a Sophie Germain prime `q` of `bits - 1` bits, then returns
@@ -26,7 +41,7 @@ pub fn is_safe_prime(p: &Integer) -> bool {
 pub fn generate_safe_prime(bits: u64, rng: &mut impl CryptoRngCore) -> Integer {
     let mut sync_rng = SyncRng(&mut *rng);
     let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
-    let primes = small_odd_primes(50_000);
+    let primes = small_odd_primes(default_sieve_limit(bits));
     let (_, p) = gen_pair(bits as u32 - 1, &Integer::from(2), 25, 15, &primes, rug_rng);
     p
 }
@@ -130,18 +145,34 @@ pub fn gen_pair(
             }
         }
 
+        // Safe-prime case (a = 2): f = 2r+1 with r = (f-1)/2 a known prime > sqrt(f),
+        // so by Pocklington a single base-2 Fermat test proves f prime given r prime.
+        let pocklington = *a == Integer::from(2);
         for j in 0..w {
             if sieve[j] {
                 continue;
             }
             let r = Integer::from(&base + 2 * j as u64);
+            // Cheap filter: one Miller-Rabin round rejects almost all composite r.
+            if r.is_probably_prime(1) == IsPrime::No {
+                continue;
+            }
+            let mut f = Integer::from(a * &r);
+            f += Integer::ONE;
+            let f_is_prime = if pocklington {
+                // gcd(2^2-1, f) = gcd(3, f) = 1 (3 is sieved); then f prime <=> 2^(f-1) == 1 (mod f).
+                f.mod_u(3) != 0
+                    && Integer::from(2).pow_mod(&Integer::from(&f - 1), &f).unwrap()
+                        == Integer::from(1)
+            } else {
+                f.is_probably_prime(mr_rounds) != IsPrime::No
+            };
+            if !f_is_prime {
+                continue;
+            }
+            // Confirm r with the full round count (also discharges Pocklington's premise).
             if r.is_probably_prime(mr_rounds) != IsPrime::No {
-                // cheap seed first
-                let mut f = Integer::from(a * &r);
-                f += Integer::ONE;
-                if f.is_probably_prime(mr_rounds) != IsPrime::No {
-                    return (r, f);
-                }
+                return (r, f);
             }
         }
         // window exhausted -> draw a fresh random base

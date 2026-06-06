@@ -8,5 +8,6 @@ mod prime;
 
 pub use arith::{gcd, jacobi, tonelli_shanks};
 pub use prime::{
-    gen_pair, generate_blum_prime, generate_safe_prime, is_safe_prime, small_odd_primes, SyncRng,
+    default_sieve_limit, gen_pair, generate_blum_prime, generate_safe_prime, is_safe_prime,
+    small_odd_primes, SyncRng,
 };

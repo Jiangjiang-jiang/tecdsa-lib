@@ -101,7 +101,16 @@ impl Integer {
 
     /// Generates a random safe prime
     pub fn generate_safe_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self {
-        sieve_generate_safe_primes(rng, bits, 50_000)
+        // Sieve bound grows with size: small primes barely need sieving, while large ones
+        // benefit from removing far more composite candidates up front (tuned by benchmark).
+        let sieve_limit = if bits <= 512 {
+            50_000
+        } else if bits <= 1024 {
+            200_000
+        } else {
+            500_000
+        };
+        sieve_generate_safe_primes(rng, bits, sieve_limit)
     }
 }
 
@@ -113,9 +122,12 @@ impl Integer {
 /// Rather than testing random candidates one at a time, this draws a single
 /// random odd base and sieves a whole window of candidates `q = base + 2j`
 /// against every odd prime below `sieve_limit`, ruling out in one pass any
-/// position where either `q` or `2q + 1` is divisible by a small prime. Only the
-/// survivors are subjected to the (expensive) Miller-Rabin test, which sharply
-/// reduces the number of big-integer primality checks per safe prime found.
+/// position where either `q` or `2q + 1` is divisible by a small prime. Survivors
+/// are first cheaply filtered with a single Miller-Rabin round; `p = 2q + 1` is
+/// then checked with one base-2 Fermat test which, by Pocklington's criterion
+/// (`q` prime and `q > sqrt(p)`), *proves* `p` prime, so the full confidence
+/// rounds are spent only on `q`. This minimises the big-integer primality checks
+/// per safe prime found.
 ///
 /// A larger `sieve_limit` removes more composite candidates up front at the cost
 /// of a bigger sieve; `50_000` (used by [`generate_safe_prime`]) works well for
@@ -129,8 +141,10 @@ pub fn sieve_generate_safe_primes(
 
     /// Width (in bits) of the candidate window scanned per random base.
     const WINDOW_BITS: u32 = 15;
-    /// Miller-Rabin rounds (25 taken same as one used in `mpz_nextprime`).
-    const MR_ROUNDS: u32 = 25;
+    /// Cheap pre-filter: one Miller-Rabin round rejects almost all composites.
+    const FILTER_ROUNDS: u32 = 1;
+    /// Final confidence for the accepted Sophie Germain prime `q` (25 as in `mpz_nextprime`).
+    const CONFIRM_ROUNDS: u32 = 25;
 
     let window: usize = 1 << WINDOW_BITS;
     let seed_bits = bits - 1;
@@ -173,15 +187,29 @@ pub fn sieve_generate_safe_primes(
                 continue;
             }
             let q = &base + 2 * (j as u64);
-            if let IsPrime::Yes | IsPrime::Probably = q.is_probably_prime(MR_ROUNDS, rng) {
-                // q (the cheaper, smaller candidate) passed; now test p = 2q + 1.
-                let mut p = q;
-                p <<= 1;
-                p += 1;
-                if let IsPrime::Yes | IsPrime::Probably = p.is_probably_prime(MR_ROUNDS, rng) {
-                    return p;
-                }
+            // Cheap filter: one Miller-Rabin round rejects almost all composite `q`
+            // before we pay for the full confirmation or touch `p`.
+            if q.is_probably_prime(FILTER_ROUNDS, rng) == IsPrime::No {
+                continue;
             }
+            let mut p = q.clone();
+            p <<= 1;
+            p += 1; // p = 2q + 1
+            // Pocklington: `q = (p-1)/2` is a (probable) prime with `q > sqrt(p)`, and
+            // `gcd(2^2 - 1, p) = gcd(3, p) = 1` (3 is in the sieve), so a single base-2
+            // Fermat test is a primality *proof* for `p` given `q` is prime.
+            if p.mod_u(3) == 0 {
+                continue; // 3 | p => p composite (defensive; the sieve already drops these)
+            }
+            let p_minus_1 = &p - 1i32;
+            if Integer::from(2u32).pow_mod(&p_minus_1, &p) != Some(Integer::one()) {
+                continue;
+            }
+            // `p` is prime provided `q` is; spend the confidence rounds on `q` only.
+            if q.is_probably_prime(CONFIRM_ROUNDS, rng) == IsPrime::No {
+                continue;
+            }
+            return p;
         }
         // Window exhausted without success: draw a fresh random base.
     }
