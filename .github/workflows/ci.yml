@@ -1,18 +1,11 @@
 name: CI
 
-# Runs on every PR and on pushes to main.
-# Goal: fast, reliable feedback for all contributors. The slow #[ignore]'d
-# integration tests are NOT run here — see nightly.yml for those.
-# Compile cost (notably the class-group C++/cmake build) is absorbed by
-# Swatinem/rust-cache, so doc-only or unrelated PRs finish in ~1-2 min.
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
-# Cancel superseded runs on the same PR/branch to save CI minutes.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -40,19 +33,18 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # Deny level comes from [workspace.lints] in Cargo.toml (clippy::all = deny).
       - run: cargo clippy --locked --workspace --all-features --all-targets
 
   test:
-    name: Test
+    name: Test (all, including ignored)
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
-      # Heavy-crate concurrency is capped via .config/nextest.toml so the
-      - run: cargo nextest run --locked --release --workspace --all-features --no-fail-fast
+      - run: cargo nextest run --locked --release --workspace --all-features --no-fail-fast --run-ignored all
 
   doc:
     name: Documentation
@@ -61,9 +53,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # `cargo doc` builds the docs and fails on hard doc errors, but we do not
-      # set RUSTDOCFLAGS=-D warnings: broken intra-doc-link nits (e.g. `[n]`
-      # math notation) should not block PRs. They still print as warnings.
       - run: cargo doc --locked --workspace --no-deps --all-features
 
   deny:
