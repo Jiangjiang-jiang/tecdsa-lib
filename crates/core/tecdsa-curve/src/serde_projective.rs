@@ -3,14 +3,14 @@
 //!
 //! # Usage in structs
 //!
-//! ```ignore
+//! ```text
 //! #[serde(with = "tecdsa_curve::serde_projective")]
 //! pub field: C::ProjectivePoint,
 //! ```
 //!
 //! For `Vec<C::ProjectivePoint>`, use the [`vec`](mod@vec) submodule:
 //!
-//! ```ignore
+//! ```text
 //! #[serde(with = "tecdsa_curve::serde_projective::vec")]
 //! pub field: Vec<C::ProjectivePoint>,
 //! ```
