@@ -176,10 +176,8 @@ pub struct DkgClGenOutput {
 /// - `setup`: mutable reference to `ClSetup` (provides PRNG and CL operations).
 /// - `all_pks`: public keys `{ek_j}` of all `n` parties.
 /// - `n`: total number of parties.
-/// - `t`: corruption threshold (Shamir polynomial degree = `t`; reconstruction
-///   threshold is `t + 1`). **Important**: following the WMC24 convention, the
-///   Shamir degree is `t` (not `t - 1`), so `t + 1` shares are needed to
-///   reconstruct.
+/// - `threshold`: reconstruction threshold (`threshold` shares needed to
+///   reconstruct). Polynomial degree = `threshold - 1`.
 /// - `my_index`: 0-based index of this party.
 ///
 /// # Returns
@@ -189,12 +187,12 @@ pub fn dkg_cl_gen(
     setup: &mut ClSetup,
     all_pks: &[ClHsmqkPublicKey],
     n: usize,
-    t: usize,
+    threshold: usize,
     my_index: usize,
 ) -> ClResult<DkgClGenOutput> {
     assert_eq!(all_pks.len(), n);
     assert!(my_index < n);
-    assert!(t < n);
+    assert!(threshold > 0 && threshold <= n);
 
     let q_bytes = setup.q_bytes()?;
     let q = Mpz::from_bytes_be(&q_bytes);
@@ -207,9 +205,9 @@ pub fn dkg_cl_gen(
     let chi_prime_i_bytes = sample_random(setup)?;
 
     // 2. Shamir share chi_i and chi'_i over Z with delta scaling.
-    //    Degree = t, so reconstruction needs t+1 shares.
-    let shares_chi = shamir_share_delta_signed(setup, &chi_i_bytes, n, t + 1)?;
-    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i_bytes, n, t + 1)?;
+    //    Polynomial degree = threshold - 1, reconstruction needs threshold shares.
+    let shares_chi = shamir_share_delta_signed(setup, &chi_i_bytes, n, threshold)?;
+    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i_bytes, n, threshold)?;
 
     // 3. For each recipient j, produce (PC, chunk_cts, agg_ct, proof).
     let mut per_recipient = Vec::with_capacity(n);
@@ -333,13 +331,13 @@ pub fn dkg_cl_gen_with_secret(
     setup: &mut ClSetup,
     all_pks: &[ClHsmqkPublicKey],
     n: usize,
-    t: usize,
+    threshold: usize,
     my_index: usize,
     secret: &[u8],
 ) -> ClResult<DkgClGenOutput> {
     assert_eq!(all_pks.len(), n);
     assert!(my_index < n);
-    assert!(t < n);
+    assert!(threshold > 0 && threshold <= n);
 
     let q_bytes = setup.q_bytes()?;
     let q = Mpz::from_bytes_be(&q_bytes);
@@ -352,8 +350,8 @@ pub fn dkg_cl_gen_with_secret(
     let chi_prime_i_bytes = sample_random(setup)?;
 
     // Shamir share chi_i and chi'_i over Z with delta scaling.
-    let shares_chi = shamir_share_delta_signed(setup, &chi_i_bytes, n, t + 1)?;
-    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i_bytes, n, t + 1)?;
+    let shares_chi = shamir_share_delta_signed(setup, &chi_i_bytes, n, threshold)?;
+    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i_bytes, n, threshold)?;
 
     let mut per_recipient = Vec::with_capacity(n);
     for j in 0..n {
@@ -705,12 +703,12 @@ mod tests {
     use super::*;
     use crate::cl::Mpz;
 
-    /// Basic smoke test: 3 parties, threshold t=1 (2-of-3 reconstruction).
+    /// Basic smoke test: 3 parties, threshold t=2 (2-of-3).
     /// Runs Gen + GenVf + Reveal + RevealVf + Aggregate.
     #[test]
     fn dkg_cl_3_of_3_full_round() {
         let n = 3;
-        let t = 1; // corruption threshold: at most 1 corrupted, 2 can reconstruct
+        let t = 2; // reconstruction threshold: 2-of-2
 
         let mut setup = ClSetup::new_secp256k1("50001").expect("setup");
 
@@ -786,7 +784,7 @@ mod tests {
     #[test]
     fn dkg_cl_128bit_multi_chunk_full_round() {
         let n = 3;
-        let t = 1;
+        let t = 2; // reconstruction threshold: 2-of-2
 
         let mut setup = ClSetup::new_secp256k1_128bit("42042").expect("setup");
 
@@ -861,7 +859,7 @@ mod tests {
     #[test]
     fn dkg_cl_2_of_2() {
         let n = 2;
-        let t = 1;
+        let t = 2; // reconstruction threshold: 2-of-2
 
         let mut setup = ClSetup::new_secp256k1("50010").expect("setup");
 

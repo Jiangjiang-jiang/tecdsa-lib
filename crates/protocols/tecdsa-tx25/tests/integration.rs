@@ -3,7 +3,7 @@
 //!
 //! Covers the complete flow: KeyGen -> Presign -> Online Sign -> ECDSA Verify.
 //!
-//! Uses n=5, corruption t=2 with insecure CL parameters (p=7) for speed.
+//! Uses n=5, t=3 (3-of-5) with insecure CL parameters (p=7) for speed.
 //!
 //! Reference: Tang & Xue. "Robust Threshold ECDSA." S&P 2025.
 
@@ -87,7 +87,7 @@ fn run_single_round(machines: &mut [(PartyId, Tx25OnlineSignMachine)]) {
 #[test]
 fn test_tx25_full_protocol_5_of_3() {
     let n = 5usize;
-    let t = 2u16; // corruption threshold: max 2 corrupted, reconstruct = t+1 = 3 to sign
+    let t = 3u16; // reconstruction threshold: 3 parties needed to sign
     let seed = "90001";
     let use_128bit_security = false; // insecure p=7 for speed
 

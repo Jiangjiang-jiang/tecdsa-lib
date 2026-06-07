@@ -74,8 +74,8 @@ fn xal23_mta_correctness_secp256k1() {
 fn xal23_full_protocol_n2_all_signers() {
     let mut rng = rand::thread_rng();
 
-    // n=2, t=1
-    let key_shares = trusted_dealer_keygen::<C>(2, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+    // n=2, t=2 (reconstruction threshold)
+    let key_shares = trusted_dealer_keygen::<C>(2, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
 
     let signer_indices: Vec<usize> = vec![0, 1];
 
@@ -97,8 +97,8 @@ fn xal23_full_protocol_n2_all_signers() {
 fn xal23_full_protocol_n3_all_signers() {
     let mut rng = rand::thread_rng();
 
-    // Key generation: n=3, t=1
-    let key_shares = trusted_dealer_keygen::<C>(3, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+    // Key generation: n=3, t=2 (reconstruction threshold)
+    let key_shares = trusted_dealer_keygen::<C>(3, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
 
     // All 3 parties sign
     let signer_indices: Vec<usize> = vec![0, 1, 2];
@@ -129,7 +129,7 @@ fn presign_sign_via_orchestrator_3of3() {
 
     let mut rng = rand::thread_rng();
     let n = 3u16;
-    let key_shares = trusted_dealer_keygen::<C>(n, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+    let key_shares = trusted_dealer_keygen::<C>(n, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
     let all_parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
     // Presign via Orchestrator

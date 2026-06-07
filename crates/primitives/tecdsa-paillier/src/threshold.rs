@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Threshold Paillier decryption with trusted dealer setup.
 //!
-//! In a `(t, n)` threshold Paillier scheme, all parties share a single
-//! Paillier public key `(N, Gamma)`.  The secret key `lambda(N)` is never
+//! In a threshold Paillier scheme, all parties share a single Paillier
+//! public key `(N, Gamma)`.  The secret key `lambda(N)` is never
 //! reconstructed; instead each party holds a Shamir share of
 //! `d = lambda(N) * beta` and computes a partial decryption.  Combining
-//! `t+1` partials via Lagrange interpolation in the exponent recovers
-//! the plaintext.
+//! `threshold + 1` partials via Lagrange interpolation in the exponent
+//! recovers the plaintext.
+//!
+//! **Note:** `ThresholdSetup.corruption_threshold` uses *corruption threshold* (polynomial
+//! degree) semantics: `threshold + 1` partials are needed to decrypt. This
+//! differs from the project-wide convention where `t` means reconstruction
+//! threshold. Protocol code should convert: `paillier_threshold = t - 1`.
 //!
 //! This module uses a **trusted dealer** for key generation: the dealer
 //! generates `(N, p, q)`, computes `d = lambda(N) * beta`, and distributes
@@ -46,8 +51,9 @@ pub struct ThresholdSetup {
     pub theta: Integer,
     /// Total number of parties.
     pub n: u16,
-    /// Threshold parameter: t+1 parties needed to decrypt.
-    pub threshold: u16,
+    /// Corruption threshold (polynomial degree). Decryption requires
+    /// `corruption_threshold + 1` partial decryptions.
+    pub corruption_threshold: u16,
     /// Delta = n! (factorial of total parties).
     pub delta: Integer,
 }
@@ -105,7 +111,7 @@ fn l_function(u: &Integer, n: &Integer) -> Integer {
 ///
 /// Returns (setup, decryption shares for all n parties).
 pub fn trusted_dealer_setup(
-    threshold: u16,
+    corruption_threshold: u16,
     total: u16,
     rng: &mut impl CryptoRngCore,
 ) -> Result<(ThresholdSetup, Vec<DecryptionShare>), ThresholdError> {
@@ -132,13 +138,13 @@ pub fn trusted_dealer_setup(
 
     // Shamir share d over Z with coefficient modulus M = N * delta.
     let m = &n * &delta;
-    let shares = shamir_split_integer(&d, threshold, total, &m, rng);
+    let shares = shamir_split_integer(&d, corruption_threshold, total, &m, rng);
 
     let setup = ThresholdSetup {
         ek,
         theta,
         n: total,
-        threshold,
+        corruption_threshold,
         delta,
     };
 
@@ -172,7 +178,7 @@ pub fn combine_partials(
     partials: &[PartialDecryption],
     setup: &ThresholdSetup,
 ) -> Result<Integer, ThresholdError> {
-    let needed = setup.threshold as usize + 1;
+    let needed = setup.corruption_threshold as usize + 1;
     if partials.len() < needed {
         return Err(ThresholdError::NotEnoughShares {
             needed,
@@ -236,13 +242,13 @@ pub fn combine_partials(
 
 fn shamir_split_integer(
     secret: &Integer,
-    threshold: u16,
+    corruption_threshold: u16,
     total: u16,
     modulus: &Integer,
     rng: &mut impl CryptoRngCore,
 ) -> Vec<DecryptionShare> {
     let mut coeffs = vec![secret.clone()];
-    for _ in 0..threshold {
+    for _ in 0..corruption_threshold {
         coeffs.push(sample_below(modulus, rng));
     }
 

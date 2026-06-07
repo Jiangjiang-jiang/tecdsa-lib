@@ -7,7 +7,7 @@ use tecdsa_vss::shamir::{self, Share};
 
 type C = k256::Secp256k1;
 
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     (1..=n)
@@ -17,7 +17,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -26,8 +26,8 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
 
 /// Run the keygen state machines to completion without the Orchestrator
 /// (which requires serde bounds that `ProjectivePoint` does not satisfy).
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<tecdsa_cggmp20::key_share::Cggmp20CoreKeyShare<C>> {
-    let configs = make_session_configs(n, corrupted_t);
+fn run_keygen(n: u16, t: u16) -> Vec<tecdsa_cggmp20::key_share::Cggmp20CoreKeyShare<C>> {
+    let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Cggmp20KeygenMachine<C>)> = configs
@@ -82,7 +82,7 @@ fn run_keygen(n: u16, corrupted_t: u16) -> Vec<tecdsa_cggmp20::key_share::Cggmp2
 
 #[test]
 fn keygen_2of3_produces_valid_shares() {
-    let shares = run_keygen(3, 1);
+    let shares = run_keygen(3, 2);
 
     assert_eq!(shares.len(), 3);
 
@@ -115,7 +115,7 @@ fn keygen_2of3_produces_valid_shares() {
 #[test]
 #[ignore = "slow: larger threshold variant"]
 fn keygen_3of5_produces_valid_shares() {
-    let shares = run_keygen(5, 2);
+    let shares = run_keygen(5, 3);
 
     assert_eq!(shares.len(), 5);
 
@@ -148,7 +148,7 @@ fn keygen_3of5_produces_valid_shares() {
 #[test]
 #[ignore = "slow: reconstruction test"]
 fn keygen_2of3_shares_reconstruct_to_secret() {
-    let shares = run_keygen(3, 1);
+    let shares = run_keygen(3, 2);
 
     // Take any 2 of 3 shares (party 0 and party 1).
     // Cggmp20CoreKeyShare.party_index is 0-based; Share index must be 1-based.

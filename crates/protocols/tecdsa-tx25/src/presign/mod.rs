@@ -90,7 +90,7 @@ pub struct Tx25Presignature {
     pub b_hat_points: BTreeMap<(u16, u16), k256::ProjectivePoint>,
     /// This party's index (1-based).
     pub party_index: u16,
-    /// Threshold $t$ (need $t+1$ parties to sign).
+    /// Reconstruction threshold $t$ ($t$ parties needed to sign).
     pub threshold: u16,
 }
 

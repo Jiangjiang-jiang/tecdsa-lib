@@ -130,7 +130,7 @@ impl TroutKeygenMachine {
         // 3. Feldman VSS
         let x_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rng);
         let (vss_shares, vss_commitments) =
-            tecdsa_vss::feldman::split::<k256::Secp256k1>(&x_i, threshold + 1, n, &mut rng);
+            tecdsa_vss::feldman::split::<k256::Secp256k1>(&x_i, threshold, n, &mut rng);
 
         // 4. DlogProof for A_{i,0} = x_i * G
         let a_i_0 = vss_commitments[0];
@@ -667,7 +667,7 @@ mod tests {
         machines.iter().all(|m| m.is_done())
     }
 
-    /// Interactive 3-round DKG for 3 parties (n=3, t=1).
+    /// Interactive 3-round DKG for 3 parties (n=3, t=2).
     ///
     /// Verifies:
     /// - All parties produce valid `TroutKeyShare`.
@@ -678,7 +678,7 @@ mod tests {
     fn keygen_interactive_3_parties() {
         let seed = "33333";
         let n = 3u16;
-        let t = 1u16;
+        let t = 2u16; // reconstruction threshold: 2 parties needed to sign
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
         // Create machines (Round 1 executes immediately in the constructor).

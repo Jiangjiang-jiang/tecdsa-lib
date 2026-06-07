@@ -35,10 +35,12 @@ fn generate_ring_pedersen(rng: &mut impl CryptoRngCore) -> (Integer, Integer, In
     (n_tilde, h1, h2)
 }
 
-/// Run keygen for `n` parties with threshold `t`.
-fn run_keygen(t: u16, n: u16, rng: &mut impl CryptoRngCore) -> Vec<Ggn16KeyShare<TestCurve>> {
+/// Run keygen for `n` parties with reconstruction threshold `t`.
+fn run_keygen(n: u16, t: u16, rng: &mut impl CryptoRngCore) -> Vec<Ggn16KeyShare<TestCurve>> {
+    // trusted_dealer_setup takes corruption threshold (polynomial degree)
+    let corruption_t = t - 1;
     let (setup, dec_shares) =
-        trusted_dealer_setup(t, n, rng).expect("trusted dealer setup should succeed");
+        trusted_dealer_setup(corruption_t, n, rng).expect("trusted dealer setup should succeed");
     let (n_tilde, h1, h2) = generate_ring_pedersen(rng);
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
@@ -81,11 +83,11 @@ fn make_message_hash(msg: &str) -> DataToSign<TestCurve> {
 #[test]
 fn ggn16_full_sign_3_of_3() {
     let mut rng = rand::thread_rng();
-    let t = 2u16; // threshold: need all 3 parties (t+1 = 3)
+    let t = 3u16; // reconstruction threshold: need all 3 parties
     let n = 3u16;
 
     // Step 1: Keygen
-    let shares = run_keygen(t, n, &mut rng);
+    let shares = run_keygen(n, t, &mut rng);
 
     // Verify all parties agree on the public key
     let pk0_bytes = shares[0].public_key.to_bytes();
@@ -162,11 +164,11 @@ fn ggn16_full_sign_3_of_3() {
 #[test]
 fn ggn16_full_sign_2_of_2() {
     let mut rng = rand::thread_rng();
-    let t = 1u16; // threshold
-    let n = 2u16; // 2 parties, both required
+    let t = 2u16; // reconstruction threshold: both parties needed
+    let n = 2u16;
 
     // Step 1: Keygen
-    let shares = run_keygen(t, n, &mut rng);
+    let shares = run_keygen(n, t, &mut rng);
 
     // Step 2: Presign
     let signer_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
@@ -217,11 +219,11 @@ fn ggn16_full_sign_2_of_2() {
 #[test]
 fn ggn16_full_sign_2_of_3() {
     let mut rng = rand::thread_rng();
-    let t = 1u16; // threshold: need 2-of-3
+    let t = 2u16; // reconstruction threshold: need 2-of-3
     let n = 3u16;
 
     // Step 1: Keygen (all 3 parties)
-    let shares = run_keygen(t, n, &mut rng);
+    let shares = run_keygen(n, t, &mut rng);
 
     // Step 2: Presign (only parties 1 and 2 sign)
     let signer_parties: Vec<PartyId> = vec![PartyId(1), PartyId(2)];
@@ -272,10 +274,10 @@ fn ggn16_full_sign_2_of_3() {
 #[test]
 fn ggn16_two_signatures_differ() {
     let mut rng = rand::thread_rng();
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold
     let n = 2u16;
 
-    let shares = run_keygen(t, n, &mut rng);
+    let shares = run_keygen(n, t, &mut rng);
 
     let signer_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 

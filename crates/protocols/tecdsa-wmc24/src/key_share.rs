@@ -34,7 +34,7 @@ pub struct Wmc24KeyShare {
     pub elek_shares: Vec<k256::ProjectivePoint>,
     /// Aggregate ElGamal public key elek = sum(elek_j).
     pub elek: k256::ProjectivePoint,
-    /// Threshold t: need t+1 parties to sign.
+    /// Reconstruction threshold t: t parties needed to sign.
     pub threshold: u16,
     /// Total parties n.
     pub total: u16,

@@ -38,15 +38,14 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
         })
 }
 
-/// Run keygen for `n` parties with corruption threshold `corrupted_t`.
+/// Run keygen for `n` parties with reconstruction threshold `t`.
 ///
-/// Reconstruction requires `corrupted_t + 1` parties.
-fn run_keygen(n: usize, corrupted_t: u16, use_128bit: bool) -> Vec<Wmy23KeyShare> {
+/// `t` parties are needed to sign.
+fn run_keygen(n: usize, t: u16, use_128bit: bool) -> Vec<Wmy23KeyShare> {
     use tecdsa_protocol::PartyId;
     use tecdsa_testkit::Orchestrator;
 
     let seed = "12345";
-    let reconstruction_threshold = corrupted_t + 1;
     let all_parties: Vec<PartyId> = (1..=n as u16).map(PartyId).collect();
 
     let machines: Vec<(PartyId, Wmy23KeygenMachine)> = all_parties
@@ -54,14 +53,8 @@ fn run_keygen(n: usize, corrupted_t: u16, use_128bit: bool) -> Vec<Wmy23KeyShare
         .map(|&pid| {
             (
                 pid,
-                Wmy23KeygenMachine::new(
-                    pid,
-                    all_parties.clone(),
-                    reconstruction_threshold,
-                    seed,
-                    use_128bit,
-                )
-                .expect("keygen machine"),
+                Wmy23KeygenMachine::new(pid, all_parties.clone(), t, seed, use_128bit)
+                    .expect("keygen machine"),
             )
         })
         .collect();
@@ -165,7 +158,7 @@ fn run_sign(
 
 #[test]
 fn test_wmy23_full_sign() {
-    let shares = run_keygen(3, 2, false); // corruption threshold=2, need 3 to sign (3-of-3)
+    let shares = run_keygen(3, 3, false); // reconstruction threshold=3, need 3 to sign (3-of-3)
     let mut setup = ClSetup::new_secp256k1("12345").unwrap();
     let presigs = run_drg_presign(&shares, &mut setup);
     let msg = hash_message(b"WMY23 correctness test");
@@ -176,7 +169,7 @@ fn test_wmy23_full_sign() {
 // ---------------------------------------------------------------------------
 // Threshold (t-of-n) subset signing via the state machines.
 //
-// Demonstrates that, with Feldman-VSS key shares, a strict `t+1` quorum can
+// Demonstrates that, with Feldman-VSS key shares, a strict `t` quorum can
 // sign: the presign machine Lagrange-weights each signer's Shamir share for
 // the active quorum (w_i = lambda_i * x_i), so the additive MtAwc machinery
 // reconstructs the joint key from the subset alone.
@@ -195,7 +188,7 @@ fn test_wmy23_threshold_subset_sign() {
 
     let seed = "12345";
     let n = 3u16;
-    let reconstruction_threshold = 2u16; // t+1 = 2  =>  2-of-3 signing
+    let reconstruction_threshold = 2u16; // t=2, 2-of-3 signing
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     // --- KeyGen via the Feldman-VSS state machine ---
@@ -230,7 +223,7 @@ fn test_wmy23_threshold_subset_sign() {
     // Shares must be distinct Shamir shares (not additive duplicates).
     assert_ne!(key_shares[0].secret_share, key_shares[1].secret_share);
 
-    // --- Sign with the subset {1, 2} (a t+1 quorum, NOT all n) ---
+    // --- Sign with the subset {1, 2} (a t=2 quorum, NOT all n) ---
     let signers = [1u16, 2];
     let signer_parties: Vec<PartyId> = signers.iter().map(|&s| PartyId(s)).collect();
 
@@ -318,11 +311,11 @@ fn bench_wmy23_paper_params() {
     println!("=============================================\n");
 
     let n = 5;
-    let corrupted_t = 3u16; // corruption threshold: tolerate 3 corrupted, need 4 to sign
+    let t = 4u16; // reconstruction threshold: need 4 to sign
     let iters = 3;
 
     let start = Instant::now();
-    let shares = run_keygen(n, corrupted_t, true);
+    let shares = run_keygen(n, t, true);
     let keygen_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     let mut times = Vec::new();

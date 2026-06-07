@@ -59,22 +59,16 @@ fn hash_message(msg: &[u8]) -> DataToSign<C> {
 /// `Dkls23KeyShare` containing the Shamir share, verification shares, and
 /// the joint ECDSA public key.
 ///
-/// `corrupted_t` = max corrupted parties. Reconstruction needs `corrupted_t + 1`.
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Dkls23KeyShare<C>> {
+/// `t` = reconstruction threshold (number of parties needed to sign).
+fn run_keygen(n: u16, t: u16) -> Vec<Dkls23KeyShare<C>> {
     let mut rng = rand::thread_rng();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
-    let reconstruction_threshold = corrupted_t + 1;
 
     // Create one keygen state machine per party.
     let machines: Vec<(PartyId, Dkls23KeygenMachine<C>)> = all_parties
         .iter()
         .map(|&pid| {
-            let machine = Dkls23KeygenMachine::new(
-                pid,
-                all_parties.clone(),
-                reconstruction_threshold,
-                &mut rng,
-            );
+            let machine = Dkls23KeygenMachine::new(pid, all_parties.clone(), t, &mut rng);
             (pid, machine)
         })
         .collect();
@@ -176,8 +170,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Step 1: Key Generation
-    println!("[1/3] Running distributed key generation (3 parties, corruption threshold=1)...");
-    let shares = run_keygen(3, 1); // corruption threshold=1, need 2 to sign
+    println!("[1/3] Running distributed key generation (3 parties, 2-of-3 signing)...");
+    let shares = run_keygen(3, 2); // 2-of-3 signing threshold
     let public_key = shares[0].public_key;
     println!("  Key generation complete.");
     println!("  All 3 parties agree on the joint ECDSA public key.");

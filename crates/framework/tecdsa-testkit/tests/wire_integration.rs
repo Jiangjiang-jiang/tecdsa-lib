@@ -152,10 +152,11 @@ fn wire_ggn16_keygen() {
     use tecdsa_paillier::{backend::Integer, threshold::trusted_dealer_setup};
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2-of-3
     let mut rng = rand::thread_rng();
 
-    let (setup, dec_shares) = trusted_dealer_setup(t, n, &mut rng).expect("trusted dealer setup");
+    let (setup, dec_shares) =
+        trusted_dealer_setup(t - 1, n, &mut rng).expect("trusted dealer setup");
 
     // Ring-Pedersen parameters.
     let p = Integer::generate_safe_prime(&mut rng, 256);
@@ -273,7 +274,7 @@ fn wire_tx25_keygen() {
     use tecdsa_tx25::keygen::Tx25KeygenMachine;
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2-of-3
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, Tx25KeygenMachine)> = all_parties
@@ -305,7 +306,7 @@ fn wire_jtx25_keygen() {
     use tecdsa_jtx25::keygen::Jtx25KeygenMachine;
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2-of-3
     let all_parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, Jtx25KeygenMachine)> = all_parties
@@ -337,7 +338,7 @@ fn wire_wmc24_keygen() {
     use tecdsa_wmc24::keygen::Wmc24KeygenMachine;
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2-of-3
     let all_parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, Wmc24KeygenMachine)> = all_parties
@@ -364,7 +365,7 @@ fn wire_llz25_keygen() {
     use tecdsa_llz25::keygen::Llz25KeygenMachine;
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2-of-3
     let seed = "12345";
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
@@ -396,7 +397,7 @@ fn wire_trout_keygen() {
     use tecdsa_trout::keygen::TroutKeygenMachine;
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2-of-3
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, TroutKeygenMachine)> = all_parties
@@ -422,7 +423,7 @@ fn wire_xal23_keygen() {
     use tecdsa_xal23::keygen::Xal23KeygenMachine;
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2-of-3
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     // Reduced JL parameters for testing speed.

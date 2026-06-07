@@ -30,33 +30,27 @@ use tecdsa_wmc24::{
 // Helper: run keygen state machine
 // ---------------------------------------------------------------------------
 
-/// Run keygen for `n` parties with corruption threshold `corrupted_t`.
+/// Run keygen for `n` parties with reconstruction threshold `t`.
 ///
-/// Reconstruction requires `corrupted_t + 1` parties.
-fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Wmc24KeyShare> {
-    run_keygen_with_seed(n, corrupted_t, "60001", false)
+/// `t` parties are needed to sign.
+fn run_keygen(n: usize, t: u16) -> Vec<Wmc24KeyShare> {
+    run_keygen_with_seed(n, t, "60001", false)
 }
 
 fn run_keygen_with_seed(
     n: usize,
-    corrupted_t: u16,
+    t: u16,
     seed: &str,
     use_128bit_security: bool,
 ) -> Vec<Wmc24KeyShare> {
     let parties: Vec<PartyId> = (1..=n as u16).map(PartyId).collect();
-    let reconstruction_threshold = corrupted_t + 1;
 
     let machines: Vec<(PartyId, Wmc24KeygenMachine)> = parties
         .iter()
         .map(|&pid| {
-            let machine = Wmc24KeygenMachine::new(
-                pid,
-                parties.clone(),
-                reconstruction_threshold,
-                seed,
-                use_128bit_security,
-            )
-            .unwrap_or_else(|e| panic!("keygen new() failed for party {pid}: {e}"));
+            let machine =
+                Wmc24KeygenMachine::new(pid, parties.clone(), t, seed, use_128bit_security)
+                    .unwrap_or_else(|e| panic!("keygen new() failed for party {pid}: {e}"));
             (pid, machine)
         })
         .collect();
@@ -165,7 +159,7 @@ fn run_online_sign(
 
 #[test]
 fn test_keygen_5_of_2() {
-    let shares = run_keygen(5, 1); // corruption threshold=1, need 2 to reconstruct
+    let shares = run_keygen(5, 2); // reconstruction threshold=2, need 2 to sign
 
     let pk0 = shares[0].public_key;
     for share in &shares[1..] {
@@ -238,7 +232,7 @@ fn test_keygen_5_of_2() {
 
 #[test]
 fn test_keygen_128bit_3_of_2() {
-    let shares = run_keygen_with_seed(3, 1, "42042", true);
+    let shares = run_keygen_with_seed(3, 2, "42042", true);
 
     let pk0 = shares[0].public_key;
     let elek0 = shares[0].elek;
@@ -251,10 +245,10 @@ fn test_keygen_128bit_3_of_2() {
 #[test]
 fn test_full_protocol_keygen_presign_sign() {
     let n = 5;
-    let corrupted_t = 1u16; // corruption threshold
+    let t = 2u16; // reconstruction threshold
 
     // Step 1: Keygen (now produces proper Shamir ElGamal shares natively).
-    let key_shares = run_keygen(n, corrupted_t);
+    let key_shares = run_keygen(n, t);
 
     // Step 2: Presign with all 5 parties.
     let signer_indices: Vec<usize> = (0..n).collect();
@@ -302,11 +296,11 @@ fn test_full_protocol_keygen_presign_sign() {
 
 #[test]
 fn test_threshold_subset_signing() {
-    // n=5, corruption t=1, sign with parties {0, 2, 4} (a subset of t+1=2 or more).
+    // n=5, t=2, sign with parties {0, 2, 4} (a subset of t=2 or more).
     let n = 5;
-    let corrupted_t = 1u16; // corruption threshold
+    let t = 2u16; // reconstruction threshold
 
-    let key_shares = run_keygen(n, corrupted_t);
+    let key_shares = run_keygen(n, t);
 
     let signer_indices = vec![0, 2, 4];
     let presignatures = run_presign(&key_shares, &signer_indices);

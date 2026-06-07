@@ -26,7 +26,7 @@ where
     pub elgamal_pk_shares: Vec<C::ProjectivePoint>,
     /// Number of parties
     pub n: u16,
-    /// Threshold (t+1 parties needed to sign)
+    /// Reconstruction threshold (t parties needed to sign)
     pub t: u16,
 }
 

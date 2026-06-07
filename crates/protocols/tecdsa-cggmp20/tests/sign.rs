@@ -28,7 +28,7 @@ impl Cggmp20SecurityParams for TestLevel {
     const KAPPA: usize = 128;
 }
 
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     (1..=n)
@@ -38,14 +38,14 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
         .collect()
 }
 
-fn make_signer_configs(signers: &[u16], n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_signer_configs(signers: &[u16], n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([1u8; 32]);
     let parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     signers
@@ -56,15 +56,15 @@ fn make_signer_configs(signers: &[u16], n: u16, corrupted_t: u16) -> Vec<Session
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
         .collect()
 }
 
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
-    let configs = make_session_configs(n, corrupted_t);
+fn run_keygen(n: u16, t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
+    let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Cggmp20KeygenMachine<C>)> = configs
@@ -112,7 +112,7 @@ fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
 }
 
 fn run_aux_info(n: u16) -> Vec<AuxInfo> {
-    let configs = make_session_configs(n, 1);
+    let configs = make_session_configs(n, 2);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, AuxInfoMachine<TestLevel>)> = configs
@@ -165,8 +165,8 @@ fn run_presign(
     signers: &[u16],
 ) -> Vec<(Presignature<C>, PresignaturePublicData<C>)> {
     let n = core_shares.len() as u16;
-    let corrupted_t = core_shares[0].vss_setup.threshold - 1;
-    let signer_configs = make_signer_configs(signers, n, corrupted_t);
+    let t = core_shares[0].vss_setup.threshold;
+    let signer_configs = make_signer_configs(signers, n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Cggmp20PresignMachine<C>)> = signers
@@ -261,7 +261,7 @@ fn verify_signature(
 
 #[test]
 fn sign_2of3_verifies() {
-    let core_shares = run_keygen(3, 1);
+    let core_shares = run_keygen(3, 2);
     let aux_infos = run_aux_info(3);
     let signers = [1u16, 2];
     let presigs = run_presign(&core_shares, &aux_infos, &signers);
@@ -290,7 +290,7 @@ fn sign_2of3_verifies() {
 #[test]
 #[ignore = "slow: multiple message variant"]
 fn sign_different_messages_produce_different_signatures() {
-    let core_shares = run_keygen(3, 1);
+    let core_shares = run_keygen(3, 2);
     let aux_infos = run_aux_info(3);
     let signers = [1u16, 2];
 

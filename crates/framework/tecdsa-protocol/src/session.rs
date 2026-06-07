@@ -19,8 +19,8 @@ pub struct SessionConfig {
 impl SessionConfig {
     /// Create a SessionConfig from canonical parameter types.
     ///
-    /// This is the preferred constructor. The `local_party` and `parties` fields
-    /// are derived from the `PartySet` for backward compatibility.
+    /// `PartyInfo.threshold` is set to the reconstruction threshold `t`
+    /// (number of parties required to sign).
     pub fn from_party_set(session_id: SessionId, party_set: &PartySet) -> Self {
         let local_id = party_set.local_party();
         let parties = party_set.parties().to_vec();
@@ -31,7 +31,7 @@ impl SessionConfig {
                 id: local_id,
                 index: index + 1, // 1-based
                 total: party_set.threshold().n(),
-                threshold: party_set.threshold().reconstruct_threshold(),
+                threshold: party_set.threshold().t(),
             },
             parties,
         }
@@ -39,28 +39,22 @@ impl SessionConfig {
 
     /// Extract a `Threshold` from the legacy fields.
     ///
-    /// Interprets `local_party.threshold` as the reconstruction threshold (t+1),
-    /// so corruption threshold t = threshold - 1. Returns an error if the legacy
-    /// fields contain invalid values.
+    /// Interprets `local_party.threshold` as the reconstruction threshold `t`.
     pub fn try_threshold(&self) -> Result<Threshold, ParamError> {
-        let reconstruct = self.local_party.threshold;
-        if reconstruct == 0 {
-            return Err(ParamError::ZeroParties);
-        }
-        Threshold::new(self.local_party.total, reconstruct - 1)
+        Threshold::new(self.local_party.total, self.local_party.threshold)
     }
 
-    /// Corruption threshold t (max corrupted parties).
+    /// Maximum tolerated corruptions = t - 1.
     ///
     /// Panics if legacy fields are invalid. Prefer [`try_threshold`](Self::try_threshold)
     /// in fallible contexts.
-    pub fn corruption_threshold(&self) -> u16 {
+    pub fn max_corruptions(&self) -> u16 {
         self.try_threshold()
             .expect("SessionConfig has invalid threshold fields")
-            .t()
+            .max_corruptions()
     }
 
-    /// Reconstruction/signing quorum = t + 1.
+    /// Reconstruction/signing threshold `t` (number of parties required).
     ///
     /// This is the value stored in `local_party.threshold`.
     pub fn reconstruct_threshold(&self) -> u16 {
@@ -74,8 +68,8 @@ mod tests {
     use crate::params::{PartySet, Threshold};
 
     #[test]
-    fn from_party_set_derives_legacy_fields() {
-        let threshold = Threshold::new(3, 1).unwrap();
+    fn from_party_set_derives_fields() {
+        let threshold = Threshold::new(3, 2).unwrap();
         let party_set = PartySet::new(
             PartyId(2),
             vec![PartyId(1), PartyId(2), PartyId(3)],
@@ -87,13 +81,13 @@ mod tests {
 
         assert_eq!(config.local_party.id, PartyId(2));
         assert_eq!(config.local_party.total, 3);
-        assert_eq!(config.local_party.threshold, 2); // reconstruct threshold = t+1
+        assert_eq!(config.local_party.threshold, 2);
         assert_eq!(config.parties.len(), 3);
     }
 
     #[test]
     fn try_threshold_roundtrips() {
-        let threshold = Threshold::new(3, 1).unwrap();
+        let threshold = Threshold::new(3, 2).unwrap();
         let party_set = PartySet::new(
             PartyId(1),
             vec![PartyId(1), PartyId(2), PartyId(3)],
@@ -104,13 +98,14 @@ mod tests {
         let config = SessionConfig::from_party_set(SessionId([0u8; 32]), &party_set);
         let recovered = config.try_threshold().unwrap();
         assert_eq!(recovered.n(), 3);
-        assert_eq!(recovered.t(), 1);
+        assert_eq!(recovered.t(), 2);
         assert_eq!(recovered.reconstruct_threshold(), 2);
+        assert_eq!(recovered.max_corruptions(), 1);
     }
 
     #[test]
     fn corruption_and_reconstruct_accessors() {
-        let threshold = Threshold::new(5, 2).unwrap();
+        let threshold = Threshold::new(5, 3).unwrap();
         let party_set = PartySet::new(
             PartyId(1),
             vec![PartyId(1), PartyId(2), PartyId(3), PartyId(4), PartyId(5)],
@@ -119,7 +114,7 @@ mod tests {
         .unwrap();
 
         let config = SessionConfig::from_party_set(SessionId([0u8; 32]), &party_set);
-        assert_eq!(config.corruption_threshold(), 2);
+        assert_eq!(config.max_corruptions(), 2);
         assert_eq!(config.reconstruct_threshold(), 3);
     }
 

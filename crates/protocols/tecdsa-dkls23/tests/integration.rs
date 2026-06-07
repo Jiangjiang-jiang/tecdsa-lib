@@ -23,24 +23,17 @@ type C = k256::Secp256k1;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Run keygen to produce key shares for n parties with corruption threshold t.
+/// Run keygen to produce key shares for n parties with reconstruction threshold t.
 ///
-/// `corrupted_t` = max number of corrupted parties tolerated.
-/// Reconstruction requires `corrupted_t + 1` parties.
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Dkls23KeyShare<C>> {
+/// `t` = number of parties needed to sign (reconstruction threshold).
+fn run_keygen(n: u16, t: u16) -> Vec<Dkls23KeyShare<C>> {
     let mut rng = rand::thread_rng();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
-    let reconstruction_threshold = corrupted_t + 1;
 
     let machines: Vec<(PartyId, Dkls23KeygenMachine<C>)> = all_parties
         .iter()
         .map(|&pid| {
-            let machine = Dkls23KeygenMachine::new(
-                pid,
-                all_parties.clone(),
-                reconstruction_threshold,
-                &mut rng,
-            );
+            let machine = Dkls23KeygenMachine::new(pid, all_parties.clone(), t, &mut rng);
             (pid, machine)
         })
         .collect();
@@ -141,8 +134,8 @@ fn run_online_sign(
 
 #[test]
 fn test_dkls23_full_sign_2_of_3() {
-    // 1. Run keygen (3 parties, corruption threshold=1, need 2 to sign)
-    let shares = run_keygen(3, 1);
+    // 1. Run keygen (3 parties, 2-of-3 signing)
+    let shares = run_keygen(3, 2);
 
     // Verify keygen produced correct shares
     let pk0_bytes = shares[0].public_key.to_bytes();
@@ -182,8 +175,8 @@ fn test_dkls23_full_sign_2_of_3() {
 
 #[test]
 fn test_dkls23_full_sign_3_of_5() {
-    // 1. Run keygen (5 parties, corruption threshold=2, need 3 to sign)
-    let shares = run_keygen(5, 2);
+    // 1. Run keygen (5 parties, 3-of-5 signing)
+    let shares = run_keygen(5, 3);
 
     // 2. Choose signing subset (parties 1, 3, 5)
     let signer_indices = &[1u16, 3, 5];
@@ -217,7 +210,7 @@ fn test_dkls23_full_sign_3_of_5() {
 #[test]
 fn test_dkls23_different_signer_subsets() {
     // Verify that different subsets of parties can sign independently
-    let shares = run_keygen(3, 1); // corruption threshold=1, need 2 to sign
+    let shares = run_keygen(3, 2); // 2-of-3 signing
     let message = test_message_digest(b"different subsets");
 
     // Sign with parties {1, 2}
@@ -242,7 +235,7 @@ fn test_dkls23_different_signer_subsets() {
 #[test]
 fn test_dkls23_different_messages() {
     // Verify that the same keygen can sign different messages
-    let shares = run_keygen(3, 1); // corruption threshold=1, need 2 to sign
+    let shares = run_keygen(3, 2); // 2-of-3 signing
     let signer_indices = &[1u16, 2];
 
     let msg1 = test_message_digest(b"message one");
@@ -261,8 +254,8 @@ fn test_dkls23_different_messages() {
 
 #[test]
 fn test_dkls23_2_of_2() {
-    // Minimal threshold case: 2-of-2 (corruption threshold=1)
-    let shares = run_keygen(2, 1);
+    // Minimal threshold case: 2-of-2 signing
+    let shares = run_keygen(2, 2);
     let message = test_message_digest(b"2-of-2 signing");
 
     let presigs = run_presign(&shares, &[1, 2]);
@@ -281,11 +274,11 @@ fn bench_timing_dkls23() {
     use std::time::Instant;
 
     let configs: Vec<(u16, u16, &[u16])> = vec![
-        (2, 1, &[1, 2]),          // 2-of-2 (corruption t=1)
-        (3, 1, &[1, 2]),          // 2-of-3 (corruption t=1)
-        (3, 2, &[1, 2, 3]),       // 3-of-3 (corruption t=2)
-        (5, 2, &[1, 3, 5]),       // 3-of-5 (corruption t=2)
-        (5, 4, &[1, 2, 3, 4, 5]), // 5-of-5 (corruption t=4)
+        (2, 2, &[1, 2]),          // 2-of-2
+        (3, 2, &[1, 2]),          // 2-of-3
+        (3, 3, &[1, 2, 3]),       // 3-of-3
+        (5, 3, &[1, 3, 5]),       // 3-of-5
+        (5, 5, &[1, 2, 3, 4, 5]), // 5-of-5
     ];
     let warmup = 2;
     let iterations = 5;

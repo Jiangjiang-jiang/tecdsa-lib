@@ -276,7 +276,7 @@ pub(crate) fn identify_cheaters(
             .collect();
 
         let t = presignature.threshold;
-        if remaining.len() >= (t + 1) as usize {
+        if remaining.len() >= t as usize {
             // Re-filter deltas and chis to only include remaining parties.
             let mut filtered_deltas: BTreeMap<u16, BTreeMap<u16, k256::Scalar>> = BTreeMap::new();
             let mut filtered_chis: BTreeMap<u16, BTreeMap<u16, k256::Scalar>> = BTreeMap::new();

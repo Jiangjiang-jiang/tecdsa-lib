@@ -15,7 +15,7 @@ use zeroize::Zeroize;
 /// Feldman VSS setup parameters.
 #[derive(Debug, Clone)]
 pub struct VssSetup {
-    /// The threshold parameter `t`: at least `t + 1` shares are needed to sign.
+    /// Reconstruction threshold `t`: `t` parties needed to sign.
     pub threshold: u16,
     /// Total number of parties `n`.
     pub total: u16,
@@ -93,7 +93,7 @@ where
     use elliptic_curve::Field;
 
     assert!(n >= 2, "need at least 2 parties");
-    assert!(t >= 1, "threshold must be >= 1");
+    assert!(t >= 2, "threshold must be >= 2");
 
     // Generate the master secret key
     let x = C::random_scalar(rng);
@@ -152,7 +152,7 @@ mod tests {
     fn trusted_dealer_produces_valid_shares() {
         let mut rng = rand::thread_rng();
         // Small JL params for unit test speed (not cryptographically meaningful)
-        let shares = trusted_dealer_keygen::<k256::Secp256k1>(3, 1, 256, 128, &mut rng);
+        let shares = trusted_dealer_keygen::<k256::Secp256k1>(3, 2, 256, 128, &mut rng);
 
         assert_eq!(shares.len(), 3);
 

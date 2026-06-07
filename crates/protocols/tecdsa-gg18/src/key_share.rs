@@ -8,13 +8,12 @@ use tecdsa_paillier::{zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey}
 use tecdsa_protocol::KeyShareValidation;
 use zeroize::Zeroize;
 
-/// Feldman VSS setup parameters: threshold `t` and total number of parties `n`.
+/// Feldman VSS setup parameters: reconstruction threshold `t` and total number of parties `n`.
 ///
-/// A valid `(t, n)` sharing requires `t + 1` parties to reconstruct the secret
-/// and `n >= 2t + 1` for malicious security.
+/// A valid `(t, n)` sharing requires `t` parties to reconstruct the secret.
 #[derive(Debug, Clone)]
 pub struct VssSetup {
-    /// The threshold parameter `t`: at least `t + 1` shares are needed to sign.
+    /// Reconstruction threshold `t`: at least `t` parties are needed to sign.
     pub threshold: u16,
     /// Total number of parties `n`.
     pub total: u16,

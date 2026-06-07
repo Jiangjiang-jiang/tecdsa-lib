@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Canonical parameter types for threshold ECDSA protocols.
 //!
-//! `t` always means the corruption threshold (maximum number of corrupted parties).
-//! The reconstruction/signing quorum is `t + 1`.
+//! Throughout this repository, `(n, t)` means `t`-of-`n` reconstruction/signing.
+//! `t` is the reconstruction threshold (number of parties required to sign).
+//! The maximum tolerated corruptions is `t - 1`.
 
 use std::fmt;
 
@@ -15,7 +16,7 @@ use crate::party::PartyId;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamError {
     ZeroParties,
-    CorruptionThresholdTooLarge { n: u16, t: u16 },
+    InvalidThreshold { n: u16, t: u16 },
     PartyCountMismatch { expected: u16, got: usize },
     DuplicatePartyId(PartyId),
     LocalPartyNotInSet(PartyId),
@@ -25,8 +26,8 @@ impl fmt::Display for ParamError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroParties => write!(f, "n must be > 0"),
-            Self::CorruptionThresholdTooLarge { n, t } => {
-                write!(f, "corruption threshold t={t} must be < n={n}")
+            Self::InvalidThreshold { n, t } => {
+                write!(f, "threshold t={t} must satisfy 1 <= t <= n={n}")
             }
             Self::PartyCountMismatch { expected, got } => {
                 write!(f, "expected {expected} parties, got {got}")
@@ -45,11 +46,12 @@ impl std::error::Error for ParamError {}
 
 /// Protocol threshold parameters.
 ///
-/// `t` is the corruption threshold: the maximum number of parties that may be
-/// corrupted. The reconstruction/signing quorum is `t + 1`.
+/// `t` is the reconstruction/signing threshold: the number of parties required
+/// to reconstruct the secret or produce a signature. The maximum tolerated
+/// corruptions is `t - 1`.
 ///
-/// For example, `Threshold::new(3, 1)` means 3 parties, at most 1 corrupted,
-/// any 2 can sign.
+/// For example, `Threshold::new(3, 2)` means 3 parties, any 2 can sign,
+/// at most 1 corrupted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Threshold {
     n: u16,
@@ -57,12 +59,16 @@ pub struct Threshold {
 }
 
 impl Threshold {
+    /// Create a new threshold with `t`-of-`n` semantics.
+    ///
+    /// `t` is the reconstruction threshold (number of parties needed to sign).
+    /// Requires `1 <= t <= n`.
     pub fn new(n: u16, t: u16) -> Result<Self, ParamError> {
         if n == 0 {
             return Err(ParamError::ZeroParties);
         }
-        if t >= n {
-            return Err(ParamError::CorruptionThresholdTooLarge { n, t });
+        if t == 0 || t > n {
+            return Err(ParamError::InvalidThreshold { n, t });
         }
         Ok(Self { n, t })
     }
@@ -72,14 +78,19 @@ impl Threshold {
         self.n
     }
 
-    /// Corruption threshold (max corrupted parties).
+    /// Reconstruction/signing threshold (number of parties required).
     pub const fn t(self) -> u16 {
         self.t
     }
 
-    /// Reconstruction/signing quorum = t + 1.
+    /// Reconstruction/signing threshold (same as `t()`).
     pub const fn reconstruct_threshold(self) -> u16 {
-        self.t + 1
+        self.t
+    }
+
+    /// Maximum tolerated corruptions = t - 1.
+    pub const fn max_corruptions(self) -> u16 {
+        self.t - 1
     }
 }
 
@@ -251,23 +262,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reconstruct_threshold_is_t_plus_one() {
-        let threshold = Threshold::new(3, 1).unwrap();
+    fn threshold_new_semantics() {
+        // (n=5, t=3) means 3-of-5: 3 parties reconstruct, 2 corrupted max
+        let threshold = Threshold::new(5, 3).unwrap();
+        assert_eq!(threshold.n(), 5);
+        assert_eq!(threshold.t(), 3);
+        assert_eq!(threshold.reconstruct_threshold(), 3);
+        assert_eq!(threshold.max_corruptions(), 2);
+    }
+
+    #[test]
+    fn threshold_2_of_3() {
+        let threshold = Threshold::new(3, 2).unwrap();
         assert_eq!(threshold.n(), 3);
-        assert_eq!(threshold.t(), 1);
+        assert_eq!(threshold.t(), 2);
         assert_eq!(threshold.reconstruct_threshold(), 2);
+        assert_eq!(threshold.max_corruptions(), 1);
     }
 
     #[test]
-    fn rejects_t_ge_n() {
-        assert!(Threshold::new(3, 3).is_err());
+    fn threshold_n_of_n() {
+        let threshold = Threshold::new(3, 3).unwrap();
+        assert_eq!(threshold.reconstruct_threshold(), 3);
+        assert_eq!(threshold.max_corruptions(), 2);
+    }
+
+    #[test]
+    fn rejects_t_zero() {
+        assert!(Threshold::new(3, 0).is_err());
+    }
+
+    #[test]
+    fn rejects_t_greater_than_n() {
+        assert!(Threshold::new(3, 4).is_err());
+    }
+
+    #[test]
+    fn rejects_n_zero() {
         assert!(Threshold::new(0, 0).is_err());
-    }
-
-    #[test]
-    fn rejects_t_eq_n_minus_one_is_valid() {
-        // t = n-1 is valid (all but one corrupted)
-        assert!(Threshold::new(3, 2).is_ok());
     }
 
     #[test]
@@ -284,28 +316,28 @@ mod tests {
 
     #[test]
     fn party_set_requires_local_party() {
-        let threshold = Threshold::new(3, 1).unwrap();
+        let threshold = Threshold::new(3, 2).unwrap();
         let parties = vec![PartyId(1), PartyId(2), PartyId(3)];
         assert!(PartySet::new(PartyId(4), parties, threshold).is_err());
     }
 
     #[test]
     fn party_set_rejects_wrong_n() {
-        let threshold = Threshold::new(3, 1).unwrap();
+        let threshold = Threshold::new(3, 2).unwrap();
         let parties = vec![PartyId(1), PartyId(2)];
         assert!(PartySet::new(PartyId(1), parties, threshold).is_err());
     }
 
     #[test]
     fn party_set_rejects_duplicates() {
-        let threshold = Threshold::new(3, 1).unwrap();
+        let threshold = Threshold::new(3, 2).unwrap();
         let parties = vec![PartyId(1), PartyId(1), PartyId(2)];
         assert!(PartySet::new(PartyId(1), parties, threshold).is_err());
     }
 
     #[test]
     fn party_set_valid() {
-        let threshold = Threshold::new(3, 1).unwrap();
+        let threshold = Threshold::new(3, 2).unwrap();
         let parties = vec![PartyId(3), PartyId(1), PartyId(2)];
         let ps = PartySet::new(PartyId(2), parties, threshold).unwrap();
         assert_eq!(ps.local_party(), PartyId(2));
@@ -315,8 +347,8 @@ mod tests {
 
     #[test]
     fn threshold_display() {
-        let t = Threshold::new(5, 2).unwrap();
-        assert_eq!(format!("{t}"), "(n=5, t=2)");
+        let t = Threshold::new(5, 3).unwrap();
+        assert_eq!(format!("{t}"), "(n=5, t=3)");
     }
 
     #[test]

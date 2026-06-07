@@ -55,8 +55,8 @@ impl Cggmp20SecurityParams for DemoLevel {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build session configurations for `n` parties with corruption threshold `corrupted_t`.
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+/// Build session configurations for `n` parties with reconstruction threshold `t`.
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     (1..=n)
@@ -66,7 +66,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -74,7 +74,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
 }
 
 /// Build session configurations for only the signing subset.
-fn make_signer_configs(signers: &[u16], n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_signer_configs(signers: &[u16], n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([1u8; 32]);
     let parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     signers
@@ -85,7 +85,7 @@ fn make_signer_configs(signers: &[u16], n: u16, corrupted_t: u16) -> Vec<Session
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -152,8 +152,8 @@ fn hash_message(message: &[u8]) -> DataToSign<C> {
 /// Each party contributes a random polynomial via Feldman VSS. The output
 /// is a `Cggmp20CoreKeyShare` containing the party's secret share, the joint
 /// public key, and VSS verification data.
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
-    let configs = make_session_configs(n, corrupted_t);
+fn run_keygen(n: u16, t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
+    let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Cggmp20KeygenMachine<C>)> = configs
@@ -180,7 +180,7 @@ fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
 /// then proves correctness via `Pi_prm`, `pi_mod` (Paillier-Blum modulus),
 /// and `pi_fac` (no-small-factor) ZK proofs.
 fn run_aux_info(n: u16) -> Vec<AuxInfo> {
-    let configs = make_session_configs(n, 1);
+    let configs = make_session_configs(n, 2);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, AuxInfoMachine<DemoLevel>)> = configs
@@ -216,8 +216,8 @@ fn run_presign(
 )> {
     #[allow(clippy::cast_possible_truncation)]
     let n = core_shares.len() as u16;
-    let corrupted_t = core_shares[0].vss_setup.threshold - 1;
-    let signer_configs = make_signer_configs(signers, n, corrupted_t);
+    let t = core_shares[0].vss_setup.threshold;
+    let signer_configs = make_signer_configs(signers, n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Cggmp20PresignMachine<C>)> = signers
@@ -256,8 +256,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Step 1: Key Generation
-    println!("[1/4] Running distributed key generation (3 parties)...");
-    let core_shares = run_keygen(3, 1);
+    println!("[1/4] Running distributed key generation (3 parties, 2-of-3 signing)...");
+    let core_shares = run_keygen(3, 2);
     let public_key = core_shares[0].public_key;
     println!("  Key generation complete.");
     println!("  All 3 parties agree on the joint ECDSA public key.");

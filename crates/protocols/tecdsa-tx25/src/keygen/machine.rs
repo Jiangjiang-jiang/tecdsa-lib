@@ -130,7 +130,7 @@ impl Tx25KeygenMachine {
     ///
     /// * `my_id` - This party's identifier.
     /// * `all_parties` - All party identifiers in consistent order.
-    /// * `threshold` - Reconstruction threshold `t` (need `t+1` to sign).
+    /// * `threshold` - Reconstruction threshold `t`: `t` parties needed to sign.
     /// * `cl_setup_seed` - Seed for CL setup creation.
     /// * `use_128bit_security` - If true, use 128-bit security CL parameters
     ///   (1828-bit discriminant).  If false, use insecure p=7 parameters

@@ -16,7 +16,7 @@
 //! - **XAL23**: JL-based MtA, 2-round keygen + 4-round presign + 1-round sign
 //!
 //! Each protocol is measured for keygen, presign, and sign phases
-//! using `n=3, t=1` (corruption threshold) with per-party timing via the Orchestrator.
+//! using `n=3, t=2` (signing threshold) with per-party timing via the Orchestrator.
 //! Each phase benchmarks every participating party separately.
 
 use std::{sync::Arc, time::Duration};
@@ -40,8 +40,8 @@ const SAMPLES: usize = 10;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build `SessionConfig`s for `n` parties with corruption threshold `corrupted_t`.
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+/// Build `SessionConfig`s for `n` parties with signing threshold `t`.
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     (1..=n)
@@ -51,7 +51,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -59,7 +59,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
 }
 
 /// Build `SessionConfig`s for a signing subset.
-fn make_signer_configs(signers: &[u16], n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_signer_configs(signers: &[u16], n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([1u8; 32]);
     let parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     signers
@@ -70,7 +70,7 @@ fn make_signer_configs(signers: &[u16], n: u16, corrupted_t: u16) -> Vec<Session
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -101,8 +101,8 @@ mod cggmp20_helpers {
 
     use super::*;
 
-    pub fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
-        let configs = make_session_configs(n, corrupted_t);
+    pub fn run_keygen(n: u16, t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
+        let configs = make_session_configs(n, t);
         let mut rng = tecdsa_core::Csprng::new();
 
         let machines: Vec<(PartyId, Cggmp20KeygenMachine<C>)> = configs
@@ -125,7 +125,7 @@ mod cggmp20_helpers {
     }
 
     pub fn run_aux_info(n: u16) -> Vec<AuxInfo> {
-        let configs = make_session_configs(n, 1);
+        let configs = make_session_configs(n, 2);
         let mut rng = tecdsa_core::Csprng::new();
 
         let machines: Vec<(PartyId, AuxInfoMachine<SecurityLevel128>)> = configs
@@ -153,8 +153,8 @@ mod cggmp20_helpers {
         signers: &[u16],
     ) -> Vec<(Presignature<C>, PresignaturePublicData<C>)> {
         let n = core_shares.len() as u16;
-        let corrupted_t = core_shares[0].vss_setup.threshold - 1;
-        let signer_configs = make_signer_configs(signers, n, corrupted_t);
+        let t = core_shares[0].vss_setup.threshold;
+        let signer_configs = make_signer_configs(signers, n, t);
         let mut rng = tecdsa_core::Csprng::new();
 
         let machines: Vec<(PartyId, Cggmp20PresignMachine<C>)> = signers
@@ -197,15 +197,14 @@ mod dkls23_helpers {
 
     use super::*;
 
-    pub fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Dkls23KeyShare<C>> {
+    pub fn run_keygen(n: u16, t: u16) -> Vec<Dkls23KeyShare<C>> {
         let mut rng = rand::thread_rng();
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
         let machines: Vec<(PartyId, Dkls23KeygenMachine<C>)> = all_parties
             .iter()
             .map(|&pid| {
-                let machine =
-                    Dkls23KeygenMachine::new(pid, all_parties.clone(), corrupted_t + 1, &mut rng);
+                let machine = Dkls23KeygenMachine::new(pid, all_parties.clone(), t, &mut rng);
                 (pid, machine)
             })
             .collect();
@@ -262,8 +261,8 @@ mod gg18_helpers {
 
     use super::*;
 
-    pub fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Gg18KeyShare<C>> {
-        let configs = make_session_configs(n, corrupted_t);
+    pub fn run_keygen(n: u16, t: u16) -> Vec<Gg18KeyShare<C>> {
+        let configs = make_session_configs(n, t);
         let mut rng = tecdsa_core::Csprng::new();
 
         let machines: Vec<(PartyId, Gg18KeygenMachine<C>)> = configs
@@ -328,9 +327,11 @@ mod ggn16_helpers {
     use super::*;
 
     /// Generate threshold Paillier setup + Ring-Pedersen parameters for GGN16.
+    ///
+    /// `corruption_t` is the Paillier polynomial degree (= reconstruction threshold - 1).
     pub fn fast_trusted_dealer_setup(
         n: u16,
-        corrupted_t: u16,
+        corruption_t: u16,
     ) -> (
         ThresholdSetup,
         Vec<DecryptionShare>,
@@ -362,7 +363,7 @@ mod ggn16_helpers {
         }
         let m = &n_int * &delta;
         let mut coeffs = vec![d];
-        for _ in 0..corrupted_t {
+        for _ in 0..corruption_t {
             coeffs.push(m.random_below_ref(&mut rng));
         }
         let mut shares = Vec::with_capacity(n as usize);
@@ -380,7 +381,7 @@ mod ggn16_helpers {
             ek,
             theta,
             n,
-            threshold: corrupted_t,
+            corruption_threshold: corruption_t,
             delta,
         };
 
@@ -397,7 +398,7 @@ mod ggn16_helpers {
 
     pub fn run_keygen(
         n: u16,
-        corrupted_t: u16,
+        corruption_t: u16,
         threshold_setup: ThresholdSetup,
         dec_shares: Vec<DecryptionShare>,
         h1: Integer,
@@ -408,6 +409,7 @@ mod ggn16_helpers {
 
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
         let mut rng = tecdsa_core::Csprng::new();
+        let t = corruption_t + 1; // reconstruction threshold for keygen constructor
 
         let machines: Vec<_> = dec_shares
             .into_iter()
@@ -419,7 +421,7 @@ mod ggn16_helpers {
                     Ggn16KeygenMachine::<C>::new(
                         pid,
                         all_parties.clone(),
-                        corrupted_t,
+                        t,
                         threshold_setup.clone(),
                         dec_share,
                         h1.clone(),
@@ -456,7 +458,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 
     // --- DKG: one execution per sample, every party reported separately ---
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
-        let configs = make_session_configs(3, 1);
+        let configs = make_session_configs(3, 2);
         let builders: Vec<_> = configs
             .iter()
             .map(|cfg| {
@@ -473,7 +475,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=3u16 {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/cggmp20/n3_t1/party{party_idx}"),
+            format!("dkg/cggmp20/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -481,7 +483,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 
     // --- AuxInfo: one execution per sample, every party reported separately ---
     let aux_runs = per_party::precompute_runs(SAMPLES, || {
-        let configs = make_session_configs(3, 1);
+        let configs = make_session_configs(3, 2);
         let builders: Vec<_> = configs
             .iter()
             .map(|cfg| {
@@ -506,7 +508,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 
     // --- Presign: per-party active time for each signer ---
     // Untimed setup: generate key shares and aux info once
-    let core_shares = cggmp20_helpers::run_keygen(3, 1);
+    let core_shares = cggmp20_helpers::run_keygen(3, 2);
     let aux_infos: Vec<Arc<_>> = cggmp20_helpers::run_aux_info(3)
         .into_iter()
         .map(Arc::new)
@@ -515,8 +517,8 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 
     let presign_runs = per_party::precompute_runs(SAMPLES, || {
         let n = core_shares.len() as u16;
-        let corrupted_t = core_shares[0].vss_setup.threshold - 1;
-        let signer_configs = make_signer_configs(&signers, n, corrupted_t);
+        let t = core_shares[0].vss_setup.threshold;
+        let signer_configs = make_signer_configs(&signers, n, t);
         let builders: Vec<_> = signers
             .iter()
             .enumerate()
@@ -543,7 +545,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/cggmp20/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/cggmp20/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -562,7 +564,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 
     for (idx, &signer) in signers.iter().enumerate() {
         sign_group.bench_function(
-            format!("online_sign/cggmp20/n3_t1/signers_1_2/party{signer}/partial_sign"),
+            format!("online_sign/cggmp20/n3_t2/signers_1_2/party{signer}/partial_sign"),
             |b| {
                 b.iter(|| presigs[idx].0.partial_sign(&message));
             },
@@ -574,7 +576,7 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
         .map(|(p, _)| p.partial_sign(&message))
         .collect();
     let pub_data = &presigs[0].1;
-    sign_group.bench_function("online_sign/cggmp20/n3_t1/combine", |b| {
+    sign_group.bench_function("online_sign/cggmp20/n3_t2/combine", |b| {
         b.iter(|| PartialSignature::combine(&partials, pub_data, public_key, &message));
     });
 
@@ -592,7 +594,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
-    let corrupted_t = 1u16;
+    let t = 2u16;
     let signer_indices = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signer_indices.iter().map(|&i| PartyId(i)).collect();
@@ -607,7 +609,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
                 let all_p2 = all_p.clone();
                 (p, move || {
                     let mut rng = rand::thread_rng();
-                    Dkls23KeygenMachine::<C>::new(p, all_p2, corrupted_t + 1, &mut rng)
+                    Dkls23KeygenMachine::<C>::new(p, all_p2, t, &mut rng)
                 })
             })
             .collect();
@@ -616,7 +618,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/dkls23/n3_t1/party{party_idx}"),
+            format!("dkg/dkls23/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -624,7 +626,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
 
     // --- Presign: per-party active time for each signer ---
     // Untimed setup: generate key shares once
-    let shares = dkls23_helpers::run_keygen(n, corrupted_t);
+    let shares = dkls23_helpers::run_keygen(n, t);
 
     let presign_runs = per_party::precompute_runs(SAMPLES, || {
         let builders: Vec<_> = signer_indices
@@ -648,7 +650,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
     for &signer in &signer_indices {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/dkls23/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/dkls23/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -678,7 +680,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
     for &signer in &signer_indices {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/dkls23/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/dkls23/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -733,7 +735,7 @@ fn dkls23_benchmarks(c: &mut Criterion) {
     for &signer in &signer_indices {
         per_party::bench_party_replay(
             &mut group,
-            format!("full_sign/dkls23/n3_t1/signers_1_2/party{signer}"),
+            format!("full_sign/dkls23/n3_t2/signers_1_2/party{signer}"),
             &full_runs,
             PartyId(signer),
         );
@@ -753,13 +755,13 @@ fn gg18_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
-    let corrupted_t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let message = make_data_to_sign(b"benchmark message");
 
     // --- DKG: one execution per sample, every party reported separately ---
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
-        let configs = make_session_configs(n, corrupted_t);
+        let configs = make_session_configs(n, t);
         let builders: Vec<_> = configs
             .iter()
             .map(|cfg| {
@@ -776,7 +778,7 @@ fn gg18_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/gg18/n3_t1/party{party_idx}"),
+            format!("dkg/gg18/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -784,7 +786,7 @@ fn gg18_benchmarks(c: &mut Criterion) {
 
     // --- Presign: per-party active time for each signer ---
     // Untimed setup: generate key shares once
-    let key_shares = gg18_helpers::run_keygen(n, corrupted_t);
+    let key_shares = gg18_helpers::run_keygen(n, t);
 
     let presign_runs = per_party::precompute_runs(SAMPLES, || {
         let builders: Vec<_> = signers
@@ -809,7 +811,7 @@ fn gg18_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/gg18/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/gg18/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -840,7 +842,7 @@ fn gg18_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/gg18/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/gg18/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -897,7 +899,7 @@ fn gg18_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("full_sign/gg18/n3_t1/signers_1_2/party{signer}"),
+            format!("full_sign/gg18/n3_t2/signers_1_2/party{signer}"),
             &full_runs,
             PartyId(signer),
         );
@@ -914,7 +916,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
-    let corrupted_t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
@@ -922,7 +924,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
 
     // Setup: threshold Paillier + Ring-Pedersen (untimed — done once)
     let (threshold_setup, dec_shares, n_tilde, h1, h2) =
-        ggn16_helpers::fast_trusted_dealer_setup(n, corrupted_t);
+        ggn16_helpers::fast_trusted_dealer_setup(n, t - 1);
 
     // --- DKG: one execution per sample, every party reported separately ---
     // GGN16 keygen requires pre-constructed machines with threshold Paillier setup,
@@ -930,7 +932,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     // re-generated per run for independence.
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
         let mut rng = tecdsa_core::Csprng::new();
-        let (ts, ds, nt, h1c, h2c) = ggn16_helpers::fast_trusted_dealer_setup(n, corrupted_t);
+        let (ts, ds, nt, h1c, h2c) = ggn16_helpers::fast_trusted_dealer_setup(n, t - 1);
         let machines: Vec<_> = ds
             .into_iter()
             .enumerate()
@@ -941,7 +943,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
                     Ggn16KeygenMachine::<C>::new(
                         pid,
                         all_parties.clone(),
-                        corrupted_t,
+                        t,
                         ts.clone(),
                         dec_share,
                         h1c.clone(),
@@ -957,7 +959,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/ggn16/n3_t1/party{party_idx}"),
+            format!("dkg/ggn16/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -965,7 +967,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
 
     // Untimed setup: generate key shares once for presign/sign benchmarks
     let key_shares =
-        ggn16_helpers::run_keygen(n, corrupted_t, threshold_setup, dec_shares, h1, h2, n_tilde);
+        ggn16_helpers::run_keygen(n, t - 1, threshold_setup, dec_shares, h1, h2, n_tilde);
 
     // --- Presign: per-party active time for each signer ---
     let presign_runs = per_party::precompute_runs(SAMPLES, || {
@@ -990,7 +992,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/ggn16/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/ggn16/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -1038,7 +1040,7 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/ggn16/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/ggn16/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -1064,7 +1066,7 @@ fn ln18_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
-    let corrupted_t = 1u16;
+    let t = 2u16;
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
     // --- DKG: one execution per sample, every party reported separately ---
@@ -1077,7 +1079,7 @@ fn ln18_benchmarks(c: &mut Criterion) {
                     id: PartyId(i),
                     index: i,
                     total: n,
-                    threshold: corrupted_t + 1,
+                    threshold: t,
                 },
                 parties: parties.clone(),
             })
@@ -1097,7 +1099,7 @@ fn ln18_benchmarks(c: &mut Criterion) {
     for party_idx in 0..n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/ln18/n3_t1/party{party_idx}"),
+            format!("dkg/ln18/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -1114,7 +1116,7 @@ fn ln18_benchmarks(c: &mut Criterion) {
                     id: PartyId(i),
                     index: i,
                     total: n,
-                    threshold: corrupted_t + 1,
+                    threshold: t,
                 },
                 parties: parties.clone(),
             })
@@ -1265,7 +1267,7 @@ fn ln18_benchmarks(c: &mut Criterion) {
 
     {
         let mut next = 0usize;
-        group.bench_function("full_sign_8round/ln18/n3_t1/wall", |b| {
+        group.bench_function("full_sign_8round/ln18/n3_t2/wall", |b| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
@@ -1279,7 +1281,7 @@ fn ln18_benchmarks(c: &mut Criterion) {
 
     {
         let mut next = 0usize;
-        group.bench_function("full_sign_8round/ln18/n3_t1/per_party_avg", |b| {
+        group.bench_function("full_sign_8round/ln18/n3_t2/per_party_avg", |b| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
@@ -1304,7 +1306,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
 
     let seed = "42042";
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
@@ -1335,7 +1337,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/tx25/n3_t1/party{party_idx}"),
+            format!("dkg/tx25/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -1387,7 +1389,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/tx25/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/tx25/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -1438,7 +1440,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/tx25/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/tx25/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -1457,7 +1459,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
 
     let seed = "42042";
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
@@ -1488,7 +1490,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/jtx25/n3_t1/party{party_idx}"),
+            format!("dkg/jtx25/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -1540,7 +1542,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/jtx25/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/jtx25/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -1596,7 +1598,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/jtx25/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/jtx25/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -1617,11 +1619,11 @@ fn wmy23_benchmarks(c: &mut Criterion) {
 
     let seed = "42042";
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
-    // WMY23's Feldman-VSS keygen takes the reconstruction threshold (t+1); the
+    // WMY23's Feldman-VSS keygen takes the reconstruction threshold (t); the
     // presign machine Lagrange-weights each signer's Shamir share, so the 2-of-3
     // subset below reconstructs the key.
     let msg_data = make_data_to_sign(b"benchmark message");
@@ -1637,7 +1639,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
                     Wmy23KeygenMachine::new_with_setup(
                         pid,
                         all_parties.clone(),
-                        t + 1,
+                        t,
                         seed,
                         true,
                         cl_setup.clone(),
@@ -1651,7 +1653,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/wmy23/n3_t1/party{party_idx}"),
+            format!("dkg/wmy23/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -1667,7 +1669,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
                     Wmy23KeygenMachine::new_with_setup(
                         pid,
                         all_parties.clone(),
-                        t + 1,
+                        t,
                         seed,
                         true,
                         cl_setup.clone(),
@@ -1708,7 +1710,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/wmy23/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/wmy23/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -1764,7 +1766,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/wmy23/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/wmy23/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -1783,7 +1785,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
 
     let seed = "42042";
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
@@ -1814,7 +1816,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/wmc24/n3_t1/party{party_idx}"),
+            format!("dkg/wmc24/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -1865,7 +1867,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/wmc24/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/wmc24/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -1921,7 +1923,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/wmc24/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/wmc24/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -1941,7 +1943,7 @@ fn llz25_benchmarks(c: &mut Criterion) {
 
     let seed = "42042";
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
@@ -1981,7 +1983,7 @@ fn llz25_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/llz25/n3_t1/party{party_idx}"),
+            format!("dkg/llz25/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -2042,7 +2044,7 @@ fn llz25_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/llz25/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/llz25/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -2096,7 +2098,7 @@ fn llz25_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/llz25/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/llz25/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -2116,7 +2118,7 @@ fn trout_benchmarks(c: &mut Criterion) {
 
     let seed = "42042";
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
@@ -2148,7 +2150,7 @@ fn trout_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/trout/n3_t1/party{party_idx}"),
+            format!("dkg/trout/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -2216,7 +2218,7 @@ fn trout_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/trout/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/trout/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -2293,7 +2295,7 @@ fn trout_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/trout/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/trout/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );
@@ -2311,7 +2313,7 @@ fn xal23_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16;
     let signers = [1u16, 2];
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
@@ -2334,7 +2336,7 @@ fn xal23_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=n {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/xal23/n3_t1/party{party_idx}"),
+            format!("dkg/xal23/n3_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -2391,7 +2393,7 @@ fn xal23_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("presign/xal23/n3_t1/signers_1_2/party{signer}"),
+            format!("presign/xal23/n3_t2/signers_1_2/party{signer}"),
             &presign_runs,
             PartyId(signer),
         );
@@ -2437,7 +2439,7 @@ fn xal23_benchmarks(c: &mut Criterion) {
     for &signer in &signers {
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/xal23/n3_t1/signers_1_2/party{signer}"),
+            format!("online_sign/xal23/n3_t2/signers_1_2/party{signer}"),
             &online_runs,
             PartyId(signer),
         );

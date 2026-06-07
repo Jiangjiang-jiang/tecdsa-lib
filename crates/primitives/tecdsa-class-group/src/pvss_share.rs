@@ -81,7 +81,7 @@ fn eval_poly_mod_q(coeffs: &[Integer], x: &Integer, q: &Integer) -> Integer {
 /// * `setup` - CL-HSM setup context (mutable for random sampling).
 /// * `party_ids` - 1-based party indices for all parties.
 /// * `pks` - CL public keys for each party (same order as `party_ids`).
-/// * `reconstruct_threshold` - Reconstruction threshold (t+1 in corruption convention) (degree of polynomial is `t-1`).
+/// * `reconstruct_threshold` - Reconstruction threshold `t` (number of parties needed). Polynomial degree = `t - 1`.
 /// * `my_index_in_list` - The distributor's position in `party_ids` (0-based).
 pub fn pvss_share_distribute(
     setup: &mut ClSetup,

@@ -43,7 +43,7 @@ pub struct TroutKeyShare {
     pub cl_setup_seed: String,
     /// Whether to use 128-bit security CL parameters.
     pub use_128bit_security: bool,
-    /// Threshold t: at least t+1 parties needed.
+    /// Reconstruction threshold t: t parties needed to sign.
     pub threshold: u16,
     /// Total parties n.
     pub total: u16,

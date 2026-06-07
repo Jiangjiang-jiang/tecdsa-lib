@@ -340,7 +340,7 @@ mod tests {
     fn compute_pc(setup: &ClSetup, chi_prime: &[u8], chi_chunks: &[Vec<u8>]) -> ClResult<Qfi> {
         let q = setup.cl().q();
         let h_chi_prime = setup.power_of_h_bytes(chi_prime)?;
-        let product = compute_h_q_pow_product(setup, &q, chi_chunks)?;
+        let product = compute_h_q_pow_product(setup, q, chi_chunks)?;
         setup.compose(&h_chi_prime, &product)
     }
 
@@ -355,7 +355,7 @@ mod tests {
     ) -> ClResult<(Qfi, Qfi)> {
         let q = setup.cl().q();
 
-        let product = compute_h_q_pow_product(setup, &q, chi_chunks)?;
+        let product = compute_h_q_pow_product(setup, q, chi_chunks)?;
 
         let h_r = setup.power_of_h_bytes(r_agg)?;
         let c0 = setup.compose(&h_r, &product)?;

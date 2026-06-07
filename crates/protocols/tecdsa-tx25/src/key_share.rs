@@ -51,7 +51,7 @@ pub struct Tx25KeyShare {
     /// Whether to use 128-bit security CL parameters (1828-bit discriminant).
     /// If false, uses the insecure p=7 parameters (for fast testing only).
     pub use_128bit_security: bool,
-    /// Threshold $t$: at least $t+1$ parties needed (honest majority: $n \ge 2t - 1$).
+    /// Reconstruction threshold $t$: $t$ parties needed to sign (honest majority: $n \ge 2t - 1$).
     pub threshold: u16,
     /// Total parties $n$.
     pub total: u16,

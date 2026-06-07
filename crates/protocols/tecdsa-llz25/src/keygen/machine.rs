@@ -104,7 +104,7 @@ impl Llz25KeygenMachine {
         // 1. Feldman VSS
         let x_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rng);
         let (vss_shares, vss_commitments) =
-            tecdsa_vss::feldman::split::<k256::Secp256k1>(&x_i, threshold + 1, n, &mut rng);
+            tecdsa_vss::feldman::split::<k256::Secp256k1>(&x_i, threshold, n, &mut rng);
 
         // 2. DlogProof for A_{i,0} = x_i * G
         let a_i_0 = vss_commitments[0];
@@ -175,7 +175,7 @@ impl Llz25KeygenMachine {
     /// # Arguments
     /// - `my_id`: this party's unique identifier.
     /// - `all_parties`: all party IDs in a consistent order.
-    /// - `threshold`: reconstruction threshold t (need t+1 to sign).
+    /// - `threshold`: reconstruction threshold t (t parties needed to sign).
     /// - `cl_setup_seed`: seed for CL setup.
     /// - `use_128bit`: whether to use 128-bit security CL params.
     /// - `pk_crs`: the NIM CRS public key (agreed upon out-of-band).
@@ -630,7 +630,7 @@ mod tests {
         machines.iter().all(|m| m.is_done())
     }
 
-    /// Interactive 3-round DKG for 3 parties (n=3, t=1).
+    /// Interactive 3-round DKG for 3 parties (n=3, t=2).
     ///
     /// Verifies:
     /// - All parties produce valid `Llz25KeyShare`.
@@ -643,7 +643,7 @@ mod tests {
     fn keygen_interactive_3_parties() {
         let seed = "44444";
         let n = 3u16;
-        let t = 1u16;
+        let t = 2u16; // reconstruction threshold: 2 parties needed to sign
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
         // Create CL setup and CRS public key (shared by all parties out-of-band).

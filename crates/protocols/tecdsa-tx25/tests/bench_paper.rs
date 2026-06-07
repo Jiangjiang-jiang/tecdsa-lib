@@ -62,7 +62,7 @@ fn run_single_round(machines: &mut [(PartyId, Tx25OnlineSignMachine)]) {
 #[test]
 fn bench_tx25_n5_128bit() {
     let n = 5u16;
-    let t = 1u16;
+    let t = 2u16; // paper corruption threshold=1, repo reconstruction threshold=2
     let seed = "128001";
     let party_ids: Vec<PartyId> = (1..=n).map(PartyId).collect();
 

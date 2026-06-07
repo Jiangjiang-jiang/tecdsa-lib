@@ -7,7 +7,7 @@ pub const METADATA: ProtocolMetadata = ProtocolMetadata {
     primitive: "Threshold ECDSA",
     signing_rounds_paper: 6,
     signing_rounds_impl: 6,
-    security_model: "Malicious with dishonest majority (threshold-optimal, n = t+1)",
+    security_model: "Malicious with dishonest majority (threshold-optimal, n = t)",
     presign_rounds: 5,
     online_sign_rounds: 1,
     keygen_rounds: 2,

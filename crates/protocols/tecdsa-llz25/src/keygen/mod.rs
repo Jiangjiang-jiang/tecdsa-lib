@@ -60,7 +60,7 @@ pub struct KeygenAuxInfo {
 ///
 /// # Arguments
 /// - `n`: total number of parties.
-/// - `threshold`: reconstruction threshold (need `threshold+1` to sign).
+/// - `threshold`: reconstruction threshold (t parties needed to sign).
 /// - `setup`: mutable CL setup (used for NIM encoding and ZK proofs).
 /// - `pk_crs`: the CRS public key for NIM encoding.
 /// - `cl_setup_seed`: seed string for CL setup recreation.
@@ -77,7 +77,7 @@ pub fn keygen_with_dealer(
 
     // 1. Trusted dealer: generate random signing key and Shamir shares.
     let x = k256::Secp256k1::random_scalar(&mut rng);
-    let shares = shamir::split::<k256::Secp256k1>(&x, threshold + 1, n, &mut rng);
+    let shares = shamir::split::<k256::Secp256k1>(&x, threshold, n, &mut rng);
     let public_key = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x;
 
     // Compute public verification shares.

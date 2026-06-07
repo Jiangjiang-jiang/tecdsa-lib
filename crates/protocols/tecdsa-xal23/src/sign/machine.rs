@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn sign_machine_n2() {
         let mut rng = rand::thread_rng();
-        let key_shares = trusted_dealer_keygen::<Curve>(2, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+        let key_shares = trusted_dealer_keygen::<Curve>(2, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
         let signer_indices: Vec<usize> = vec![0, 1];
 
         let presigs =
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn sign_machine_n3() {
         let mut rng = rand::thread_rng();
-        let key_shares = trusted_dealer_keygen::<Curve>(3, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+        let key_shares = trusted_dealer_keygen::<Curve>(3, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
         let signer_indices: Vec<usize> = vec![0, 1, 2];
 
         let presigs =
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn sign_machine_rejects_duplicate() {
         let mut rng = rand::thread_rng();
-        let key_shares = trusted_dealer_keygen::<Curve>(2, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+        let key_shares = trusted_dealer_keygen::<Curve>(2, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
         let signer_indices: Vec<usize> = vec![0, 1];
 
         let presigs =
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn sign_machine_rejects_unknown_party() {
         let mut rng = rand::thread_rng();
-        let key_shares = trusted_dealer_keygen::<Curve>(2, 1, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
+        let key_shares = trusted_dealer_keygen::<Curve>(2, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
         let signer_indices: Vec<usize> = vec![0, 1];
 
         let presigs =

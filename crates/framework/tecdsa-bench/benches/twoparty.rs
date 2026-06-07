@@ -81,7 +81,7 @@ fn lin17_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=2u16 {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/lin17/n2_t1/party{party_idx}"),
+            format!("dkg/lin17/n2_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -137,13 +137,13 @@ fn lin17_benchmarks(c: &mut Criterion) {
     });
     per_party::bench_party_replay(
         &mut group,
-        "full_sign/lin17/n2_t1/party1",
+        "full_sign/lin17/n2_t2/party1",
         &sign_runs,
         PartyId(1),
     );
     per_party::bench_party_replay(
         &mut group,
-        "full_sign/lin17/n2_t1/party2",
+        "full_sign/lin17/n2_t2/party2",
         &sign_runs,
         PartyId(2),
     );
@@ -186,7 +186,7 @@ fn kgg24_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=2u16 {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/kgg24/n2_t1/party{party_idx}"),
+            format!("dkg/kgg24/n2_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -248,13 +248,13 @@ fn kgg24_benchmarks(c: &mut Criterion) {
     });
     per_party::bench_party_replay(
         &mut group,
-        "full_sign/kgg24/n2_t1/party1",
+        "full_sign/kgg24/n2_t2/party1",
         &sign_runs,
         PartyId(1),
     );
     per_party::bench_party_replay(
         &mut group,
-        "full_sign/kgg24/n2_t1/party2",
+        "full_sign/kgg24/n2_t2/party2",
         &sign_runs,
         PartyId(2),
     );
@@ -297,7 +297,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=2u16 {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/xal21/n2_t1/party{party_idx}"),
+            format!("dkg/xal21/n2_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -320,7 +320,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
     let (p1_key, p2_key) = tecdsa_xal21::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
 
-    sign_group.bench_function("presign/xal21/n2_t1/combined", |b| {
+    sign_group.bench_function("presign/xal21/n2_t2/combined", |b| {
         b.iter(|| {
             let mut rng = rand_core::OsRng;
             offline_sign::offline_sign::<C>(&p1_key, &p2_key, &mut rng).expect("offline_sign");
@@ -334,7 +334,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
         offline_sign::offline_sign::<C>(&p1_key, &p2_key, &mut rng).expect("offline_sign");
 
     // Party 2: compute s2
-    sign_group.bench_function("online_sign/xal21/n2_t1/party2", |b| {
+    sign_group.bench_function("online_sign/xal21/n2_t2/party2", |b| {
         b.iter(|| {
             online_sign::party2_compute_s2::<C>(&p2_presig, &message).expect("s2");
         });
@@ -343,7 +343,7 @@ fn xal21_benchmarks(c: &mut Criterion) {
     // Party 1: combine and verify
     {
         let p2_msg = online_sign::party2_compute_s2::<C>(&p2_presig, &message).expect("s2");
-        sign_group.bench_function("online_sign/xal21/n2_t1/party1", |b| {
+        sign_group.bench_function("online_sign/xal21/n2_t2/party1", |b| {
             b.iter(|| {
                 online_sign::party1_compute_signature::<C>(&p1_key, &p1_presig, &p2_msg, &message)
                     .expect("sig");
@@ -389,7 +389,7 @@ fn abc24_benchmarks(c: &mut Criterion) {
     for party_idx in 1..=2u16 {
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/abc24/n2_t1/party{party_idx}"),
+            format!("dkg/abc24/n2_t2/party{party_idx}"),
             &dkg_runs,
             PartyId(party_idx),
         );
@@ -425,13 +425,13 @@ fn abc24_benchmarks(c: &mut Criterion) {
     });
     per_party::bench_party_replay(
         &mut group,
-        "full_sign/abc24/n2_t1/party1",
+        "full_sign/abc24/n2_t2/party1",
         &sign_runs,
         PartyId(1),
     );
     per_party::bench_party_replay(
         &mut group,
-        "full_sign/abc24/n2_t1/party2",
+        "full_sign/abc24/n2_t2/party2",
         &sign_runs,
         PartyId(2),
     );

@@ -96,7 +96,7 @@ where
     /// # Arguments
     /// - `my_id`: this party's identifier
     /// - `all_parties`: sorted list of all participating party identifiers
-    /// - `threshold`: `t` such that `t+1` shares are needed to sign
+    /// - `threshold`: reconstruction threshold `t` (t parties needed to sign)
     /// - `jl_p_bits`: bit length parameter for JL key generation
     /// - `jl_k`: message-space parameter for JL key generation
     pub fn new(
@@ -112,11 +112,11 @@ where
         if all_parties.len() < 2 {
             return Err(TecdsaError::Other("need at least 2 parties".into()));
         }
-        if threshold < 1 {
-            return Err(TecdsaError::Other("threshold must be >= 1".into()));
+        if threshold < 2 {
+            return Err(TecdsaError::Other("threshold must be >= 2".into()));
         }
-        if threshold >= all_parties.len() as u16 {
-            return Err(TecdsaError::Other("threshold must be < n".into()));
+        if threshold > all_parties.len() as u16 {
+            return Err(TecdsaError::Other("threshold must be <= n".into()));
         }
 
         let n = all_parties.len() as u16;
@@ -129,10 +129,10 @@ where
         // 1b. Generate ZkJlModProof (proves N is well-formed for JL encryption)
         let jl_mod_proof = ZkJlModProof::prove(&jl_pk, &jl_sk, &jl_qnr, &mut rng);
 
-        // 2. Feldman VSS: split random secret with threshold (t+1)-of-n
+        // 2. Feldman VSS: split random secret with threshold t-of-n
         let x_i = C::random_scalar(&mut rng);
         let (vss_shares, vss_commitments) =
-            tecdsa_vss::feldman::split::<C>(&x_i, threshold + 1, n, &mut rng);
+            tecdsa_vss::feldman::split::<C>(&x_i, threshold, n, &mut rng);
 
         // 3. DlogProof for A_{i,0} = x_i * G
         let a_i_0 = vss_commitments[0];
@@ -576,8 +576,8 @@ mod tests {
     }
 
     #[test]
-    fn dkg_n2_t1_produces_consistent_shares() {
-        let shares = run_dkg(2, 1);
+    fn dkg_n2_t2_produces_consistent_shares() {
+        let shares = run_dkg(2, 2);
 
         assert_eq!(shares.len(), 2);
         // All parties should have the same public key
@@ -621,8 +621,8 @@ mod tests {
     }
 
     #[test]
-    fn dkg_n3_t1_produces_consistent_shares() {
-        let shares = run_dkg(3, 1);
+    fn dkg_n3_t2_produces_consistent_shares() {
+        let shares = run_dkg(3, 2);
 
         assert_eq!(shares.len(), 3);
 
@@ -640,7 +640,7 @@ mod tests {
             assert_eq!(share.jl_pks.len(), 3);
         }
 
-        // Reconstruct with any 2 of 3 shares (threshold t=1 => need t+1=2 shares)
+        // Reconstruct with any 2 of 3 shares (threshold t=2 => need t=2 shares)
         let any_two = vec![
             tecdsa_vss::shamir::Share::<k256::Secp256k1> {
                 index: 1,
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn dkg_n3_t2_threshold_reconstruction() {
-        let shares = run_dkg(3, 2);
+        let shares = run_dkg(3, 3);
 
         assert_eq!(shares.len(), 3);
 
@@ -669,7 +669,7 @@ mod tests {
         assert_eq!(shares[0].public_key, shares[1].public_key);
         assert_eq!(shares[1].public_key, shares[2].public_key);
 
-        // Reconstruct with all 3 shares (threshold t=2 => need t+1=3 shares)
+        // Reconstruct with all 3 shares (threshold t=3 => need t=3 shares)
         let all_three = vec![
             tecdsa_vss::shamir::Share::<k256::Secp256k1> {
                 index: 1,

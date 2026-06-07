@@ -285,7 +285,7 @@ fn global_idx(party: PartyId) -> usize {
 /// active signing quorum: `w_i = λ_i · x_i`, where `λ_i` is the Lagrange
 /// coefficient (evaluated at 0) for this party's point within the quorum.
 ///
-/// Summed over any quorum of `≥ t+1` signers, `Σ_i w_i = x` (the joint key), so
+/// Summed over any quorum of `≥ t` signers, `Σ_i w_i = x` (the joint key), so
 /// the additive presign/sign machinery reconstructs the correct signature for a
 /// `t`-of-`n` subset — the same mechanism used for XAL23.
 fn lagrange_weighted_share(

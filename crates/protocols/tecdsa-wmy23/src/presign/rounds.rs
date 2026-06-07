@@ -116,7 +116,7 @@ fn point_from_bytes(
 }
 
 /// Lagrange-weighted key share `hat_x_i = lambda_i * x_i` for the full party
-/// set `{1..n}` (used by the simplified all-parties presign). With `(t+1,n)`
+/// set `{1..n}` (used by the simplified all-parties presign). With `t-of-n`
 /// Shamir key shares, `sum_i hat_x_i = x` (the joint key). `my_idx` is 0-based.
 fn full_set_lagrange_weighted_share(
     my_idx: usize,
@@ -233,7 +233,7 @@ pub fn presign_round2(
     // Use our own CL public key directly from the key share
     let my_pk = &key_share.cl_pks[my_idx];
 
-    // Key shares are (t+1,n) Shamir shares; for this simplified all-parties
+    // Key shares are t-of-n Shamir shares; for this simplified all-parties
     // presign, weight by the Lagrange coefficient over the full set {1..n}.
     let hat_x_i = full_set_lagrange_weighted_share(my_idx, n, key_share);
 
@@ -866,7 +866,7 @@ pub fn drg_presign_round2(
     // Lagrange-weighted shares
     let hat_k_i = lambda_i * k_comb.combined_share;
     let hat_gamma_i = lambda_i * gamma_comb.combined_share;
-    // The signing-key share x_i is a (t+1,n) Shamir share, so it must be
+    // The signing-key share x_i is a t-of-n Shamir share, so it must be
     // Lagrange-weighted by the same lambda_i to contribute additively to x.
     let hat_x_i = lambda_i * key_share.secret_share;
 

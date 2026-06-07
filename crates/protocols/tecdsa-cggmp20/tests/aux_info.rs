@@ -17,7 +17,7 @@ impl Cggmp20SecurityParams for TestLevel {
     const KAPPA: usize = 128;
 }
 
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     (1..=n)
@@ -27,7 +27,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -35,8 +35,8 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
 }
 
 /// Run the aux-info state machines to completion using manual orchestration.
-fn run_auxinfo(n: u16, corrupted_t: u16) -> Vec<tecdsa_cggmp20::key_share::AuxInfo> {
-    let configs = make_session_configs(n, corrupted_t);
+fn run_auxinfo(n: u16, t: u16) -> Vec<tecdsa_cggmp20::key_share::AuxInfo> {
+    let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, AuxInfoMachine<TestLevel>)> = configs
@@ -92,7 +92,7 @@ fn run_auxinfo(n: u16, corrupted_t: u16) -> Vec<tecdsa_cggmp20::key_share::AuxIn
 #[test]
 #[ignore = "slow: 3-party auxinfo"]
 fn auxinfo_3_parties() {
-    let results = run_auxinfo(3, 1);
+    let results = run_auxinfo(3, 2);
 
     assert_eq!(results.len(), 3);
 
@@ -160,7 +160,7 @@ fn auxinfo_3_parties() {
 
 #[test]
 fn auxinfo_2_parties() {
-    let results = run_auxinfo(2, 1);
+    let results = run_auxinfo(2, 2);
 
     assert_eq!(results.len(), 2);
 

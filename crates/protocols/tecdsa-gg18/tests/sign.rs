@@ -25,7 +25,7 @@ type C = k256::Secp256k1;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     (1..=n)
@@ -35,7 +35,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -57,8 +57,8 @@ fn test_precomputed(rng: &mut impl rand_core::CryptoRngCore) -> PaillierPrecompu
 }
 
 /// Run keygen to produce key shares.
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Gg18KeyShare<C>> {
-    let configs = make_session_configs(n, corrupted_t);
+fn run_keygen(n: u16, t: u16) -> Vec<Gg18KeyShare<C>> {
+    let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Gg18KeygenMachine<C>)> = configs
@@ -212,7 +212,7 @@ fn run_online_sign(
 
 #[test]
 fn presign_2of3_produces_valid_presignature() {
-    let shares = run_keygen(3, 1);
+    let shares = run_keygen(3, 2);
 
     // Presign with parties [1, 2]
     let presigs = run_presign(&shares, &[1, 2]);
@@ -225,7 +225,7 @@ fn presign_2of3_produces_valid_presignature() {
 
 #[test]
 fn sign_2of3_verifies() {
-    let shares = run_keygen(3, 1);
+    let shares = run_keygen(3, 2);
     let message = test_message_digest();
 
     // Presign with parties [1, 2]
@@ -240,7 +240,7 @@ fn sign_2of3_verifies() {
 
 #[test]
 fn sign_3of5_verifies() {
-    let shares = run_keygen(5, 2);
+    let shares = run_keygen(5, 3);
     let message = test_message_digest();
 
     // Presign with parties [1, 2, 3]
@@ -257,7 +257,7 @@ fn sign_3of5_verifies() {
 fn presign_reuse_different_messages() {
     // Verify that the same keygen can produce different presignatures
     // and sign different messages
-    let shares = run_keygen(3, 1);
+    let shares = run_keygen(3, 2);
 
     let msg1 = {
         let hash = Sha256::digest(b"message one");

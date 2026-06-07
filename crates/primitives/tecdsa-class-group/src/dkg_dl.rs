@@ -213,8 +213,8 @@ pub struct DkgDlGenOutput {
 /// - `setup`: mutable CL setup (provides PRNG and CL operations).
 /// - `all_pks`: CL public keys `{ek_j}` of all `n` parties.
 /// - `n`: total number of parties.
-/// - `t`: corruption threshold. Reconstruction threshold = `t + 1`.
-///   Shamir polynomial degree = `t`.
+/// - `threshold`: reconstruction threshold (`threshold` shares needed).
+///   Polynomial degree = `threshold - 1`.
 /// - `my_index`: 0-based index of this party.
 /// - `rng`: cryptographic RNG for EC operations.
 ///
@@ -225,18 +225,18 @@ pub fn dkg_dl_gen(
     setup: &mut ClSetup,
     all_pks: &[ClHsmqkPublicKey],
     n: usize,
-    t: usize,
+    threshold: usize,
     my_index: usize,
     rng: &mut impl CryptoRngCore,
 ) -> ClResult<DkgDlGenOutput> {
     assert_eq!(all_pks.len(), n);
     assert!(my_index < n);
-    assert!(t < n);
+    assert!(threshold > 0 && threshold <= n);
 
     // Step 1: Sample chi_i and create Pedersen VSS.
-    // Reconstruction threshold = t + 1, so polynomial degree = t.
+    // Polynomial degree = threshold - 1, reconstruction needs threshold shares.
     let chi_i = k256::Secp256k1::random_scalar(rng);
-    let vss = pedersen_vss_share_dl(&chi_i, (t + 1) as u16, n as u16, rng);
+    let vss = pedersen_vss_share_dl(&chi_i, threshold as u16, n as u16, rng);
 
     // Step 2: For each recipient j, encrypt share and prove.
     let mut per_recipient = Vec::with_capacity(n);
@@ -553,11 +553,11 @@ mod tests {
     use crate::cl::ClSetup;
 
     /// Full DKG-DL protocol: Gen + GenVf + Reveal + RevealVf + Aggregate.
-    /// 3 parties, threshold t=1 (2-of-3 reconstruction).
+    /// 3 parties, threshold t=2 (2-of-3).
     #[test]
     fn dkg_dl_3_parties_full_round() {
         let n = 3;
-        let t = 1; // corruption threshold: at most 1 corrupted, 2 can reconstruct
+        let t = 2; // reconstruction threshold: 2-of-2
 
         let mut setup = ClSetup::new_secp256k1("60001").expect("setup");
 
@@ -641,7 +641,7 @@ mod tests {
     #[test]
     fn dkg_dl_share_consistency() {
         let n = 3;
-        let t = 1;
+        let t = 2; // reconstruction threshold: 2-of-2
 
         let mut setup = ClSetup::new_secp256k1("60002").expect("setup");
 
@@ -677,11 +677,11 @@ mod tests {
         }
     }
 
-    /// 2-party degenerate case (n=2, t=1).
+    /// 2-party degenerate case (n=2, t=2).
     #[test]
     fn dkg_dl_2_of_2() {
         let n = 2;
-        let t = 1;
+        let t = 2; // reconstruction threshold: 2-of-2
 
         let mut setup = ClSetup::new_secp256k1("60003").expect("setup");
 

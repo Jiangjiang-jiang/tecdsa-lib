@@ -200,21 +200,15 @@ mod tests {
     #[test]
     fn keygen_2_of_3() {
         let mut rng = rand::thread_rng();
-        let corrupted_t = 1u16; // corruption threshold: tolerate 1 corrupted, need 2 to sign
+        let t = 2u16; // reconstruction threshold: 2-of-3 signing
         let n = 3u16;
-        let reconstruction_threshold = corrupted_t + 1;
 
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
         // Create keygen machines
         let mut machines: Vec<(PartyId, Dkls23KeygenMachine<TestCurve>)> = Vec::new();
         for &pid in &all_parties {
-            let machine = Dkls23KeygenMachine::new(
-                pid,
-                all_parties.clone(),
-                reconstruction_threshold,
-                &mut rng,
-            );
+            let machine = Dkls23KeygenMachine::new(pid, all_parties.clone(), t, &mut rng);
             machines.push((pid, machine));
         }
 
@@ -265,15 +259,15 @@ mod tests {
             }
         }
 
-        // 4. Lagrange reconstruction: any (corrupted_t + 1) shares reconstruct the secret key
+        // 4. Lagrange reconstruction: any t shares reconstruct the secret key
         //    sk = sum_i lagrange_i * share_i, and sk * G == pk
         let indices: Vec<u16> = shares.iter().map(|s| s.party_index).collect();
         let reconstruction_shares: Vec<_> = shares.iter().map(|s| s.shamir_share).collect();
 
-        // Reconstruct using first reconstruction_threshold=2 parties
+        // Reconstruct using first t=2 parties
         let sk = lagrange_interpolate_at_zero::<TestCurve>(
-            &indices[..reconstruction_threshold as usize],
-            &reconstruction_shares[..reconstruction_threshold as usize],
+            &indices[..t as usize],
+            &reconstruction_shares[..t as usize],
         );
         let pk_reconstructed =
             <k256::Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * sk;
@@ -283,7 +277,7 @@ mod tests {
             "Lagrange reconstruction of first t shares should give the public key"
         );
 
-        // Reconstruct using last reconstruction_threshold=2 parties
+        // Reconstruct using last t=2 parties
         let sk2 =
             lagrange_interpolate_at_zero::<TestCurve>(&indices[1..], &reconstruction_shares[1..]);
         let pk_reconstructed2 =
@@ -298,20 +292,14 @@ mod tests {
     #[test]
     fn keygen_3_of_5() {
         let mut rng = rand::thread_rng();
-        let corrupted_t = 2u16; // corruption threshold: tolerate 2 corrupted, need 3 to sign
+        let t = 3u16; // reconstruction threshold: 3-of-5 signing
         let n = 5u16;
-        let reconstruction_threshold = corrupted_t + 1;
 
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
         let mut machines: Vec<(PartyId, Dkls23KeygenMachine<TestCurve>)> = Vec::new();
         for &pid in &all_parties {
-            let machine = Dkls23KeygenMachine::new(
-                pid,
-                all_parties.clone(),
-                reconstruction_threshold,
-                &mut rng,
-            );
+            let machine = Dkls23KeygenMachine::new(pid, all_parties.clone(), t, &mut rng);
             machines.push((pid, machine));
         }
 

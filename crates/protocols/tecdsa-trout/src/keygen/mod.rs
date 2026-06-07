@@ -36,7 +36,7 @@ use crate::{
 /// - `setup`: CL-HSM setup (shared across all parties).
 /// - `seed`: CL setup seed string (for recreating setup from key shares).
 /// - `n`: total number of parties.
-/// - `t`: threshold (t+1 parties needed to sign).
+/// - `t`: reconstruction threshold (t parties needed to sign).
 /// - `use_128bit`: whether to use 128-bit security CL params.
 /// - `rng`: cryptographic RNG.
 ///
@@ -52,7 +52,7 @@ pub fn trusted_dealer_keygen(
 ) -> TroutResult<Vec<TroutKeyShare>> {
     // 1. Generate the signing key x and split via Shamir
     let x = <k256::Secp256k1 as TecdsaCurve>::random_scalar(rng);
-    let shares = tecdsa_vss::shamir::split::<k256::Secp256k1>(&x, t + 1, n, rng);
+    let shares = tecdsa_vss::shamir::split::<k256::Secp256k1>(&x, t, n, rng);
 
     // Joint public key X = x * G
     let public_key = k256::Secp256k1::generator() * x;

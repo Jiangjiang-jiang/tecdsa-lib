@@ -6,7 +6,7 @@ use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, S
 
 type C = k256::Secp256k1;
 
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
     (0..n)
@@ -16,7 +16,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -24,8 +24,8 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
 }
 
 /// Run the LN18 keygen state machines to completion using a manual round loop.
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<tecdsa_ln18::key_share::Ln18KeyShare<C>> {
-    let configs = make_session_configs(n, corrupted_t);
+fn run_keygen(n: u16, t: u16) -> Vec<tecdsa_ln18::key_share::Ln18KeyShare<C>> {
+    let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Ln18KeygenMachine<C>)> = configs
@@ -86,7 +86,7 @@ fn run_keygen(n: u16, corrupted_t: u16) -> Vec<tecdsa_ln18::key_share::Ln18KeySh
 
 #[test]
 fn keygen_2of2() {
-    let shares = run_keygen(2, 1);
+    let shares = run_keygen(2, 2);
     assert_eq!(shares.len(), 2);
 
     // All parties agree on the public key.
@@ -141,7 +141,7 @@ fn keygen_2of2() {
 
 #[test]
 fn keygen_3of3() {
-    let shares = run_keygen(3, 2);
+    let shares = run_keygen(3, 3);
     assert_eq!(shares.len(), 3);
 
     // All parties agree on the public key.
@@ -183,7 +183,7 @@ fn keygen_3of3() {
 #[test]
 #[ignore = "slow: larger/variant test"]
 fn keygen_5of5() {
-    let shares = run_keygen(5, 4);
+    let shares = run_keygen(5, 5);
     assert_eq!(shares.len(), 5);
 
     // All parties agree on the public key.

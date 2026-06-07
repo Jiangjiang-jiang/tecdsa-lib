@@ -46,7 +46,7 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
 fn test_trout_full_sign_3_of_5() {
     let seed = "77777";
     let n = 5u16;
-    let t = 2u16; // corruption threshold: max 2 corrupted, reconstruct = t+1 = 3
+    let t = 3u16; // reconstruction threshold: 3 parties needed to sign
 
     let mut rng = rand::rngs::OsRng;
     let mut setup = ClSetup::new_secp256k1(seed).expect("CL setup");

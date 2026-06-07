@@ -19,11 +19,11 @@ const MSG: &[u8] = b"Hello, LLZ25 threshold ECDSA!";
 
 /// Run the full LLZ25 protocol: keygen + presign + sign + verify.
 ///
-/// Parameters: n=5, t=2 (corruption threshold; reconstruct = t+1 = 3), insecure CL params (p=7).
+/// Parameters: n=5, t=3 (reconstruction threshold; 3 parties needed to sign), insecure CL params (p=7).
 #[test]
 fn test_llz25_full_sign_5_of_3() {
     let n = 5u16;
-    let t = 2u16; // corruption threshold: max 2 corrupted, reconstruct = t+1 = 3
+    let t = 3u16; // reconstruction threshold: 3 parties needed to sign
 
     // -- Setup --
     let mut setup = ClSetup::new_secp256k1(SEED).expect("CL setup");
@@ -42,7 +42,7 @@ fn test_llz25_full_sign_5_of_3() {
         assert_eq!(ks.public_key, public_key, "public key mismatch");
     }
 
-    // -- Select quorum: parties 1, 3, 5 (3 parties for t+1=3) --
+    // -- Select quorum: parties 1, 3, 5 (3 parties for t=3) --
     let quorum_party_indices: Vec<usize> = vec![0, 2, 4]; // 0-based indices into key_shares
     let quorum_indices: Vec<u16> = quorum_party_indices
         .iter()
@@ -115,11 +115,11 @@ fn test_llz25_full_sign_5_of_3() {
     println!("LLZ25 5-of-3 sign OK: r={:?}", sig.r);
 }
 
-/// Test with the minimum quorum size (t+1 = 3 out of 5).
+/// Test with the minimum quorum size (t=3, 3-of-5).
 #[test]
 fn test_llz25_minimum_quorum() {
     let n = 5u16;
-    let t = 2u16;
+    let t = 3u16; // reconstruction threshold: 3 parties needed to sign
 
     let mut setup = ClSetup::new_secp256k1("67890").expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
@@ -184,7 +184,7 @@ fn test_llz25_minimum_quorum() {
 #[test]
 fn test_llz25_all_parties_sign() {
     let n = 3u16;
-    let t = 1u16; // need 2 parties
+    let t = 2u16; // reconstruction threshold: 2 parties needed to sign
 
     let mut setup = ClSetup::new_secp256k1("11111").expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
@@ -249,7 +249,7 @@ fn test_llz25_all_parties_sign() {
 #[test]
 fn test_llz25_ecdsa_verify() {
     let n = 3u16;
-    let t = 1u16;
+    let t = 2u16; // reconstruction threshold: 2 parties needed to sign
 
     let mut setup = ClSetup::new_secp256k1("22222").expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");

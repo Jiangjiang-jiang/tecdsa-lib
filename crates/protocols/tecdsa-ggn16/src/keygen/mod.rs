@@ -62,7 +62,7 @@ where
     ///
     /// * `my_id` - This party's identifier.
     /// * `all_parties` - All party identifiers (including self), in consistent order.
-    /// * `threshold` - Threshold parameter `t`: at least `t+1` parties needed.
+    /// * `threshold` - Reconstruction threshold `t`: `t` parties needed to sign.
     /// * `threshold_setup` - Shared Paillier public parameters from the trusted dealer.
     /// * `decryption_share` - This party's threshold Paillier decryption share.
     /// * `h1`, `h2`, `N_tilde` - Ring-Pedersen auxiliary parameters for ZK proofs.
@@ -217,7 +217,7 @@ mod tests {
     /// uses `DecryptionKey::from_primes` with small primes instead of the
     /// expensive `DecryptionKey::generate`.
     fn fast_trusted_dealer_setup(
-        threshold: u16,
+        corruption_threshold: u16,
         total: u16,
         rng: &mut impl CryptoRngCore,
     ) -> (ThresholdSetup, Vec<DecryptionShare>) {
@@ -251,7 +251,7 @@ mod tests {
         // Shamir share d over Z with coefficient modulus M = N * delta
         let m = &n * &delta;
         let mut coeffs = vec![d.clone()];
-        for _ in 0..threshold {
+        for _ in 0..corruption_threshold {
             coeffs.push(m.random_below_ref(rng));
         }
         let mut shares = Vec::with_capacity(total as usize);
@@ -270,7 +270,7 @@ mod tests {
             ek,
             theta,
             n: total,
-            threshold,
+            corruption_threshold,
             delta,
         };
 
@@ -299,11 +299,13 @@ mod tests {
     #[test]
     fn keygen_3_party() {
         let mut rng = rand::thread_rng();
-        let t = 1u16; // threshold
+        let t = 2u16; // reconstruction threshold: need 2 to sign
         let n = 3u16; // total parties
 
         // Step 1: Trusted dealer setup for threshold Paillier (fast, small primes)
-        let (setup, dec_shares) = fast_trusted_dealer_setup(t, n, &mut rng);
+        // trusted_dealer_setup takes corruption threshold (polynomial degree)
+        let corruption_t = t - 1;
+        let (setup, dec_shares) = fast_trusted_dealer_setup(corruption_t, n, &mut rng);
 
         // Step 2: Generate shared Ring-Pedersen parameters
         let (n_tilde, h1, h2) = generate_ring_pedersen(&mut rng);
@@ -378,8 +380,8 @@ mod tests {
             .collect();
 
         // Combine t+1 partial decryptions
-        let decrypted = combine_partials(&partials[0..((t + 1) as usize)], &setup)
-            .expect("combine should succeed");
+        let decrypted =
+            combine_partials(&partials[0..(t as usize)], &setup).expect("combine should succeed");
 
         // The decrypted value should equal the integer sum of x_i values.
         assert_eq!(
@@ -484,10 +486,12 @@ mod tests {
     #[test]
     fn keygen_2_of_2() {
         let mut rng = rand::thread_rng();
-        let t = 1u16;
+        let t = 2u16; // reconstruction threshold: both parties needed
         let n = 2u16;
 
-        let (setup, dec_shares) = fast_trusted_dealer_setup(t, n, &mut rng);
+        // trusted_dealer_setup takes corruption threshold (polynomial degree)
+        let corruption_t = t - 1;
+        let (setup, dec_shares) = fast_trusted_dealer_setup(corruption_t, n, &mut rng);
         let (n_tilde, h1, h2) = generate_ring_pedersen(&mut rng);
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 

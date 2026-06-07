@@ -26,33 +26,27 @@ use tecdsa_protocol::PartyId;
 // Helper: run keygen state machine
 // ---------------------------------------------------------------------------
 
-/// Run keygen for `n` parties with corruption threshold `corrupted_t`.
+/// Run keygen for `n` parties with reconstruction threshold `t`.
 ///
-/// Reconstruction requires `corrupted_t + 1` parties.
-fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Jtx25KeyShare> {
-    run_keygen_with_seed(n, corrupted_t, "50001", false)
+/// `t` parties are needed to sign.
+fn run_keygen(n: usize, t: u16) -> Vec<Jtx25KeyShare> {
+    run_keygen_with_seed(n, t, "50001", false)
 }
 
 fn run_keygen_with_seed(
     n: usize,
-    corrupted_t: u16,
+    t: u16,
     seed: &str,
     use_128bit_security: bool,
 ) -> Vec<Jtx25KeyShare> {
     let parties: Vec<PartyId> = (1..=n as u16).map(PartyId).collect();
-    let reconstruction_threshold = corrupted_t + 1;
 
     let machines: Vec<(PartyId, Jtx25KeygenMachine)> = parties
         .iter()
         .map(|&pid| {
-            let machine = Jtx25KeygenMachine::new(
-                pid,
-                parties.clone(),
-                reconstruction_threshold,
-                seed,
-                use_128bit_security,
-            )
-            .unwrap_or_else(|e| panic!("keygen new() failed for party {pid}: {e}"));
+            let machine =
+                Jtx25KeygenMachine::new(pid, parties.clone(), t, seed, use_128bit_security)
+                    .unwrap_or_else(|e| panic!("keygen new() failed for party {pid}: {e}"));
             (pid, machine)
         })
         .collect();
@@ -176,7 +170,7 @@ fn run_robust_online_sign(
 
 #[test]
 fn test_keygen_5_of_2() {
-    let shares = run_keygen(5, 1); // corruption threshold=1, need 2 to reconstruct
+    let shares = run_keygen(5, 2); // reconstruction threshold=2, need 2 to sign
 
     // All parties agree on joint public key.
     let pk0 = shares[0].public_key;
@@ -225,7 +219,7 @@ fn test_keygen_5_of_2() {
 
 #[test]
 fn test_keygen_3_of_2() {
-    let shares = run_keygen(3, 1); // corruption threshold=1, need 2 to reconstruct
+    let shares = run_keygen(3, 2); // reconstruction threshold=2, need 2 to sign
 
     let pk0 = shares[0].public_key;
     for share in &shares[1..] {
@@ -248,7 +242,7 @@ fn test_keygen_3_of_2() {
 
 #[test]
 fn test_keygen_128bit_3_of_2() {
-    let shares = run_keygen_with_seed(3, 1, "42042", true);
+    let shares = run_keygen_with_seed(3, 2, "42042", true);
 
     let pk0 = shares[0].public_key;
     for share in &shares[1..] {
@@ -260,9 +254,9 @@ fn test_keygen_128bit_3_of_2() {
 #[cfg(feature = "robust")]
 fn test_robust_full_protocol() {
     let n = 5;
-    let corrupted_t = 1u16; // corruption threshold
+    let t = 2u16; // reconstruction threshold
 
-    let key_shares = run_keygen(n, corrupted_t);
+    let key_shares = run_keygen(n, t);
 
     let signer_indices: Vec<usize> = (0..n).collect();
     let presignatures = run_robust_presign(&key_shares, &signer_indices);
@@ -309,9 +303,9 @@ fn test_robust_full_protocol() {
 #[cfg(feature = "robust")]
 fn test_robust_threshold_subset_signing() {
     let n = 5;
-    let corrupted_t = 1u16; // corruption threshold
+    let t = 2u16; // reconstruction threshold
 
-    let key_shares = run_keygen(n, corrupted_t);
+    let key_shares = run_keygen(n, t);
 
     let signer_indices = vec![0, 2, 4];
     let presignatures = run_robust_presign(&key_shares, &signer_indices);
@@ -444,9 +438,9 @@ fn run_online_sign(
 #[test]
 fn test_full_protocol() {
     let n = 5;
-    let corrupted_t = 1u16; // corruption threshold
+    let t = 2u16; // reconstruction threshold
 
-    let key_shares = run_keygen(n, corrupted_t);
+    let key_shares = run_keygen(n, t);
 
     let signer_indices: Vec<usize> = (0..n).collect();
     let presignatures = run_presign(&key_shares, &signer_indices);
@@ -490,9 +484,9 @@ fn test_full_protocol() {
 #[test]
 fn test_threshold_subset_signing() {
     let n = 5;
-    let corrupted_t = 1u16; // corruption threshold
+    let t = 2u16; // reconstruction threshold
 
-    let key_shares = run_keygen(n, corrupted_t);
+    let key_shares = run_keygen(n, t);
 
     let signer_indices = vec![0, 2, 4];
     let presignatures = run_presign(&key_shares, &signer_indices);

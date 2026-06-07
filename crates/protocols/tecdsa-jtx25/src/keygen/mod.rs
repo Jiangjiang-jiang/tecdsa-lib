@@ -694,16 +694,11 @@ impl Jtx25KeygenMachine {
         .map_err(|e| TecdsaError::Other(format!("pvss_distribute: {e}")))?;
 
         // --- DKG-CL Gen: paper-compliant chunk encryption + R_Blnt ---
-        // threshold parameter for DKG-CL: corruption threshold t where
-        // reconstruction needs t+1 shares. Our `state.threshold` is the
-        // reconstruction threshold, so corruption threshold = threshold - 1.
-        let dkg_cl_t = (state.threshold - 1) as usize;
-
         let dkg_cl_gen_output = dkg_cl::dkg_cl_gen_with_secret(
             &mut self.setup,
             &ordered_pks,
             n,
-            dkg_cl_t,
+            state.threshold as usize,
             my_idx,
             &state.cl_sk_bytes,
         )

@@ -37,7 +37,7 @@ where
     pub h1: Integer,
     pub h2: Integer,
     pub N_tilde: Integer,
-    /// Threshold $t$: at least $t+1$ parties needed.
+    /// Reconstruction threshold $t$: $t$ parties needed to sign.
     pub threshold: u16,
     /// Total parties $n$.
     pub total: u16,

@@ -38,7 +38,7 @@ fn test_paillier_dk(rng: &mut impl CryptoRngCore) -> DecryptionKey {
     DecryptionKey::from_primes(p, q).expect("valid primes")
 }
 
-fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
+fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
     (0..n)
@@ -48,7 +48,7 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
                 id: PartyId(i),
                 index: i,
                 total: n,
-                threshold: corrupted_t + 1,
+                threshold: t,
             },
             parties: parties.clone(),
         })
@@ -56,8 +56,8 @@ fn make_session_configs(n: u16, corrupted_t: u16) -> Vec<SessionConfig> {
 }
 
 /// Run the LN18 keygen state machines to completion.
-fn run_keygen(n: u16, corrupted_t: u16) -> Vec<Ln18KeyShare<C>> {
-    let configs = make_session_configs(n, corrupted_t);
+fn run_keygen(n: u16, t: u16) -> Vec<Ln18KeyShare<C>> {
+    let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, Ln18KeygenMachine<C>)> = configs
@@ -303,7 +303,7 @@ fn presign_2of2() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -341,7 +341,7 @@ fn presign_3of3() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -378,7 +378,7 @@ fn online_sign_2of2() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -444,7 +444,7 @@ fn online_sign_3of3() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -502,7 +502,7 @@ fn sign_2of2_verifies() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -550,7 +550,7 @@ fn sign_3of3_verifies() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -597,7 +597,7 @@ fn full_sign_8rounds_2of2() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -650,7 +650,7 @@ fn full_sign_8rounds_3of3() {
     let mut rng = Csprng::new();
     let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    let key_shares = run_keygen(n, n - 1);
+    let key_shares = run_keygen(n, n);
     let init_outputs = run_init_direct(&parties, &mut rng);
     let (dks, eks, ntilde_map) = gen_paillier_and_ntilde(&parties, &mut rng);
 
@@ -734,7 +734,7 @@ mod ot_sign_tests {
         let mut rng = Csprng::new();
         let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-        let key_shares = run_keygen(n, n - 1);
+        let key_shares = run_keygen(n, n);
         let init_outputs = run_init_direct(&parties, &mut rng);
 
         let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
@@ -760,7 +760,7 @@ mod ot_sign_tests {
         let mut rng = Csprng::new();
         let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-        let key_shares = run_keygen(n, n - 1);
+        let key_shares = run_keygen(n, n);
         let init_outputs = run_init_direct(&parties, &mut rng);
 
         let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
@@ -804,7 +804,7 @@ mod ot_sign_tests {
         let mut rng = Csprng::new();
         let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-        let key_shares = run_keygen(n, n - 1);
+        let key_shares = run_keygen(n, n);
         let init_outputs = run_init_direct(&parties, &mut rng);
 
         let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
@@ -845,7 +845,7 @@ mod ot_sign_tests {
         let mut rng = Csprng::new();
         let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-        let key_shares = run_keygen(n, n - 1);
+        let key_shares = run_keygen(n, n);
         let init_outputs = run_init_direct(&parties, &mut rng);
 
         let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
@@ -882,7 +882,7 @@ mod ot_sign_tests {
         let mut rng = Csprng::new();
         let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-        let key_shares = run_keygen(n, n - 1);
+        let key_shares = run_keygen(n, n);
         let init_outputs = run_init_direct(&parties, &mut rng);
 
         let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
@@ -925,7 +925,7 @@ mod ot_sign_tests {
         let mut rng = Csprng::new();
         let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-        let key_shares = run_keygen(n, n - 1);
+        let key_shares = run_keygen(n, n);
         let init_outputs = run_init_direct(&parties, &mut rng);
 
         let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
