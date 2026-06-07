@@ -17,9 +17,7 @@
 //! Tests: keygen -> presign -> online sign -> verify.
 
 use elliptic_curve::CurveArithmetic;
-use rug::{integer::Order, Integer};
-use tecdsa_bigint::mul_mod;
-use tecdsa_class_group::cl::{ClSetup, Qfi};
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_protocol::PartyId;
 use tecdsa_wmc24::{
     key_share::Wmc24KeyShare,
