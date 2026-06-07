@@ -11,7 +11,7 @@ use tecdsa_class_group::cl::ClSetup;
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
 use tecdsa_wmy23::{
     key_share::Wmy23KeyShare,
-    keygen::rounds::{keygen_finalize, keygen_round1, keygen_round2_bcast, keygen_round2_share},
+    keygen::Wmy23KeygenMachine,
     presign::rounds::{
         drg_presign_round1, drg_presign_round2, drg_presign_round3_bob, drg_presign_round4_finalize,
     },
@@ -43,48 +43,36 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
 ///
 /// Reconstruction requires `corrupted_t + 1` parties.
 fn run_keygen(n: usize, corrupted_t: u16, use_128bit: bool) -> Vec<Wmy23KeyShare> {
-    let mut rng = rand::thread_rng();
+    use tecdsa_protocol::PartyId;
+    use tecdsa_testkit::Orchestrator;
+
     let seed = "12345";
     let reconstruction_threshold = corrupted_t + 1;
-    let mut setup = if use_128bit {
-        ClSetup::new_secp256k1_128bit(seed).expect("CL setup")
-    } else {
-        ClSetup::new_secp256k1(seed).expect("CL setup")
-    };
+    let all_parties: Vec<PartyId> = (1..=n as u16).map(PartyId).collect();
 
-    let mut r1_states = Vec::new();
-    let mut r1_bcasts = Vec::new();
-    for i in 0..n {
-        let (s, b) = keygen_round1(
-            &mut setup,
-            seed,
-            i,
-            n as u16,
-            reconstruction_threshold,
-            use_128bit,
-            &mut rng,
-        )
-        .unwrap();
-        r1_states.push(s);
-        r1_bcasts.push(b);
-    }
-    let r2_bcasts: Vec<_> = r1_states.iter().map(keygen_round2_bcast).collect();
-
-    // Feldman VSS: deal the private shares. `shares_to[i][j]` is the VSS share
-    // party `i` sends to party `j`.
-    let shares_to: Vec<Vec<k256::Scalar>> = r1_states
+    let machines: Vec<(PartyId, Wmy23KeygenMachine)> = all_parties
         .iter()
-        .map(|s| (0..n).map(|j| keygen_round2_share(s, j)).collect())
+        .map(|&pid| {
+            (
+                pid,
+                Wmy23KeygenMachine::new(
+                    pid,
+                    all_parties.clone(),
+                    reconstruction_threshold,
+                    seed,
+                    use_128bit,
+                )
+                .expect("keygen machine"),
+            )
+        })
         .collect();
 
-    r1_states
+    Orchestrator::new(machines, 15)
+        .run()
+        .expect("keygen orchestrator")
+        .outputs
         .into_iter()
-        .enumerate()
-        .map(|(i, s)| {
-            // `received[j]` is the share party `j` sent to this party `i`.
-            let received: Vec<k256::Scalar> = (0..n).map(|j| shares_to[j][i]).collect();
-            keygen_finalize(s, &r1_bcasts, &r2_bcasts, &received, &setup).unwrap()
-        })
+        .map(|r| r.expect("keygen finish"))
         .collect()
 }
 

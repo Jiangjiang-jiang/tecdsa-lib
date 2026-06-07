@@ -77,40 +77,27 @@ pub struct Llz25KeygenMachine {
 }
 
 impl Llz25KeygenMachine {
-    /// Create a new LLZ25 DKG state machine.
+    /// Create a new LLZ25 DKG state machine from a pre-built `ClSetup`.
     ///
-    /// Immediately executes Round 1 logic:
-    /// - Run Feldman VSS on a random secret
-    /// - Prove DLog for the constant coefficient
-    /// - Hash-commit to all public data
-    /// - Queue the commitment for broadcast
+    /// This avoids recreating the expensive CL setup per party,
+    /// which is useful in benchmarks where all parties share the same
+    /// discriminant parameters.
     ///
-    /// # Arguments
-    /// - `my_id`: this party's unique identifier.
-    /// - `all_parties`: all party IDs in a consistent order.
-    /// - `threshold`: reconstruction threshold t (need t+1 to sign).
-    /// - `cl_setup_seed`: seed for CL setup.
-    /// - `use_128bit`: whether to use 128-bit security CL params.
-    /// - `pk_crs`: the NIM CRS public key (agreed upon out-of-band).
-    pub fn new(
+    /// See [`Self::new`] for the full documentation.
+    pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
         threshold: u16,
         cl_setup_seed: &str,
         use_128bit: bool,
         pk_crs: ClHsmqkPublicKey,
+        setup: ClSetup,
     ) -> tecdsa_core::Result<Self> {
         if !all_parties.contains(&my_id) {
             return Err(TecdsaError::Other("my_id not in all_parties".into()));
         }
 
         let n = all_parties.len() as u16;
-        let setup = if use_128bit {
-            ClSetup::new_secp256k1_128bit(cl_setup_seed)
-        } else {
-            ClSetup::new_secp256k1(cl_setup_seed)
-        }
-        .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 
         let mut rng = rand::rngs::OsRng;
 
@@ -175,6 +162,47 @@ impl Llz25KeygenMachine {
             output: None,
             done: false,
         })
+    }
+
+    /// Create a new LLZ25 DKG state machine.
+    ///
+    /// Immediately executes Round 1 logic:
+    /// - Run Feldman VSS on a random secret
+    /// - Prove DLog for the constant coefficient
+    /// - Hash-commit to all public data
+    /// - Queue the commitment for broadcast
+    ///
+    /// # Arguments
+    /// - `my_id`: this party's unique identifier.
+    /// - `all_parties`: all party IDs in a consistent order.
+    /// - `threshold`: reconstruction threshold t (need t+1 to sign).
+    /// - `cl_setup_seed`: seed for CL setup.
+    /// - `use_128bit`: whether to use 128-bit security CL params.
+    /// - `pk_crs`: the NIM CRS public key (agreed upon out-of-band).
+    pub fn new(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        threshold: u16,
+        cl_setup_seed: &str,
+        use_128bit: bool,
+        pk_crs: ClHsmqkPublicKey,
+    ) -> tecdsa_core::Result<Self> {
+        let setup = if use_128bit {
+            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+        } else {
+            ClSetup::new_secp256k1(cl_setup_seed)
+        }
+        .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
+
+        Self::new_with_setup(
+            my_id,
+            all_parties,
+            threshold,
+            cl_setup_seed,
+            use_128bit,
+            pk_crs,
+            setup,
+        )
     }
 
     fn n(&self) -> usize {

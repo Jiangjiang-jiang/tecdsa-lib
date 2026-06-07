@@ -15,6 +15,7 @@
 
 pub mod r_aff_com;
 pub mod r_bint;
+pub mod r_blnt;
 pub mod r_cl_dl;
 pub mod r_cl_dl_ec;
 pub mod r_cl_kwlg;

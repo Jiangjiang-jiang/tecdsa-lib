@@ -104,8 +104,8 @@ impl Llz25SignMachine {
     /// Immediately computes the partial signature and queues the broadcast.
     ///
     /// # Arguments
-    /// - `my_id`: this party's ID (0-based PartyId)
-    /// - `all_parties`: all participating party IDs (0-based)
+    /// - `my_id`: this party's ID (1-based PartyId)
+    /// - `all_parties`: all participating party IDs (1-based)
     /// - `presignature`: output of the presign phase
     /// - `msg`: the message to sign
     pub fn new(

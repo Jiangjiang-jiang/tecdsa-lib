@@ -266,26 +266,59 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_enc_pc
+    // R_enc_pc (cross-domain)
     {
+        use elliptic_curve::group::GroupEncoding;
         use tecdsa_class_group::zk::r_enc_pc::REncPcProof;
         let (r_sk, _) = setup.keygen().expect("keygen");
         let r_bytes = setup.sk_to_bytes(&r_sk).expect("r_bytes");
         let ct = setup
             .encrypt_with_r_bytes(&pk, &m_bytes, &r_bytes)
             .expect("enc");
-        let y = setup.power_of_f_bytes(&m_bytes).expect("f^m");
-        let proof =
-            REncPcProof::prove(&mut setup, &pk, &ct, &y, &m_bytes, &r_bytes).expect("prove");
+        // EC Pedersen commitment: PC = g^m * h^{m'} (m' = m for simplicity)
+        let m_scalar = {
+            use elliptic_curve::ops::Reduce;
+            let mut buf = [0u8; 32];
+            let len = m_bytes.len().min(32);
+            buf[32 - len..].copy_from_slice(&m_bytes[m_bytes.len() - len..]);
+            let uint = k256::U256::from_be_slice(&buf);
+            k256::Scalar::reduce(&uint)
+        };
+        let g_ec = k256::ProjectivePoint::GENERATOR;
+        let h_ec = <k256::Secp256k1 as tecdsa_curve::TecdsaCurve>::nums_pedersen_h();
+        let pc = g_ec * m_scalar + h_ec * m_scalar;
+        let pc_bytes = pc.to_bytes();
+        let proof = REncPcProof::prove(
+            &mut setup,
+            &pk,
+            &ct,
+            pc_bytes.as_ref(),
+            &m_bytes,
+            &m_bytes,
+            &r_bytes,
+        )
+        .expect("prove");
         assert!(
-            proof.verify(&setup, &pk, &ct, &y).expect("verify"),
+            proof
+                .verify(&setup, &pk, &ct, pc_bytes.as_ref())
+                .expect("verify"),
             "REncPcProof fixture invalid"
         );
         g.bench_function("r_enc_pc/prove", |b| {
-            b.iter(|| REncPcProof::prove(&mut setup, &pk, &ct, &y, &m_bytes, &r_bytes))
+            b.iter(|| {
+                REncPcProof::prove(
+                    &mut setup,
+                    &pk,
+                    &ct,
+                    pc_bytes.as_ref(),
+                    &m_bytes,
+                    &m_bytes,
+                    &r_bytes,
+                )
+            })
         });
         g.bench_function("r_enc_pc/verify", |b| {
-            b.iter(|| proof.verify(&setup, &pk, &ct, &y))
+            b.iter(|| proof.verify(&setup, &pk, &ct, pc_bytes.as_ref()))
         });
     }
 

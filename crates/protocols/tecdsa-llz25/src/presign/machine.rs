@@ -259,8 +259,8 @@ impl Llz25PresignMachine {
     /// Immediately runs `presign_round1` and queues the broadcast message.
     ///
     /// # Arguments
-    /// - `my_id`: this party's ID (0-based PartyId)
-    /// - `all_parties`: all participating party IDs (0-based)
+    /// - `my_id`: this party's ID (1-based PartyId)
+    /// - `all_parties`: all participating party IDs (1-based)
     /// - `key_share`: this party's key share from keygen
     /// - `quorum_indices`: 1-based party indices of the signing quorum
     /// - `my_pos`: this party's 0-based position in the quorum

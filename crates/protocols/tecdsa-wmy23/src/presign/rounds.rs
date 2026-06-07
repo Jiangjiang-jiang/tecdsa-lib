@@ -788,28 +788,28 @@ pub fn drg_presign_round2(
         // Use party i's CL public key directly from key share
         let pk_i = &key_share.cl_pks[i];
 
-        // Verify k share with full R_Enc-PC proof verification.
+        // Verify k share with full R_Enc-PC proof verification (cross-domain).
         let k_ok = drg_gen_verify(
             setup,
             pk_i,
             &r1_bcasts[i].k_commitments,
             &r1_states[i].k_gen.ciphertext,
             &r1_states[i].k_gen.proof,
-            &r1_states[i].k_gen.y_element,
+            &r1_states[i].k_gen.pc_bytes,
             &p2p.k_share,
         )?;
         if !k_ok {
             return Err(format!("DRG.GenVf: k share from party {i} failed").into());
         }
 
-        // Verify gamma share with full R_Enc-PC proof verification.
+        // Verify gamma share with full R_Enc-PC proof verification (cross-domain).
         let gamma_ok = drg_gen_verify(
             setup,
             pk_i,
             &r1_bcasts[i].gamma_commitments,
             &r1_states[i].gamma_gen.ciphertext,
             &r1_states[i].gamma_gen.proof,
-            &r1_states[i].gamma_gen.y_element,
+            &r1_states[i].gamma_gen.pc_bytes,
             &p2p.gamma_share,
         )?;
         if !gamma_ok {

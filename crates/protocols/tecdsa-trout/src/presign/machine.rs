@@ -207,8 +207,8 @@ impl TroutPresignMachine {
     /// Create a new presign state machine.
     ///
     /// # Arguments
-    /// - `my_id`: this party's ID (0-based)
-    /// - `all_parties`: all participating party IDs (0-based)
+    /// - `my_id`: this party's ID (1-based)
+    /// - `all_parties`: all participating party IDs (1-based)
     /// - `share`: this party's key share
     /// - `signing_parties_1based`: 1-based party indices of signing parties
     /// - `session_nonce`: unique nonce for this session

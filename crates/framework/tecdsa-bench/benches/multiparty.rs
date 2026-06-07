@@ -85,120 +85,6 @@ fn make_data_to_sign(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
     tecdsa_protocol::DataToSign::from_digest(scalar)
 }
 
-/// Install a trusted threshold-CL key setup into JTX25 key shares.
-///
-/// JTX25's interactive DKG emits placeholder threshold-CL material (each party
-/// keeps its own CL key and the "aggregate" is just party 1's key); the real
-/// protocol requires a shared master CL key split via delta-scaled Shamir. This
-/// mirrors the crate's integration-test `setup_threshold_cl_keys`, using the
-/// 128-bit parameters the benchmark presign/sign run with.
-fn setup_threshold_cl_keys_jtx25(
-    shares: &mut [tecdsa_jtx25::key_share::Jtx25KeyShare],
-    seed: &str,
-) {
-    use tecdsa_class_group::cl::{ClSetup, Qfi};
-
-    let n = shares.len();
-    let t = shares[0].threshold as usize;
-    let mut setup = ClSetup::new_secp256k1_128bit(seed).expect("cl setup 128");
-    let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-    let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_to_bytes");
-    let sk_shares = tecdsa_jtx25::keygen::shamir_share_delta(&mut setup, &sk_bytes, n, t)
-        .expect("shamir_share_delta");
-
-    let mut pk_share_qfis: Vec<Qfi> = Vec::with_capacity(n);
-    for share in &sk_shares {
-        pk_share_qfis.push(setup.power_of_h_bytes(share).expect("power_of_h"));
-    }
-
-    for (i, share) in shares.iter_mut().enumerate() {
-        share.cl_sk_share = sk_shares[i].clone();
-        share.cl_pk = setup.pk_from_qfi(pk_raw.elt()).expect("pk_from_qfi");
-        share.cl_pk_shares = pk_share_qfis.clone();
-        share.n_parties_dkg = n;
-    }
-}
-
-/// Install a trusted threshold-CL + threshold-ElGamal key setup into WMC24 key
-/// shares (WMC24's DKG emits placeholder material, same as JTX25). Mirrors the
-/// crate's integration-test `setup_threshold_cl_keys` at 128-bit params.
-fn setup_threshold_cl_keys_wmc24(
-    shares: &mut [tecdsa_wmc24::key_share::Wmc24KeyShare],
-    seed: &str,
-) {
-    use elliptic_curve::CurveArithmetic;
-    use num_bigint::{BigInt, BigUint};
-    use tecdsa_class_group::cl::{ClSetup, Qfi};
-
-    let n = shares.len();
-    let t = shares[0].threshold as usize;
-    let mut setup = ClSetup::new_secp256k1_128bit(seed).expect("cl setup 128");
-    let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-    let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_to_bytes");
-    let sk_shares = tecdsa_wmc24::keygen::shamir_share_delta(&mut setup, &sk_bytes, n, t)
-        .expect("shamir_share_delta");
-
-    let mut pk_share_qfis: Vec<Qfi> = Vec::with_capacity(n);
-    for share in &sk_shares {
-        let share_bi = BigInt::from(BigUint::from_bytes_be(share));
-        let (sign, abs_str) = if share_bi < BigInt::from(0) {
-            (true, (-&share_bi).to_string())
-        } else {
-            (false, share_bi.to_string())
-        };
-        let mut h_share = setup.power_of_h(&abs_str).expect("power_of_h");
-        if sign {
-            h_share.neg();
-        }
-        pk_share_qfis.push(h_share);
-    }
-
-    // Threshold ElGamal keys: share the aggregate decryption key via Shamir.
-    let master_eldk = shares
-        .iter()
-        .fold(k256::Scalar::ZERO, |acc, s| acc + s.eldk_i);
-    let master_elek =
-        <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * master_eldk;
-
-    let master_eldk_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&master_eldk);
-    let q_bytes = setup.q_bytes().expect("q_bytes");
-    let q = BigUint::from_bytes_be(&q_bytes);
-
-    let mut coeffs: Vec<BigUint> = Vec::with_capacity(t);
-    coeffs.push(BigUint::from_bytes_be(&master_eldk_bytes));
-    for _ in 1..t {
-        let (rsk, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&rsk).expect("sk_bytes");
-        coeffs.push(BigUint::from_bytes_be(&r_bytes) % &q);
-    }
-
-    let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
-    let mut elg_shares: Vec<k256::Scalar> = Vec::with_capacity(n);
-    let mut elg_pk_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
-    for i in 1..=n {
-        let x = BigUint::from(i as u64);
-        let mut val = BigUint::ZERO;
-        let mut x_pow = BigUint::from(1u32);
-        for coeff in &coeffs {
-            val = (&val + coeff * &x_pow) % &q;
-            x_pow = (&x_pow * &x) % &q;
-        }
-        let scalar = tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&val);
-        elg_pk_shares.push(g * scalar);
-        elg_shares.push(scalar);
-    }
-
-    for (i, share) in shares.iter_mut().enumerate() {
-        share.cl_sk_share = sk_shares[i].clone();
-        share.cl_pk = setup.pk_from_qfi(pk_raw.elt()).expect("pk_from_qfi");
-        share.cl_pk_shares = pk_share_qfis.clone();
-        share.n_parties_dkg = n;
-        share.eldk_i = elg_shares[i];
-        share.elek_shares = elg_pk_shares.clone();
-        share.elek = master_elek;
-    }
-}
-
 // ===========================================================================
 // CGGMP20
 // ===========================================================================
@@ -1423,6 +1309,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
+    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
     // --- DKG: one execution per sample, every party reported separately ---
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
@@ -1431,8 +1318,15 @@ fn tx25_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Tx25KeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("tx25 keygen"),
+                    Tx25KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("tx25 keygen"),
                 )
             })
             .collect();
@@ -1454,8 +1348,15 @@ fn tx25_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Tx25KeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("tx25 keygen"),
+                    Tx25KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("tx25 keygen"),
                 )
             })
             .collect();
@@ -1469,15 +1370,13 @@ fn tx25_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 (
                     pid,
                     Tx25PresignMachine::new(
                         pid,
                         signer_parties.clone(),
                         &key_shares[(s - 1) as usize],
-                        setup,
+                        cl_setup.clone(),
                     )
                     .expect("tx25 presign"),
                 )
@@ -1502,15 +1401,13 @@ fn tx25_benchmarks(c: &mut Criterion) {
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
-                    let setup =
-                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                     (
                         pid,
                         Tx25PresignMachine::new(
                             pid,
                             signer_parties.clone(),
                             &key_shares[(s - 1) as usize],
-                            setup,
+                            cl_setup.clone(),
                         )
                         .expect("tx25 presign"),
                     )
@@ -1565,6 +1462,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
+    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
     // --- DKG: one execution per sample, every party reported separately ---
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
@@ -1573,8 +1471,15 @@ fn jtx25_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Jtx25KeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("jtx25 keygen"),
+                    Jtx25KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("jtx25 keygen"),
                 )
             })
             .collect();
@@ -1590,27 +1495,27 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     }
 
     // Untimed setup
-    let mut key_shares = {
+    let key_shares = {
         let machines: Vec<_> = all_parties
             .iter()
             .map(|&pid| {
                 (
                     pid,
-                    Jtx25KeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("jtx25 keygen"),
+                    Jtx25KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("jtx25 keygen"),
                 )
             })
             .collect();
-        Orchestrator::new(machines, 10)
-            .run()
-            .expect("orch")
-            .into_iter()
-            .map(|r| r.unwrap())
-            .collect::<Vec<_>>()
+        let (outputs, _) = per_party::run_timed_without_init(machines, 10);
+        outputs.into_iter().map(|r| r.unwrap()).collect::<Vec<_>>()
     };
-    // JTX25's DKG emits placeholder threshold-CL material; install the real
-    // trusted threshold-CL setup before presign (mirrors the integration test).
-    setup_threshold_cl_keys_jtx25(&mut key_shares, seed);
 
     // --- Presign ---
     let presign_runs = per_party::precompute_runs(SAMPLES, || {
@@ -1618,15 +1523,13 @@ fn jtx25_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 (
                     pid,
                     Jtx25PresignMachine::new(
                         pid,
                         signer_parties.clone(),
                         &key_shares[(s - 1) as usize],
-                        setup,
+                        cl_setup.clone(),
                     )
                     .expect("jtx25 presign"),
                 )
@@ -1650,15 +1553,13 @@ fn jtx25_benchmarks(c: &mut Criterion) {
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
-                    let setup =
-                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                     (
                         pid,
                         Jtx25PresignMachine::new(
                             pid,
                             signer_parties.clone(),
                             &key_shares[(s - 1) as usize],
-                            setup,
+                            cl_setup.clone(),
                         )
                         .expect("jtx25 presign"),
                     )
@@ -1724,6 +1625,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
     // presign machine Lagrange-weights each signer's Shamir share, so the 2-of-3
     // subset below reconstructs the key.
     let msg_data = make_data_to_sign(b"benchmark message");
+    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
     // --- DKG: one execution per sample, every party reported separately ---
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
@@ -1732,8 +1634,15 @@ fn wmy23_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Wmy23KeygenMachine::new(pid, all_parties.clone(), t + 1, seed, true)
-                        .expect("wmy23 keygen"),
+                    Wmy23KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t + 1,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("wmy23 keygen"),
                 )
             })
             .collect();
@@ -1755,8 +1664,15 @@ fn wmy23_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Wmy23KeygenMachine::new(pid, all_parties.clone(), t + 1, seed, true)
-                        .expect("wmy23 keygen"),
+                    Wmy23KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t + 1,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("wmy23 keygen"),
                 )
             })
             .collect();
@@ -1775,13 +1691,11 @@ fn wmy23_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let config = PresignConfig {
                     key_share: key_shares[(s - 1) as usize].clone(),
                     my_id: pid,
                     signer_parties: signer_parties.clone(),
-                    cl_setup: setup,
+                    cl_setup: cl_setup.clone(),
                 };
                 (
                     pid,
@@ -1807,13 +1721,11 @@ fn wmy23_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 let config = PresignConfig {
                     key_share: key_shares[(s - 1) as usize].clone(),
                     my_id: pid,
                     signer_parties: signer_parties.clone(),
-                    cl_setup: setup,
+                    cl_setup: cl_setup.clone(),
                 };
                 (
                     pid,
@@ -1876,6 +1788,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
+    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
     // --- DKG: one execution per sample, every party reported separately ---
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
@@ -1884,8 +1797,15 @@ fn wmc24_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Wmc24KeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("wmc24 keygen"),
+                    Wmc24KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("wmc24 keygen"),
                 )
             })
             .collect();
@@ -1901,43 +1821,40 @@ fn wmc24_benchmarks(c: &mut Criterion) {
     }
 
     // Untimed setup
-    let mut key_shares = {
+    let key_shares = {
         let machines: Vec<_> = all_parties
             .iter()
             .map(|&pid| {
                 (
                     pid,
-                    Wmc24KeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("wmc24 keygen"),
+                    Wmc24KeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("wmc24 keygen"),
                 )
             })
             .collect();
-        Orchestrator::new(machines, 10)
-            .run()
-            .expect("orch")
-            .into_iter()
-            .map(|r| r.unwrap())
-            .collect::<Vec<_>>()
+        let (outputs, _) = per_party::run_timed_without_init(machines, 10);
+        outputs.into_iter().map(|r| r.unwrap()).collect::<Vec<_>>()
     };
-    // WMC24's DKG emits placeholder threshold-CL/ElGamal material; install the
-    // real trusted setup before presign (mirrors the integration test).
-    setup_threshold_cl_keys_wmc24(&mut key_shares, seed);
-
     // --- Presign ---
     let presign_runs = per_party::precompute_runs(SAMPLES, || {
         let machines: Vec<_> = signers
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                 (
                     pid,
                     Wmc24PresignMachine::new(
                         pid,
                         signer_parties.clone(),
                         &key_shares[(s - 1) as usize],
-                        setup,
+                        cl_setup.clone(),
                     )
                     .expect("wmc24 presign"),
                 )
@@ -1961,15 +1878,13 @@ fn wmc24_benchmarks(c: &mut Criterion) {
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
-                    let setup =
-                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
                     (
                         pid,
                         Wmc24PresignMachine::new(
                             pid,
                             signer_parties.clone(),
                             &key_shares[(s - 1) as usize],
-                            setup,
+                            cl_setup.clone(),
                         )
                         .expect("wmc24 presign"),
                     )
@@ -2032,11 +1947,11 @@ fn llz25_benchmarks(c: &mut Criterion) {
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
     let quorum_indices: Vec<u16> = signers.to_vec();
+    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
     // CRS key
     let pk_crs = {
-        let mut tmp =
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+        let mut tmp = cl_setup.clone();
         let (_, pk) = tmp.keygen().expect("crs keygen");
         pk
     };
@@ -2048,13 +1963,14 @@ fn llz25_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Llz25KeygenMachine::new(
+                    Llz25KeygenMachine::new_with_setup(
                         pid,
                         all_parties.clone(),
                         t,
                         seed,
                         true,
                         pk_crs.clone(),
+                        cl_setup.clone(),
                     )
                     .expect("llz25 keygen"),
                 )
@@ -2078,13 +1994,14 @@ fn llz25_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    Llz25KeygenMachine::new(
+                    Llz25KeygenMachine::new_with_setup(
                         pid,
                         all_parties.clone(),
                         t,
                         seed,
                         true,
                         pk_crs.clone(),
+                        cl_setup.clone(),
                     )
                     .expect("llz25 keygen"),
                 )
@@ -2105,13 +2022,6 @@ fn llz25_benchmarks(c: &mut Criterion) {
             .enumerate()
             .map(|(pos, &s)| {
                 let pid = PartyId(s);
-                let local_setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
-                let (_, local_pk_crs) = {
-                    let mut tmp =
-                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
-                    tmp.keygen().expect("crs")
-                };
                 (
                     pid,
                     Llz25PresignMachine::new(
@@ -2120,8 +2030,8 @@ fn llz25_benchmarks(c: &mut Criterion) {
                         key_shares[(s - 1) as usize].clone(),
                         quorum_indices.clone(),
                         pos,
-                        local_setup,
-                        local_pk_crs,
+                        cl_setup.clone(),
+                        pk_crs.clone(),
                     )
                     .expect("llz25 presign"),
                 )
@@ -2146,13 +2056,6 @@ fn llz25_benchmarks(c: &mut Criterion) {
             .enumerate()
             .map(|(pos, &s)| {
                 let pid = PartyId(s);
-                let local_setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
-                let (_, local_pk_crs) = {
-                    let mut tmp =
-                        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
-                    tmp.keygen().expect("crs")
-                };
                 (
                     pid,
                     Llz25PresignMachine::new(
@@ -2161,8 +2064,8 @@ fn llz25_benchmarks(c: &mut Criterion) {
                         key_shares[(s - 1) as usize].clone(),
                         quorum_indices.clone(),
                         pos,
-                        local_setup,
-                        local_pk_crs,
+                        cl_setup.clone(),
+                        pk_crs.clone(),
                     )
                     .expect("llz25 presign"),
                 )
@@ -2219,6 +2122,7 @@ fn trout_benchmarks(c: &mut Criterion) {
     let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     let message = make_data_to_sign(b"benchmark message");
     let signing_1based: Vec<u16> = signers.to_vec();
+    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
     // --- DKG: one execution per sample, every party reported separately ---
     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
@@ -2227,8 +2131,15 @@ fn trout_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    TroutKeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("trout keygen"),
+                    TroutKeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("trout keygen"),
                 )
             })
             .collect();
@@ -2250,8 +2161,15 @@ fn trout_benchmarks(c: &mut Criterion) {
             .map(|&pid| {
                 (
                     pid,
-                    TroutKeygenMachine::new(pid, all_parties.clone(), t, seed, true)
-                        .expect("trout keygen"),
+                    TroutKeygenMachine::new_with_setup(
+                        pid,
+                        all_parties.clone(),
+                        t,
+                        seed,
+                        true,
+                        cl_setup.clone(),
+                    )
+                    .expect("trout keygen"),
                 )
             })
             .collect();
@@ -2269,8 +2187,7 @@ fn trout_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let local_setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+                let local_setup = cl_setup.clone();
                 let share = key_shares[(s - 1) as usize].clone();
                 // Reconstruct the *joint* CL public key (Y_cl = ∏ Y_k) that
                 // keygen encrypted x_i under; a fresh single-party key never
@@ -2312,8 +2229,7 @@ fn trout_benchmarks(c: &mut Criterion) {
             .iter()
             .map(|&s| {
                 let pid = PartyId(s);
-                let local_setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+                let local_setup = cl_setup.clone();
                 let share = key_shares[(s - 1) as usize].clone();
                 // Reconstruct the *joint* CL public key (Y_cl = ∏ Y_k) that
                 // keygen encrypted x_i under; a fresh single-party key never
@@ -2350,8 +2266,7 @@ fn trout_benchmarks(c: &mut Criterion) {
             .zip(presigs)
             .map(|(&s, presig)| {
                 let pid = PartyId(s);
-                let local_setup =
-                    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+                let local_setup = cl_setup.clone();
                 let share = &key_shares[(s - 1) as usize];
                 // Same joint-CL-key reconstruction as presign (see above).
                 let (pa, pb, pc) = &share.cl_pk_abc;

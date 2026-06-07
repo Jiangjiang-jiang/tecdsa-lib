@@ -12,12 +12,16 @@
 pub mod batch;
 pub mod cl;
 pub mod class_group;
+pub mod coin_flip;
 pub mod ddlog;
+pub mod dkg_cl;
+pub mod dkg_dl;
 pub mod drg;
 pub mod matrix;
 pub mod mta;
 pub mod mta_broadcast;
 pub mod nim;
+pub mod pedersen_cl;
 pub mod pvss;
 pub mod pvss_share;
 pub mod scaled_decrypt;

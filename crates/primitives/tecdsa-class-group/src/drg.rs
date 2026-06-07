@@ -30,7 +30,7 @@
 
 #![allow(non_snake_case)]
 
-use elliptic_curve::CurveArithmetic;
+use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 
@@ -180,7 +180,7 @@ pub fn pedersen_vss_verify(
 /// Output of DRG.Gen for one party.
 ///
 /// Contains the secret, its Pedersen VSS shares, CL ciphertext of the secret,
-/// and the R_Enc-PC proof linking the ciphertext to the F-subgroup commitment.
+/// and the R_Enc-PC proof linking the ciphertext to the EC Pedersen commitment.
 pub struct DrgGenOutput {
     /// The secret `chi_i` sampled by this party.
     pub secret: k256::Scalar,
@@ -194,10 +194,10 @@ pub struct DrgGenOutput {
     pub ciphertext: ClCiphertext,
     /// Encryption randomness `rho_i` (decimal string, needed for proof).
     pub enc_randomness: Vec<u8>,
-    /// F-subgroup element `Y = f^{chi_i}`, broadcast alongside the proof
-    /// for verifiers to check R_Enc-PC.
-    pub y_element: Qfi,
-    /// R_Enc-PC proof: proves `c_{chi_i}` encrypts `chi_i` and `f^{chi_i} = Y`.
+    /// Compressed EC Pedersen commitment `PC = g^{chi_i} * h^{chi'_i}` (33 bytes).
+    /// This is `commitments[0]` serialised. Broadcast for R_Enc-PC verification.
+    pub pc_bytes: Vec<u8>,
+    /// R_Enc-PC proof: proves `c_{chi_i}` encrypts the same `chi_i` committed in PC.
     pub proof: REncPcProof,
 }
 
@@ -216,9 +216,9 @@ pub struct DrgCombOutput {
     pub ciphertext: ClCiphertext,
     /// Encryption randomness for the combined ciphertext.
     pub enc_randomness: Vec<u8>,
-    /// F-subgroup element `Y = f^{x_i}`, broadcast alongside the proof.
-    pub y_element: Qfi,
-    /// R_Enc-PC proof linking `c_{x_i}` to `f^{x_i}`.
+    /// Compressed EC Pedersen commitment bytes (33 bytes). Broadcast for R_Enc-PC verification.
+    pub pc_bytes: Vec<u8>,
+    /// R_Enc-PC proof linking `c_{x_i}` to the EC Pedersen commitment.
     pub proof: REncPcProof,
 }
 
@@ -298,10 +298,21 @@ pub fn drg_gen_with_secret(
 
     let ciphertext = setup.encrypt_with_r_bytes(pk, &chi_bytes, &r_bytes)?;
 
-    // Step 4: Prove R_Enc-PC: ct encrypts chi_i and f^{chi_i} = Y
-    // The F-subgroup element Y = f^{chi_i} serves as the public check value.
-    let y = setup.power_of_f_bytes(&chi_bytes)?;
-    let proof = REncPcProof::prove(setup, pk, &ciphertext, &y, &chi_bytes, &r_bytes)?;
+    // Step 4: Prove R_Enc-PC (cross-domain): ct encrypts chi_i AND
+    // PC = g^{chi_i} * h^{chi'_i} uses the same chi_i.
+    // PC = commitments[0] = g^{a_0} * h^{a'_0} = g^{chi_i} * h^{chi'_i}.
+    let pc = vss_output.commitments[0];
+    let pc_bytes = pc.to_bytes().to_vec();
+    let chi_prime_bytes = scalar_to_bytes::<k256::Secp256k1>(&vss_output.secret_randomness);
+    let proof = REncPcProof::prove(
+        setup,
+        pk,
+        &ciphertext,
+        &pc_bytes,
+        &chi_bytes,
+        &chi_prime_bytes,
+        &r_bytes,
+    )?;
 
     Ok(DrgGenOutput {
         secret: vss_output.secret,
@@ -310,7 +321,7 @@ pub fn drg_gen_with_secret(
         commitments: vss_output.commitments,
         ciphertext,
         enc_randomness: r_bytes,
-        y_element: y,
+        pc_bytes,
         proof,
     })
 }
@@ -337,7 +348,7 @@ pub fn drg_gen_verify(
     commitments: &[k256::ProjectivePoint],
     ciphertext: &ClCiphertext,
     proof: &REncPcProof,
-    y: &Qfi,
+    pc_bytes: &[u8],
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // Step 1: Verify Pedersen VSS share
@@ -345,11 +356,10 @@ pub fn drg_gen_verify(
         return Ok(false);
     }
 
-    // Step 2: Verify R_Enc-PC proof with explicit Y = f^{chi_i}.
-    // WMY23 Figure 2, GenVf, Step 2: the verifier receives
-    // (c_{chi_i}, F_{chi_i}, Y_{chi_i}, pi_{chi_i}) and checks that
-    // the ciphertext encrypts a value whose F-subgroup image is Y.
-    let proof_ok = proof.verify(setup, pk_i, ciphertext, y)?;
+    // Step 2: Verify R_Enc-PC proof (cross-domain).
+    // The proof binds the CL ciphertext plaintext to the EC Pedersen
+    // commitment `PC = commitments[0]`, ensuring the same chi_i.
+    let proof_ok = proof.verify(setup, pk_i, ciphertext, pc_bytes)?;
     Ok(proof_ok)
 }
 
@@ -377,7 +387,7 @@ pub fn drg_gen_verify_full(
     commitments: &[k256::ProjectivePoint],
     ciphertext: &ClCiphertext,
     proof: &REncPcProof,
-    y: &Qfi,
+    pc_bytes: &[u8],
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // Step 1: Verify Pedersen VSS share
@@ -385,8 +395,8 @@ pub fn drg_gen_verify_full(
         return Ok(false);
     }
 
-    // Step 2: Verify R_Enc-PC proof
-    let proof_ok = proof.verify(setup, pk_i, ciphertext, y)?;
+    // Step 2: Verify R_Enc-PC proof (cross-domain)
+    let proof_ok = proof.verify(setup, pk_i, ciphertext, pc_bytes)?;
     Ok(proof_ok)
 }
 
@@ -452,9 +462,19 @@ pub fn drg_comb(
     let r_bytes = setup.sk_to_bytes(&r_sk)?;
     let ciphertext = setup.encrypt_with_r_bytes(pk, &x_i_bytes, &r_bytes)?;
 
-    // Step 5: Prove R_Enc-PC
-    let y = setup.power_of_f_bytes(&x_i_bytes)?;
-    let proof = REncPcProof::prove(setup, pk, &ciphertext, &y, &x_i_bytes, &r_bytes)?;
+    // Step 5: Prove R_Enc-PC (cross-domain)
+    // PC = pedersen_commitment = g^{x_i} * h^{x'_i}
+    let pc_bytes = pedersen_commitment.to_bytes().to_vec();
+    let x_prime_i_bytes = scalar_to_bytes::<k256::Secp256k1>(&combined_randomness);
+    let proof = REncPcProof::prove(
+        setup,
+        pk,
+        &ciphertext,
+        &pc_bytes,
+        &x_i_bytes,
+        &x_prime_i_bytes,
+        &r_bytes,
+    )?;
 
     Ok(DrgCombOutput {
         combined_share,
@@ -462,7 +482,7 @@ pub fn drg_comb(
         pedersen_commitment,
         ciphertext,
         enc_randomness: r_bytes,
-        y_element: y,
+        pc_bytes,
         proof,
     })
 }
@@ -606,7 +626,7 @@ pub fn drg_full_run(
                 &gen_outputs[i].commitments,
                 &gen_outputs[i].ciphertext,
                 &gen_outputs[i].proof,
-                &gen_outputs[i].y_element,
+                &gen_outputs[i].pc_bytes,
                 share_for_j,
             )?;
             if !ok {
@@ -786,7 +806,7 @@ mod tests {
             &gen.commitments,
             &gen.ciphertext,
             &gen.proof,
-            &gen.y_element,
+            &gen.pc_bytes,
             &gen.vss_shares[0], // share for party 1 (index 0 in vec)
         )
         .expect("drg_gen_verify");
@@ -812,7 +832,7 @@ mod tests {
             &gen.commitments,
             &gen.ciphertext,
             &gen.proof,
-            &gen.y_element,
+            &gen.pc_bytes,
             &bad_share,
         )
         .expect("drg_gen_verify");
@@ -954,10 +974,10 @@ mod tests {
 
         let gen = drg_gen(&mut setup, &keys[0].1, 1, 2, &mut rng).expect("drg_gen");
 
-        // Proof is always generated; verify using the stored Y element.
+        // Proof is always generated; verify using the stored PC bytes.
         let ok = gen
             .proof
-            .verify(&setup, &keys[0].1, &gen.ciphertext, &gen.y_element)
+            .verify(&setup, &keys[0].1, &gen.ciphertext, &gen.pc_bytes)
             .expect("verify");
         assert!(ok, "R_Enc-PC proof should verify for honest generation");
     }
@@ -978,7 +998,7 @@ mod tests {
             &gen.commitments,
             &gen.ciphertext,
             &gen.proof,
-            &gen.y_element,
+            &gen.pc_bytes,
             &gen.vss_shares[0],
         )
         .expect("verify_full");

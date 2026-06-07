@@ -11,6 +11,7 @@ use super::mpz::Mpz;
 
 /// A seedable RNG used for key generation, encryption randomness and prime
 /// generation.
+#[derive(Clone)]
 pub struct RandGen {
     state: RandState<'static>,
 }

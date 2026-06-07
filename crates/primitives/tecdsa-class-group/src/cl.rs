@@ -34,6 +34,7 @@ pub enum ClError {
 pub type ClResult<T> = Result<T, ClError>;
 
 /// Initialised CL-HSMqk class-group scheme.
+#[derive(Clone)]
 pub struct ClSetup {
     rng: RandGen,
     cl: CL_HSMqk,

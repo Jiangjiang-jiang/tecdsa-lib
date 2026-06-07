@@ -17,7 +17,7 @@ set -euo pipefail
 #   - ~10-30 min depending on hardware (Paillier/CL proofs are heavy)
 #
 # Profile B parameters (lambda=128, secp256k1):
-#   Paillier N=3072, CL |DeltaK|~1827, JL N=3072/k=256, NTilde=3072
+#   Paillier N=3072, CL |DeltaK|~1827, JL N=3360/k=712, NTilde=3072
 #
 # ZK proof coverage (110 benchmark functions, 55 proof relations):
 #   curve       5/5   Dlog, Ddh, Egexp, Prod, Re

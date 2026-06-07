@@ -27,6 +27,21 @@ pub struct RGdecClProof {
 }
 
 impl RGdecClProof {
+    /// Constructs from raw parts (for deserialization).
+    pub fn from_parts(t1: Qfi, t2: Qfi, z: Vec<u8>, e: Vec<u8>) -> Self {
+        Self { t1, t2, z, e }
+    }
+
+    /// Extracts raw parts (for serialization).
+    pub fn to_parts(&self) -> (Qfi, Qfi, Vec<u8>, Vec<u8>) {
+        (
+            self.t1.clone(),
+            self.t2.clone(),
+            self.z.clone(),
+            self.e.clone(),
+        )
+    }
+
     /// Proves correct generalized decryption.
     ///
     /// `dec_result` is the decrypted element `D = c2 * (c1^{sk})^{-1}`.

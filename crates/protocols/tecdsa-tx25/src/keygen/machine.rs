@@ -37,30 +37,20 @@ pub struct Tx25KeygenMachine {
 }
 
 impl Tx25KeygenMachine {
-    /// Create a new TX25 keygen state machine.
+    /// Create a new TX25 keygen state machine from a pre-built `ClSetup`.
     ///
-    /// Immediately runs Round 1 (CL key generation + R_key proof) and
-    /// queues the Round 1 broadcast for all other parties.
+    /// This avoids recreating the expensive CL setup per party,
+    /// which is useful in benchmarks where all parties share the same
+    /// discriminant parameters.
     ///
-    /// # Arguments
-    ///
-    /// * `my_id` - This party's identifier.
-    /// * `all_parties` - All party identifiers in consistent order.
-    /// * `threshold` - Reconstruction threshold `t` (need `t+1` to sign).
-    /// * `cl_setup_seed` - Seed for CL setup creation.
-    /// * `use_128bit_security` - If true, use 128-bit security CL parameters
-    ///   (1828-bit discriminant).  If false, use insecure p=7 parameters
-    ///   (for fast testing only).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if CL key generation or proof generation fails.
-    pub fn new(
+    /// See [`Self::new`] for the full documentation.
+    pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
         threshold: u16,
         cl_setup_seed: &str,
         use_128bit_security: bool,
+        mut setup: ClSetup,
     ) -> tecdsa_core::Result<Self> {
         if !all_parties.contains(&my_id) {
             return Err(TecdsaError::Other("my_id not found in all_parties".into()));
@@ -78,14 +68,6 @@ impl Tx25KeygenMachine {
                 "TX25 requires n >= 2t-1 for honest majority: n={n}, t={threshold}"
             )));
         }
-
-        // Create CL setup.
-        let mut setup = if use_128bit_security {
-            ClSetup::new_secp256k1_128bit(cl_setup_seed)
-        } else {
-            ClSetup::new_secp256k1(cl_setup_seed)
-        }
-        .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 
         // Step 1: Generate CL keypair.
         let (cl_sk_raw, cl_pk_raw) = setup
@@ -137,6 +119,48 @@ impl Tx25KeygenMachine {
             setup,
             all_parties,
         })
+    }
+
+    /// Create a new TX25 keygen state machine.
+    ///
+    /// Immediately runs Round 1 (CL key generation + R_key proof) and
+    /// queues the Round 1 broadcast for all other parties.
+    ///
+    /// # Arguments
+    ///
+    /// * `my_id` - This party's identifier.
+    /// * `all_parties` - All party identifiers in consistent order.
+    /// * `threshold` - Reconstruction threshold `t` (need `t+1` to sign).
+    /// * `cl_setup_seed` - Seed for CL setup creation.
+    /// * `use_128bit_security` - If true, use 128-bit security CL parameters
+    ///   (1828-bit discriminant).  If false, use insecure p=7 parameters
+    ///   (for fast testing only).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if CL key generation or proof generation fails.
+    pub fn new(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        threshold: u16,
+        cl_setup_seed: &str,
+        use_128bit_security: bool,
+    ) -> tecdsa_core::Result<Self> {
+        let setup = if use_128bit_security {
+            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+        } else {
+            ClSetup::new_secp256k1(cl_setup_seed)
+        }
+        .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
+
+        Self::new_with_setup(
+            my_id,
+            all_parties,
+            threshold,
+            cl_setup_seed,
+            use_128bit_security,
+            setup,
+        )
     }
 
     /// Returns the number of other parties (excluding self) whose messages
