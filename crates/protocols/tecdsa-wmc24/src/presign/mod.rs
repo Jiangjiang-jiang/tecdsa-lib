@@ -28,7 +28,16 @@ use std::collections::BTreeMap;
 
 pub use machine::Wmc24PresignMachine;
 pub use msg::Wmc24PresignMsg;
+use tecdsa_core::TecdsaError;
+use tecdsa_protocol::PartyId;
 use zeroize::Zeroize;
+
+pub(crate) fn party_id_to_dkg_idx(pid: PartyId) -> tecdsa_core::Result<usize> {
+    pid.0
+        .checked_sub(1)
+        .map(|v| v as usize)
+        .ok_or_else(|| TecdsaError::Other("invalid PartyId(0): expected 1-based".into()))
+}
 
 // ---------------------------------------------------------------------------
 // Presignature output

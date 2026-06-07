@@ -49,7 +49,7 @@ impl Wmc24PresignMachine {
 
         let mut cl_pk_share_abcs: BTreeMap<u16, QfiAbc> = BTreeMap::new();
         for (dkg_idx, qfi) in key_share.cl_pk_shares.iter().enumerate() {
-            let pid = dkg_idx as u16;
+            let pid = (dkg_idx + 1) as u16;
             let data = qfi.to_bytes();
             cl_pk_share_abcs.insert(pid, QfiAbc { data });
         }
@@ -262,12 +262,12 @@ impl StateMachine for Wmc24PresignMachine {
                         .ok_or_else(|| TecdsaError::Other(format!("party {from} not found")))?;
 
                     let party_ids_1based: Vec<u16> =
-                        state.all_parties.iter().map(|p| p.0 + 1).collect();
+                        state.all_parties.iter().map(|p| p.0).collect();
                     let lagrange_coeffs =
                         tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
                     let lambda_j = lagrange_coeffs[from_idx];
 
-                    let from_dkg_idx = from.0 as usize;
+                    let from_dkg_idx = super::party_id_to_dkg_idx(from)?;
                     let x_j_lambda_point = self.key_mat.public_shares[from_dkg_idx] * lambda_j;
 
                     let dl_cl_x_ok = pi_dl_cl_x

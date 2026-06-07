@@ -131,7 +131,8 @@ impl Wmc24OnlineSignMachine {
             .map_err(|e| TecdsaError::Other(format!("ct_from sig: {e}")))?;
 
         // Partial decrypt c_sig.
-        let my_party_index = presignature.party_index as usize + 1;
+        // party_index is 1-based (matches PartyId convention and t-CL evaluation points).
+        let my_party_index = presignature.party_index as usize;
         let sk_share = &presignature.cl_sk_share;
 
         let my_pk_abc = presignature

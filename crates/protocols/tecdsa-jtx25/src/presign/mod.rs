@@ -78,6 +78,17 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
+// PartyId → 0-based DKG index helper
+// ---------------------------------------------------------------------------
+
+fn party_id_to_dkg_idx(pid: PartyId) -> tecdsa_core::Result<usize> {
+    pid.0
+        .checked_sub(1)
+        .map(|v| v as usize)
+        .ok_or_else(|| TecdsaError::Other("invalid PartyId(0): expected 1-based".into()))
+}
+
+// ---------------------------------------------------------------------------
 // Presignature output
 // ---------------------------------------------------------------------------
 
@@ -348,9 +359,12 @@ impl Jtx25PresignMachine {
         let pk_elt = &key_share.cl_pk.elt();
         let cl_pk_bytes = { pk_elt.to_bytes() };
 
+        // Build CL PK shares map with 1-based keys matching PartyId convention.
+        // key_share.cl_pk_shares is indexed by DKG order (0..n), and PartyId(i)
+        // uses i = 1..=n in presign/sign, so the map key = dkg_idx + 1 = PartyId.0.
         let mut cl_pk_share_bytes: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
         for (dkg_idx, qfi) in key_share.cl_pk_shares.iter().enumerate() {
-            let pid = dkg_idx as u16;
+            let pid = (dkg_idx + 1) as u16;
             let data = qfi.to_bytes();
             cl_pk_share_bytes.insert(pid, data);
         }
@@ -486,7 +500,7 @@ impl Jtx25PresignMachine {
             .position(|p| *p == state.my_id)
             .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
 
-        let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0 + 1).collect();
+        let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0).collect();
 
         // Preserve commitments for verification in Round 2.
         let r1_commitments: BTreeMap<PartyId, [u8; 32]> = state
@@ -818,12 +832,12 @@ impl StateMachine for Jtx25PresignMachine {
                         .ok_or_else(|| TecdsaError::Other(format!("party {from} not found")))?;
 
                     let party_ids_1based: Vec<u16> =
-                        state.all_parties.iter().map(|p| p.0 + 1).collect();
+                        state.all_parties.iter().map(|p| p.0).collect();
                     let lagrange_coeffs =
                         tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
                     let lambda_j = lagrange_coeffs[from_idx];
 
-                    let from_dkg_idx = from.0 as usize;
+                    let from_dkg_idx = party_id_to_dkg_idx(from)?;
                     let x_j_lambda_point = self.key_mat.public_shares[from_dkg_idx] * lambda_j;
 
                     let dl_cl_x_ok = pi_dl_cl_x

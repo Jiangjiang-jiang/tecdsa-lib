@@ -18,7 +18,7 @@
 //! Robust tests require `--features robust`.
 
 use elliptic_curve::CurveArithmetic;
-use tecdsa_class_group::cl::{ClSetup, Qfi};
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_jtx25::{key_share::Jtx25KeyShare, keygen::Jtx25KeygenMachine};
 use tecdsa_protocol::PartyId;
 
@@ -30,8 +30,16 @@ use tecdsa_protocol::PartyId;
 ///
 /// Reconstruction requires `corrupted_t + 1` parties.
 fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Jtx25KeyShare> {
-    let seed = "50001";
-    let parties: Vec<PartyId> = (0..n as u16).map(PartyId).collect();
+    run_keygen_with_seed(n, corrupted_t, "50001", false)
+}
+
+fn run_keygen_with_seed(
+    n: usize,
+    corrupted_t: u16,
+    seed: &str,
+    use_128bit_security: bool,
+) -> Vec<Jtx25KeyShare> {
+    let parties: Vec<PartyId> = (1..=n as u16).map(PartyId).collect();
     let reconstruction_threshold = corrupted_t + 1;
 
     let machines: Vec<(PartyId, Jtx25KeygenMachine)> = parties
@@ -42,7 +50,7 @@ fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Jtx25KeyShare> {
                 parties.clone(),
                 reconstruction_threshold,
                 seed,
-                false,
+                use_128bit_security,
             )
             .unwrap_or_else(|e| panic!("keygen new() failed for party {pid}: {e}"));
             (pid, machine)
@@ -57,50 +65,6 @@ fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Jtx25KeyShare> {
         .enumerate()
         .map(|(i, r)| r.unwrap_or_else(|e| panic!("party {i} keygen finish() failed: {e}")))
         .collect()
-}
-
-// ---------------------------------------------------------------------------
-// Helper: set up threshold CL keys for the key shares
-// ---------------------------------------------------------------------------
-
-/// Given keygen outputs (which have individual CL keys), replace the CL key
-/// material with proper threshold CL key shares.
-///
-/// This implements the "trusted setup" approach: generate a master CL keypair,
-/// share the secret key using delta-scaled Shamir, and distribute the shares.
-fn setup_threshold_cl_keys(shares: &mut [Jtx25KeyShare], seed: &str) {
-    let n = shares.len();
-    let t = shares[0].threshold as usize;
-
-    let mut setup = ClSetup::new_secp256k1(seed).expect("ClSetup");
-
-    // Generate master CL keypair.
-    let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-    let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_to_bytes");
-
-    // Share the secret key using delta-scaled Shamir.
-    let sk_shares = tecdsa_jtx25::keygen::shamir_share_delta(&mut setup, &sk_bytes, n, t)
-        .expect("shamir_share_delta");
-
-    // Compute per-party public key shares: pk_i = h^{sk_i}.
-    let mut pk_share_qfis: Vec<Qfi> = Vec::with_capacity(n);
-    for share in &sk_shares {
-        // For negative shares (which can happen with random coefficients),
-        // we need to handle the sign properly.
-        // The share is a signed integer string. We need to compute h^share.
-        // If share is negative, h^share = (h^|share|)^{-1}.
-        // share bytes are unsigned big-endian; compute h^share directly.
-        let pk_share = setup.power_of_h_bytes(share).expect("power_of_h");
-        pk_share_qfis.push(pk_share);
-    }
-
-    // Update each key share with the threshold CL material.
-    for (i, share) in shares.iter_mut().enumerate() {
-        share.cl_sk_share = sk_shares[i].clone();
-        share.cl_pk = setup.pk_from_qfi(pk_raw.elt()).expect("pk_from_qfi");
-        share.cl_pk_shares = pk_share_qfis.clone();
-        share.n_parties_dkg = n;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -120,14 +84,14 @@ fn run_robust_presign(
     let seed = &key_shares[0].cl_setup_seed;
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
-        .map(|&i| PartyId(key_shares[i].party_index - 1))
+        .map(|&i| PartyId(key_shares[i].party_index))
         .collect();
 
     let mut machines: Vec<(PartyId, Jtx25RobustPresignMachine)> = Vec::new();
 
     for &idx in signer_indices {
         let share = &key_shares[idx];
-        let pid = PartyId(share.party_index - 1);
+        let pid = PartyId(share.party_index);
         let setup = if share.use_128bit_security {
             ClSetup::new_secp256k1_128bit(seed).expect("ClSetup 128")
         } else {
@@ -167,7 +131,7 @@ fn run_robust_online_sign(
 ) -> Vec<tecdsa_protocol::Signature<k256::Secp256k1>> {
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
-        .map(|&i| PartyId(key_shares[i].party_index - 1))
+        .map(|&i| PartyId(key_shares[i].party_index))
         .collect();
     let public_key = key_shares[0].public_key;
 
@@ -175,7 +139,7 @@ fn run_robust_online_sign(
 
     for (pi, presig) in presignatures.into_iter().enumerate() {
         let idx = signer_indices[pi];
-        let pid = PartyId(key_shares[idx].party_index - 1);
+        let pid = PartyId(key_shares[idx].party_index);
 
         let machine = Jtx25RobustOnlineSignMachine::new(
             pid,
@@ -283,14 +247,22 @@ fn test_keygen_3_of_2() {
 }
 
 #[test]
+fn test_keygen_128bit_3_of_2() {
+    let shares = run_keygen_with_seed(3, 1, "42042", true);
+
+    let pk0 = shares[0].public_key;
+    for share in &shares[1..] {
+        assert_eq!(pk0, share.public_key);
+    }
+}
+
+#[test]
 #[cfg(feature = "robust")]
 fn test_robust_full_protocol() {
     let n = 5;
     let corrupted_t = 1u16; // corruption threshold
-    let seed = "50001";
 
-    let mut key_shares = run_keygen(n, corrupted_t);
-    setup_threshold_cl_keys(&mut key_shares, seed);
+    let key_shares = run_keygen(n, corrupted_t);
 
     let signer_indices: Vec<usize> = (0..n).collect();
     let presignatures = run_robust_presign(&key_shares, &signer_indices);
@@ -338,10 +310,8 @@ fn test_robust_full_protocol() {
 fn test_robust_threshold_subset_signing() {
     let n = 5;
     let corrupted_t = 1u16; // corruption threshold
-    let seed = "50002";
 
-    let mut key_shares = run_keygen(n, corrupted_t);
-    setup_threshold_cl_keys(&mut key_shares, seed);
+    let key_shares = run_keygen(n, corrupted_t);
 
     let signer_indices = vec![0, 2, 4];
     let presignatures = run_robust_presign(&key_shares, &signer_indices);
@@ -390,14 +360,14 @@ fn run_presign(key_shares: &[Jtx25KeyShare], signer_indices: &[usize]) -> Vec<Jt
     let seed = &key_shares[0].cl_setup_seed;
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
-        .map(|&i| PartyId(key_shares[i].party_index - 1))
+        .map(|&i| PartyId(key_shares[i].party_index))
         .collect();
 
     let mut machines: Vec<(PartyId, Jtx25PresignMachine)> = Vec::new();
 
     for &idx in signer_indices {
         let share = &key_shares[idx];
-        let pid = PartyId(share.party_index - 1);
+        let pid = PartyId(share.party_index);
         let setup = if share.use_128bit_security {
             ClSetup::new_secp256k1_128bit(seed).expect("ClSetup 128")
         } else {
@@ -432,7 +402,7 @@ fn run_online_sign(
 ) -> Vec<tecdsa_protocol::Signature<k256::Secp256k1>> {
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
-        .map(|&i| PartyId(key_shares[i].party_index - 1))
+        .map(|&i| PartyId(key_shares[i].party_index))
         .collect();
     let public_key = key_shares[0].public_key;
 
@@ -440,7 +410,7 @@ fn run_online_sign(
 
     for (pi, presig) in presignatures.into_iter().enumerate() {
         let idx = signer_indices[pi];
-        let pid = PartyId(key_shares[idx].party_index - 1);
+        let pid = PartyId(key_shares[idx].party_index);
 
         let machine =
             Jtx25OnlineSignMachine::new(pid, signer_parties.clone(), presig, message, public_key)
@@ -475,10 +445,8 @@ fn run_online_sign(
 fn test_full_protocol() {
     let n = 5;
     let corrupted_t = 1u16; // corruption threshold
-    let seed = "60001";
 
-    let mut key_shares = run_keygen(n, corrupted_t);
-    setup_threshold_cl_keys(&mut key_shares, seed);
+    let key_shares = run_keygen(n, corrupted_t);
 
     let signer_indices: Vec<usize> = (0..n).collect();
     let presignatures = run_presign(&key_shares, &signer_indices);
@@ -523,10 +491,8 @@ fn test_full_protocol() {
 fn test_threshold_subset_signing() {
     let n = 5;
     let corrupted_t = 1u16; // corruption threshold
-    let seed = "60002";
 
-    let mut key_shares = run_keygen(n, corrupted_t);
-    setup_threshold_cl_keys(&mut key_shares, seed);
+    let key_shares = run_keygen(n, corrupted_t);
 
     let signer_indices = vec![0, 2, 4];
     let presignatures = run_presign(&key_shares, &signer_indices);

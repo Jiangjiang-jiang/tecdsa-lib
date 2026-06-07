@@ -17,8 +17,7 @@
 //! Tests: keygen -> presign -> online sign -> verify.
 
 use elliptic_curve::CurveArithmetic;
-use num_bigint::{BigInt, BigUint};
-use tecdsa_class_group::cl::{ClSetup, Qfi};
+use tecdsa_class_group::cl::ClSetup;
 use tecdsa_protocol::PartyId;
 use tecdsa_wmc24::{
     key_share::Wmc24KeyShare,
@@ -35,8 +34,16 @@ use tecdsa_wmc24::{
 ///
 /// Reconstruction requires `corrupted_t + 1` parties.
 fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Wmc24KeyShare> {
-    let seed = "60001";
-    let parties: Vec<PartyId> = (0..n as u16).map(PartyId).collect();
+    run_keygen_with_seed(n, corrupted_t, "60001", false)
+}
+
+fn run_keygen_with_seed(
+    n: usize,
+    corrupted_t: u16,
+    seed: &str,
+    use_128bit_security: bool,
+) -> Vec<Wmc24KeyShare> {
+    let parties: Vec<PartyId> = (1..=n as u16).map(PartyId).collect();
     let reconstruction_threshold = corrupted_t + 1;
 
     let machines: Vec<(PartyId, Wmc24KeygenMachine)> = parties
@@ -47,7 +54,7 @@ fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Wmc24KeyShare> {
                 parties.clone(),
                 reconstruction_threshold,
                 seed,
-                false,
+                use_128bit_security,
             )
             .unwrap_or_else(|e| panic!("keygen new() failed for party {pid}: {e}"));
             (pid, machine)
@@ -65,94 +72,6 @@ fn run_keygen(n: usize, corrupted_t: u16) -> Vec<Wmc24KeyShare> {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: set up threshold CL keys for the key shares
-// ---------------------------------------------------------------------------
-
-fn setup_threshold_cl_keys(shares: &mut [Wmc24KeyShare], seed: &str) {
-    let n = shares.len();
-    let t = shares[0].threshold as usize;
-
-    let mut setup = ClSetup::new_secp256k1(seed).expect("ClSetup");
-
-    let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-    let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_to_bytes");
-
-    let sk_shares = tecdsa_wmc24::keygen::shamir_share_delta(&mut setup, &sk_bytes, n, t)
-        .expect("shamir_share_delta");
-
-    let mut pk_share_qfis: Vec<Qfi> = Vec::with_capacity(n);
-    for share in &sk_shares {
-        let share_bi = BigInt::from(BigUint::from_bytes_be(share));
-        let (sign, abs_str) = if share_bi < BigInt::from(0) {
-            let abs = (-&share_bi).to_string();
-            (true, abs)
-        } else {
-            (false, share_bi.to_string())
-        };
-
-        let mut h_share = setup.power_of_h(&abs_str).expect("power_of_h");
-        let pk_share = if sign {
-            h_share.neg();
-            h_share
-        } else {
-            h_share
-        };
-        pk_share_qfis.push(pk_share);
-    }
-
-    // Also set up threshold ElGamal keys with Shamir sharing.
-    // Generate a master ElGamal key and distribute using Shamir.
-    let master_eldk = shares
-        .iter()
-        .fold(k256::Scalar::ZERO, |acc, s| acc + s.eldk_i);
-    let master_elek =
-        <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * master_eldk;
-
-    // Create Shamir shares of master_eldk (standard polynomial sharing mod q).
-    let master_eldk_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&master_eldk);
-    let q_bytes = setup.q_bytes().expect("q_bytes");
-    let q = num_bigint::BigUint::from_bytes_be(&q_bytes);
-
-    // Generate a random t-1 degree polynomial with constant term = master_eldk.
-    let mut coeffs: Vec<num_bigint::BigUint> = Vec::with_capacity(t);
-    coeffs.push(num_bigint::BigUint::from_bytes_be(&master_eldk_bytes));
-    for _ in 1..t {
-        let (rsk, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&rsk).expect("sk_bytes");
-        let r_val = num_bigint::BigUint::from_bytes_be(&r_bytes);
-        coeffs.push(r_val % &q);
-    }
-
-    // Evaluate polynomial at i = 1, 2, ..., n (mod q).
-    let mut elg_shares: Vec<k256::Scalar> = Vec::with_capacity(n);
-    let mut elg_pk_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
-    let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
-    for i in 1..=n {
-        let x = num_bigint::BigUint::from(i as u64);
-        let mut val = num_bigint::BigUint::ZERO;
-        let mut x_pow = num_bigint::BigUint::from(1u32);
-        for coeff in &coeffs {
-            val = (&val + coeff * &x_pow) % &q;
-            x_pow = (&x_pow * &x) % &q;
-        }
-        let scalar = tecdsa_curve::conv::biguint_to_scalar::<k256::Secp256k1>(&val);
-        elg_pk_shares.push(g * scalar);
-        elg_shares.push(scalar);
-    }
-
-    for (i, share) in shares.iter_mut().enumerate() {
-        share.cl_sk_share = sk_shares[i].clone();
-        share.cl_pk = setup.pk_from_qfi(pk_raw.elt()).expect("pk_from_qfi");
-        share.cl_pk_shares = pk_share_qfis.clone();
-        share.n_parties_dkg = n;
-        // Set threshold ElGamal keys.
-        share.eldk_i = elg_shares[i];
-        share.elek_shares = elg_pk_shares.clone();
-        share.elek = master_elek;
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Helper: run presign state machine
 // ---------------------------------------------------------------------------
 
@@ -160,14 +79,14 @@ fn run_presign(key_shares: &[Wmc24KeyShare], signer_indices: &[usize]) -> Vec<Wm
     let seed = &key_shares[0].cl_setup_seed;
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
-        .map(|&i| PartyId(key_shares[i].party_index - 1))
+        .map(|&i| PartyId(key_shares[i].party_index))
         .collect();
 
     let mut machines: Vec<(PartyId, Wmc24PresignMachine)> = Vec::new();
 
     for &idx in signer_indices {
         let share = &key_shares[idx];
-        let pid = PartyId(share.party_index - 1);
+        let pid = PartyId(share.party_index);
         let setup = if share.use_128bit_security {
             ClSetup::new_secp256k1_128bit(seed).expect("ClSetup 128")
         } else {
@@ -206,7 +125,7 @@ fn run_online_sign(
 ) -> Vec<tecdsa_protocol::Signature<k256::Secp256k1>> {
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
-        .map(|&i| PartyId(key_shares[i].party_index - 1))
+        .map(|&i| PartyId(key_shares[i].party_index))
         .collect();
     let public_key = key_shares[0].public_key;
 
@@ -214,7 +133,7 @@ fn run_online_sign(
 
     for (pi, presig) in presignatures.into_iter().enumerate() {
         let idx = signer_indices[pi];
-        let pid = PartyId(key_shares[idx].party_index - 1);
+        let pid = PartyId(key_shares[idx].party_index);
 
         let machine =
             Wmc24OnlineSignMachine::new(pid, signer_parties.clone(), presig, message, public_key)
@@ -287,27 +206,57 @@ fn test_keygen_5_of_2() {
         );
     }
 
-    // Verify elek = sum(elek_j).
-    let elek_sum = shares[0].elek_shares.iter().fold(
-        <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY,
-        |acc, p| acc + *p,
+    // Verify elek = Lagrange interpolation of elek_shares (Shamir polynomial evaluation shares).
+    let n = shares.len();
+    let indices: Vec<u16> = (1..=n as u16).collect();
+    let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
+    let elek_interpolated = shares[0]
+        .elek_shares
+        .iter()
+        .zip(lagrange_coeffs.iter())
+        .fold(
+            <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY,
+            |acc, (p, l)| acc + *p * l,
+        );
+    assert_eq!(
+        elek0, elek_interpolated,
+        "elek must equal Lagrange interpolation of elek_shares"
     );
-    assert_eq!(elek0, elek_sum, "elek must equal sum of elek_shares");
+
+    // Verify each party's elek_share = eldk_i * G.
+    for share in &shares {
+        let my_idx = (share.party_index - 1) as usize;
+        let expected =
+            <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * share.eldk_i;
+        assert_eq!(
+            share.elek_shares[my_idx], expected,
+            "elek_share[{}] must match eldk_i * G",
+            share.party_index
+        );
+    }
+}
+
+#[test]
+fn test_keygen_128bit_3_of_2() {
+    let shares = run_keygen_with_seed(3, 1, "42042", true);
+
+    let pk0 = shares[0].public_key;
+    let elek0 = shares[0].elek;
+    for share in &shares[1..] {
+        assert_eq!(pk0, share.public_key);
+        assert_eq!(elek0, share.elek);
+    }
 }
 
 #[test]
 fn test_full_protocol_keygen_presign_sign() {
     let n = 5;
     let corrupted_t = 1u16; // corruption threshold
-    let seed = "60001";
 
-    // Step 1: Keygen.
-    let mut key_shares = run_keygen(n, corrupted_t);
+    // Step 1: Keygen (now produces proper Shamir ElGamal shares natively).
+    let key_shares = run_keygen(n, corrupted_t);
 
-    // Step 2: Set up threshold CL keys.
-    setup_threshold_cl_keys(&mut key_shares, seed);
-
-    // Step 3: Presign with all 5 parties.
+    // Step 2: Presign with all 5 parties.
     let signer_indices: Vec<usize> = (0..n).collect();
     let presignatures = run_presign(&key_shares, &signer_indices);
 
@@ -356,10 +305,8 @@ fn test_threshold_subset_signing() {
     // n=5, corruption t=1, sign with parties {0, 2, 4} (a subset of t+1=2 or more).
     let n = 5;
     let corrupted_t = 1u16; // corruption threshold
-    let seed = "60001";
 
-    let mut key_shares = run_keygen(n, corrupted_t);
-    setup_threshold_cl_keys(&mut key_shares, seed);
+    let key_shares = run_keygen(n, corrupted_t);
 
     let signer_indices = vec![0, 2, 4];
     let presignatures = run_presign(&key_shares, &signer_indices);

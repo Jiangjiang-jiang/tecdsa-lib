@@ -201,11 +201,19 @@ pub(crate) fn copy_ct(setup: &ClSetup, ct: &ClCiphertext) -> Result<ClCiphertext
 #[cfg(feature = "robust")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerREncPcProof {
-    pub t1: SerializedQfi,
-    pub t2: SerializedQfi,
-    pub s: SerializedQfi,
-    pub u1: Vec<u8>,
-    pub u2: Vec<u8>,
+    /// Compressed EC Pedersen commitment randomness R_PC (33 bytes).
+    pub r_pc_bytes: Vec<u8>,
+    /// CL commitment R_c0 = h^{a3}.
+    pub r_c0: SerializedQfi,
+    /// CL commitment R_c1 = f^{a1} * ek^{a3}.
+    pub r_c1: SerializedQfi,
+    /// Response z1 for chi (shared between EC and CL checks).
+    pub z1: Vec<u8>,
+    /// Response z2 for chi'.
+    pub z2: Vec<u8>,
+    /// Response z3 for r (unbounded).
+    pub z3: Vec<u8>,
+    /// Fiat-Shamir challenge.
     pub e: Vec<u8>,
 }
 
@@ -213,21 +221,23 @@ pub(crate) struct SerREncPcProof {
 impl SerREncPcProof {
     pub fn from_proof(proof: &REncPcProof) -> Result<Self, String> {
         Ok(Self {
-            t1: SerializedQfi::from_qfi(&proof.t1)?,
-            t2: SerializedQfi::from_qfi(&proof.t2)?,
-            s: SerializedQfi::from_qfi(&proof.s)?,
-            u1: proof.u1.clone(),
-            u2: proof.u2.clone(),
+            r_pc_bytes: proof.r_pc_bytes.clone(),
+            r_c0: SerializedQfi::from_qfi(&proof.r_c0)?,
+            r_c1: SerializedQfi::from_qfi(&proof.r_c1)?,
+            z1: proof.z1.clone(),
+            z2: proof.z2.clone(),
+            z3: proof.z3.clone(),
             e: proof.e.clone(),
         })
     }
     pub fn to_proof(&self) -> Result<REncPcProof, String> {
         Ok(REncPcProof {
-            t1: self.t1.to_qfi()?,
-            t2: self.t2.to_qfi()?,
-            s: self.s.to_qfi()?,
-            u1: self.u1.clone(),
-            u2: self.u2.clone(),
+            r_pc_bytes: self.r_pc_bytes.clone(),
+            r_c0: self.r_c0.to_qfi()?,
+            r_c1: self.r_c1.to_qfi()?,
+            z1: self.z1.clone(),
+            z2: self.z2.clone(),
+            z3: self.z3.clone(),
             e: self.e.clone(),
         })
     }

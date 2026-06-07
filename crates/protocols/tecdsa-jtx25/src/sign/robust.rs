@@ -173,7 +173,7 @@ impl Jtx25RobustOnlineSignMachine {
             .pk_from_qfi(&cl_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("cl_pk from_qfi: {e}")))?;
 
-        // Reconstruct per-party CL PK shares.
+        // Reconstruct per-party CL PK shares (1-based keys matching PartyId.0).
         let mut cl_pk_shares: BTreeMap<u16, ClPublicKey> = BTreeMap::new();
         for (&pid, bytes) in &presignature.cl_pk_share_bytes {
             let qfi = Qfi::from_bytes(bytes);
@@ -330,8 +330,8 @@ impl Jtx25RobustOnlineSignMachine {
         // --- Partial decryption ---
         // party_index for t-CL partial decryption is 1-based (matching
         // the Shamir evaluation points in shamir_share_delta).
-        // presignature.party_index is PartyId.0 (0-based), so add 1.
-        let my_party_index = presignature.party_index as usize + 1;
+        // presignature.party_index is PartyId.0 (already 1-based).
+        let my_party_index = presignature.party_index as usize;
         let sk_share = &presignature.cl_sk_share;
 
         // Build PK share for proof.

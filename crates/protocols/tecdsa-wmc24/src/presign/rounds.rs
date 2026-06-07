@@ -160,7 +160,7 @@ pub(crate) fn transition_r1_to_r2(
     setup: &mut ClSetup,
     key_mat: &KeyMaterial,
 ) -> tecdsa_core::Result<Round2State> {
-    let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0 + 1).collect();
+    let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0).collect();
 
     // Compute k_bar = sum of all k_bar_j (homomorphic sum).
     let mut k_bar: Option<ClCiphertext> = None;
@@ -383,7 +383,7 @@ pub(crate) fn transition_r2_to_r3(
     // Statement: (G, D_gamma.c0, elek_i, pd_elg_i) is a DDH tuple.
     // Witness: eldk_i such that elek_i = eldk_i * G AND pd_elg_i = eldk_i * D_gamma.c0.
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
-    let my_dkg_idx = state.my_id.0 as usize;
+    let my_dkg_idx = super::party_id_to_dkg_idx(state.my_id)?;
     let elek_i = key_mat.elek_shares[my_dkg_idx];
     let ddh_stmt = DdhStatement::<k256::Secp256k1> {
         g,
@@ -395,7 +395,8 @@ pub(crate) fn transition_r2_to_r3(
     let pi_part_dec_elg = DdhProof::prove(&ddh_stmt, &ddh_wit, &mut rand::thread_rng());
 
     // Partial decrypt gk_bar: pd_cl_i = t-CL.PartDec.
-    let my_party_index = state.my_id.0 as usize + 1;
+    // PartyId.0 is 1-based, matching t-CL evaluation points.
+    let my_party_index = state.my_id.0 as usize;
     let (gk_c1, _) = setup
         .ct_components(&gk_bar)
         .map_err(|e| TecdsaError::Other(format!("gk_bar comp: {e}")))?;
@@ -473,7 +474,7 @@ pub(crate) fn finalize(
 
     // 1. g^gamma = ElGamal final decrypt of D_gamma.
     // ElGamal key shares use Shamir sharing: need Lagrange coefficients.
-    let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0 + 1).collect();
+    let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0).collect();
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
 
     let mut pd_elg_pairs: Vec<(k256::Scalar, k256::ProjectivePoint)> = Vec::new();

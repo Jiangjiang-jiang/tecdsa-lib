@@ -171,7 +171,7 @@ impl Jtx25OnlineSignMachine {
             .pk_from_qfi(&cl_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("cl_pk from_qfi: {e}")))?;
 
-        // Reconstruct per-party CL PK shares.
+        // Reconstruct per-party CL PK shares (1-based keys matching PartyId.0).
         let mut cl_pk_shares: BTreeMap<u16, ClPublicKey> = BTreeMap::new();
         for (&pid, bytes) in &presignature.cl_pk_share_bytes {
             let qfi = Qfi::from_bytes(bytes);
@@ -290,7 +290,8 @@ impl Jtx25OnlineSignMachine {
         }
 
         // --- Partial decryption ---
-        let my_party_index = presignature.party_index as usize + 1;
+        // party_index is 1-based (matches PartyId convention and t-CL evaluation points).
+        let my_party_index = presignature.party_index as usize;
         let sk_share = &presignature.cl_sk_share;
 
         let my_pk_data = presignature
