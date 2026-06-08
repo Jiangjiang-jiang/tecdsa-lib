@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! One-shot protocol timing.
 //!
-//! Runs each protocol phase (keygen, presign, sign) once and prints TSV rows
-//! with per-party active time from the Orchestrator timing infrastructure.
+//! Runs each protocol phase (keygen, presign, sign) once per swept `(n, t)`
+//! configuration and prints TSV rows from the Orchestrator timing
+//! infrastructure: a `/wall` row for the whole orchestrated run plus the active
+//! time of the first participating party (party 1). The protocol always runs
+//! with all `n` parties, but per-party times are near-symmetric so only one is
+//! reported.
 //!
 //! Covers: MtA primitives, multi-party (CGGMP20, DKLs23, GG18),
 //! and two-party (Lin17, KGG24, XAL21, ABC24) protocols.
+//!
+//! The swept `(n, t)` configurations are read from the environment (see
+//! [`tecdsa_bench::config`]): DKG uses `TECDSA_BENCH_DKG_CONFIGS`
+//! (default `3:3,7:7,11:11,15:15,20:20`); presign/sign use `TECDSA_BENCH_SIGN_N`
+//! (default `20`) parties with thresholds `TECDSA_BENCH_SIGN_THRESHOLDS`
+//! (default `2,3,7,11,15,20`), signing quorum parties `1..=t`. LN18 is currently
+//! excluded.
 //!
 //! Format: name<TAB>elapsed_ns<TAB>elapsed_human
 
@@ -17,7 +28,7 @@ use std::{
 use elliptic_curve::{ops::Reduce, PrimeField};
 use k256::Secp256k1;
 use sha2::{Digest, Sha256};
-use tecdsa_bench::per_party;
+use tecdsa_bench::{config, per_party};
 use tecdsa_protocol::{DataToSign, PartyId, PartyInfo, SessionConfig, SessionId};
 
 type C = Secp256k1;
@@ -106,7 +117,7 @@ fn main() {
     run_group("dkls23", dkls23_once);
     run_group("gg18", gg18_once);
     run_group("ggn16", ggn16_once);
-    run_group("ln18", ln18_once);
+    // run_group("ln18", ln18_once);  // excluded for now (see `ln18_once`)
     run_group("tx25", tx25_once);
     run_group("jtx25", jtx25_once);
     run_group("wmy23", wmy23_once);
@@ -310,102 +321,160 @@ fn cggmp20_once() {
         security_level::SecurityLevel128, sign::types::PartialSignature,
     };
 
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG
-    let keygen_out = time_once("cggmp20/dkg/n3_t2/wall", || {
-        let configs = make_session_configs(n, t);
-        let builders: Vec<_> = configs
-            .iter()
-            .map(|cfg| {
-                let cfg = cfg.clone();
-                let pid = cfg.local_party.id;
-                (pid, move || {
-                    let mut rng = tecdsa_core::Csprng::new();
-                    Cggmp20KeygenMachine::<C>::new(&cfg, &mut rng)
+    // DKG: sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let keygen_out = time_once(&format!("cggmp20/dkg/n{n}_t{t}/wall"), || {
+            let configs = make_session_configs(n, t);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Cggmp20KeygenMachine::<C>::new(&cfg, &mut rng)
+                    })
                 })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    let core_shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("cggmp20/dkg/n3_t2", pid, timing.total_active());
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(
+                &format!("cggmp20/dkg/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 
-    // AuxInfo
-    let aux_out = time_once("cggmp20/aux_info/n3/wall", || {
-        let configs = make_session_configs(n, 2);
-        let builders: Vec<_> = configs
-            .iter()
-            .map(|cfg| {
-                let cfg = cfg.clone();
-                let pid = cfg.local_party.id;
-                (pid, move || {
-                    let mut rng = tecdsa_core::Csprng::new();
-                    AuxInfoMachine::<SecurityLevel128>::new(&cfg, &mut rng)
+    // AuxInfo: depends only on n; sweep the distinct DKG party counts.
+    let mut aux_ns: Vec<u16> = config::dkg_configs().into_iter().map(|(n, _)| n).collect();
+    aux_ns.sort_unstable();
+    aux_ns.dedup();
+    for n in aux_ns {
+        let aux_out = time_once(&format!("cggmp20/aux_info/n{n}/wall"), || {
+            // Threshold is irrelevant to aux info; use a valid value (t = n).
+            let configs = make_session_configs(n, n);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        AuxInfoMachine::<SecurityLevel128>::new(&cfg, &mut rng)
+                    })
                 })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    let aux_infos: Vec<Arc<_>> = aux_out
-        .0
-        .into_iter()
-        .map(|r| Arc::new(r.unwrap()))
-        .collect();
-    for (&pid, timing) in &aux_out.1 {
-        print_timing("cggmp20/aux_info/n3", pid, timing.total_active());
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        for (&pid, timing) in aux_out.1.iter().take(1) {
+            print_timing(
+                &format!("cggmp20/aux_info/n{n}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 
-    // Presign
-    let presign_out = time_once("cggmp20/presign/n3_t2/wall", || {
-        let signer_configs = make_signer_configs(&signers, n, t);
-        let builders: Vec<_> = signers
-            .iter()
-            .enumerate()
-            .map(|(idx, &signer_1based)| {
-                let pid = PartyId(signer_1based);
-                let cfg = signer_configs[idx].clone();
-                let core_share = core_shares[(signer_1based - 1) as usize].clone();
-                let aux = Arc::clone(&aux_infos[(signer_1based - 1) as usize]);
-                let signers_clone = signers.to_vec();
-                (pid, move || {
-                    let mut rng = tecdsa_core::Csprng::new();
-                    Cggmp20PresignMachine::<C>::with_security::<SecurityLevel128>(
-                        &cfg,
-                        &core_share,
-                        &aux,
-                        &signers_clone,
-                        &mut rng,
-                    )
-                })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("cggmp20/presign/n3_t2", pid, timing.total_active());
-    }
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
 
-    // Online sign
-    let public_key = &core_shares[0].public_key;
-    for (idx, &signer) in signers.iter().enumerate() {
-        let name = format!("cggmp20/online_sign/n3_t2/party{signer}/partial_sign");
-        time_once(&name, || presigs[idx].0.partial_sign(&message));
+        // Untimed setup: key shares + aux info at (n, t) (DKG/aux timed above).
+        let core_shares: Vec<_> = {
+            let configs = make_session_configs(n, t);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Cggmp20KeygenMachine::<C>::new(&cfg, &mut rng)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let aux_infos: Vec<Arc<_>> = {
+            let configs = make_session_configs(n, n);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        AuxInfoMachine::<SecurityLevel128>::new(&cfg, &mut rng)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+                .0
+                .into_iter()
+                .map(|r| Arc::new(r.unwrap()))
+                .collect()
+        };
+
+        // Presign
+        let presign_out = time_once(&format!("cggmp20/presign/n{n}_t{t}/wall"), || {
+            let kg_t = core_shares[0].vss_setup.threshold;
+            let signer_configs = make_signer_configs(&signers, n, kg_t);
+            let builders: Vec<_> = signers
+                .iter()
+                .enumerate()
+                .map(|(idx, &signer_1based)| {
+                    let pid = PartyId(signer_1based);
+                    let cfg = signer_configs[idx].clone();
+                    let core_share = core_shares[(signer_1based - 1) as usize].clone();
+                    let aux = Arc::clone(&aux_infos[(signer_1based - 1) as usize]);
+                    let signers_clone = signers.clone();
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Cggmp20PresignMachine::<C>::with_security::<SecurityLevel128>(
+                            &cfg,
+                            &core_share,
+                            &aux,
+                            &signers_clone,
+                            &mut rng,
+                        )
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("cggmp20/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Online sign
+        let public_key = &core_shares[0].public_key;
+        for (idx, &signer) in signers.iter().enumerate().take(1) {
+            let name = format!("cggmp20/online_sign/n{n}_t{t}/party{signer}/partial_sign");
+            time_once(&name, || presigs[idx].0.partial_sign(&message));
+        }
+        let partials: Vec<_> = presigs
+            .iter()
+            .map(|(p, _)| p.partial_sign(&message))
+            .collect();
+        let pub_data = &presigs[0].1;
+        time_once(&format!("cggmp20/online_sign/n{n}_t{t}/combine"), || {
+            PartialSignature::combine(&partials, pub_data, public_key, &message).expect("combine")
+        });
     }
-    let partials: Vec<_> = presigs
-        .iter()
-        .map(|(p, _)| p.partial_sign(&message))
-        .collect();
-    let pub_data = &presigs[0].1;
-    time_once("cggmp20/online_sign/n3_t2/combine", || {
-        PartialSignature::combine(&partials, pub_data, public_key, &message).expect("combine")
-    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -419,77 +488,110 @@ fn dkls23_once() {
         sign::{Dkls23OnlineSignMachine, OnlineSignConfig},
     };
 
-    let n = 3u16;
-    let t = 2u16;
-    let signer_indices = [1u16, 2];
-    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
-    let signer_parties: Vec<PartyId> = signer_indices.iter().map(|&i| PartyId(i)).collect();
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG
-    let keygen_out = time_once("dkls23/dkg/n3_t2/wall", || {
-        let all_p = all_parties.clone();
-        let builders: Vec<_> = all_p
-            .iter()
-            .map(|&p| {
-                let all_p2 = all_p.clone();
-                (p, move || {
-                    let mut rng = rand::thread_rng();
-                    Dkls23KeygenMachine::<C>::new(p, all_p2, t, &mut rng)
+    // DKG: sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let keygen_out = time_once(&format!("dkls23/dkg/n{n}_t{t}/wall"), || {
+            let all_p = all_parties.clone();
+            let builders: Vec<_> = all_p
+                .iter()
+                .map(|&p| {
+                    let all_p2 = all_p.clone();
+                    (p, move || {
+                        let mut rng = rand::thread_rng();
+                        Dkls23KeygenMachine::<C>::new(p, all_p2, t, &mut rng)
+                    })
                 })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    let shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("dkls23/dkg/n3_t2", pid, timing.total_active());
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("dkls23/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
     }
 
-    // Presign
-    let presign_out = time_once("dkls23/presign/n3_t2/wall", || {
-        let builders: Vec<_> = signer_indices
-            .iter()
-            .map(|&idx| {
-                let share = shares[(idx - 1) as usize].clone();
-                let pid = PartyId(idx);
-                let sp = signer_parties.clone();
-                (pid, move || {
-                    let config = PresignConfig {
-                        key_share: share,
-                        my_id: pid,
-                        signer_parties: sp,
-                    };
-                    Dkls23PresignMachine::new(config, rand_core::OsRng)
-                })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 20)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("dkls23/presign/n3_t2", pid, timing.total_active());
-    }
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        let signer_indices = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signer_indices.iter().map(|&i| PartyId(i)).collect();
 
-    // Online sign
-    let sign_out = time_once("dkls23/online_sign/n3_t2/wall", || {
-        let builders: Vec<_> = presigs
-            .into_iter()
-            .map(|presig| {
-                let pid = presig.my_id;
-                (pid, move || {
-                    let config = OnlineSignConfig {
-                        presignature: presig,
-                        message,
-                    };
-                    Dkls23OnlineSignMachine::new(config)
+        // Untimed setup: key shares at (n, t).
+        let shares: Vec<_> = {
+            let all_p = all_parties.clone();
+            let builders: Vec<_> = all_p
+                .iter()
+                .map(|&p| {
+                    let all_p2 = all_p.clone();
+                    (p, move || {
+                        let mut rng = rand::thread_rng();
+                        Dkls23KeygenMachine::<C>::new(p, all_p2, t, &mut rng)
+                    })
                 })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing("dkls23/online_sign/n3_t2", pid, timing.total_active());
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        // Presign
+        let presign_out = time_once(&format!("dkls23/presign/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = signer_indices
+                .iter()
+                .map(|&idx| {
+                    let share = shares[(idx - 1) as usize].clone();
+                    let pid = PartyId(idx);
+                    let sp = signer_parties.clone();
+                    (pid, move || {
+                        let config = PresignConfig {
+                            key_share: share,
+                            my_id: pid,
+                            signer_parties: sp,
+                        };
+                        Dkls23PresignMachine::new(config, rand_core::OsRng)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 20)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("dkls23/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Online sign
+        let sign_out = time_once(&format!("dkls23/online_sign/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = presigs
+                .into_iter()
+                .map(|presig| {
+                    let pid = presig.my_id;
+                    (pid, move || {
+                        let config = OnlineSignConfig {
+                            presignature: presig,
+                            message,
+                        };
+                        Dkls23OnlineSignMachine::new(config)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("dkls23/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }
 
@@ -504,78 +606,111 @@ fn gg18_once() {
         sign::{Gg18OnlineSignMachine, OnlineSignConfig},
     };
 
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG
-    let keygen_out = time_once("gg18/dkg/n3_t2/wall", || {
-        let configs = make_session_configs(n, t);
-        let builders: Vec<_> = configs
-            .iter()
-            .map(|cfg| {
-                let cfg = cfg.clone();
-                let pid = cfg.local_party.id;
-                (pid, move || {
-                    let mut rng = tecdsa_core::Csprng::new();
-                    Gg18KeygenMachine::<C>::new(&cfg, &mut rng)
+    // DKG: sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let keygen_out = time_once(&format!("gg18/dkg/n{n}_t{t}/wall"), || {
+            let configs = make_session_configs(n, t);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Gg18KeygenMachine::<C>::new(&cfg, &mut rng)
+                    })
                 })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    let key_shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("gg18/dkg/n3_t2", pid, timing.total_active());
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("gg18/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
     }
 
-    // Presign
-    let presign_out = time_once("gg18/presign/n3_t2/wall", || {
-        let builders: Vec<_> = signers
-            .iter()
-            .map(|&signer_1based| {
-                let party_0based = (signer_1based - 1) as usize;
-                let pid = PartyId(signer_1based);
-                let key_share = key_shares[party_0based].clone();
-                let signers_clone = signers.to_vec();
-                (pid, move || {
-                    let mut rng = tecdsa_core::Csprng::new();
-                    let config = PresignConfig {
-                        key_share,
-                        signers: signers_clone,
-                    };
-                    Gg18PresignMachine::new(config, &mut rng)
-                })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("gg18/presign/n3_t2", pid, timing.total_active());
-    }
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
 
-    // Online sign
-    let sign_out = time_once("gg18/online_sign/n3_t2/wall", || {
-        let builders: Vec<_> = presigs
-            .into_iter()
-            .map(|presig| {
-                let pid = presig.my_id;
-                (pid, move || {
-                    let mut rng = tecdsa_core::Csprng::new();
-                    let config = OnlineSignConfig {
-                        presignature: presig,
-                        message,
-                    };
-                    Gg18OnlineSignMachine::new(config, &mut rng)
+        // Untimed setup: key shares at (n, t).
+        let key_shares: Vec<_> = {
+            let configs = make_session_configs(n, t);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Gg18KeygenMachine::<C>::new(&cfg, &mut rng)
+                    })
                 })
-            })
-            .collect();
-        per_party::run_timed_with_init(builders, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing("gg18/online_sign/n3_t2", pid, timing.total_active());
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        // Presign
+        let presign_out = time_once(&format!("gg18/presign/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = signers
+                .iter()
+                .map(|&signer_1based| {
+                    let party_0based = (signer_1based - 1) as usize;
+                    let pid = PartyId(signer_1based);
+                    let key_share = key_shares[party_0based].clone();
+                    let signers_clone = signers.clone();
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        let config = PresignConfig {
+                            key_share,
+                            signers: signers_clone,
+                        };
+                        Gg18PresignMachine::new(config, &mut rng)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("gg18/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Online sign
+        let sign_out = time_once(&format!("gg18/online_sign/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = presigs
+                .into_iter()
+                .map(|presig| {
+                    let pid = presig.my_id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        let config = OnlineSignConfig {
+                            presignature: presig,
+                            message,
+                        };
+                        Gg18OnlineSignMachine::new(config, &mut rng)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("gg18/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }
 
@@ -583,158 +718,216 @@ fn gg18_once() {
 // GGN16
 // ═══════════════════════════════════════════════════════════════════════
 
-fn ggn16_once() {
-    use tecdsa_ggn16::{
-        key_share::Ggn16KeyShare, keygen::Ggn16KeygenMachine, presign::Ggn16PresignMachine,
-        sign::Ggn16OnlineSignMachine,
-    };
+/// Trusted-dealer setup for GGN16: threshold Paillier (corruption threshold
+/// `corruption_t`) + Ring-Pedersen parameters. Generates 1536-bit safe primes
+/// (slow). Mirrors the Criterion bench's `fast_trusted_dealer_setup`.
+fn ggn16_dealer_setup(
+    n: u16,
+    corruption_t: u16,
+) -> (
+    tecdsa_paillier::threshold::ThresholdSetup,
+    Vec<tecdsa_paillier::threshold::DecryptionShare>,
+    tecdsa_paillier::backend::Integer,
+    tecdsa_paillier::backend::Integer,
+    tecdsa_paillier::backend::Integer,
+) {
     use tecdsa_paillier::{
         backend::Integer,
         threshold::{DecryptionShare, ThresholdSetup},
     };
 
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
+    let mut rng = rand_core::OsRng;
+    let p = Integer::generate_safe_prime(&mut rng, 1536);
+    let q = Integer::generate_safe_prime(&mut rng, 1536);
+    let dk =
+        tecdsa_paillier::DecryptionKey::from_primes(p.clone(), q.clone()).expect("valid primes");
+    let ek = dk.encryption_key().clone();
+    let n_int = ek.n().clone();
+    let p_minus_1 = &p - Integer::one();
+    let q_minus_1 = &q - Integer::one();
+    let lambda = p_minus_1.lcm_ref(&q_minus_1);
+    let beta = loop {
+        let candidate = n_int.random_below_ref(&mut rng);
+        if candidate > Integer::zero() && candidate.gcd_ref(&n_int) == Integer::one() {
+            break candidate;
+        }
+    };
+    let d = &lambda * &beta;
+    let theta = d.modulo_ref(&n_int);
+    let mut delta = Integer::one();
+    for i in 2..=n as u32 {
+        delta *= Integer::from(i);
+    }
+    let m = &n_int * &delta;
+    let mut coeffs = vec![d];
+    for _ in 0..corruption_t {
+        coeffs.push(m.random_below_ref(&mut rng));
+    }
+    let mut shares = Vec::with_capacity(n as usize);
+    for i in 1..=n {
+        let x = Integer::from(i as u32);
+        let mut val = Integer::zero();
+        let mut x_pow = Integer::one();
+        for coeff in &coeffs {
+            val += coeff * &x_pow;
+            x_pow *= &x;
+        }
+        shares.push(DecryptionShare { index: i, d_i: val });
+    }
+    let setup = ThresholdSetup {
+        ek,
+        theta,
+        n,
+        corruption_threshold: corruption_t,
+        delta,
+    };
+
+    // Ring-Pedersen
+    let rp = Integer::generate_safe_prime(&mut rng, 1536);
+    let rq = Integer::generate_safe_prime(&mut rng, 1536);
+    let n_tilde = &rp * &rq;
+    let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
+    let rlambda = (&rp - Integer::one()) * (&rq - Integer::one());
+    let h2 = h1.pow_mod_ref(&rlambda, &n_tilde).expect("pow_mod");
+
+    (setup, shares, n_tilde, h1, h2)
+}
+
+fn ggn16_once() {
+    use tecdsa_ggn16::{
+        keygen::Ggn16KeygenMachine, presign::Ggn16PresignMachine, sign::Ggn16OnlineSignMachine,
+    };
+
     let message = make_data_to_sign(b"benchmark message");
-    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-    // ── Setup: threshold Paillier + Ring-Pedersen (timed separately) ──
-    let (threshold_setup, dec_shares) = time_once("ggn16/setup/threshold_paillier", || {
-        let mut rng = rand_core::OsRng;
-        let p = Integer::generate_safe_prime(&mut rng, 1536);
-        let q = Integer::generate_safe_prime(&mut rng, 1536);
-        let dk = tecdsa_paillier::DecryptionKey::from_primes(p.clone(), q.clone())
-            .expect("valid primes");
-        let ek = dk.encryption_key().clone();
-        let n_int = ek.n().clone();
-        let p_minus_1 = &p - Integer::one();
-        let q_minus_1 = &q - Integer::one();
-        let lambda = p_minus_1.lcm_ref(&q_minus_1);
-        let beta = loop {
-            let candidate = n_int.random_below_ref(&mut rng);
-            if candidate > Integer::zero() && candidate.gcd_ref(&n_int) == Integer::one() {
-                break candidate;
-            }
-        };
-        let d = &lambda * &beta;
-        let theta = d.modulo_ref(&n_int);
-        let mut delta = Integer::one();
-        for i in 2..=n as u32 {
-            delta *= Integer::from(i);
-        }
-        let m = &n_int * &delta;
-        let mut coeffs = vec![d];
-        for _ in 0..t - 1 {
-            coeffs.push(m.random_below_ref(&mut rng));
-        }
-        let mut shares = Vec::with_capacity(n as usize);
-        for i in 1..=n {
-            let x = Integer::from(i as u32);
-            let mut val = Integer::zero();
-            let mut x_pow = Integer::one();
-            for coeff in &coeffs {
-                val += coeff * &x_pow;
-                x_pow *= &x;
-            }
-            shares.push(DecryptionShare { index: i, d_i: val });
-        }
-        let setup = ThresholdSetup {
-            ek,
-            theta,
-            n,
-            corruption_threshold: t - 1,
-            delta,
-        };
-        (setup, shares)
-    });
-
-    let (n_tilde, h1, h2) = time_once("ggn16/setup/ring_pedersen", || {
-        let mut rng = rand_core::OsRng;
-        let p = Integer::generate_safe_prime(&mut rng, 1536);
-        let q = Integer::generate_safe_prime(&mut rng, 1536);
-        let nt = &p * &q;
-        let h1 = Integer::sample_in_mult_group_of(&mut rng, &nt);
-        let lambda = (&p - Integer::one()) * (&q - Integer::one());
-        let h2 = h1.pow_mod_ref(&lambda, &nt).expect("pow_mod");
-        (nt, h1, h2)
-    });
-
-    // DKG
-    let keygen_out = time_once("ggn16/dkg/n3_t2/wall", || {
-        let mut rng = tecdsa_core::Csprng::new();
-        let machines: Vec<_> = dec_shares
-            .into_iter()
-            .enumerate()
-            .map(|(i, dec_share)| {
-                let pid = all_parties[i];
-                (
-                    pid,
-                    Ggn16KeygenMachine::<C>::new(
+    // DKG: sweep (n, t). Dealer setup (safe primes, corruption threshold t-1) is
+    // timed per config, then the keygen protocol itself.
+    for (n, t) in config::dkg_configs() {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let (threshold_setup, dec_shares, n_tilde, h1, h2) =
+            time_once(&format!("ggn16/setup/n{n}_t{t}/wall"), || {
+                ggn16_dealer_setup(n, t - 1)
+            });
+        let keygen_out = time_once(&format!("ggn16/dkg/n{n}_t{t}/wall"), || {
+            let mut rng = tecdsa_core::Csprng::new();
+            let machines: Vec<_> = dec_shares
+                .into_iter()
+                .enumerate()
+                .map(|(i, dec_share)| {
+                    let pid = all_parties[i];
+                    (
                         pid,
-                        all_parties.clone(),
-                        t,
-                        threshold_setup.clone(),
-                        dec_share,
-                        h1.clone(),
-                        h2.clone(),
-                        n_tilde.clone(),
-                        &mut rng,
-                    ),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let key_shares: Vec<Ggn16KeyShare<C>> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("ggn16/dkg/n3_t2", pid, timing.total_active());
+                        Ggn16KeygenMachine::<C>::new(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            threshold_setup.clone(),
+                            dec_share,
+                            h1.clone(),
+                            h2.clone(),
+                            n_tilde.clone(),
+                            &mut rng,
+                        ),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("ggn16/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
     }
 
-    let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-    // Presign
-    let presign_out = time_once("ggn16/presign/n3_t2/wall", || {
-        let mut rng = tecdsa_core::Csprng::new();
-        let machines: Vec<_> = signers
-            .iter()
-            .map(|&s| {
-                let pid = PartyId(s);
-                (
-                    pid,
-                    Ggn16PresignMachine::<C>::new(
-                        key_shares[(s - 1) as usize].clone(),
+        // Untimed setup: dealer setup + key shares at (n, t).
+        let (threshold_setup, dec_shares, n_tilde, h1, h2) = ggn16_dealer_setup(n, t - 1);
+        let key_shares: Vec<_> = {
+            let mut rng = tecdsa_core::Csprng::new();
+            let machines: Vec<_> = dec_shares
+                .into_iter()
+                .enumerate()
+                .map(|(i, dec_share)| {
+                    let pid = all_parties[i];
+                    (
                         pid,
-                        signer_parties.clone(),
-                        &mut rng,
-                    ),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("ggn16/presign/n3_t2", pid, timing.total_active());
-    }
+                        Ggn16KeygenMachine::<C>::new(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            threshold_setup.clone(),
+                            dec_share,
+                            h1.clone(),
+                            h2.clone(),
+                            n_tilde.clone(),
+                            &mut rng,
+                        ),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
 
-    // Online sign
-    let sign_out = time_once("ggn16/online_sign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .zip(presigs)
-            .map(|(&s, presig)| {
-                let pid = PartyId(s);
-                (
-                    pid,
-                    Ggn16OnlineSignMachine::<C>::new(presig, message).expect("ggn16 sign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing("ggn16/online_sign/n3_t2", pid, timing.total_active());
+        // Presign
+        let presign_out = time_once(&format!("ggn16/presign/n{n}_t{t}/wall"), || {
+            let mut rng = tecdsa_core::Csprng::new();
+            let machines: Vec<_> = signers
+                .iter()
+                .map(|&s| {
+                    let pid = PartyId(s);
+                    (
+                        pid,
+                        Ggn16PresignMachine::<C>::new(
+                            key_shares[(s - 1) as usize].clone(),
+                            pid,
+                            signer_parties.clone(),
+                            &mut rng,
+                        ),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("ggn16/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Online sign
+        let sign_out = time_once(&format!("ggn16/online_sign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .zip(presigs)
+                .map(|(&s, presig)| {
+                    let pid = PartyId(s);
+                    (
+                        pid,
+                        Ggn16OnlineSignMachine::<C>::new(presig, message).expect("ggn16 sign"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("ggn16/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }
 
@@ -742,6 +935,10 @@ fn ggn16_once() {
 // LN18 (8-round full sign via simulation)
 // ═══════════════════════════════════════════════════════════════════════
 
+// LN18 is currently excluded (see the multiparty bench): its 8-round sign always
+// uses all `n` parties, not a `t`-subset, so it doesn't fit the presign/sign
+// `n`-fixed, varying-`t` sweep. Kept compilable for easy re-enable.
+#[allow(dead_code)]
 fn ln18_once() {
     use std::collections::BTreeMap;
 
@@ -958,7 +1155,7 @@ fn lin17_once() {
             .collect();
         per_party::run_timed_with_init(builders, 10)
     });
-    for (&pid, timing) in &keygen_out.1 {
+    for (&pid, timing) in keygen_out.1.iter().take(1) {
         print_timing("lin17/dkg/n2_t2", pid, timing.total_active());
     }
 
@@ -1032,7 +1229,7 @@ fn kgg24_once() {
             .collect();
         per_party::run_timed_with_init(builders, 10)
     });
-    for (&pid, timing) in &keygen_out.1 {
+    for (&pid, timing) in keygen_out.1.iter().take(1) {
         print_timing("kgg24/dkg/n2_t2", pid, timing.total_active());
     }
 
@@ -1112,7 +1309,7 @@ fn xal21_once() {
             .collect();
         per_party::run_timed_with_init(builders, 10)
     });
-    for (&pid, timing) in &keygen_out.1 {
+    for (&pid, timing) in keygen_out.1.iter().take(1) {
         print_timing("xal21/dkg/n2_t2", pid, timing.total_active());
     }
 
@@ -1165,7 +1362,7 @@ fn abc24_once() {
             .collect();
         per_party::run_timed_with_init(builders, 10)
     });
-    for (&pid, timing) in &keygen_out.1 {
+    for (&pid, timing) in keygen_out.1.iter().take(1) {
         print_timing("abc24/dkg/n2_t2", pid, timing.total_active());
     }
 
@@ -1197,11 +1394,39 @@ fn abc24_once() {
 // CL-based helpers (shared ClSetup for TX25, JTX25, WMY23, WMC24, LLZ25, Trout)
 // ═══════════════════════════════════════════════════════════════════════
 
-fn cl_keygen_presign_sign<KM, PM, SM>(
+/// DKG-only sweep for CL-based protocols: times keygen for each
+/// `TECDSA_BENCH_DKG_CONFIGS` `(n, t)` and prints per-party active time.
+///
+/// CL protocols use without_init (machine construction includes a CL setup
+/// clone which is not protocol work); matches the Criterion benchmark.
+fn cl_dkg_sweep<KM>(name: &str, make_keygen: impl Fn(PartyId, Vec<PartyId>, u16) -> KM)
+where
+    KM: tecdsa_protocol::StateMachine,
+    KM::Outbound: Clone + Into<KM::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
+    KM::Inbound: Clone + serde::Serialize + serde::de::DeserializeOwned,
+{
+    for (n, t) in config::dkg_configs() {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let keygen_out = time_once(&format!("{name}/dkg/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| (pid, make_keygen(pid, all_parties.clone(), t)))
+                .collect();
+            per_party::run_timed_without_init(machines, 15)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("{name}/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
+    }
+}
+
+/// Presign + online-sign sweep for CL-based protocols: for each threshold in
+/// `TECDSA_BENCH_SIGN_THRESHOLDS` at `TECDSA_BENCH_SIGN_N` parties, silently
+/// regenerates key shares (DKG timing lives in [`cl_dkg_sweep`]) then times
+/// presign and online sign, printing per-party active time. The signing quorum
+/// is parties `1..=t`.
+fn cl_presign_sign_sweep<KM, PM, SM>(
     name: &str,
-    n: u16,
-    t: u16,
-    signers: &[u16],
     msg_bytes: &[u8],
     make_keygen: impl Fn(PartyId, Vec<PartyId>, u16) -> KM,
     // Post-keygen fixup applied to the collected key shares before presign.
@@ -1227,71 +1452,73 @@ fn cl_keygen_presign_sign<KM, PM, SM>(
     SM::Outbound: Clone + Into<SM::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
     SM::Inbound: Clone + serde::Serialize + serde::de::DeserializeOwned,
 {
+    let n = config::sign_n();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-    // DKG — CL protocols use without_init (machine construction includes
-    // CL setup clone which is not protocol work); matches Criterion benchmark.
-    let keygen_out = time_once(&format!("{name}/dkg/n{n}_t{t}/wall"), || {
-        let machines: Vec<_> = all_parties
-            .iter()
-            .map(|&pid| (pid, make_keygen(pid, all_parties.clone(), t)))
-            .collect();
-        per_party::run_timed_without_init(machines, 15)
-    });
-    let mut key_shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing(&format!("{name}/dkg/n{n}_t{t}"), pid, timing.total_active());
-    }
+        // Untimed setup: key shares at (n, t).
+        let mut key_shares: Vec<_> = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| (pid, make_keygen(pid, all_parties.clone(), t)))
+                .collect();
+            per_party::run_timed_without_init(machines, 15)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
 
-    // Install the protocol's required key material (e.g. trusted threshold-CL
-    // setup) before presign. No-op for protocols with self-contained DKG output.
-    post_keygen(&mut key_shares);
+        // Install the protocol's required key material (e.g. trusted threshold-CL
+        // setup) before presign. No-op for protocols with self-contained DKG output.
+        post_keygen(&mut key_shares);
+        let public_key = extract_pk(&key_shares[0]);
 
-    let public_key = extract_pk(&key_shares[0]);
-    let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+        // Presign
+        let presign_out = time_once(&format!("{name}/presign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .map(|&s| {
+                    let pid = PartyId(s);
+                    let share = &key_shares[(s - 1) as usize];
+                    (pid, make_presign(pid, signer_parties.clone(), share))
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("{name}/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
 
-    // Presign
-    let presign_out = time_once(&format!("{name}/presign/n{n}_t{t}/wall"), || {
-        let machines: Vec<_> = signers
-            .iter()
-            .map(|&s| {
-                let pid = PartyId(s);
-                let share = &key_shares[(s - 1) as usize];
-                (pid, make_presign(pid, signer_parties.clone(), share))
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing(
-            &format!("{name}/presign/n{n}_t{t}"),
-            pid,
-            timing.total_active(),
-        );
-    }
-
-    // Online sign
-    let sign_out = time_once(&format!("{name}/online_sign/n{n}_t{t}/wall"), || {
-        let machines: Vec<_> = signers
-            .iter()
-            .zip(presigs)
-            .map(|(&s, presig)| {
-                let pid = PartyId(s);
-                (
-                    pid,
-                    make_sign(pid, signer_parties.clone(), presig, msg_bytes, public_key),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing(
-            &format!("{name}/online_sign/n{n}_t{t}"),
-            pid,
-            timing.total_active(),
-        );
+        // Online sign
+        let sign_out = time_once(&format!("{name}/online_sign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .zip(presigs)
+                .map(|(&s, presig)| {
+                    let pid = PartyId(s);
+                    (
+                        pid,
+                        make_sign(pid, signer_parties.clone(), presig, msg_bytes, public_key),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("{name}/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }
 
@@ -1305,20 +1532,18 @@ fn tx25_once() {
     };
 
     let seed = "42042";
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("tx25/setup/cl", || {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    cl_keygen_presign_sign(
+    cl_dkg_sweep("tx25", |pid, all, threshold| {
+        Tx25KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
+            .expect("tx25 keygen")
+    });
+    cl_presign_sign_sweep(
         "tx25",
-        n,
-        t,
-        &signers,
         &msg,
         |pid, all, threshold| {
             Tx25KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
@@ -1345,20 +1570,18 @@ fn jtx25_once() {
     };
 
     let seed = "42042";
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("jtx25/setup/cl", || {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    cl_keygen_presign_sign(
+    cl_dkg_sweep("jtx25", |pid, all, threshold| {
+        Jtx25KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
+            .expect("jtx25 keygen")
+    });
+    cl_presign_sign_sweep(
         "jtx25",
-        n,
-        t,
-        &signers,
         &msg,
         |pid, all, threshold| {
             Jtx25KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
@@ -1387,94 +1610,132 @@ fn wmy23_once() {
     };
 
     let seed = "42042";
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let msg_data = make_data_to_sign(b"benchmark message");
-    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     let cl_setup = time_once("wmy23/setup/cl", || {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    // DKG
-    let keygen_out = time_once("wmy23/dkg/n3_t2/wall", || {
-        let machines: Vec<_> = all_parties
-            .iter()
-            .map(|&pid| {
-                (
-                    pid,
-                    Wmy23KeygenMachine::new_with_setup(
+    // DKG: sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let keygen_out = time_once(&format!("wmy23/dkg/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
                         pid,
-                        all_parties.clone(),
-                        t,
-                        seed,
-                        true,
-                        cl_setup.clone(),
+                        Wmy23KeygenMachine::new_with_setup(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            seed,
+                            true,
+                            cl_setup.clone(),
+                        )
+                        .expect("wmy23 keygen"),
                     )
-                    .expect("wmy23 keygen"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 15)
-    });
-    let key_shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("wmy23/dkg/n3_t2", pid, timing.total_active());
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 15)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("wmy23/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
     }
 
-    let public_key = key_shares[0].public_key;
-    let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-    // Presign
-    let presign_out = time_once("wmy23/presign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .map(|&s| {
-                let pid = PartyId(s);
-                let config = PresignConfig {
-                    key_share: key_shares[(s - 1) as usize].clone(),
-                    my_id: pid,
-                    signer_parties: signer_parties.clone(),
-                    cl_setup: cl_setup.clone(),
-                };
-                (
-                    pid,
-                    Wmy23PresignMachine::new(config).expect("wmy23 presign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("wmy23/presign/n3_t2", pid, timing.total_active());
-    }
-
-    // Online sign
-    let sign_out = time_once("wmy23/online_sign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .zip(presigs)
-            .map(|(&s, presig)| {
-                let pid = PartyId(s);
-                (
-                    pid,
-                    Wmy23OnlineSignMachine::new(
+        // Untimed setup: key shares at (n, t).
+        let key_shares: Vec<_> = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
                         pid,
-                        signer_parties.clone(),
-                        presig,
-                        msg_data,
-                        public_key,
+                        Wmy23KeygenMachine::new_with_setup(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            seed,
+                            true,
+                            cl_setup.clone(),
+                        )
+                        .expect("wmy23 keygen"),
                     )
-                    .expect("wmy23 sign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing("wmy23/online_sign/n3_t2", pid, timing.total_active());
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 15)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let public_key = key_shares[0].public_key;
+
+        // Presign
+        let presign_out = time_once(&format!("wmy23/presign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .map(|&s| {
+                    let pid = PartyId(s);
+                    let config = PresignConfig {
+                        key_share: key_shares[(s - 1) as usize].clone(),
+                        my_id: pid,
+                        signer_parties: signer_parties.clone(),
+                        cl_setup: cl_setup.clone(),
+                    };
+                    (
+                        pid,
+                        Wmy23PresignMachine::new(config).expect("wmy23 presign"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("wmy23/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Online sign
+        let sign_out = time_once(&format!("wmy23/online_sign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .zip(presigs)
+                .map(|(&s, presig)| {
+                    let pid = PartyId(s);
+                    (
+                        pid,
+                        Wmy23OnlineSignMachine::new(
+                            pid,
+                            signer_parties.clone(),
+                            presig,
+                            msg_data,
+                            public_key,
+                        )
+                        .expect("wmy23 sign"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("wmy23/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }
 
@@ -1488,26 +1749,24 @@ fn wmc24_once() {
     };
 
     let seed = "42042";
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("wmc24/setup/cl", || {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    cl_keygen_presign_sign(
+    cl_dkg_sweep("wmc24", |pid, all, threshold| {
+        Wmc24KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
+            .expect("wmc24 keygen")
+    });
+    cl_presign_sign_sweep(
         "wmc24",
-        n,
-        t,
-        &signers,
         &msg,
         |pid, all, threshold| {
             Wmc24KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
                 .expect("wmc24 keygen")
         },
-        |_shares| { /* DKG now produces proper Shamir ElGamal shares natively */ },
+        |_shares| { /* DKG produces proper Shamir ElGamal shares natively */ },
         |pid, all, share| {
             Wmc24PresignMachine::new(pid, all, share, cl_setup.clone()).expect("wmc24 presign")
         },
@@ -1529,105 +1788,144 @@ fn llz25_once() {
     };
 
     let seed = "42042";
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let msg = sha2::Sha256::digest(b"benchmark message");
-    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     let cl_setup = time_once("llz25/setup/cl", || {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    // Setup: CL CRS key (shared out-of-band)
+    // Setup: CL CRS key (shared out-of-band, independent of n/t).
     let pk_crs = {
         let mut tmp = cl_setup.clone();
         let (_, pk) = tmp.keygen().expect("crs keygen");
         pk
     };
 
-    // Interactive DKG via Orchestrator
-    let keygen_out = time_once("llz25/dkg/n3_t2/wall", || {
-        let machines: Vec<_> = all_parties
-            .iter()
-            .map(|&pid| {
-                (
-                    pid,
-                    Llz25KeygenMachine::new_with_setup(
+    // DKG: sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let keygen_out = time_once(&format!("llz25/dkg/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
                         pid,
-                        all_parties.clone(),
-                        t,
-                        seed,
-                        true,
-                        pk_crs.clone(),
-                        cl_setup.clone(),
+                        Llz25KeygenMachine::new_with_setup(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            seed,
+                            true,
+                            pk_crs.clone(),
+                            cl_setup.clone(),
+                        )
+                        .expect("llz25 keygen machine"),
                     )
-                    .expect("llz25 keygen machine"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let key_shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("llz25/dkg/n3_t2", pid, timing.total_active());
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("llz25/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
     }
 
-    let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
-    let quorum_indices: Vec<u16> = signers.to_vec();
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+        let quorum_indices: Vec<u16> = signers.clone();
 
-    // Presign
-    let presign_out = time_once("llz25/presign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .enumerate()
-            .map(|(pos, &s)| {
-                let pid = PartyId(s);
-                let local_pk_crs = {
-                    let mut tmp = cl_setup.clone();
-                    let (_, pk) = tmp.keygen().expect("crs");
-                    pk
-                };
-                (
-                    pid,
-                    Llz25PresignMachine::new(
+        // Untimed setup: key shares at (n, t).
+        let key_shares: Vec<_> = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
                         pid,
-                        signer_parties.clone(),
-                        key_shares[(s - 1) as usize].clone(),
-                        quorum_indices.clone(),
-                        pos,
-                        cl_setup.clone(),
-                        local_pk_crs,
+                        Llz25KeygenMachine::new_with_setup(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            seed,
+                            true,
+                            pk_crs.clone(),
+                            cl_setup.clone(),
+                        )
+                        .expect("llz25 keygen machine"),
                     )
-                    .expect("llz25 presign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("llz25/presign/n3_t2", pid, timing.total_active());
-    }
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
 
-    // Sign
-    let sign_out = time_once("llz25/online_sign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .zip(presigs)
-            .map(|(&s, presig)| {
-                let pid = PartyId(s);
-                (
-                    pid,
-                    Llz25SignMachine::new(pid, signer_parties.clone(), presig, &msg)
-                        .expect("llz25 sign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing("llz25/online_sign/n3_t2", pid, timing.total_active());
+        // Presign
+        let presign_out = time_once(&format!("llz25/presign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .enumerate()
+                .map(|(pos, &s)| {
+                    let pid = PartyId(s);
+                    let local_pk_crs = {
+                        let mut tmp = cl_setup.clone();
+                        let (_, pk) = tmp.keygen().expect("crs");
+                        pk
+                    };
+                    (
+                        pid,
+                        Llz25PresignMachine::new(
+                            pid,
+                            signer_parties.clone(),
+                            key_shares[(s - 1) as usize].clone(),
+                            quorum_indices.clone(),
+                            pos,
+                            cl_setup.clone(),
+                            local_pk_crs,
+                        )
+                        .expect("llz25 presign"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("llz25/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Sign
+        let sign_out = time_once(&format!("llz25/online_sign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .zip(presigs)
+                .map(|(&s, presig)| {
+                    let pid = PartyId(s);
+                    (
+                        pid,
+                        Llz25SignMachine::new(pid, signer_parties.clone(), presig, &msg)
+                            .expect("llz25 sign"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("llz25/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }
 
@@ -1642,116 +1940,154 @@ fn trout_once() {
     };
 
     let seed = "42042";
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let message = make_data_to_sign(b"benchmark message");
-    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     let cl_setup = time_once("trout/setup/cl", || {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    // Interactive DKG via Orchestrator
-    let keygen_out = time_once("trout/dkg/n3_t2/wall", || {
-        let machines: Vec<_> = all_parties
-            .iter()
-            .map(|&pid| {
-                (
-                    pid,
-                    TroutKeygenMachine::new_with_setup(
+    // DKG: sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let keygen_out = time_once(&format!("trout/dkg/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
                         pid,
-                        all_parties.clone(),
-                        t,
-                        seed,
-                        true,
-                        cl_setup.clone(),
+                        TroutKeygenMachine::new_with_setup(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            seed,
+                            true,
+                            cl_setup.clone(),
+                        )
+                        .expect("trout keygen machine"),
                     )
-                    .expect("trout keygen machine"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let key_shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("trout/dkg/n3_t2", pid, timing.total_active());
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("trout/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
     }
 
-    let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
-    let signing_1based: Vec<u16> = signers.to_vec();
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+        let signing_1based: Vec<u16> = signers.clone();
 
-    // Presign (clone key shares)
-    let presign_out = time_once("trout/presign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .map(|&s| {
-                let pid = PartyId(s);
-                let share = key_shares[(s - 1) as usize].clone();
-                // Reconstruct the *joint* CL public key (Y_cl = product Y_k) that
-                // keygen encrypted x_i under. Passing a fresh single-party key
-                // here (the old behavior) never matches and breaks scaled
-                // decryption — mirror the crate's integration test instead.
-                let (pa, pb, pc) = &share.cl_pk_abc;
-                let cl_pk_qfi =
-                    tecdsa_trout::error::qfi_from_abc(pa, pb, pc).expect("reconstruct CL pk");
-                let local_setup = cl_setup.clone();
-                let cl_pk = local_setup.pk_from_qfi(&cl_pk_qfi).expect("pk_from_qfi");
-                (
-                    pid,
-                    TroutPresignMachine::new(
+        // Untimed setup: key shares at (n, t).
+        let key_shares: Vec<_> = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
                         pid,
-                        signer_parties.clone(),
-                        share,
-                        signing_1based.clone(),
-                        b"bench-session",
-                        local_setup,
-                        cl_pk,
+                        TroutKeygenMachine::new_with_setup(
+                            pid,
+                            all_parties.clone(),
+                            t,
+                            seed,
+                            true,
+                            cl_setup.clone(),
+                        )
+                        .expect("trout keygen machine"),
                     )
-                    .expect("trout presign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("trout/presign/n3_t2", pid, timing.total_active());
-    }
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
 
-    // Sign via Orchestrator (1-round: broadcast F_i shares, aggregate, compute signature)
-    let sign_out = time_once("trout/online_sign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .zip(presigs)
-            .map(|(&s, presig)| {
-                let pid = PartyId(s);
-                let share = key_shares[(s - 1) as usize].clone();
-                // Same joint-CL-key reconstruction as presign (see above).
-                let (pa, pb, pc) = &share.cl_pk_abc;
-                let cl_pk_qfi =
-                    tecdsa_trout::error::qfi_from_abc(pa, pb, pc).expect("reconstruct CL pk");
-                let local_setup = cl_setup.clone();
-                let cl_pk = local_setup.pk_from_qfi(&cl_pk_qfi).expect("pk_from_qfi");
-                (
-                    pid,
-                    TroutSignMachine::new(
+        // Presign (clone key shares)
+        let presign_out = time_once(&format!("trout/presign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .map(|&s| {
+                    let pid = PartyId(s);
+                    let share = key_shares[(s - 1) as usize].clone();
+                    // Reconstruct the *joint* CL public key (Y_cl = product Y_k) that
+                    // keygen encrypted x_i under. Passing a fresh single-party key
+                    // here never matches and breaks scaled decryption — mirror the
+                    // crate's integration test instead.
+                    let (pa, pb, pc) = &share.cl_pk_abc;
+                    let cl_pk_qfi =
+                        tecdsa_trout::error::qfi_from_abc(pa, pb, pc).expect("reconstruct CL pk");
+                    let local_setup = cl_setup.clone();
+                    let cl_pk = local_setup.pk_from_qfi(&cl_pk_qfi).expect("pk_from_qfi");
+                    (
                         pid,
-                        signer_parties.clone(),
-                        presig,
-                        &message,
-                        &share,
-                        local_setup,
-                        &cl_pk,
+                        TroutPresignMachine::new(
+                            pid,
+                            signer_parties.clone(),
+                            share,
+                            signing_1based.clone(),
+                            b"bench-session",
+                            local_setup,
+                            cl_pk,
+                        )
+                        .expect("trout presign"),
                     )
-                    .expect("trout sign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing("trout/online_sign/n3_t2", pid, timing.total_active());
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        let presigs: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("trout/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Sign via Orchestrator (1-round: broadcast F_i shares, aggregate, compute signature)
+        let sign_out = time_once(&format!("trout/online_sign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .zip(presigs)
+                .map(|(&s, presig)| {
+                    let pid = PartyId(s);
+                    let share = key_shares[(s - 1) as usize].clone();
+                    // Same joint-CL-key reconstruction as presign (see above).
+                    let (pa, pb, pc) = &share.cl_pk_abc;
+                    let cl_pk_qfi =
+                        tecdsa_trout::error::qfi_from_abc(pa, pb, pc).expect("reconstruct CL pk");
+                    let local_setup = cl_setup.clone();
+                    let cl_pk = local_setup.pk_from_qfi(&cl_pk_qfi).expect("pk_from_qfi");
+                    (
+                        pid,
+                        TroutSignMachine::new(
+                            pid,
+                            signer_parties.clone(),
+                            presig,
+                            &message,
+                            &share,
+                            local_setup,
+                            &cl_pk,
+                        )
+                        .expect("trout sign"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("trout/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }
 
@@ -1764,82 +2100,112 @@ fn xal23_once() {
         keygen::Xal23KeygenMachine, presign::Xal23PresignMachine, sign::Xal23SignMachine,
     };
 
-    let n = 3u16;
-    let t = 2u16;
-    let signers = [1u16, 2];
     let message = make_data_to_sign(b"benchmark message");
-    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
-    let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-    // DKG (JL-based, Profile B: p_bits=1680, k=712)
-    let keygen_out = time_once("xal23/dkg/n3_t2/wall", || {
-        let machines: Vec<_> = all_parties
-            .iter()
-            .map(|&pid| {
-                (
-                    pid,
-                    Xal23KeygenMachine::<C>::new(pid, all_parties.clone(), t, 1680, 712)
-                        .expect("xal23 keygen"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let mut key_shares: Vec<_> = keygen_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &keygen_out.1 {
-        print_timing("xal23/dkg/n3_t2", pid, timing.total_active());
-    }
-
-    // XAL23's presign/sign assume *additive* signing shares (w_i = secret_share,
-    // summed over the quorum), but Xal23KeygenMachine performs a Feldman DKG and
-    // emits *Shamir* shares (the protocol's own `compute_lagrange_coeff` that would
-    // bridge the two is dead code; the integration test instead uses an additive
-    // trusted dealer). Convert the quorum's Shamir shares to additive shares via
-    // Lagrange weighting (w_i = lambda_i * x_i) so any t subset reconstructs the key.
-    // Each party's Shamir evaluation point equals its 1-based keygen index = PartyId.
-    let lambdas = tecdsa_vss::lagrange::coefficients::<C>(&signers);
-    for (pos, &s) in signers.iter().enumerate() {
-        key_shares[(s - 1) as usize].secret_share *= lambdas[pos];
-    }
-
-    // Presign (interactive 4-round StateMachine via Orchestrator)
-    let presign_out = time_once("xal23/presign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .map(|&s| {
-                let pid = PartyId(s);
-                (
-                    pid,
-                    Xal23PresignMachine::<C>::new(
+    // DKG (JL-based, Profile B: p_bits=1680, k=712): sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let keygen_out = time_once(&format!("xal23/dkg/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
                         pid,
-                        signer_parties.clone(),
-                        &key_shares[(s - 1) as usize],
-                        &mut rand_core::OsRng,
+                        Xal23KeygenMachine::<C>::new(pid, all_parties.clone(), t, 1680, 712)
+                            .expect("xal23 keygen"),
                     )
-                    .expect("xal23 presign"),
-                )
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    let presig_results: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
-    for (&pid, timing) in &presign_out.1 {
-        print_timing("xal23/presign/n3_t2", pid, timing.total_active());
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("xal23/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
     }
 
-    // Online sign
-    let sign_out = time_once("xal23/online_sign/n3_t2/wall", || {
-        let machines: Vec<_> = signers
-            .iter()
-            .zip(presig_results)
-            .map(|(&s, presig)| {
-                let pid = PartyId(s);
-                (pid, Xal23SignMachine::<C>::new(presig, message))
-            })
-            .collect();
-        per_party::run_timed_without_init(machines, 10)
-    });
-    for (&pid, timing) in &sign_out.1 {
-        print_timing("xal23/online_sign/n3_t2", pid, timing.total_active());
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+
+        // Untimed setup: key shares at (n, t).
+        let mut key_shares: Vec<_> = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
+                        pid,
+                        Xal23KeygenMachine::<C>::new(pid, all_parties.clone(), t, 1680, 712)
+                            .expect("xal23 keygen"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        // XAL23's presign/sign assume *additive* signing shares (w_i = secret_share,
+        // summed over the quorum), but Xal23KeygenMachine performs a Feldman DKG and
+        // emits *Shamir* shares. Convert the quorum's Shamir shares to additive shares
+        // via Lagrange weighting (w_i = lambda_i * x_i) so any t subset reconstructs the
+        // key. Each party's Shamir evaluation point equals its 1-based keygen index.
+        let lambdas = tecdsa_vss::lagrange::coefficients::<C>(&signers);
+        for (pos, &s) in signers.iter().enumerate() {
+            key_shares[(s - 1) as usize].secret_share *= lambdas[pos];
+        }
+
+        // Presign (interactive 4-round StateMachine via Orchestrator)
+        let presign_out = time_once(&format!("xal23/presign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .map(|&s| {
+                    let pid = PartyId(s);
+                    (
+                        pid,
+                        Xal23PresignMachine::<C>::new(
+                            pid,
+                            signer_parties.clone(),
+                            &key_shares[(s - 1) as usize],
+                            &mut rand_core::OsRng,
+                        )
+                        .expect("xal23 presign"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        let presig_results: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in presign_out.1.iter().take(1) {
+            print_timing(
+                &format!("xal23/presign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Online sign
+        let sign_out = time_once(&format!("xal23/online_sign/n{n}_t{t}/wall"), || {
+            let machines: Vec<_> = signers
+                .iter()
+                .zip(presig_results)
+                .map(|(&s, presig)| {
+                    let pid = PartyId(s);
+                    (pid, Xal23SignMachine::<C>::new(presig, message))
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 10)
+        });
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("xal23/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
     }
 }

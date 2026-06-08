@@ -16,6 +16,19 @@ set -euo pipefail
 #   - Rust toolchain (stable)
 #   - ~10-30 min depending on hardware (Paillier/CL proofs are heavy)
 #
+# Multi-party (n, t) sweeps are configurable at run time via env vars (no rebuild
+# between runs); see crates/framework/tecdsa-bench/src/config.rs:
+#   TECDSA_BENCH_DKG_CONFIGS       DKG (n,t) pairs   (default 3:3,7:7,11:11,15:15,20:20)
+#   TECDSA_BENCH_SIGN_N            presign/sign n    (default 20)
+#   TECDSA_BENCH_SIGN_THRESHOLDS   presign/sign t's  (default 2,3,7,11,15,20)
+# Unset = default; set-but-empty = skip that phase (e.g. TECDSA_BENCH_DKG_CONFIGS=
+# runs only presign/sign; TECDSA_BENCH_SIGN_THRESHOLDS= runs only DKG).
+# Example (quick subset):
+#   TECDSA_BENCH_DKG_CONFIGS=3:3,7:7 TECDSA_BENCH_SIGN_THRESHOLDS=2,20 \
+#       bash scripts/run_benchmarks.sh protocol
+# These compose with the multiparty/protocol-once benches and the one-shot binary;
+# they have no effect on the two-party (n2_t2) suite, ZK, or primitive benches.
+#
 # Profile B parameters (lambda=128, secp256k1):
 #   Paillier N=3072, CL |DeltaK|~1827, JL N=3360/k=712, NTilde=3072
 #
