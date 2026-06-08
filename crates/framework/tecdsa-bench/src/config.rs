@@ -33,6 +33,7 @@ use std::env;
 const DKG_CONFIGS_VAR: &str = "TECDSA_BENCH_DKG_CONFIGS";
 const SIGN_N_VAR: &str = "TECDSA_BENCH_SIGN_N";
 const SIGN_THRESHOLDS_VAR: &str = "TECDSA_BENCH_SIGN_THRESHOLDS";
+const RUNS_VAR: &str = "TECDSA_BENCH_RUNS";
 
 const DEFAULT_DKG_CONFIGS: &[(u16, u16)] = &[(3, 3), (7, 7), (11, 11), (15, 15), (20, 20)];
 const DEFAULT_SIGN_N: u16 = 20;
@@ -160,6 +161,33 @@ pub fn sign_thresholds() -> Vec<u16> {
 #[must_use]
 pub fn first_signers(t: u16) -> Vec<u16> {
     (1..=t).collect()
+}
+
+/// Explicit override for the number of real protocol executions per
+/// (phase, config), from `TECDSA_BENCH_RUNS`.
+///
+/// Returns `Some(n)` when the variable is set (forcing exactly `n` executions,
+/// clamped to at least 1), and `None` when unset — in which case the harness
+/// chooses the execution count adaptively (see
+/// [`per_party::precompute_runs`](crate::per_party::precompute_runs)).
+///
+/// This is the main lever for fast smoke runs: `TECDSA_BENCH_RUNS=1` executes
+/// each protocol/phase exactly once.
+///
+/// # Panics
+/// If the variable is set but not a non-negative integer.
+#[must_use]
+pub fn bench_runs_override() -> Option<usize> {
+    match env::var(RUNS_VAR) {
+        Ok(s) => {
+            let n = s
+                .trim()
+                .parse::<usize>()
+                .unwrap_or_else(|e| panic!("{RUNS_VAR}: invalid integer {s:?}: {e}"));
+            Some(n.max(1))
+        }
+        Err(_) => None,
+    }
 }
 
 #[cfg(test)]

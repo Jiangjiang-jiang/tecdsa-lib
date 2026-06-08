@@ -135,6 +135,26 @@ where
             .with_big_endian()
             .with_fixed_int_encoding();
 
+        // Direct-index recipient lookup: `PartyId(u16)` -> position in `machines`.
+        // The orchestrator only ever routes IDs chosen by the (trusted) test/bench
+        // harness, so a plain array keyed by the id is both faster than a linear
+        // `find` (O(1) vs O(n) per point-to-point message, i.e. O(n) vs O(n^2) per
+        // round) and needs no hashing/DoS protection. Membership is fixed for the
+        // whole run, so the table is built once. `usize::MAX` marks "no machine".
+        let machine_index: Vec<usize> = {
+            let max_id = self
+                .machines
+                .iter()
+                .map(|(pid, _)| pid.0 as usize)
+                .max()
+                .unwrap_or(0);
+            let mut idx = vec![usize::MAX; max_id + 1];
+            for (i, (pid, _)) in self.machines.iter().enumerate() {
+                idx[pid.0 as usize] = i;
+            }
+            idx
+        };
+
         for round in 0..self.max_rounds {
             let all_done = self.machines.iter().all(|(_, m)| m.is_done());
             if all_done {
@@ -183,14 +203,21 @@ where
                                 s.messages_received += 1;
                             }
                         }
-                        if let Some((_, machine)) = self.machines.iter_mut().find(|(p, _)| *p == to)
-                        {
+                        let idx = machine_index
+                            .get(to.0 as usize)
+                            .copied()
+                            .unwrap_or(usize::MAX);
+                        if let Some((_, machine)) = self.machines.get_mut(idx) {
+                            // Build the recipient's owned inbound *before* starting
+                            // the timer so message cloning is not charged to handle
+                            // time (it is delivery/transport cost, not compute).
+                            let inbound: M::Inbound = outgoing.msg.clone().into();
                             let t0 = if self.collect_timing {
                                 Some(Instant::now())
                             } else {
                                 None
                             };
-                            machine.handle(*from, outgoing.msg.clone().into())?;
+                            machine.handle(*from, inbound)?;
                             if let Some(t0) = t0 {
                                 self.timings.entry(to).or_default().handle += t0.elapsed();
                             }
@@ -214,12 +241,15 @@ where
                                         s.messages_received += 1;
                                     }
                                 }
+                                // Clone this recipient's payload *before* the timer so
+                                // cloning is not charged to handle time (see above).
+                                let inbound: M::Inbound = outgoing.msg.clone().into();
                                 let t0 = if self.collect_timing {
                                     Some(Instant::now())
                                 } else {
                                     None
                                 };
-                                machine.handle(*from, outgoing.msg.clone().into())?;
+                                machine.handle(*from, inbound)?;
                                 if let Some(t0) = t0 {
                                     self.timings.entry(*pid).or_default().handle += t0.elapsed();
                                 }

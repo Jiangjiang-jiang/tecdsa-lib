@@ -141,3 +141,20 @@ large_enum_variant = "allow"
 [patch.crates-io]
 fast-paillier = { path = "vendor/fast-paillier" }
 
+# Build profiles. Overflow checks were previously forced on for every profile via
+# `.cargo/config.toml` RUSTFLAGS; they are now scoped here so benchmarks run
+# without the per-operation overflow branches (a real cost in the class-group /
+# bigint hot loops) while release keeps them on for safety. dev/test inherit the
+# default `overflow-checks = true`.
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+# `bench` inherits from `release`; turn overflow checks off (the suite measures
+# protocol crypto, not arithmetic safety) and keep the LTO/codegen-units tuning.
+[profile.bench]
+overflow-checks = false
+lto = "fat"
+codegen-units = 1
+

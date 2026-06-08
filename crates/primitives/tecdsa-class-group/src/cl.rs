@@ -8,7 +8,7 @@
 //! and provides access to the class group context, random-number generator, and
 //! scheme parameters.
 
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 pub use self::{Ciphertext as ClCiphertext, PublicKey as ClPublicKey, SecretKey as ClSecretKey};
 pub use crate::class_group::{
@@ -34,10 +34,16 @@ pub enum ClError {
 pub type ClResult<T> = Result<T, ClError>;
 
 /// Initialised CL-HSMqk class-group scheme.
+///
+/// The heavy, immutable scheme data ([`CL_HSMqk`], which embeds the fixed-base
+/// comb table for `h` — ~256 class-group elements) is held behind an [`Arc`],
+/// so cloning a `ClSetup` only bumps the refcount and copies the small mutable
+/// PRNG state, rather than deep-copying the comb table. This matters because
+/// benchmarks and per-party protocol setup clone the setup many times.
 #[derive(Clone)]
 pub struct ClSetup {
     rng: RandGen,
-    cl: CL_HSMqk,
+    cl: Arc<CL_HSMqk>,
 }
 
 impl std::fmt::Debug for ClSetup {
@@ -115,7 +121,10 @@ impl ClSetup {
             Params::default(),
         )?;
 
-        Ok(Self { rng: randgen, cl })
+        Ok(Self {
+            rng: randgen,
+            cl: Arc::new(cl),
+        })
     }
 
     // ── Accessors ──────────────────────────────────────────────────────

@@ -123,18 +123,73 @@ where
     active_map(run_timed_without_init(machines, max_rounds).1)
 }
 
-/// Execute `run_once` `samples + 1` times, returning the per-party timing map
-/// from every run.
+/// Execute `run_once` enough times to gather `target_samples` pooled per-party
+/// timings, returning the per-party timing map from every run.
 ///
-/// **All real protocol work happens here, once.** The extra `+ 1` run absorbs
-/// the warm-up invocation Criterion performs before measurement, so that every
-/// measured sample maps to a distinct pre-recorded run (see
-/// [`bench_party_replay`]).
+/// **All real protocol work happens here.** A single execution already yields
+/// one timing *per participating party*, and per-party times are near-symmetric,
+/// so [`bench_party_replay`] pools all parties across all runs into one sample
+/// set. We therefore run only as many executions as needed to reach
+/// `target_samples` pooled timings (`ceil(target_samples / parties)`), capped at
+/// `target_samples` executions — for large quorums this is a single run, which
+/// is the dominant wall-clock win over the previous "one full run per sample".
+///
+/// `TECDSA_BENCH_RUNS` (see [`config::bench_runs_override`](crate::config::bench_runs_override))
+/// forces an exact execution count, overriding the adaptive choice — set it to
+/// `1` for fast smoke runs that execute each protocol/phase exactly once.
 pub fn precompute_runs(
-    samples: usize,
+    target_samples: usize,
     mut run_once: impl FnMut() -> BTreeMap<PartyId, Duration>,
 ) -> Vec<BTreeMap<PartyId, Duration>> {
-    (0..samples + 1).map(|_| run_once()).collect()
+    if let Some(forced) = crate::config::bench_runs_override() {
+        return (0..forced).map(|_| run_once()).collect();
+    }
+    let mut out = Vec::new();
+    let first = run_once();
+    let parties = first.len().max(1);
+    out.push(first);
+    while out.len() < target_samples && out.len() * parties < target_samples {
+        out.push(run_once());
+    }
+    out
+}
+
+/// Like [`precompute_runs`], but for a two-phase pipeline (e.g. presign then
+/// online-sign) where the second phase consumes the first phase's outputs.
+///
+/// `run_once` performs **both** phases in a single execution and returns their
+/// per-party active-time maps as `(phase_a, phase_b)`. This lets the first phase
+/// be timed once and its outputs reused by the second phase, instead of running
+/// the first phase again (untimed) just to feed the second — halving the heavy
+/// presign work in the sign sweeps. Returns the two pooled run-vectors (same
+/// length), each replayed independently by [`bench_party_replay`].
+///
+/// Adaptive/`TECDSA_BENCH_RUNS` semantics match [`precompute_runs`] (sized by the
+/// first phase's party count).
+pub fn precompute_runs_2(
+    target_samples: usize,
+    mut run_once: impl FnMut() -> (BTreeMap<PartyId, Duration>, BTreeMap<PartyId, Duration>),
+) -> (
+    Vec<BTreeMap<PartyId, Duration>>,
+    Vec<BTreeMap<PartyId, Duration>>,
+) {
+    let forced = crate::config::bench_runs_override();
+    let mut a = Vec::new();
+    let mut b = Vec::new();
+    let (fa, fb) = run_once();
+    let parties = fa.len().max(1);
+    a.push(fa);
+    b.push(fb);
+    let enough = |len: usize| match forced {
+        Some(r) => len >= r,
+        None => len >= target_samples || len * parties >= target_samples,
+    };
+    while !enough(a.len()) {
+        let (na, nb) = run_once();
+        a.push(na);
+        b.push(nb);
+    }
+    (a, b)
 }
 
 /// Configure a Criterion group so each per-party benchmark bottoms out at one
@@ -151,29 +206,37 @@ pub fn configure_replay_group(group: &mut BenchmarkGroup<'_, WallTime>, samples:
         .measurement_time(Duration::from_nanos(1));
 }
 
-/// Register a per-party benchmark that replays a party's pre-recorded active
-/// times from `runs` (produced by [`precompute_runs`]).
+/// Register a benchmark that replays pre-recorded active times from `runs`
+/// (produced by [`precompute_runs`]).
 ///
-/// The closure performs negligible work, but the [`Duration`] it returns to
-/// Criterion is the real measured per-party active time, so Criterion computes
-/// its statistics over genuine measurements. A cursor walks `runs` (wrapping
-/// with `%`) so each sample maps to a distinct execution and the same physical
-/// run is shared across every party's benchmark.
+/// Every party's active time from every run is pooled into one sample set. The
+/// closure performs negligible work, but each [`Duration`] it returns to
+/// Criterion is a real measured per-party active time, so Criterion computes its
+/// statistics over `runs * parties` genuine measurements. A cursor walks the
+/// pool (wrapping with `%`) so a small number of real executions still yields a
+/// full sample set. Pooling relies on the suite's near-symmetry assumption (it
+/// already reports a single representative party).
+///
+/// `_pid` is retained for call-site compatibility; the representative-party label
+/// is encoded by the caller in `id`. Pooling no longer selects a single party.
 pub fn bench_party_replay(
     group: &mut BenchmarkGroup<'_, WallTime>,
     id: impl Into<String>,
     runs: &[BTreeMap<PartyId, Duration>],
-    pid: PartyId,
+    _pid: PartyId,
 ) {
+    let pool: Vec<Duration> = runs.iter().flat_map(|m| m.values().copied()).collect();
+    let pool = if pool.is_empty() {
+        vec![Duration::ZERO]
+    } else {
+        pool
+    };
     let mut next = 0usize;
     group.bench_function(id.into(), |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                total += runs[next % runs.len()]
-                    .get(&pid)
-                    .copied()
-                    .unwrap_or_default();
+                total += pool[next % pool.len()];
                 next += 1;
             }
             total

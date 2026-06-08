@@ -666,9 +666,13 @@ fn dkls23_benchmarks(c: &mut Criterion) {
         // Untimed setup: generate key shares once per threshold.
         let shares = dkls23_helpers::run_keygen(n, t);
 
-        // --- Presign: per-party active time for each signer ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
-            let builders: Vec<_> = signer_indices
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed. (Full sign below is a
+        // separate end-to-end measurement.)
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed online sign).
+            let presign_builders: Vec<_> = signer_indices
                 .iter()
                 .map(|&idx| {
                     let share = shares[(idx - 1) as usize].clone();
@@ -684,24 +688,12 @@ fn dkls23_benchmarks(c: &mut Criterion) {
                     })
                 })
                 .collect();
-            per_party::active_with_init(builders, 20)
-        });
-        for &signer in signer_indices.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/dkls23/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_with_init(presign_builders, 20);
 
-        // --- Online Sign: per-party active time for each signer ---
-        // Presignature is one-time use, so generate fresh per run (untimed).
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: generate fresh presignature
-            let presigs = dkls23_helpers::run_presign(&shares, &signer_indices);
-            // Timed: construct + run online sign machines
-            let builders: Vec<_> = presigs
+            // Timed: online sign, consuming the presignatures just produced.
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
+            let sign_builders: Vec<_> = presigs
                 .into_iter()
                 .map(|presig| {
                     let pid = presig.my_id;
@@ -714,9 +706,20 @@ fn dkls23_benchmarks(c: &mut Criterion) {
                     })
                 })
                 .collect();
-            per_party::active_with_init(builders, 10)
+            let (_, sign_timings) = per_party::run_timed_with_init(sign_builders, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signer_indices.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/dkls23/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/dkls23/n{n}_t{t}/party{signer}"),
@@ -834,9 +837,13 @@ fn gg18_benchmarks(c: &mut Criterion) {
         // Untimed setup: generate key shares once per threshold.
         let key_shares = gg18_helpers::run_keygen(n, t);
 
-        // --- Presign: per-party active time for each signer ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
-            let builders: Vec<_> = signers
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed. (Full sign below is a
+        // separate end-to-end measurement.)
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed online sign).
+            let presign_builders: Vec<_> = signers
                 .iter()
                 .map(|&signer_1based| {
                     let party_0based = (signer_1based - 1) as usize;
@@ -853,24 +860,12 @@ fn gg18_benchmarks(c: &mut Criterion) {
                     })
                 })
                 .collect();
-            per_party::active_with_init(builders, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/gg18/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_with_init(presign_builders, 10);
 
-        // --- Online Sign: per-party active time for each signer ---
-        // Presignature is one-time use, so generate fresh per run (untimed).
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: generate fresh presignature
-            let presigs = gg18_helpers::run_presign(&key_shares, &signers);
-            // Timed: construct + run online sign machines
-            let builders: Vec<_> = presigs
+            // Timed: online sign, consuming the presignatures just produced.
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
+            let sign_builders: Vec<_> = presigs
                 .into_iter()
                 .map(|presig| {
                     let pid = presig.my_id;
@@ -884,9 +879,20 @@ fn gg18_benchmarks(c: &mut Criterion) {
                     })
                 })
                 .collect();
-            per_party::active_with_init(builders, 10)
+            let (_, sign_timings) = per_party::run_timed_with_init(sign_builders, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/gg18/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/gg18/n{n}_t{t}/party{signer}"),
@@ -1022,10 +1028,13 @@ fn ggn16_benchmarks(c: &mut Criterion) {
         let key_shares =
             ggn16_helpers::run_keygen(n, t - 1, threshold_setup, dec_shares, h1, h2, n_tilde);
 
-        // --- Presign: per-party active time for each signer ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed online sign).
             let mut rng = tecdsa_core::Csprng::new();
-            let machines: Vec<_> = signers
+            let presign_machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
@@ -1040,44 +1049,12 @@ fn ggn16_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/ggn16/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
 
-        // --- Online Sign: per-party active time for each signer ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: fresh presignature
-            let mut rng = tecdsa_core::Csprng::new();
-            let presig_machines: Vec<_> = signers
-                .iter()
-                .map(|&s| {
-                    let pid = PartyId(s);
-                    (
-                        pid,
-                        Ggn16PresignMachine::<C>::new(
-                            key_shares[(s - 1) as usize].clone(),
-                            pid,
-                            signer_parties.clone(),
-                            &mut rng,
-                        ),
-                    )
-                })
-                .collect();
-            let presigs: Vec<_> = Orchestrator::new(presig_machines, 10)
-                .run()
-                .expect("orch")
-                .into_iter()
-                .map(|r| r.unwrap())
-                .collect();
-            // Timed: online sign
-            let machines: Vec<_> = signers
+            // Timed: online sign, consuming the presignatures just produced.
+            let sign_machines: Vec<_> = signers
                 .iter()
                 .zip(presigs)
                 .map(|(&s, presig)| {
@@ -1088,9 +1065,20 @@ fn ggn16_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/ggn16/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/ggn16/n{n}_t{t}/party{signer}"),
@@ -1186,9 +1174,12 @@ fn tx25_benchmarks(c: &mut Criterion) {
             result.into_iter().map(|r| r.unwrap()).collect::<Vec<_>>()
         };
 
-        // --- Presign: per-party active time for each signer ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
-            let machines: Vec<_> = signers
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed online sign).
+            let presign_machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
@@ -1204,46 +1195,13 @@ fn tx25_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/tx25/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
 
-        // --- Online Sign: per-party active time for each signer ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: fresh presignature
-            let presigs = {
-                let machines: Vec<_> = signers
-                    .iter()
-                    .map(|&s| {
-                        let pid = PartyId(s);
-                        (
-                            pid,
-                            Tx25PresignMachine::new(
-                                pid,
-                                signer_parties.clone(),
-                                &key_shares[(s - 1) as usize],
-                                cl_setup.clone(),
-                            )
-                            .expect("tx25 presign"),
-                        )
-                    })
-                    .collect();
-                Orchestrator::new(machines, 10)
-                    .run()
-                    .expect("orch")
-                    .into_iter()
-                    .map(|r| r.unwrap())
-                    .collect::<Vec<_>>()
-            };
+            // Timed: online sign, consuming the presignatures just produced.
             let pk = key_shares[0].public_key;
-            let machines: Vec<_> = signers
+            let sign_machines: Vec<_> = signers
                 .iter()
                 .zip(presigs)
                 .map(|(&s, presig)| {
@@ -1261,9 +1219,20 @@ fn tx25_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/tx25/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/tx25/n{n}_t{t}/party{signer}"),
@@ -1355,9 +1324,12 @@ fn jtx25_benchmarks(c: &mut Criterion) {
             outputs.into_iter().map(|r| r.unwrap()).collect::<Vec<_>>()
         };
 
-        // --- Presign ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
-            let machines: Vec<_> = signers
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed online sign).
+            let presign_machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
@@ -1373,45 +1345,13 @@ fn jtx25_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/jtx25/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
 
-        // --- Online Sign ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            let presigs = {
-                let machines: Vec<_> = signers
-                    .iter()
-                    .map(|&s| {
-                        let pid = PartyId(s);
-                        (
-                            pid,
-                            Jtx25PresignMachine::new(
-                                pid,
-                                signer_parties.clone(),
-                                &key_shares[(s - 1) as usize],
-                                cl_setup.clone(),
-                            )
-                            .expect("jtx25 presign"),
-                        )
-                    })
-                    .collect();
-                Orchestrator::new(machines, 10)
-                    .run()
-                    .expect("orch")
-                    .into_iter()
-                    .map(|r| r.unwrap())
-                    .collect::<Vec<_>>()
-            };
+            // Timed: online sign, consuming the presignatures just produced.
             let pk = key_shares[0].public_key;
-            let machines: Vec<_> = signers
+            let sign_machines: Vec<_> = signers
                 .iter()
                 .zip(presigs)
                 .map(|(&s, presig)| {
@@ -1429,9 +1369,20 @@ fn jtx25_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/jtx25/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/jtx25/n{n}_t{t}/party{signer}"),
@@ -1533,8 +1484,11 @@ fn wmy23_benchmarks(c: &mut Criterion) {
         };
         let public_key = key_shares[0].public_key;
 
-        // --- Presign: per-party active time ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed online sign).
             let presign_machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
@@ -1551,44 +1505,11 @@ fn wmy23_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(presign_machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/wmy23/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
 
-        // --- Online Sign: per-party active time ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: presign
-            let presign_machines: Vec<_> = signers
-                .iter()
-                .map(|&s| {
-                    let pid = PartyId(s);
-                    let config = PresignConfig {
-                        key_share: key_shares[(s - 1) as usize].clone(),
-                        my_id: pid,
-                        signer_parties: signer_parties.clone(),
-                        cl_setup: cl_setup.clone(),
-                    };
-                    (
-                        pid,
-                        Wmy23PresignMachine::new(config).expect("wmy23 presign"),
-                    )
-                })
-                .collect();
-            let presigs: Vec<_> = Orchestrator::new(presign_machines, 10)
-                .run()
-                .expect("orch")
-                .into_iter()
-                .map(|r| r.unwrap())
-                .collect();
-
-            // Timed: online sign
+            // Timed: online sign, consuming the presignatures just produced.
             let sign_machines: Vec<_> = signers
                 .iter()
                 .zip(presigs)
@@ -1607,9 +1528,20 @@ fn wmy23_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(sign_machines, 10)
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/wmy23/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/wmy23/n{n}_t{t}/party{signer}"),
@@ -1701,9 +1633,13 @@ fn wmc24_benchmarks(c: &mut Criterion) {
             outputs.into_iter().map(|r| r.unwrap()).collect::<Vec<_>>()
         };
 
-        // --- Presign ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
-            let machines: Vec<_> = signers
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed. Each run yields both
+        // phases' per-party active times.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed online sign).
+            let presign_machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
@@ -1719,45 +1655,13 @@ fn wmc24_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/wmc24/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
 
-        // --- Online Sign ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            let presigs = {
-                let machines: Vec<_> = signers
-                    .iter()
-                    .map(|&s| {
-                        let pid = PartyId(s);
-                        (
-                            pid,
-                            Wmc24PresignMachine::new(
-                                pid,
-                                signer_parties.clone(),
-                                &key_shares[(s - 1) as usize],
-                                cl_setup.clone(),
-                            )
-                            .expect("wmc24 presign"),
-                        )
-                    })
-                    .collect();
-                Orchestrator::new(machines, 10)
-                    .run()
-                    .expect("orch")
-                    .into_iter()
-                    .map(|r| r.unwrap())
-                    .collect::<Vec<_>>()
-            };
+            // Timed: online sign, consuming the presignatures just produced.
             let pk = key_shares[0].public_key;
-            let machines: Vec<_> = signers
+            let sign_machines: Vec<_> = signers
                 .iter()
                 .zip(presigs)
                 .map(|(&s, presig)| {
@@ -1775,9 +1679,20 @@ fn wmc24_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/wmc24/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/wmc24/n{n}_t{t}/party{signer}"),
@@ -1884,8 +1799,11 @@ fn llz25_benchmarks(c: &mut Criterion) {
                 .collect::<Vec<_>>()
         };
 
-        // --- Presign: per-party active time ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed sign).
             let presign_machines: Vec<_> = signers
                 .iter()
                 .enumerate()
@@ -1906,48 +1824,11 @@ fn llz25_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(presign_machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/llz25/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
 
-        // --- Online Sign: per-party active time ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: presign
-            let presign_machines: Vec<_> = signers
-                .iter()
-                .enumerate()
-                .map(|(pos, &s)| {
-                    let pid = PartyId(s);
-                    (
-                        pid,
-                        Llz25PresignMachine::new(
-                            pid,
-                            signer_parties.clone(),
-                            key_shares[(s - 1) as usize].clone(),
-                            quorum_indices.clone(),
-                            pos,
-                            cl_setup.clone(),
-                            pk_crs.clone(),
-                        )
-                        .expect("llz25 presign"),
-                    )
-                })
-                .collect();
-            let presigs: Vec<_> = Orchestrator::new(presign_machines, 10)
-                .run()
-                .expect("orch")
-                .into_iter()
-                .map(|r| r.unwrap())
-                .collect();
-
-            // Timed: sign
+            // Timed: sign, consuming the presignatures just produced.
             let sign_machines: Vec<_> = signers
                 .iter()
                 .zip(presigs)
@@ -1960,9 +1841,20 @@ fn llz25_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(sign_machines, 10)
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/llz25/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/llz25/n{n}_t{t}/party{signer}"),
@@ -2060,8 +1952,11 @@ fn trout_benchmarks(c: &mut Criterion) {
                 .collect::<Vec<_>>()
         };
 
-        // --- Presign: per-party active time ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed sign).
             let presign_machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
@@ -2090,56 +1985,11 @@ fn trout_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(presign_machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
-            per_party::bench_party_replay(
-                &mut group,
-                format!("presign/trout/n{n}_t{t}/party{signer}"),
-                &presign_runs,
-                PartyId(signer),
-            );
-        }
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
 
-        // --- Online Sign: per-party active time ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: presign
-            let presign_machines: Vec<_> = signers
-                .iter()
-                .map(|&s| {
-                    let pid = PartyId(s);
-                    let local_setup = cl_setup.clone();
-                    let share = key_shares[(s - 1) as usize].clone();
-                    // Reconstruct the *joint* CL public key (Y_cl = ∏ Y_k) that
-                    // keygen encrypted x_i under; a fresh single-party key never
-                    // matches and breaks scaled decryption.
-                    let (pa, pb, pc) = &share.cl_pk_abc;
-                    let cl_pk_qfi =
-                        tecdsa_trout::error::qfi_from_abc(pa, pb, pc).expect("reconstruct CL pk");
-                    let cl_pk = local_setup.pk_from_qfi(&cl_pk_qfi).expect("pk_from_qfi");
-                    (
-                        pid,
-                        TroutPresignMachine::new(
-                            pid,
-                            signer_parties.clone(),
-                            share,
-                            signing_1based.clone(),
-                            b"bench-session",
-                            local_setup,
-                            cl_pk,
-                        )
-                        .expect("trout presign"),
-                    )
-                })
-                .collect();
-            let presigs: Vec<_> = Orchestrator::new(presign_machines, 10)
-                .run()
-                .expect("orch")
-                .into_iter()
-                .map(|r| r.unwrap())
-                .collect();
-
-            // Timed: sign
+            // Timed: sign, consuming the presignatures just produced.
             let sign_machines: Vec<_> = signers
                 .iter()
                 .zip(presigs)
@@ -2167,9 +2017,20 @@ fn trout_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(sign_machines, 10)
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/trout/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/trout/n{n}_t{t}/party{signer}"),
@@ -2257,9 +2118,12 @@ fn xal23_benchmarks(c: &mut Criterion) {
             key_shares[(s - 1) as usize].secret_share *= lambdas[pos];
         }
 
-        // --- Presign ---
-        let presign_runs = per_party::precompute_runs(SAMPLES, || {
-            let machines: Vec<_> = signers
+        // --- Presign + Online sign (pipelined) ---
+        // Presign is timed once and its presignatures feed the online-sign
+        // timing, instead of regenerating them untimed.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Timed: presign (capture outputs to feed sign).
+            let presign_machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
@@ -2275,7 +2139,25 @@ fn xal23_benchmarks(c: &mut Criterion) {
                     )
                 })
                 .collect();
-            per_party::active_without_init(machines, 10)
+            let (presign_outputs, presign_timings) =
+                per_party::run_timed_without_init(presign_machines, 10);
+            let presigs: Vec<_> = presign_outputs.into_iter().map(|r| r.unwrap()).collect();
+
+            // Timed: sign, consuming the presignatures just produced.
+            let sign_machines: Vec<_> = signers
+                    .iter()
+                .zip(presigs)
+                .map(|(&s, presig)| {
+                    let pid = PartyId(s);
+                    (pid, Xal23SignMachine::<C>::new(presig, message))
+                })
+                .collect();
+            let (_, sign_timings) = per_party::run_timed_without_init(sign_machines, 10);
+
+            (
+                per_party::active_map(presign_timings),
+                per_party::active_map(sign_timings),
+            )
         });
         for &signer in signers.iter().take(1) {
             per_party::bench_party_replay(
@@ -2284,46 +2166,6 @@ fn xal23_benchmarks(c: &mut Criterion) {
                 &presign_runs,
                 PartyId(signer),
             );
-        }
-
-        // --- Online Sign ---
-        let online_runs = per_party::precompute_runs(SAMPLES, || {
-            // Untimed: fresh presignature
-            let presig_results = {
-                let machines: Vec<_> = signers
-                    .iter()
-                    .map(|&s| {
-                        let pid = PartyId(s);
-                        (
-                            pid,
-                            Xal23PresignMachine::<C>::new(
-                                pid,
-                                signer_parties.clone(),
-                                &key_shares[(s - 1) as usize],
-                                &mut rand_core::OsRng,
-                            )
-                            .expect("xal23 presign"),
-                        )
-                    })
-                    .collect();
-                Orchestrator::new(machines, 10)
-                    .run()
-                    .expect("orch")
-                    .into_iter()
-                    .map(|r| r.unwrap())
-                    .collect::<Vec<_>>()
-            };
-            let machines: Vec<_> = signers
-                .iter()
-                .zip(presig_results)
-                .map(|(&s, presig)| {
-                    let pid = PartyId(s);
-                    (pid, Xal23SignMachine::<C>::new(presig, message))
-                })
-                .collect();
-            per_party::active_without_init(machines, 10)
-        });
-        for &signer in signers.iter().take(1) {
             per_party::bench_party_replay(
                 &mut group,
                 format!("online_sign/xal23/n{n}_t{t}/party{signer}"),

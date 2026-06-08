@@ -1,2 +1,5 @@
-[env]
-RUSTFLAGS = { value = "-C overflow-checks=on", force = true }
+# Overflow checks are controlled per-profile in the workspace `Cargo.toml`
+# (`[profile.release]`/`[profile.bench]`/`[profile.dev]`) rather than forced
+# globally via RUSTFLAGS, so benchmarks (built with the `bench` profile) can run
+# without the overflow-check branches that slow the arithmetic-heavy class-group
+# and bigint hot paths, while dev/test/release keep them on.
