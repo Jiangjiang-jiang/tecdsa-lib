@@ -32,7 +32,8 @@ use rug::{Complete, Integer};
 
 use crate::{
     cl::{
-        Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Mpz, PublicKey as ClHsmqkPublicKey, Qfi,
+        Ciphertext as ClHsmqkCiphertext, ClError, ClResult, ClSetup, Mpz,
+        PublicKey as ClHsmqkPublicKey, Qfi,
     },
     zk::{r_blnt::RBlntProof, r_gdec_cl::RGdecClProof, sample_random},
 };
@@ -92,6 +93,34 @@ fn factorial(n: usize) -> Mpz {
         delta = delta * Mpz::from(i as u64);
     }
     delta
+}
+
+/// Upper bound on the magnitude of a delta-scaled Shamir share
+/// `F(j) = Delta*s + r_1*j + ... + r_{t-1}*j^{t-1}` evaluated at any point
+/// `j <= n`, where the shared secret `s` and the random coefficients `r_l`
+/// are each strictly below `sk_bound`.
+///
+/// The bound is `sk_bound * (Delta + sum_{l=1}^{t-1} n^l)` with `Delta = n!`.
+///
+/// A share is far larger than the secret it shares — by the `Delta = n!`
+/// scaling of the constant term and by the high-degree terms `r_l * j^l` — so
+/// the q-ary chunk decomposition must be sized for this bound. Sizing it for
+/// `sk_bound` alone silently truncates the high-order chunks for larger
+/// `(n, t)` (see the `resize` in the Gen phase), corrupting the integer share
+/// and breaking delta-scaled Lagrange reconstruction.
+fn share_magnitude_bound(sk_bound: &Mpz, n: usize, t: usize) -> Mpz {
+    // poly = Delta + sum_{l=1}^{t-1} n^l, with the geometric sum in closed form
+    //   sum_{l=1}^{t-1} n^l = (n^t - n) / (n - 1)   (n >= 2; the sum is 0 when
+    // t <= 1). The numerator is always divisible by (n - 1) since
+    // n ≡ 1 (mod n - 1), so `divexact` is exact.
+    let mut poly = factorial(n); // Delta = n!
+    if n >= 2 && t >= 2 {
+        let n_mpz = Mpz::from(n as u64);
+        let numer = &n_mpz.pow_u(t as u32) - &n_mpz; // n^t - n
+        let denom = &n_mpz - &Mpz::from(1u64); // n - 1
+        poly = &poly + &numer.divexact(&denom);
+    }
+    &poly * sk_bound
 }
 
 /// Share a secret `s` (big-endian unsigned bytes) using delta-scaled
@@ -198,7 +227,12 @@ pub fn dkg_cl_gen(
     let q = Mpz::from_bytes_be(&q_bytes);
     let sk_bound_bytes = setup.secretkey_bound_bytes()?;
     let sk_bound = Mpz::from_bytes_be(&sk_bound_bytes);
-    let num_chunks = num_chunks_for_bound(&sk_bound, &q);
+    // Size the q-ary chunk count for the SHARE magnitude, not the secret
+    // bound: a delta-scaled Shamir share is far larger than `sk_bound`, so
+    // sizing for `sk_bound` would silently truncate high-order chunks for
+    // larger `(n, t)` and corrupt the share.
+    let share_bound = share_magnitude_bound(&sk_bound, n, threshold);
+    let num_chunks = num_chunks_for_bound(&share_bound, &q);
 
     // 1. Sample chi_i in [0, B] and chi'_i in [0, B].
     let chi_i_bytes = sample_random(setup)?;
@@ -219,8 +253,16 @@ pub fn dkg_cl_gen(
         let share_j_uint = Mpz::from_bytes_be(share_j_bytes);
         let raw_chunks = decompose_q_ary(&share_j_uint, &q);
 
-        // Pad or truncate to exactly num_chunks.
+        // Pad to exactly num_chunks. `num_chunks` is sized (via
+        // `share_magnitude_bound`) so the share always fits; never truncate.
         let mut chi_chunks = raw_chunks;
+        if chi_chunks.len() > num_chunks {
+            return Err(ClError::InvalidParam(format!(
+                "DKG-CL share needs {} q-ary chunks but only {num_chunks} were \
+                 allocated (n={n}, t={threshold}); refusing to truncate the share",
+                chi_chunks.len()
+            )));
+        }
         chi_chunks.resize(num_chunks, Mpz::from(0));
 
         let chi_chunk_bytes: Vec<Vec<u8>> = chi_chunks
@@ -343,7 +385,11 @@ pub fn dkg_cl_gen_with_secret(
     let q = Mpz::from_bytes_be(&q_bytes);
     let sk_bound_bytes = setup.secretkey_bound_bytes()?;
     let sk_bound = Mpz::from_bytes_be(&sk_bound_bytes);
-    let num_chunks = num_chunks_for_bound(&sk_bound, &q);
+    // Size the q-ary chunk count for the SHARE magnitude, not the secret
+    // bound (see `share_magnitude_bound`): shares are far larger than the
+    // secret, so sizing for `sk_bound` would silently truncate the share.
+    let share_bound = share_magnitude_bound(&sk_bound, n, threshold);
+    let num_chunks = num_chunks_for_bound(&share_bound, &q);
 
     // Use the provided secret instead of sampling.
     let chi_i_bytes = secret.to_vec();
@@ -361,7 +407,16 @@ pub fn dkg_cl_gen_with_secret(
         let share_j_uint = Mpz::from_bytes_be(share_j_bytes);
         let raw_chunks = decompose_q_ary(&share_j_uint, &q);
 
+        // `num_chunks` is sized via `share_magnitude_bound` so the share
+        // always fits; never truncate (that would corrupt the share).
         let mut chi_chunks = raw_chunks;
+        if chi_chunks.len() > num_chunks {
+            return Err(ClError::InvalidParam(format!(
+                "DKG-CL share needs {} q-ary chunks but only {num_chunks} were \
+                 allocated (n={n}, t={threshold}); refusing to truncate the share",
+                chi_chunks.len()
+            )));
+        }
         chi_chunks.resize(num_chunks, Mpz::from(0));
 
         let chi_chunk_bytes: Vec<Vec<u8>> = chi_chunks
@@ -853,6 +908,56 @@ mod tests {
         assert_eq!(num_chunks_for_bound(&Mpz::from(10u32), &q), 2);
         assert_eq!(num_chunks_for_bound(&Mpz::from(99u32), &q), 2);
         assert_eq!(num_chunks_for_bound(&Mpz::from(100u32), &q), 3);
+    }
+
+    /// Regression for the WMC24 `n = t = 20` failure ("ECDSA verification
+    /// failed after signature assembly").
+    ///
+    /// A delta-scaled Shamir share `F(j) = Delta*chi + sum r_l*j^l`
+    /// (`Delta = n!`) is far larger than the secret `chi`. The chunk count was
+    /// sized for the secret bound, so for larger `(n, t)` the high-order q-ary
+    /// chunks were silently dropped by `resize`, corrupting the share and
+    /// breaking Lagrange reconstruction. This checks the share-magnitude bound
+    /// is large enough to hold the worst-case share without truncation, and
+    /// that the old (secret-sized) count would indeed have truncated at n=t=20.
+    #[test]
+    fn share_chunks_not_truncated_for_large_n() {
+        let setup = ClSetup::new_secp256k1("424242").expect("setup");
+        let q = Mpz::from_bytes_be(&setup.q_bytes().expect("q"));
+        let b = Mpz::from_bytes_be(&setup.secretkey_bound_bytes().expect("B"));
+
+        // `poly = Delta + sum_{l=1}^{t-1} n^l`; worst-case share = (B-1)*poly.
+        let poly = |n: usize, t: usize| -> Mpz {
+            let n_mpz = Mpz::from(n as u64);
+            let mut acc = factorial(n);
+            let mut n_pow = Mpz::from(1u64);
+            for _ in 1..t {
+                n_pow = &n_pow * &n_mpz;
+                acc = &acc + &n_pow;
+            }
+            acc
+        };
+        let max_coeff = &b - &Mpz::from(1u64);
+
+        for &(n, t) in &[(2usize, 2usize), (5, 5), (10, 10), (20, 20)] {
+            let new_chunks = num_chunks_for_bound(&share_magnitude_bound(&b, n, t), &q);
+            let worst_share = &max_coeff * &poly(n, t);
+            let needed = decompose_q_ary(&worst_share, &q).len();
+            assert!(
+                needed <= new_chunks,
+                "n={n},t={t}: worst-case share needs {needed} chunks but \
+                 share-magnitude bound only allots {new_chunks}",
+            );
+        }
+
+        // The reported failing case must overflow the OLD secret-sized count
+        // (i.e. the bug really was a truncation at n=t=20).
+        let old_chunks = num_chunks_for_bound(&b, &q);
+        let worst_share_20 = &max_coeff * &poly(20, 20);
+        assert!(
+            decompose_q_ary(&worst_share_20, &q).len() > old_chunks,
+            "n=t=20 share should overflow the old secret-sized chunk count",
+        );
     }
 
     /// Tests the 2-party degenerate case.
