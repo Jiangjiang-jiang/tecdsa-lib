@@ -1087,7 +1087,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
         };
         let security = pi_aff::SecurityParams {
             l_x: 256,
-            l_y: 256,
+            l_y: 1280,
             epsilon: 512,
         };
         let proof = time_once("zk/paillier_zk_facade/pi_aff_g/prove", || {

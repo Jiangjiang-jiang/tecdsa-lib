@@ -1387,7 +1387,7 @@ fn paillier_zk_facade(c: &mut Criterion) {
         };
         let security = pi_aff::SecurityParams {
             l_x: 256,
-            l_y: 256,
+            l_y: 1280,
             epsilon: 512,
         };
         let proof =
