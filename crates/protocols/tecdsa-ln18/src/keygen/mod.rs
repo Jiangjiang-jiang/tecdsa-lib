@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! LN18 threshold key generation (Protocol 5.1).
+//! LN18 threshold key generation (Feldman VSS DKG).
 //!
-//! A 5-round distributed key generation protocol where `n` parties produce a
-//! shared ECDSA key using three `F_mult` sub-operations:
+//! A 3-round distributed key generation protocol where `n` parties produce a
+//! shared ECDSA key via Feldman VSS, hash commitments, and Schnorr proofs.
 //!
-//! 1. **init** (2 rounds): each party generates an ElGamal keypair share;
-//!    the joint ElGamal public key is computed.
-//! 2. **input** (2 rounds): each party inputs its ECDSA secret share `x_i`
-//!    via commit-then-prove (F_{com-zk} hybrid model).
-//! 3. **element-out** (1 round): parties jointly reveal `Q = x * G`
-//!    without revealing the secret key `x = sum(x_i)`.
+//! ## Rounds
+//!
+//! 1. **Round 1**: Each party samples a degree-(t-1) polynomial, computes Feldman
+//!    commitments + Schnorr nonce, hash-commits, and broadcasts the commitment.
+//! 2. **Round 2**: Decommit (broadcast Feldman commitments + Schnorr nonce + rid)
+//!    and send P2P VSS shares.
+//! 3. **Round 3**: Verify commitments + Feldman shares + Schnorr proofs.
+//!    Compute combined share, public key, public shares.
+//!    Generate and broadcast Schnorr proof of combined share.
 //!
 //! ## Output
 //!
-//! Each party receives an [`Ln18KeyShare`] containing its secret share `x_i`,
-//! the joint ECDSA public key `Q`, and ElGamal key material for use in signing.
+//! Each party receives an [`Ln18KeyShare`] containing its Shamir secret share,
+//! the joint ECDSA public key, and per-party public verification shares.
 
 pub mod msg;
 mod rounds;
@@ -22,21 +25,19 @@ mod rounds;
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use msg::{msg_round, Ln18KeygenMsg};
 use rand_core::CryptoRngCore;
-use rounds::{InitRound1State, KeygenRound};
+use rounds::{KeygenRound, Round1State};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig, StateMachine};
 
 use crate::key_share::Ln18KeyShare;
 
-/// LN18 threshold key generation state machine.
+/// LN18 threshold key generation state machine (Feldman VSS DKG).
 pub struct Ln18KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     round: KeygenRound<C>,
-    /// RNG kept across round transitions (needed for input and element-out sub-ops).
-    rng: tecdsa_core::Csprng,
 }
 
 impl<C: TecdsaCurve> Ln18KeygenMachine<C>
@@ -46,13 +47,11 @@ where
 {
     /// Create a new LN18 keygen state machine.
     ///
-    /// Samples the ECDSA secret share `x_i`, generates ElGamal key material,
-    /// and queues the first round of broadcast messages.
+    /// Generates initial secrets and queues Round 1 broadcast messages.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
-        let state = InitRound1State::<C>::new(config, rng);
+        let state = Round1State::<C>::new(config, rng);
         Self {
-            round: KeygenRound::InitRound1(state),
-            rng: tecdsa_core::Csprng::new(),
+            round: KeygenRound::Round1(state),
         }
     }
 }
@@ -60,7 +59,8 @@ where
 impl<C: TecdsaCurve> StateMachine for Ln18KeygenMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+    C::Scalar:
+        PrimeField<Repr = FieldBytes<C>> + serde::Serialize + for<'de> serde::Deserialize<'de>,
 {
     type Output = Ln18KeyShare<C>;
     type Inbound = Ln18KeygenMsg<C>;
@@ -68,13 +68,13 @@ where
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
         match &mut self.round {
-            KeygenRound::InitRound1(state) => match msg {
-                Ln18KeygenMsg::InitRound1(m) => {
+            KeygenRound::Round1(state) => match msg {
+                Ln18KeygenMsg::Round1(m) => {
                     state.handle(from, m)?;
                     if state.is_ready() {
                         let old = std::mem::take(&mut self.round);
-                        if let KeygenRound::InitRound1(s) = old {
-                            self.round = KeygenRound::InitRound2(s.advance()?);
+                        if let KeygenRound::Round1(s) = old {
+                            self.round = KeygenRound::Round2(s.advance());
                         }
                     }
                     Ok(())
@@ -84,13 +84,23 @@ where
                     got: msg_round(&msg),
                 }),
             },
-            KeygenRound::InitRound2(state) => match msg {
-                Ln18KeygenMsg::InitRound2(m) => {
-                    state.handle(from, m)?;
+            KeygenRound::Round2(state) => match msg {
+                Ln18KeygenMsg::Round2Broad(m) => {
+                    state.handle_broad(from, m)?;
                     if state.is_ready() {
                         let old = std::mem::take(&mut self.round);
-                        if let KeygenRound::InitRound2(s) = old {
-                            self.round = KeygenRound::InputRound1(s.advance(&mut self.rng)?);
+                        if let KeygenRound::Round2(s) = old {
+                            self.round = KeygenRound::Round3(s.advance()?);
+                        }
+                    }
+                    Ok(())
+                }
+                Ln18KeygenMsg::Round2Uni(m) => {
+                    state.handle_uni(from, m)?;
+                    if state.is_ready() {
+                        let old = std::mem::take(&mut self.round);
+                        if let KeygenRound::Round2(s) = old {
+                            self.round = KeygenRound::Round3(s.advance()?);
                         }
                     }
                     Ok(())
@@ -100,51 +110,19 @@ where
                     got: msg_round(&msg),
                 }),
             },
-            KeygenRound::InputRound1(state) => match msg {
-                Ln18KeygenMsg::InputRound1(m) => {
+            KeygenRound::Round3(state) => match msg {
+                Ln18KeygenMsg::Round3(m) => {
                     state.handle(from, m)?;
                     if state.is_ready() {
                         let old = std::mem::take(&mut self.round);
-                        if let KeygenRound::InputRound1(s) = old {
-                            self.round = KeygenRound::InputRound2(s.advance()?);
-                        }
-                    }
-                    Ok(())
-                }
-                _ => Err(TecdsaError::RoundMismatch {
-                    expected: 3,
-                    got: msg_round(&msg),
-                }),
-            },
-            KeygenRound::InputRound2(state) => match msg {
-                Ln18KeygenMsg::InputRound2(m) => {
-                    state.handle(from, m)?;
-                    if state.is_ready() {
-                        let old = std::mem::take(&mut self.round);
-                        if let KeygenRound::InputRound2(s) = old {
-                            self.round = KeygenRound::ElementOut(s.advance(&mut self.rng)?);
-                        }
-                    }
-                    Ok(())
-                }
-                _ => Err(TecdsaError::RoundMismatch {
-                    expected: 4,
-                    got: msg_round(&msg),
-                }),
-            },
-            KeygenRound::ElementOut(state) => match msg {
-                Ln18KeygenMsg::ElementOut(m) => {
-                    state.handle(from, m)?;
-                    if state.is_ready() {
-                        let old = std::mem::take(&mut self.round);
-                        if let KeygenRound::ElementOut(s) = old {
+                        if let KeygenRound::Round3(s) = old {
                             self.round = KeygenRound::Done(s.finish()?);
                         }
                     }
                     Ok(())
                 }
                 _ => Err(TecdsaError::RoundMismatch {
-                    expected: 5,
+                    expected: 3,
                     got: msg_round(&msg),
                 }),
             },
@@ -156,11 +134,9 @@ where
 
     fn drain_outgoing(&mut self) -> Vec<Outgoing<Self::Outbound>> {
         match &mut self.round {
-            KeygenRound::InitRound1(state) => std::mem::take(&mut state.outgoing),
-            KeygenRound::InitRound2(state) => std::mem::take(&mut state.outgoing),
-            KeygenRound::InputRound1(state) => std::mem::take(&mut state.outgoing),
-            KeygenRound::InputRound2(state) => std::mem::take(&mut state.outgoing),
-            KeygenRound::ElementOut(state) => std::mem::take(&mut state.outgoing),
+            KeygenRound::Round1(state) => std::mem::take(&mut state.outgoing),
+            KeygenRound::Round2(state) => std::mem::take(&mut state.outgoing),
+            KeygenRound::Round3(state) => std::mem::take(&mut state.outgoing),
             KeygenRound::Done(_) | KeygenRound::Gone => Vec::new(),
         }
     }
@@ -178,12 +154,10 @@ where
 
     fn current_round(&self) -> u16 {
         match &self.round {
-            KeygenRound::InitRound1(_) => 1,
-            KeygenRound::InitRound2(_) => 2,
-            KeygenRound::InputRound1(_) => 3,
-            KeygenRound::InputRound2(_) => 4,
-            KeygenRound::ElementOut(_) => 5,
-            KeygenRound::Done(_) => 6,
+            KeygenRound::Round1(_) => 1,
+            KeygenRound::Round2(_) => 2,
+            KeygenRound::Round3(_) => 3,
+            KeygenRound::Done(_) => 4,
             KeygenRound::Gone => 0,
         }
     }

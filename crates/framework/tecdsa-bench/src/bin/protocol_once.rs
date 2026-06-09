@@ -15,8 +15,10 @@
 //! [`tecdsa_bench::config`]): DKG uses `TECDSA_BENCH_DKG_CONFIGS`
 //! (default `3:3,7:7,11:11,15:15,20:20`); presign/sign use `TECDSA_BENCH_SIGN_N`
 //! (default `20`) parties with thresholds `TECDSA_BENCH_SIGN_THRESHOLDS`
-//! (default `2,3,7,11,15,20`), signing quorum parties `1..=t`. LN18 is currently
-//! excluded.
+//! (default `2,3,7,11,15,20`), signing quorum parties `1..=t`.
+//!
+//! LN18 and GGN16 have external setup (Shamir re-sharing / threshold Paillier)
+//! timed separately.
 //!
 //! Format: name<TAB>elapsed_ns<TAB>elapsed_human
 
@@ -29,6 +31,7 @@ use elliptic_curve::{ops::Reduce, PrimeField};
 use k256::Secp256k1;
 use sha2::{Digest, Sha256};
 use tecdsa_bench::{config, per_party};
+use tecdsa_ln18::sign::Ln18MtaBackend;
 use tecdsa_protocol::{DataToSign, PartyId, PartyInfo, SessionConfig, SessionId};
 
 type C = Secp256k1;
@@ -117,7 +120,7 @@ fn main() {
     run_group("dkls23", dkls23_once);
     run_group("gg18", gg18_once);
     run_group("ggn16", ggn16_once);
-    // run_group("ln18", ln18_once);  // excluded for now (see `ln18_once`)
+    run_group("ln18", ln18_once);
     run_group("tx25", tx25_once);
     run_group("jtx25", jtx25_once);
     run_group("wmy23", wmy23_once);
@@ -932,198 +935,148 @@ fn ggn16_once() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// LN18 (8-round full sign via simulation)
+// LN18 (2-round offline + 6-round online via StateMachine)
 // ═══════════════════════════════════════════════════════════════════════
 
-// LN18 is currently excluded (see the multiparty bench): its 8-round sign always
-// uses all `n` parties, not a `t`-subset, so it doesn't fit the presign/sign
-// `n`-fixed, varying-`t` sweep. Kept compilable for easy re-enable.
-#[allow(dead_code)]
 fn ln18_once() {
-    use std::collections::BTreeMap;
+    ln18_once_with_backend("ln18-paillier", Ln18MtaBackend::Paillier);
+    ln18_once_with_backend("ln18-ot", Ln18MtaBackend::Ot);
+}
 
+fn ln18_once_with_backend(name: &str, backend: Ln18MtaBackend) {
     use tecdsa_ln18::{
-        f_mult::{
-            init::InitState,
-            input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
-        },
         key_share::Ln18KeyShare,
         keygen::Ln18KeygenMachine,
-        sign::{ln18_full_sign_parallel, Ln18PresignParams},
+        sign::{
+            Ln18MtaHybrid, Ln18OfflineSignMachine, Ln18OfflineSignParams, Ln18OnlineSignMachine,
+            Ln18OnlineSignParams,
+        },
     };
 
-    let n = 3u16;
-    let t = 2u16;
-    let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
-
-    // ── Setup (timed separately) ──
-
-    // DKG via StateMachine
-    let key_shares: Vec<Ln18KeyShare<C>> = time_once("ln18/dkg/n3_t2/wall", || {
-        let session_id = SessionId([0u8; 32]);
-        let configs: Vec<SessionConfig> = (0..n)
-            .map(|i| SessionConfig {
-                session_id: session_id.clone(),
-                local_party: PartyInfo {
-                    id: PartyId(i),
-                    index: i,
-                    total: n,
-                    threshold: t,
-                },
-                parties: parties.clone(),
-            })
-            .collect();
-        let mut rng = tecdsa_core::Csprng::new();
-        let machines: Vec<_> = configs
-            .iter()
-            .map(|cfg| {
-                (
-                    cfg.local_party.id,
-                    Ln18KeygenMachine::<C>::new(cfg, &mut rng),
-                )
-            })
-            .collect();
-        let (outputs, timings) = per_party::run_timed_without_init(machines, 10);
-        for (&pid, timing) in &timings {
-            print_timing("ln18/dkg/n3_t2", pid, timing.total_active());
-        }
-        outputs.into_iter().map(|r| r.unwrap()).collect()
-    });
-
-    // Init sub-protocol (ElGamal DKG, 2 rounds — setup, not timed as "sign")
-    let init_outputs = time_once("ln18/setup/init", || {
-        let mut rng = rand_core::OsRng;
-        let n_usize = parties.len();
-        let mut states = Vec::with_capacity(n_usize);
-        let mut r1_msgs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let (state, msg) = InitState::<C>::new(parties[i], parties.to_vec(), &mut rng);
-            states.push(state);
-            r1_msgs.push(msg);
-        }
-        let mut r2_msgs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r1_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            r2_msgs.push(states[i].handle_round1(&others).expect("init R1"));
-        }
-        let mut outputs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r2_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            outputs.push(states[i].finish_round2(&others).expect("init R2"));
-        }
-        outputs
-    });
-
-    // Paillier keys + NTilde (setup, not timed as "sign")
-    let (dks, eks, ntilde_map) = time_once("ln18/setup/paillier_ntilde", || {
-        let mut rng = rand_core::OsRng;
-        let mut dks = Vec::new();
-        let mut eks = BTreeMap::new();
-        let mut ntilde_map = BTreeMap::new();
-        for &pid in &parties {
-            let dk = tecdsa_paillier::keygen(&mut rng).expect("paillier keygen");
-            eks.insert(pid, dk.encryption_key().clone());
-            dks.push(dk);
-            let nt = tecdsa_bench::zk_fixtures::NTildeFixture::generate();
-            ntilde_map.insert(pid, nt.to_mta_params());
-        }
-        (dks, eks, ntilde_map)
-    });
-
-    // Input(x) sub-protocol (2 rounds — setup, stores x_i for signing)
-    let stored_x_inputs: Vec<InputOutput<C>> = time_once("ln18/setup/input_x", || {
-        let mut rng = rand_core::OsRng;
-        let elgamal_pk = init_outputs[0].elgamal_pk;
-        let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
-        let n_usize = parties.len();
-        let mut states = Vec::with_capacity(n_usize);
-        let mut r1_msgs: Vec<InputRound1Msg> = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let (state, msg) = InputState::<C>::new(
-                parties[i],
-                parties.to_vec(),
-                elgamal_pk,
-                x_shares[i],
-                &mut rng,
-            );
-            states.push(state);
-            r1_msgs.push(msg);
-        }
-        let mut r2_msgs: Vec<InputRound2Msg<C>> = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r1_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            r2_msgs.push(states[i].handle_round1(&others).expect("input R1"));
-        }
-        let mut outputs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r2_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            outputs.push(states[i].finish_round2(&others).expect("input R2"));
-        }
-        outputs
-    });
-
-    // Build sign params
-    let sign_params: Vec<Ln18PresignParams<C>> = (0..n as usize)
-        .map(|i| {
-            let ks = Ln18KeyShare {
-                party_index: key_shares[i].party_index,
-                secret_share: key_shares[i].secret_share,
-                public_key: key_shares[i].public_key,
-                elgamal_dk: init_outputs[i].d_i,
-                elgamal_pk: init_outputs[i].elgamal_pk,
-                elgamal_pk_shares: init_outputs[i].elgamal_pk_shares.clone(),
-                n: key_shares[i].n,
-                t: key_shares[i].t,
-            };
-            Ln18PresignParams {
-                key_share: ks,
-                paillier_dk: dks[i].clone(),
-                paillier_eks: eks.clone(),
-                ntilde_params: ntilde_map.clone(),
-                init_output: init_outputs[i].clone(),
-                stored_x_input: stored_x_inputs[i].clone(),
-            }
-        })
-        .collect();
-
-    // ── 8-round full sign (timed) ──
     let message = make_data_to_sign(b"benchmark message");
-    let m_scalar = message.digest();
-    let sign_start = Instant::now();
-    let sigs = ln18_full_sign_parallel(&sign_params, &parties, m_scalar, &mut rand_core::OsRng);
-    let sign_wall = sign_start.elapsed();
-    assert!(!sigs.is_empty(), "must produce signatures");
-    println!(
-        "ln18/full_sign_8round/n3_t2/wall\t{}\t{}",
-        sign_wall.as_nanos(),
-        HumanDuration(sign_wall)
-    );
-    let per_party = sign_wall / n as u32;
-    println!(
-        "ln18/full_sign_8round/n3_t2/per_party_avg\t{}\t{}",
-        per_party.as_nanos(),
-        HumanDuration(per_party)
-    );
+
+    // DKG: sweep (n, t).
+    for (n, t) in config::dkg_configs() {
+        let keygen_out = time_once(&format!("{name}/dkg/n{n}_t{t}/wall"), || {
+            let configs = make_session_configs(n, t);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Ln18KeygenMachine::<C>::new(&cfg, &mut rng)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+        });
+        for (&pid, timing) in keygen_out.1.iter().take(1) {
+            print_timing(&format!("{name}/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
+    }
+
+    // Presign / Online sign: sweep t at fixed n.
+    let n = config::sign_n();
+    for t in config::sign_thresholds() {
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+
+        // Untimed setup: key shares at (n, t).
+        let key_shares: Vec<Ln18KeyShare<C>> = {
+            let configs = make_session_configs(n, t);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Ln18KeygenMachine::<C>::new(&cfg, &mut rng)
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 10)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let public_key = key_shares[0].public_key;
+
+        // Per-session signing setup (untimed): Lagrange + Init + Input(w_i) + Paillier
+        let mut rng = rand_core::OsRng;
+        let sign_params =
+            tecdsa_ln18::sign::build_signing_setup::<C>(&key_shares, &signer_parties, &mut rng)
+                .expect("LN18 signing setup");
+
+        // Offline sign (2 rounds, message-independent)
+        let mta = Arc::new(Ln18MtaHybrid::<C>::new(signer_parties.clone(), backend));
+
+        let offline_out = time_once(&format!("{name}/offline_sign/n{n}_t{t}/wall"), || {
+            let mut rng = tecdsa_core::Csprng::new();
+            let machines: Vec<_> = sign_params
+                .into_iter()
+                .zip(signer_parties.iter())
+                .map(|(base, &pid)| {
+                    let params = Ln18OfflineSignParams {
+                        base,
+                        signer_parties: signer_parties.clone(),
+                        mta: Arc::clone(&mta),
+                    };
+                    (
+                        pid,
+                        Ln18OfflineSignMachine::<C>::new(
+                            pid,
+                            signer_parties.clone(),
+                            params,
+                            &mut rng,
+                        ),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 4)
+        });
+        let offline_states: Vec<_> = offline_out.0.into_iter().map(|r| r.unwrap()).collect();
+        for (&pid, timing) in offline_out.1.iter().take(1) {
+            print_timing(
+                &format!("{name}/offline_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+
+        // Online sign (6 rounds, message-dependent)
+        let m_scalar = *message.digest();
+
+        let sign_out = time_once(&format!("{name}/online_sign/n{n}_t{t}/wall"), || {
+            let mut rng = tecdsa_core::Csprng::new();
+            let machines: Vec<_> = offline_states
+                .into_iter()
+                .map(|state| {
+                    let pid = state.my_id;
+                    let params = Ln18OnlineSignParams {
+                        offline_state: state,
+                        message_digest: m_scalar,
+                    };
+                    (pid, Ln18OnlineSignMachine::<C>::new(params, &mut rng))
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 8)
+        });
+        let sigs: Vec<_> = sign_out.0.into_iter().map(|r| r.unwrap()).collect();
+        assert!(!sigs.is_empty(), "must produce signatures");
+        tecdsa_protocol::ecdsa::verify_ecdsa::<C>(&sigs[0], &public_key, &message)
+            .expect("LN18 benchmark signature must verify");
+        for (&pid, timing) in sign_out.1.iter().take(1) {
+            print_timing(
+                &format!("{name}/online_sign/n{n}_t{t}"),
+                pid,
+                timing.total_active(),
+            );
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

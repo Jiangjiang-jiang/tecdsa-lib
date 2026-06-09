@@ -1,34 +1,30 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for LN18 KeyGen (Protocol 5.1).
+//! Round state structs and transition logic for LN18 Feldman VSS DKG.
 //!
-//! KeyGen sequences three F_mult sub-operations:
-//! 1. **init** (2 rounds): distributed ElGamal keypair generation
-//! 2. **input** (2 rounds): each party inputs its ECDSA secret share x_i
-//!    via commit-then-prove (F_{com-zk} hybrid model)
-//! 3. **element-out** (1 round): reveal Q = x*G as the joint ECDSA public key
+//! 3 rounds:
+//! 1. Broadcast hash commitment over (rid, Feldman commitments, Schnorr nonce).
+//! 2. Decommit (broadcast) + P2P VSS shares.
+//! 3. Verify + broadcast Schnorr proof of combined share.
 //!
-//! Total: 5 interaction rounds.
+//! Output: `Ln18KeyShare` with Shamir secret share.
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
+use elliptic_curve::{
+    group::{Group, GroupEncoding},
+    sec1::ModulusSize,
+    Field, FieldBytes, FieldBytesSize, PrimeField,
+};
 use rand_core::CryptoRngCore;
+use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
+use tecdsa_vss::feldman;
 use zeroize::Zeroize;
 
-use super::msg::{
-    Ln18KeygenMsg, SerElementOut, SerInitRound1, SerInitRound2, SerInputRound1, SerInputRound2,
-};
-use crate::{
-    f_mult::{
-        element_out::{ElementOutMsg, ElementOutState},
-        init::{InitOutput, InitRound1Msg, InitRound2Msg, InitState},
-        input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
-    },
-    key_share::Ln18KeyShare,
-};
+use super::msg::{Ln18KeygenMsg, MsgRound1, MsgRound2Broad, MsgRound2Uni, MsgRound3};
+use crate::key_share::Ln18KeyShare;
 
 // ---------------------------------------------------------------------------
 // Round enum
@@ -39,66 +35,89 @@ pub(crate) enum KeygenRound<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Round 1: init sub-protocol, waiting for Round-1 commitments.
-    InitRound1(InitRound1State<C>),
-    /// Round 2: init sub-protocol, waiting for Round-2 decommitments.
-    InitRound2(InitRound2State<C>),
-    /// Round 3: input sub-protocol, waiting for Round-1 commitments.
-    InputRound1(InputRound1State<C>),
-    /// Round 4: input sub-protocol, waiting for Round-2 decommitments + proofs.
-    InputRound2(InputRound2State<C>),
-    /// Round 5: element-out sub-protocol, waiting for revealed points + DDH proofs.
-    ElementOut(ElementOutState_<C>),
-    /// Protocol complete; key share is available.
+    Round1(Round1State<C>),
+    Round2(Round2State<C>),
+    Round3(Round3State<C>),
     Done(Ln18KeyShare<C>),
-    /// Sentinel for `std::mem::take`.
+    /// Sentinel so we can `std::mem::take` without leaving an invalid state.
     #[default]
     Gone,
 }
 
 // ---------------------------------------------------------------------------
-// Round 1 state — Init commitment
+// Round 1 state
 // ---------------------------------------------------------------------------
 
-pub(crate) struct InitRound1State<C: TecdsaCurve>
+pub(crate) struct Round1State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
+    // Configuration
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
-    /// Secret ECDSA share x_i sampled during construction.
-    pub x_i: C::Scalar,
-    /// The underlying init sub-protocol state.
-    pub init_state: InitState<C>,
-    /// Outgoing messages queued at construction or after transition.
+
+    // Own secrets generated at construction
+    pub vss_shares: Vec<tecdsa_vss::shamir::Share<C>>,
+    pub feldman_commitments: Vec<C::ProjectivePoint>,
+    pub rid: [u8; 32],
+    pub decommit_nonce: [u8; 32],
+    pub schnorr_ephemeral: C::Scalar,
+    pub schnorr_commitment: C::ProjectivePoint,
+
+    // Outgoing messages queued at construction
     pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
-    /// Received Round-1 messages from other parties.
-    pub received: BTreeMap<PartyId, InitRound1Msg>,
+
+    // Received messages
+    pub round1_msgs: BTreeMap<PartyId, MsgRound1>,
 }
 
-impl<C: TecdsaCurve> InitRound1State<C>
+impl<C: TecdsaCurve> Round1State<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
+    /// Create the initial Round1 state: generate secrets and queue Round1 broadcast.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
         let my_id = config.local_party.id;
         let parties = config.parties.clone();
         let threshold = config.reconstruct_threshold(); // VSS reconstruction threshold
         let total = config.local_party.total;
 
-        // Sample ECDSA secret share x_i
-        let x_i = C::random_scalar(rng);
+        // 1. Generate random secret u_i
+        let secret_u = C::random_scalar(rng);
 
-        // Create init sub-protocol state
-        let (init_state, init_r1_msg) = InitState::<C>::new(my_id, parties.clone(), rng);
+        // 2. Feldman VSS split
+        let (vss_shares, feldman_commitments) =
+            feldman::split::<C>(&secret_u, threshold, total, rng);
 
-        // Queue the Round-1 broadcast
+        // 3. Sample rid
+        let mut rid = [0u8; 32];
+        rng.fill_bytes(&mut rid);
+
+        // 4. Sample Schnorr ephemeral r_i, compute R_i = r_i * G
+        let schnorr_ephemeral = C::random_scalar(rng);
+        let schnorr_commitment = C::generator() * schnorr_ephemeral;
+
+        // 5. Compute hash commitment over (rid || feldman_commitments || schnorr_commitment).
+        let commit_msg = {
+            let mut data = Vec::new();
+            data.extend_from_slice(&rid);
+            for com in &feldman_commitments {
+                data.extend_from_slice(com.to_bytes().as_ref());
+            }
+            data.extend_from_slice(schnorr_commitment.to_bytes().as_ref());
+            data
+        };
+        let (hash_commitment, decommit_nonce) = HashCommitment::commit(&commit_msg, rng);
+
+        // 6. Queue broadcast of MsgRound1
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
-            msg: Ln18KeygenMsg::InitRound1(SerInitRound1::from_msg(&init_r1_msg)),
+            msg: Ln18KeygenMsg::Round1(MsgRound1 {
+                commitment: hash_commitment,
+            }),
         }];
 
         Self {
@@ -106,80 +125,126 @@ where
             parties,
             threshold,
             total,
-            x_i,
-            init_state,
+            vss_shares,
+            feldman_commitments,
+            rid,
+            decommit_nonce,
+            schnorr_ephemeral,
+            schnorr_commitment,
             outgoing,
-            received: BTreeMap::new(),
+            round1_msgs: BTreeMap::new(),
         }
     }
 
+    /// Number of messages we expect to receive (from all other parties).
     fn expected_count(&self) -> usize {
         self.parties.len() - 1
     }
 
-    pub fn handle(&mut self, from: PartyId, msg: SerInitRound1) -> tecdsa_core::Result<()> {
+    /// Handle a Round1 message from another party.
+    pub fn handle(&mut self, from: PartyId, msg: MsgRound1) -> tecdsa_core::Result<()> {
         if from == self.my_id {
             return Err(TecdsaError::Other("received message from self".into()));
         }
         if !self.parties.contains(&from) {
             return Err(TecdsaError::UnknownSender(from.0));
         }
-        if self.received.contains_key(&from) {
+        if self.round1_msgs.contains_key(&from) {
             return Err(TecdsaError::DuplicateMessage(from.0));
         }
-        self.received.insert(from, msg.to_msg());
+        self.round1_msgs.insert(from, msg);
         Ok(())
     }
 
+    /// Check if all expected Round1 messages have been received.
     pub fn is_ready(&self) -> bool {
-        self.received.len() == self.expected_count()
+        self.round1_msgs.len() == self.expected_count()
     }
 
-    /// Transition to InitRound2: process commitments and produce decommitment.
-    pub fn advance(mut self) -> tecdsa_core::Result<InitRound2State<C>> {
-        let msgs: Vec<InitRound1Msg> = self.received.values().cloned().collect();
-        let r2_msg = self
-            .init_state
-            .handle_round1(&msgs)
-            .map_err(|e| TecdsaError::Other(format!("init Round-1 processing failed: {e}")))?;
+    /// Transition to Round2: queue decommitment broadcast + VSS shares (p2p).
+    pub fn advance(self) -> Round2State<C> {
+        let mut outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>> = Vec::new();
 
-        let outgoing = vec![Outgoing {
+        // Broadcast decommitment data
+        outgoing.push(Outgoing {
             to: Recipient::Broadcast,
-            msg: Ln18KeygenMsg::InitRound2(SerInitRound2::from_msg(&r2_msg)),
-        }];
+            msg: Ln18KeygenMsg::Round2Broad(MsgRound2Broad {
+                rid: self.rid,
+                feldman_commitments: self.feldman_commitments.clone(),
+                schnorr_commitment: self.schnorr_commitment,
+                decommit_nonce: self.decommit_nonce,
+            }),
+        });
 
-        Ok(InitRound2State {
+        // Send VSS shares to each other party
+        for &pid in &self.parties {
+            if pid == self.my_id {
+                continue;
+            }
+            // VSS shares are 1-based: shares[j].index = j+1.
+            // PartyId is 1-based. We need the share whose index == pid.0.
+            let share = self
+                .vss_shares
+                .iter()
+                .find(|s| s.index == pid.0)
+                .expect("VSS share must exist for every party");
+            outgoing.push(Outgoing {
+                to: Recipient::Party(pid),
+                msg: Ln18KeygenMsg::Round2Uni(MsgRound2Uni {
+                    vss_share: share.value,
+                }),
+            });
+        }
+
+        Round2State {
             my_id: self.my_id,
             parties: self.parties,
             threshold: self.threshold,
             total: self.total,
-            x_i: self.x_i,
-            init_state: self.init_state,
+            own_vss_shares: self.vss_shares,
+            feldman_commitments: self.feldman_commitments,
+            rid: self.rid,
+            schnorr_ephemeral: self.schnorr_ephemeral,
+            round1_commitments: self.round1_msgs,
             outgoing,
-            received: BTreeMap::new(),
-        })
+            round2_broad: BTreeMap::new(),
+            round2_uni: BTreeMap::new(),
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Round 2 state — Init decommitment
+// Round 2 state
 // ---------------------------------------------------------------------------
 
-pub(crate) struct InitRound2State<C: TecdsaCurve>
+pub(crate) struct Round2State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
+    // Config
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
-    pub x_i: C::Scalar,
-    pub init_state: InitState<C>,
+
+    // Own secrets
+    pub own_vss_shares: Vec<tecdsa_vss::shamir::Share<C>>,
+    pub feldman_commitments: Vec<C::ProjectivePoint>,
+    pub rid: [u8; 32],
+    pub schnorr_ephemeral: C::Scalar,
+
+    // Round 1 data
+    pub round1_commitments: BTreeMap<PartyId, MsgRound1>,
+
+    // Outgoing
     pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
-    pub received: BTreeMap<PartyId, InitRound2Msg<C>>,
+
+    // Received
+    pub round2_broad: BTreeMap<PartyId, MsgRound2Broad<C>>,
+    pub round2_uni: BTreeMap<PartyId, MsgRound2Uni<C>>,
 }
 
-impl<C: TecdsaCurve> InitRound2State<C>
+impl<C: TecdsaCurve> Round2State<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
@@ -188,294 +253,262 @@ where
         self.parties.len() - 1
     }
 
-    pub fn handle(&mut self, from: PartyId, msg: SerInitRound2<C>) -> tecdsa_core::Result<()> {
+    pub fn handle_broad(
+        &mut self,
+        from: PartyId,
+        msg: MsgRound2Broad<C>,
+    ) -> tecdsa_core::Result<()> {
         if from == self.my_id {
             return Err(TecdsaError::Other("received message from self".into()));
         }
         if !self.parties.contains(&from) {
             return Err(TecdsaError::UnknownSender(from.0));
         }
-        if self.received.contains_key(&from) {
+        if self.round2_broad.contains_key(&from) {
             return Err(TecdsaError::DuplicateMessage(from.0));
         }
-        self.received.insert(from, msg.to_msg());
+        self.round2_broad.insert(from, msg);
         Ok(())
     }
 
-    pub fn is_ready(&self) -> bool {
-        self.received.len() == self.expected_count()
-    }
-
-    /// Finalize init and transition to InputRound1 (commit phase).
-    pub fn advance(
-        mut self,
-        rng: &mut impl CryptoRngCore,
-    ) -> tecdsa_core::Result<InputRound1State<C>> {
-        let msgs: Vec<InitRound2Msg<C>> = self.received.values().cloned().collect();
-        let init_output = self
-            .init_state
-            .finish_round2(&msgs)
-            .map_err(|e| TecdsaError::Other(format!("init Round-2 processing failed: {e}")))?;
-
-        // Start input sub-protocol: each party inputs x_i (Round 1 = commitment)
-        let (input_state, input_r1_msg) = InputState::<C>::new(
-            self.my_id,
-            self.parties.clone(),
-            init_output.elgamal_pk,
-            self.x_i,
-            rng,
-        );
-
-        let outgoing = vec![Outgoing {
-            to: Recipient::Broadcast,
-            msg: Ln18KeygenMsg::InputRound1(SerInputRound1::from_msg(&input_r1_msg)),
-        }];
-
-        // Zeroize ECDSA secret share (now consumed by InputState)
-        self.x_i.zeroize();
-
-        Ok(InputRound1State {
-            my_id: self.my_id,
-            parties: self.parties,
-            threshold: self.threshold,
-            total: self.total,
-            init_output,
-            input_state,
-            outgoing,
-            received: BTreeMap::new(),
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Round 3 state — Input commitment
-// ---------------------------------------------------------------------------
-
-pub(crate) struct InputRound1State<C: TecdsaCurve>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    pub my_id: PartyId,
-    pub parties: Vec<PartyId>,
-    pub threshold: u16,
-    pub total: u16,
-    pub init_output: InitOutput<C>,
-    pub input_state: InputState<C>,
-    pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
-    pub received: BTreeMap<PartyId, InputRound1Msg>,
-}
-
-impl<C: TecdsaCurve> InputRound1State<C>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    fn expected_count(&self) -> usize {
-        self.parties.len() - 1
-    }
-
-    pub fn handle(&mut self, from: PartyId, msg: SerInputRound1) -> tecdsa_core::Result<()> {
+    pub fn handle_uni(&mut self, from: PartyId, msg: MsgRound2Uni<C>) -> tecdsa_core::Result<()> {
         if from == self.my_id {
             return Err(TecdsaError::Other("received message from self".into()));
         }
         if !self.parties.contains(&from) {
             return Err(TecdsaError::UnknownSender(from.0));
         }
-        if self.received.contains_key(&from) {
+        if self.round2_uni.contains_key(&from) {
             return Err(TecdsaError::DuplicateMessage(from.0));
         }
-        self.received.insert(from, msg.to_msg());
+        self.round2_uni.insert(from, msg);
         Ok(())
     }
 
     pub fn is_ready(&self) -> bool {
-        self.received.len() == self.expected_count()
+        self.round2_broad.len() == self.expected_count()
+            && self.round2_uni.len() == self.expected_count()
     }
 
-    /// Transition to InputRound2: process commitments and produce decommitment.
-    pub fn advance(mut self) -> tecdsa_core::Result<InputRound2State<C>> {
-        let msgs: Vec<InputRound1Msg> = self.received.values().cloned().collect();
-        let r2_msg = self
-            .input_state
-            .handle_round1(&msgs)
-            .map_err(|e| TecdsaError::Other(format!("input Round-1 processing failed: {e}")))?;
+    /// Verify all hash commitments and Feldman share consistency.
+    fn verify_round2_data(&self) -> tecdsa_core::Result<()> {
+        // Verify each party's hash commitment against their decommitted data.
+        for (&pid, broad) in &self.round2_broad {
+            let round1 = self
+                .round1_commitments
+                .get(&pid)
+                .ok_or_else(|| TecdsaError::Other(format!("missing round1 from {pid}")))?;
 
-        let outgoing = vec![Outgoing {
-            to: Recipient::Broadcast,
-            msg: Ln18KeygenMsg::InputRound2(SerInputRound2::from_msg(&r2_msg)),
-        }];
+            let commit_msg = {
+                let mut data = Vec::new();
+                data.extend_from_slice(&broad.rid);
+                for com in &broad.feldman_commitments {
+                    data.extend_from_slice(com.to_bytes().as_ref());
+                }
+                data.extend_from_slice(broad.schnorr_commitment.to_bytes().as_ref());
+                data
+            };
 
-        Ok(InputRound2State {
-            my_id: self.my_id,
-            parties: self.parties,
-            threshold: self.threshold,
-            total: self.total,
-            init_output: self.init_output,
-            input_state: self.input_state,
-            outgoing,
-            received: BTreeMap::new(),
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Round 4 state — Input decommitment + verify
-// ---------------------------------------------------------------------------
-
-pub(crate) struct InputRound2State<C: TecdsaCurve>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    pub my_id: PartyId,
-    pub parties: Vec<PartyId>,
-    pub threshold: u16,
-    pub total: u16,
-    pub init_output: InitOutput<C>,
-    pub input_state: InputState<C>,
-    pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
-    pub received: BTreeMap<PartyId, InputRound2Msg<C>>,
-}
-
-impl<C: TecdsaCurve> InputRound2State<C>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    fn expected_count(&self) -> usize {
-        self.parties.len() - 1
-    }
-
-    pub fn handle(&mut self, from: PartyId, msg: SerInputRound2<C>) -> tecdsa_core::Result<()> {
-        if from == self.my_id {
-            return Err(TecdsaError::Other("received message from self".into()));
+            if !round1.commitment.verify(&commit_msg, &broad.decommit_nonce) {
+                return Err(TecdsaError::InvalidCommitment(format!(
+                    "party {pid} commitment verification failed"
+                )));
+            }
         }
-        if !self.parties.contains(&from) {
-            return Err(TecdsaError::UnknownSender(from.0));
+
+        // Verify Feldman consistency for each received VSS share.
+        let my_index = self.my_id.0;
+        for (&pid, uni) in &self.round2_uni {
+            let broad = self
+                .round2_broad
+                .get(&pid)
+                .ok_or_else(|| TecdsaError::Other(format!("missing round2 broad from {pid}")))?;
+
+            if !feldman::verify::<C>(&uni.vss_share, my_index, &broad.feldman_commitments) {
+                return Err(TecdsaError::InvalidShare(format!(
+                    "party {pid} Feldman share verification failed"
+                )));
+            }
         }
-        if self.received.contains_key(&from) {
-            return Err(TecdsaError::DuplicateMessage(from.0));
-        }
-        self.received.insert(from, msg.to_msg());
+
         Ok(())
     }
 
-    pub fn is_ready(&self) -> bool {
-        self.received.len() == self.expected_count()
-    }
+    /// Compute public verification shares `X_j` for each party j.
+    fn compute_public_shares(&self) -> Vec<C::ProjectivePoint> {
+        let mut public_shares = Vec::with_capacity(self.total as usize);
+        for j in 1..=self.total {
+            let x = C::Scalar::from(u64::from(j));
+            let mut point = C::ProjectivePoint::identity();
 
-    /// Finalize input and transition to ElementOut.
-    pub fn advance(self, rng: &mut impl CryptoRngCore) -> tecdsa_core::Result<ElementOutState_<C>> {
-        let msgs: Vec<InputRound2Msg<C>> = self.received.values().cloned().collect();
-        let input_output = self
-            .input_state
-            .finish_round2(&msgs)
-            .map_err(|e| TecdsaError::Other(format!("input Round-2 processing failed: {e}")))?;
+            // Own polynomial evaluation at j
+            let mut x_pow = C::Scalar::ONE;
+            for com in &self.feldman_commitments {
+                point += *com * x_pow;
+                x_pow *= x;
+            }
 
-        // Start element-out sub-protocol
-        let (eo_state, eo_msg) = ElementOutState::<C>::new(
-            self.my_id,
-            self.parties.clone(),
-            input_output.a_i,
-            input_output.s_i,
-            input_output.per_party_cts.clone(),
-            self.init_output.elgamal_pk,
-            rng,
-        );
+            // Add all other parties' polynomial evaluations at j
+            for broad in self.round2_broad.values() {
+                let mut x_pow = C::Scalar::ONE;
+                for com in &broad.feldman_commitments {
+                    point += *com * x_pow;
+                    x_pow *= x;
+                }
+            }
 
-        let outgoing = vec![Outgoing {
-            to: Recipient::Broadcast,
-            msg: Ln18KeygenMsg::ElementOut(SerElementOut::from_msg(&eo_msg)),
-        }];
-
-        Ok(ElementOutState_ {
-            my_id: self.my_id,
-            parties: self.parties,
-            threshold: self.threshold,
-            total: self.total,
-            init_output: self.init_output,
-            input_output,
-            eo_state,
-            outgoing,
-            received: BTreeMap::new(),
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Round 5 state — Element-out
-// ---------------------------------------------------------------------------
-
-/// Wrapper around the element-out sub-protocol state at the keygen level.
-///
-/// Named with trailing underscore to avoid collision with the sub-op's
-/// `ElementOutState`.
-pub(crate) struct ElementOutState_<C: TecdsaCurve>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    pub my_id: PartyId,
-    pub parties: Vec<PartyId>,
-    pub threshold: u16,
-    pub total: u16,
-    pub init_output: InitOutput<C>,
-    pub input_output: InputOutput<C>,
-    pub eo_state: ElementOutState<C>,
-    pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
-    pub received: BTreeMap<PartyId, ElementOutMsg<C>>,
-}
-
-impl<C: TecdsaCurve> ElementOutState_<C>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    fn expected_count(&self) -> usize {
-        self.parties.len() - 1
-    }
-
-    pub fn handle(&mut self, from: PartyId, msg: SerElementOut<C>) -> tecdsa_core::Result<()> {
-        if from == self.my_id {
-            return Err(TecdsaError::Other("received message from self".into()));
+            public_shares.push(point);
         }
-        if !self.parties.contains(&from) {
-            return Err(TecdsaError::UnknownSender(from.0));
-        }
-        if self.received.contains_key(&from) {
-            return Err(TecdsaError::DuplicateMessage(from.0));
-        }
-        self.received.insert(from, msg.to_msg());
-        Ok(())
+        public_shares
     }
 
-    pub fn is_ready(&self) -> bool {
-        self.received.len() == self.expected_count()
-    }
+    /// Transition to Round3: verify commitments + Feldman consistency, compute
+    /// secret share, generate Schnorr proof.
+    pub fn advance(mut self) -> tecdsa_core::Result<Round3State<C>> {
+        self.verify_round2_data()?;
 
-    /// Finalize element-out and produce the key share.
-    pub fn finish(self) -> tecdsa_core::Result<Ln18KeyShare<C>> {
-        let msgs: Vec<ElementOutMsg<C>> = self.received.values().cloned().collect();
-        let eo_output = self
-            .eo_state
-            .finish(&msgs)
-            .map_err(|e| TecdsaError::Other(format!("element-out processing failed: {e}")))?;
+        let my_index = self.my_id.0;
 
-        // Q = x * G is the joint ECDSA public key
-        let public_key = eo_output.element;
+        // Compute combined rid = XOR(all rids).
+        let mut combined_rid = self.rid;
+        for broad in self.round2_broad.values() {
+            for (i, b) in broad.rid.iter().enumerate() {
+                combined_rid[i] ^= b;
+            }
+        }
 
-        // Find party index (0-based position in the sorted party list)
-        let party_index = self
-            .parties
+        // Compute secret share x_i = sum of all received vss_shares + own_share.
+        let own_share_value = self
+            .own_vss_shares
             .iter()
-            .position(|p| *p == self.my_id)
-            .expect("my_id must be in parties") as u16;
+            .find(|s| s.index == my_index)
+            .expect("own VSS share must exist")
+            .value;
+        let mut x_i = own_share_value;
+        for uni in self.round2_uni.values() {
+            x_i += uni.vss_share;
+        }
+
+        // Compute public key Q = sum of all feldman_commitments[0] (constant terms).
+        let mut public_key = self.feldman_commitments[0];
+        for broad in self.round2_broad.values() {
+            public_key += broad.feldman_commitments[0];
+        }
+
+        let public_shares = self.compute_public_shares();
+
+        // Generate Schnorr proof of x_i with combined rid as aux data.
+        let own_public_share = public_shares[(my_index - 1) as usize];
+        let schnorr_proof = DlogProof::<C>::prove(
+            &x_i,
+            &self.schnorr_ephemeral,
+            &own_public_share,
+            &combined_rid,
+        );
+
+        let outgoing = vec![Outgoing {
+            to: Recipient::Broadcast,
+            msg: Ln18KeygenMsg::Round3(MsgRound3 { schnorr_proof }),
+        }];
+
+        // Zeroize secrets not carried to the next round
+        self.schnorr_ephemeral.zeroize();
+        for share in &mut self.own_vss_shares {
+            share.value.zeroize();
+        }
+
+        Ok(Round3State {
+            my_id: self.my_id,
+            parties: self.parties,
+            threshold: self.threshold,
+            total: self.total,
+            secret_share: x_i,
+            public_key,
+            public_shares,
+            combined_rid,
+            outgoing,
+            round3_msgs: BTreeMap::new(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 state
+// ---------------------------------------------------------------------------
+
+pub(crate) struct Round3State<C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
+    // Config
+    pub my_id: PartyId,
+    pub parties: Vec<PartyId>,
+    pub threshold: u16,
+    pub total: u16,
+
+    // Computed values
+    pub secret_share: C::Scalar,
+    pub public_key: C::ProjectivePoint,
+    pub public_shares: Vec<C::ProjectivePoint>,
+    pub combined_rid: [u8; 32],
+
+    // Outgoing
+    pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
+
+    // Received
+    pub round3_msgs: BTreeMap<PartyId, MsgRound3<C>>,
+}
+
+impl<C: TecdsaCurve> Round3State<C>
+where
+    FieldBytesSize<C>: ModulusSize,
+    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+{
+    fn expected_count(&self) -> usize {
+        self.parties.len() - 1
+    }
+
+    pub fn handle(&mut self, from: PartyId, msg: MsgRound3<C>) -> tecdsa_core::Result<()> {
+        if from == self.my_id {
+            return Err(TecdsaError::Other("received message from self".into()));
+        }
+        if !self.parties.contains(&from) {
+            return Err(TecdsaError::UnknownSender(from.0));
+        }
+        if self.round3_msgs.contains_key(&from) {
+            return Err(TecdsaError::DuplicateMessage(from.0));
+        }
+        self.round3_msgs.insert(from, msg);
+        Ok(())
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.round3_msgs.len() == self.expected_count()
+    }
+
+    /// Verify all Schnorr proofs and produce the final `Ln18KeyShare`.
+    pub fn finish(self) -> tecdsa_core::Result<Ln18KeyShare<C>> {
+        // Verify every other party's Schnorr proof.
+        for (&pid, msg) in &self.round3_msgs {
+            let party_public_share = self.public_shares[(pid.0 - 1) as usize];
+            if !msg
+                .schnorr_proof
+                .verify(&party_public_share, &self.combined_rid)
+            {
+                return Err(TecdsaError::InvalidProof(format!(
+                    "party {pid} Schnorr proof verification failed"
+                )));
+            }
+        }
+
+        // Party index is 1-based (matches PartyId).
+        let party_index = self.my_id.0;
 
         Ok(Ln18KeyShare {
             party_index,
-            secret_share: self.input_output.a_i,
-            public_key,
-            elgamal_dk: self.init_output.d_i,
-            elgamal_pk: self.init_output.elgamal_pk,
-            elgamal_pk_shares: self.init_output.elgamal_pk_shares,
+            secret_share: self.secret_share,
+            public_key: self.public_key,
+            public_shares: self.public_shares,
             n: self.total,
             t: self.threshold,
         })

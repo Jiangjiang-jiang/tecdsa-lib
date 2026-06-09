@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Multi-party protocol benchmark suite for threshold ECDSA protocols.
 //!
-//! Benchmarks 12 multi-party protocols:
+//! Benchmarks multi-party protocols:
 //! - **CGGMP20**: Paillier-based, 4-round presign + local sign, `SecurityLevel128`
 //! - **DKLs23**: OT/VOLE-based, 3-round presign + 1-round online sign
 //! - **GG18**: Classic, 3-round presign + 5-round online sign
 //! - **GGN16**: Shared Paillier + threshold decryption, 2-round keygen + 6-round sign
-//! - **LN18**: EGexpEnc + Paillier/OT MtA, 5-round keygen + 8-round full sign (simulation)
 //! - **TX25**: CL public-checked MtA, 2-round presign + 1-round sign
 //! - **JTX25**: Threshold CL decryption, 2-round presign + 1-round sign
 //! - **WMY23**: CL-based MtAwc, 4-round presign + 1-round sign
@@ -28,9 +27,10 @@
 //!   thresholds in `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,15,20`); the
 //!   signing quorum is parties `1..=t`.
 //!
-//! LN18 is currently excluded from the suite (see `ln18_benchmarks`).
+//! LN18 is benchmarked by `protocol_once`, not Criterion, because its per-session
+//! Init + Lagrange setup does not fit the precompute/replay pattern used here.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use elliptic_curve::ops::Reduce;
@@ -1103,256 +1103,9 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-// LN18 is currently excluded from the suite: it has no separate presign and its
-// 8-round sign always uses all `n` parties (not a `t`-subset), so it doesn't fit
-// the presign/sign `n=20`, varying-`t` sweep. Kept compilable for easy re-enable.
-#[allow(dead_code)]
-fn ln18_benchmarks(c: &mut Criterion) {
-    use std::{collections::BTreeMap, time::Instant};
-
-    use tecdsa_ln18::{
-        f_mult::{
-            init::InitState,
-            input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
-        },
-        key_share::Ln18KeyShare,
-        keygen::Ln18KeygenMachine,
-        sign::{ln18_full_sign_parallel, Ln18PresignParams},
-    };
-
-    let mut group = c.benchmark_group("multiparty/ln18");
-    per_party::configure_replay_group(&mut group, SAMPLES);
-
-    let n = 3u16;
-    let t = 2u16;
-    let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
-
-    // --- DKG: one execution per sample, every party reported separately ---
-    let dkg_runs = per_party::precompute_runs(SAMPLES, || {
-        let session_id = SessionId([0u8; 32]);
-        let configs: Vec<SessionConfig> = (0..n)
-            .map(|i| SessionConfig {
-                session_id: session_id.clone(),
-                local_party: PartyInfo {
-                    id: PartyId(i),
-                    index: i,
-                    total: n,
-                    threshold: t,
-                },
-                parties: parties.clone(),
-            })
-            .collect();
-        let mut rng = tecdsa_core::Csprng::new();
-        let machines: Vec<_> = configs
-            .iter()
-            .map(|cfg| {
-                (
-                    cfg.local_party.id,
-                    Ln18KeygenMachine::<C>::new(cfg, &mut rng),
-                )
-            })
-            .collect();
-        per_party::active_without_init(machines, 10)
-    });
-    for party_idx in 0..n {
-        per_party::bench_party_replay(
-            &mut group,
-            format!("dkg/ln18/n3_t2/party{party_idx}"),
-            &dkg_runs,
-            PartyId(party_idx),
-        );
-    }
-
-    // --- Full 8-round sign: wall time / n (simulation, not Orchestrator per-party) ---
-    // Setup: keygen + init + paillier + input_x (all done once, untimed)
-    let key_shares: Vec<Ln18KeyShare<C>> = {
-        let session_id = SessionId([0u8; 32]);
-        let configs: Vec<SessionConfig> = (0..n)
-            .map(|i| SessionConfig {
-                session_id: session_id.clone(),
-                local_party: PartyInfo {
-                    id: PartyId(i),
-                    index: i,
-                    total: n,
-                    threshold: t,
-                },
-                parties: parties.clone(),
-            })
-            .collect();
-        let mut rng = tecdsa_core::Csprng::new();
-        let machines: Vec<_> = configs
-            .iter()
-            .map(|cfg| {
-                (
-                    cfg.local_party.id,
-                    Ln18KeygenMachine::<C>::new(cfg, &mut rng),
-                )
-            })
-            .collect();
-        let (outputs, _) = per_party::run_timed_without_init(machines, 10);
-        outputs.into_iter().map(|r| r.unwrap()).collect()
-    };
-
-    let init_outputs = {
-        let mut rng = rand_core::OsRng;
-        let n_usize = parties.len();
-        let mut states = Vec::with_capacity(n_usize);
-        let mut r1_msgs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let (state, msg) = InitState::<C>::new(parties[i], parties.to_vec(), &mut rng);
-            states.push(state);
-            r1_msgs.push(msg);
-        }
-        let mut r2_msgs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r1_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            r2_msgs.push(states[i].handle_round1(&others).expect("init R1"));
-        }
-        let mut outputs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r2_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            outputs.push(states[i].finish_round2(&others).expect("init R2"));
-        }
-        outputs
-    };
-
-    let (dks, eks, ntilde_map) = {
-        let mut rng = rand_core::OsRng;
-        let mut dks = Vec::new();
-        let mut eks = BTreeMap::new();
-        let mut ntilde_map = BTreeMap::new();
-        for &pid in &parties {
-            let dk = tecdsa_paillier::keygen(&mut rng).expect("paillier keygen");
-            eks.insert(pid, dk.encryption_key().clone());
-            dks.push(dk);
-            let nt = tecdsa_bench::zk_fixtures::NTildeFixture::generate();
-            ntilde_map.insert(pid, nt.to_mta_params());
-        }
-        (dks, eks, ntilde_map)
-    };
-
-    let stored_x_inputs: Vec<InputOutput<C>> = {
-        let mut rng = rand_core::OsRng;
-        let elgamal_pk = init_outputs[0].elgamal_pk;
-        let x_shares: Vec<_> = key_shares.iter().map(|ks| ks.secret_share).collect();
-        let n_usize = parties.len();
-        let mut states = Vec::with_capacity(n_usize);
-        let mut r1_msgs: Vec<InputRound1Msg> = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let (state, msg) = InputState::<C>::new(
-                parties[i],
-                parties.to_vec(),
-                elgamal_pk,
-                x_shares[i],
-                &mut rng,
-            );
-            states.push(state);
-            r1_msgs.push(msg);
-        }
-        let mut r2_msgs: Vec<InputRound2Msg<C>> = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r1_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            r2_msgs.push(states[i].handle_round1(&others).expect("input R1"));
-        }
-        let mut outputs = Vec::with_capacity(n_usize);
-        for i in 0..n_usize {
-            let others: Vec<_> = r2_msgs
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, m)| m.clone())
-                .collect();
-            outputs.push(states[i].finish_round2(&others).expect("input R2"));
-        }
-        outputs
-    };
-
-    let sign_params: Vec<Ln18PresignParams<C>> = (0..n as usize)
-        .map(|i| {
-            let ks = Ln18KeyShare {
-                party_index: key_shares[i].party_index,
-                secret_share: key_shares[i].secret_share,
-                public_key: key_shares[i].public_key,
-                elgamal_dk: init_outputs[i].d_i,
-                elgamal_pk: init_outputs[i].elgamal_pk,
-                elgamal_pk_shares: init_outputs[i].elgamal_pk_shares.clone(),
-                n: key_shares[i].n,
-                t: key_shares[i].t,
-            };
-            Ln18PresignParams {
-                key_share: ks,
-                paillier_dk: dks[i].clone(),
-                paillier_eks: eks.clone(),
-                ntilde_params: ntilde_map.clone(),
-                init_output: init_outputs[i].clone(),
-                stored_x_input: stored_x_inputs[i].clone(),
-            }
-        })
-        .collect();
-
-    let message = make_data_to_sign(b"benchmark message");
-    let m_scalar = message.digest();
-
-    // LN18 uses simulation (ln18_full_sign_parallel), not Orchestrator per-party.
-    // Run the simulation once per sample up front; both the wall-time and the
-    // per-party-average benchmarks replay these recorded wall times (the latter
-    // dividing by the party count), so the simulation runs once, not twice.
-    let wall_runs: Vec<Duration> = (0..SAMPLES + 1)
-        .map(|_| {
-            let start = Instant::now();
-            let sigs =
-                ln18_full_sign_parallel(&sign_params, &parties, m_scalar, &mut rand_core::OsRng);
-            let elapsed = start.elapsed();
-            assert!(!sigs.is_empty(), "must produce signatures");
-            elapsed
-        })
-        .collect();
-
-    {
-        let mut next = 0usize;
-        group.bench_function("full_sign_8round/ln18/n3_t2/wall", |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    total += wall_runs[next % wall_runs.len()];
-                    next += 1;
-                }
-                total
-            });
-        });
-    }
-
-    {
-        let mut next = 0usize;
-        group.bench_function("full_sign_8round/ln18/n3_t2/per_party_avg", |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    total += wall_runs[next % wall_runs.len()] / n as u32;
-                    next += 1;
-                }
-                total
-            });
-        });
-    }
-
-    group.finish();
-}
+// LN18 is benchmarked via protocol_once (not Criterion). LN18 keygen now
+// produces Shamir shares via Feldman VSS DKG, and protocol_once sweeps (n, t)
+// for DKG + t-subset signing.
 
 fn tx25_benchmarks(c: &mut Criterion) {
     use tecdsa_tx25::{
@@ -2593,7 +2346,8 @@ criterion_group!(
     dkls23_benchmarks,
     gg18_benchmarks,
     ggn16_benchmarks,
-    ln18_benchmarks,
+    // LN18's per-session Init + Lagrange setup does not fit the
+    // precompute_runs pattern. Use protocol_once for LN18.
     tx25_benchmarks,
     jtx25_benchmarks,
     wmy23_benchmarks,

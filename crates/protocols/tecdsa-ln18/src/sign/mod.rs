@@ -1,20 +1,31 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! LN18 threshold ECDSA signing (Protocol 5.1), split into Presign + OnlineSign.
 //!
-//! See [`rounds`] for the protocol logic and [`machine`] for StateMachine wrappers.
+//! See [`rounds`] for the legacy simulation logic, [`state_rounds`] for the real
+//! round state structs, and [`machine`] for StateMachine implementations.
 
 pub mod machine;
 pub mod msg;
+pub mod mta_hybrid;
 pub mod rounds;
+pub mod setup;
+pub(crate) mod state_rounds;
 
-// Re-export public types from submodules for backward compatibility.
-pub use machine::{
-    Ln18FullSignMachine, Ln18OnlineSignMachine, Ln18PresignMachine, Ln18SignMachine,
-};
-pub use msg::{Ln18FullSignMsg, Ln18OnlineSignMsg, Ln18PresignMsg, Ln18SignMsg};
+// --- New real StateMachine path exports ---
+pub use machine::{Ln18OfflineSignMachine, Ln18OnlineSignMachine};
+pub use msg::{Ln18OfflineSignMsg, Ln18OnlineSignMsg};
+pub use mta_hybrid::{Ln18MtaBackend, Ln18MtaHybrid};
+pub use setup::build_signing_setup;
+pub use state_rounds::{Ln18OfflineSignParams, Ln18OnlineSignParams};
+
+// --- Legacy wrapper exports (backward compatibility) ---
+pub use machine::{Ln18FullSignMachine, Ln18PresignMachine, Ln18SignMachine};
+pub use msg::{Ln18FullSignMsg, Ln18PresignMsg, Ln18SignMsg};
+
+// --- Legacy simulation helper exports ---
 pub use rounds::{
     ln18_full_sign_parallel, ln18_online_sign_parallel, ln18_presign_parallel, ln18_sign_parallel,
-    Ln18OnlineSignParams, Ln18PresignParams, Ln18SignParams,
+    Ln18OnlineSignParams as Ln18LegacyOnlineSignParams, Ln18PresignParams, Ln18SignParams,
 };
 #[cfg(feature = "mta-ot")]
 pub use rounds::{

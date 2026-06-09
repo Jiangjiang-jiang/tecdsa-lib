@@ -63,7 +63,14 @@ use crate::{
 // Parameter types
 // ===========================================================================
 
-/// Parameters needed to run the LN18 presign protocol for a single party.
+/// Parameters needed to run the LN18 signing protocol for a single party.
+///
+/// For t-of-n signing, use [`sign::build_signing_setup`](crate::sign::build_signing_setup)
+/// to construct these from keygen output. It handles Lagrange weighting,
+/// per-session Init, and Input(w_i) automatically.
+///
+/// `stored_x_input` must contain the **Lagrange-weighted** share for this
+/// signer subset (via `Input(λ_i · f(party_id))`), not the raw keygen share.
 pub struct Ln18PresignParams<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -72,15 +79,15 @@ where
     pub key_share: Ln18KeyShare<C>,
     /// This party's Paillier decryption key.
     pub paillier_dk: DecryptionKey,
-    /// Paillier encryption keys for all parties.
+    /// Paillier encryption keys for all signer parties.
     pub paillier_eks: BTreeMap<PartyId, EncryptionKey>,
-    /// Ring-Pedersen auxiliary parameters for all parties (for MtA range proofs).
+    /// Ring-Pedersen auxiliary parameters for all signer parties.
     pub ntilde_params: BTreeMap<PartyId, NTildeParams>,
-    /// The init output from keygen (ElGamal key material).
+    /// Init output for this signing session (ElGamal key material,
+    /// scoped to the signer subset).
     pub init_output: InitOutput<C>,
-    /// Stored x input state from KeyGen's input call (identifier 0 in the paper).
-    /// This is the result of `F_mult.input(x_i)` during key generation, stored
-    /// for reuse in signing via `F_mult.affine`. Avoids re-input of x_i.
+    /// Lagrange-weighted x input for this signer subset, produced by
+    /// running `Input(w_i)` where `w_i = λ_i · f(party_id)`.
     pub stored_x_input: InputOutput<C>,
 }
 
@@ -308,9 +315,7 @@ where
                 party_index: 0,
                 secret_share: C::Scalar::ZERO,
                 public_key: C::ProjectivePoint::default(),
-                elgamal_dk: op.presignature.elgamal_dk,
-                elgamal_pk: op.presignature.elgamal_pk,
-                elgamal_pk_shares: op.presignature.elgamal_pk_shares.clone(),
+                public_shares: Vec::new(),
                 n: n as u16,
                 t: 0,
             },

@@ -204,12 +204,11 @@ fn wire_ln18_keygen() {
     use tecdsa_core::Csprng;
     use tecdsa_ln18::keygen::Ln18KeygenMachine;
 
-    // LN18 uses 0-based party IDs in its existing tests.
     let n = 3u16;
     let t = 3u16;
     let session_id = SessionId([0u8; 32]);
-    let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
-    let configs: Vec<SessionConfig> = (0..n)
+    let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    let configs: Vec<SessionConfig> = (1..=n)
         .map(|i| SessionConfig {
             session_id: session_id.clone(),
             local_party: PartyInfo {

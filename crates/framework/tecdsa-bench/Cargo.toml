@@ -32,7 +32,7 @@ tecdsa-cggmp20 = { workspace = true }
 tecdsa-dkls23 = { workspace = true }
 tecdsa-gg18 = { workspace = true }
 tecdsa-ggn16 = { workspace = true }
-tecdsa-ln18 = { workspace = true }
+tecdsa-ln18 = { workspace = true, features = ["mta-ot"] }
 tecdsa-tx25 = { workspace = true }
 tecdsa-jtx25 = { workspace = true }
 tecdsa-wmy23 = { workspace = true }

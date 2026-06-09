@@ -15,6 +15,9 @@ use tecdsa_protocol::Protocol;
 ///
 /// Implements the [`Protocol`] trait to expose metadata, associated types,
 /// and state machines for key generation, presigning, and online signing.
+///
+/// The `Presign` type is `Ln18OfflineSignMachine` (2 rounds, message-independent).
+/// The `Sign` type is `Ln18OnlineSignMachine` (6 rounds, message-dependent).
 pub struct Ln18;
 
 impl Protocol for Ln18
@@ -26,12 +29,12 @@ where
     type KeyShare = key_share::Ln18KeyShare<k256::Secp256k1>;
     type PublicKey = <k256::Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint;
     type AuxInfo = ();
-    type Presignature = key_share::Ln18Presignature<k256::Secp256k1>;
+    type Presignature = key_share::Ln18OfflineSignState<k256::Secp256k1>;
     type Signature = tecdsa_protocol::Signature<k256::Secp256k1>;
 
     type KeyGen = keygen::Ln18KeygenMachine<k256::Secp256k1>;
     type AuxGen = tecdsa_protocol::NoOpMachine;
-    type Presign = sign::Ln18PresignMachine<k256::Secp256k1>;
+    type Presign = sign::Ln18OfflineSignMachine<k256::Secp256k1>;
     type Sign = sign::Ln18OnlineSignMachine<k256::Secp256k1>;
     type Refresh = tecdsa_protocol::NoRefreshMachine<Self::KeyShare>;
 

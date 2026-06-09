@@ -8,8 +8,8 @@ type C = k256::Secp256k1;
 
 fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
-    let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
-    (0..n)
+    let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    (1..=n)
         .map(|i| SessionConfig {
             session_id: session_id.clone(),
             local_party: PartyInfo {
@@ -95,46 +95,89 @@ fn keygen_2of2() {
         assert_eq!(s.public_key, pk, "public keys must agree");
     }
 
-    // All parties agree on the ElGamal public key.
-    let eg_pk = shares[0].elgamal_pk;
-    for s in &shares {
-        assert_eq!(s.elgamal_pk, eg_pk, "ElGamal public keys must agree");
-    }
+    // All parties agree on public_shares.
+    assert_eq!(
+        shares[0].public_shares, shares[1].public_shares,
+        "public_shares must be consistent"
+    );
 
-    // Verify: Q = sum(x_i) * G
-    let sum_x: <C as elliptic_curve::CurveArithmetic>::Scalar = shares
+    // public_shares[j] = f(j)*G where f is the combined polynomial.
+    // Verify via Lagrange reconstruction that the Shamir shares reconstruct the
+    // correct secret (sum of public_shares constant terms = Q).
+    let signer_pts: Vec<u16> = (1..=2).collect();
+    let lagrange = tecdsa_vss::lagrange::coefficients::<C>(&signer_pts);
+    let reconstructed_x: <C as elliptic_curve::CurveArithmetic>::Scalar = shares
         .iter()
-        .map(|s| s.secret_share)
+        .zip(lagrange.iter())
+        .map(|(s, l)| s.secret_share * l)
         .reduce(|acc, x| acc + x)
         .unwrap();
-    let expected_pk = C::generator() * sum_x;
-    assert_eq!(pk, expected_pk, "Q must equal sum(x_i) * G");
+    let expected_pk = C::generator() * reconstructed_x;
+    assert_eq!(pk, expected_pk, "Q must equal reconstructed_x * G");
 
-    // Verify: ElGamal PK = sum(d_i) * G
-    let sum_d: <C as elliptic_curve::CurveArithmetic>::Scalar = shares
-        .iter()
-        .map(|s| s.elgamal_dk)
-        .reduce(|acc, d| acc + d)
-        .unwrap();
-    let expected_eg_pk = C::generator() * sum_d;
-    assert_eq!(eg_pk, expected_eg_pk, "ElGamal PK must equal sum(d_i) * G");
-
-    // Verify: ElGamal pk_shares are consistent across parties.
-    for s in &shares {
+    // Verify: public_shares[j] = f(j) * G (matches secret shares)
+    for (i, s) in shares.iter().enumerate() {
+        let expected = C::generator() * s.secret_share;
         assert_eq!(
-            s.elgamal_pk_shares.len(),
-            2,
-            "should have n ElGamal pk shares"
+            s.public_shares[i], expected,
+            "public_shares[{i}] must equal secret_share * G"
         );
     }
-    assert_eq!(
-        shares[0].elgamal_pk_shares, shares[1].elgamal_pk_shares,
-        "ElGamal pk_shares must be consistent"
-    );
 
     // Verify: n and t are correct.
     for s in &shares {
         assert_eq!(s.n, 2);
+        assert_eq!(s.t, 2);
+    }
+}
+
+#[test]
+fn keygen_2of3() {
+    let shares = run_keygen(3, 2);
+    assert_eq!(shares.len(), 3);
+
+    // All parties agree on the public key.
+    let pk = shares[0].public_key;
+    for s in &shares {
+        assert_eq!(s.public_key, pk, "public keys must agree");
+    }
+
+    // All parties agree on public_shares.
+    for i in 1..shares.len() {
+        assert_eq!(
+            shares[i].public_shares, shares[0].public_shares,
+            "public_shares must be consistent"
+        );
+    }
+
+    // Verify Lagrange reconstruction with any 2-of-3 subset.
+    for subset in &[[1u16, 2], [1, 3], [2, 3]] {
+        let lagrange = tecdsa_vss::lagrange::coefficients::<C>(subset);
+        let reconstructed: <C as elliptic_curve::CurveArithmetic>::Scalar = subset
+            .iter()
+            .zip(lagrange.iter())
+            .map(|(&idx, l)| shares[(idx - 1) as usize].secret_share * l)
+            .reduce(|acc, x| acc + x)
+            .unwrap();
+        let expected_pk = C::generator() * reconstructed;
+        assert_eq!(
+            pk, expected_pk,
+            "Q must equal reconstructed x * G for subset {subset:?}"
+        );
+    }
+
+    // Verify: public_shares[j] = f(j) * G
+    for (i, s) in shares.iter().enumerate() {
+        let expected = C::generator() * s.secret_share;
+        assert_eq!(
+            s.public_shares[i], expected,
+            "public_shares[{i}] must equal secret_share * G"
+        );
+    }
+
+    // Verify: n and t are correct.
+    for s in &shares {
+        assert_eq!(s.n, 3);
         assert_eq!(s.t, 2);
     }
 }
@@ -150,27 +193,30 @@ fn keygen_3of3() {
         assert_eq!(s.public_key, pk, "public keys must agree");
     }
 
-    // All parties agree on the ElGamal public key.
-    let eg_pk = shares[0].elgamal_pk;
-    for s in &shares {
-        assert_eq!(s.elgamal_pk, eg_pk, "ElGamal public keys must agree");
-    }
-
-    // Verify: Q = sum(x_i) * G
-    let sum_x: <C as elliptic_curve::CurveArithmetic>::Scalar = shares
-        .iter()
-        .map(|s| s.secret_share)
-        .reduce(|acc, x| acc + x)
-        .unwrap();
-    let expected_pk = C::generator() * sum_x;
-    assert_eq!(pk, expected_pk, "Q must equal sum(x_i) * G");
-
-    // Verify: ElGamal pk_shares are consistent across all parties.
+    // All parties agree on public_shares.
     for i in 1..shares.len() {
         assert_eq!(
-            shares[i].elgamal_pk_shares, shares[0].elgamal_pk_shares,
-            "ElGamal pk_shares must be consistent"
+            shares[i].public_shares, shares[0].public_shares,
+            "public_shares must be consistent"
         );
+    }
+
+    // Verify: Lagrange reconstruction with all 3 parties
+    let signer_pts: Vec<u16> = (1..=3).collect();
+    let lagrange = tecdsa_vss::lagrange::coefficients::<C>(&signer_pts);
+    let reconstructed: <C as elliptic_curve::CurveArithmetic>::Scalar = shares
+        .iter()
+        .zip(lagrange.iter())
+        .map(|(s, l)| s.secret_share * l)
+        .reduce(|acc, x| acc + x)
+        .unwrap();
+    let expected_pk = C::generator() * reconstructed;
+    assert_eq!(pk, expected_pk, "Q must equal sum(lambda_i * x_i) * G");
+
+    // Verify: public_shares[j] matches
+    for (i, s) in shares.iter().enumerate() {
+        let expected = C::generator() * s.secret_share;
+        assert_eq!(s.public_shares[i], expected);
     }
 
     // Verify: all parties have correct n and t.
@@ -192,12 +238,15 @@ fn keygen_5of5() {
         assert_eq!(s.public_key, pk, "public keys must agree");
     }
 
-    // Verify: Q = sum(x_i) * G
-    let sum_x: <C as elliptic_curve::CurveArithmetic>::Scalar = shares
+    // Verify: Lagrange reconstruction
+    let signer_pts: Vec<u16> = (1..=5).collect();
+    let lagrange = tecdsa_vss::lagrange::coefficients::<C>(&signer_pts);
+    let reconstructed: <C as elliptic_curve::CurveArithmetic>::Scalar = shares
         .iter()
-        .map(|s| s.secret_share)
+        .zip(lagrange.iter())
+        .map(|(s, l)| s.secret_share * l)
         .reduce(|acc, x| acc + x)
         .unwrap();
-    let expected_pk = C::generator() * sum_x;
-    assert_eq!(pk, expected_pk, "Q must equal sum(x_i) * G");
+    let expected_pk = C::generator() * reconstructed;
+    assert_eq!(pk, expected_pk, "Q must equal sum(lambda_i * x_i) * G");
 }
