@@ -349,6 +349,7 @@ fn commitment_message(
 }
 
 /// Round 1: CL keygen + R_Key proof + DRG.Gen + commitment.
+#[allow(clippy::too_many_arguments)]
 pub fn keygen_round1(
     setup: &mut ClSetup,
     cl_setup_seed: &str,
@@ -356,14 +357,15 @@ pub fn keygen_round1(
     n: u16,
     threshold: u16,
     use_128bit_security: bool,
+    cl_sk: ClSecretKey,
+    cl_pk: ClPublicKey,
     rng: &mut impl CryptoRngCore,
 ) -> Result<(KeygenR1State, KeygenR1Bcast), Box<dyn std::error::Error>> {
     if threshold == 0 || threshold > n {
         return Err(format!("invalid threshold {threshold} for n={n}").into());
     }
 
-    // Phase 1: CL keygen + R_Key proof
-    let (cl_sk, cl_pk) = setup.keygen()?;
+    // Phase 1: R_Key proof over the caller-provided per-party CL keypair.
     let sk_bytes = setup.sk_to_bytes(&cl_sk)?;
     let r_key_proof = RKeyProof::prove(setup, &cl_pk, &sk_bytes)?;
 

@@ -9,8 +9,7 @@
 
 #![allow(non_snake_case)]
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use elliptic_curve::{
     group::{Curve as CurveGroup, GroupEncoding},
@@ -25,22 +24,26 @@ use tecdsa_protocol::{
     Outgoing, PartyId, Recipient,
 };
 
-use super::msg::{
-    Ln18OfflineSignMsg, Ln18OnlineSignMsg, SerElementOut, SerInputRound1, SerInputRound2,
-    SerMultRound1, SerMultRound2, SerMultRound3, SerMultRound4, SerMultRound5,
-};
-use super::mta_hybrid::{Ln18MtaHybrid, Ln18MtaLocalParams, Ln18MtaOp};
-use crate::f_mult::{
-    affine::{affine, AffineInput},
-    element_out::{ElementOutMsg, ElementOutState},
-    input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
-    mult::{
-        MultOutput, MultRound1Msg, MultRound1Result, MultRound2Result, MultRound3Result,
-        MultRound4Result, MultState,
+use super::{
+    msg::{
+        Ln18OfflineSignMsg, Ln18OnlineSignMsg, SerElementOut, SerInputRound1, SerInputRound2,
+        SerMultRound1, SerMultRound2, SerMultRound3, SerMultRound4, SerMultRound5,
     },
+    mta_hybrid::{Ln18MtaHybrid, Ln18MtaLocalParams, Ln18MtaOp},
 };
-use crate::key_share::Ln18OfflineSignState;
-use crate::sign::rounds::Ln18PresignParams;
+use crate::{
+    f_mult::{
+        affine::{affine, AffineInput},
+        element_out::{ElementOutMsg, ElementOutState},
+        input::{InputOutput, InputRound1Msg, InputRound2Msg, InputState},
+        mult::{
+            MultOutput, MultRound1Msg, MultRound1Result, MultRound2Result, MultRound3Result,
+            MultRound4Result, MultState,
+        },
+    },
+    key_share::Ln18OfflineSignState,
+    sign::rounds::Ln18PresignParams,
+};
 
 // ===========================================================================
 // Offline params

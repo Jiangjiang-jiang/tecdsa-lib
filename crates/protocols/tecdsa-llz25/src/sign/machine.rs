@@ -114,12 +114,25 @@ impl Llz25SignMachine {
         presignature: Llz25Presignature,
         msg: &[u8],
     ) -> Result<Self, Llz25Error> {
+        // Recreate the (global) CL public parameters from the key-share seed,
+        // then delegate. Benches holding the shared `ClSetup` call
+        // `new_with_setup` to avoid timing this one-time setup as online cost.
+        let setup = presignature.key_share.create_cl_setup()?;
+        Self::new_with_setup(my_id, all_parties, presignature, msg, setup)
+    }
+
+    /// Like [`new`](Self::new) but reuses a pre-built [`ClSetup`] (the global CL
+    /// public parameters) instead of reconstructing it from the key-share seed.
+    pub fn new_with_setup(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        presignature: Llz25Presignature,
+        msg: &[u8],
+        mut setup: tecdsa_class_group::cl::ClSetup,
+    ) -> Result<Self, Llz25Error> {
         if !all_parties.contains(&my_id) {
             return Err(Llz25Error::Protocol("my_id not in all_parties".into()));
         }
-
-        // Recreate CL setup from seed.
-        let mut setup = presignature.key_share.create_cl_setup()?;
 
         // Reconstruct pe_x ciphertexts from stored components.
         let pe_x_list: Vec<_> = presignature

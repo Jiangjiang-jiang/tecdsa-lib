@@ -166,6 +166,7 @@ pub fn precompute_runs(
 ///
 /// Adaptive/`TECDSA_BENCH_RUNS` semantics match [`precompute_runs`] (sized by the
 /// first phase's party count).
+#[allow(clippy::type_complexity)]
 pub fn precompute_runs_2(
     target_samples: usize,
     mut run_once: impl FnMut() -> (BTreeMap<PartyId, Duration>, BTreeMap<PartyId, Duration>),

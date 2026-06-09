@@ -27,8 +27,7 @@
 //! The existing `PendingMta` retry mechanism in `state_rounds.rs` and
 //! `machine.rs` handles the extra `None` returns naturally.
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
@@ -494,8 +493,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
+
+    use super::*;
 
     #[cfg(feature = "secp256k1")]
     type C = k256::Secp256k1;

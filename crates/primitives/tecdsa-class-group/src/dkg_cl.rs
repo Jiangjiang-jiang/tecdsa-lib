@@ -679,27 +679,19 @@ pub fn dkg_cl_aggregate(
     let delta = factorial(n_total);
     let coeffs = lagrange_coefficients_delta(party_indices, &delta);
 
-    let mut aggregate = setup.identity()?;
-
+    // aggregate = product(share_i^{lambda_i}) via one shared-squaring multi-exp
+    // (lambda_i are signed delta-scaled Lagrange coefficients).
+    let mut bases: Vec<&Qfi> = Vec::with_capacity(coeffs.len());
+    let mut exps: Vec<(bool, Vec<u8>)> = Vec::with_capacity(coeffs.len());
     for (idx, lambda) in &coeffs {
         let share_pos = party_indices
             .iter()
             .position(|&i| i == *idx)
             .expect("index mismatch");
-        let share = &public_shares[share_pos];
-
-        let (exp_bytes, should_invert) = if lambda.inner().is_negative() {
-            (lambda.abs().to_bytes_be(), true)
-        } else {
-            (lambda.abs().to_bytes_be(), false)
-        };
-
-        let mut term = setup.exp_bytes(share, &exp_bytes)?;
-        if should_invert {
-            term.neg();
-        }
-        aggregate = setup.compose(&aggregate, &term)?;
+        bases.push(&public_shares[share_pos]);
+        exps.push((lambda.inner().is_negative(), lambda.abs().to_bytes_be()));
     }
+    let aggregate = setup.multiexp_signed_bytes(&bases, &exps)?;
 
     Ok(aggregate)
 }

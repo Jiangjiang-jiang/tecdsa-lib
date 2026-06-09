@@ -69,6 +69,37 @@ impl Wmy23KeygenMachine {
         use_128bit_security: bool,
         mut setup: tecdsa_class_group::cl::ClSetup,
     ) -> tecdsa_core::Result<Self> {
+        // Generate the per-party long-term CL keypair, then delegate. Benches time
+        // this (n,t)-independent keygen separately (see `setup_benchmarks`) and call
+        // `new_with_keypair` so DKG measures only the interactive sharing.
+        let (cl_sk, cl_pk) = setup
+            .keygen()
+            .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
+        Self::new_with_keypair(
+            my_id,
+            all_parties,
+            threshold,
+            cl_setup_seed,
+            use_128bit_security,
+            setup,
+            cl_sk,
+            cl_pk,
+        )
+    }
+
+    /// Like [`new_with_setup`](Self::new_with_setup) but reuses a pre-generated
+    /// per-party CL keypair instead of generating it inside the constructor.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_keypair(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        threshold: u16,
+        cl_setup_seed: &str,
+        use_128bit_security: bool,
+        mut setup: tecdsa_class_group::cl::ClSetup,
+        cl_sk: tecdsa_class_group::cl::ClSecretKey,
+        cl_pk: tecdsa_class_group::cl::ClPublicKey,
+    ) -> tecdsa_core::Result<Self> {
         let n = all_parties.len();
         let my_idx = all_parties
             .iter()
@@ -83,6 +114,8 @@ impl Wmy23KeygenMachine {
             n as u16,
             threshold,
             use_128bit_security,
+            cl_sk,
+            cl_pk,
             &mut rng,
         )
         .map_err(|e| TecdsaError::Other(format!("keygen_round1 failed: {e}")))?;

@@ -772,6 +772,74 @@ impl ClassGroup {
         }
         result
     }
+
+    /// Simultaneous multi-exponentiation `∏ bases[i]^exps[i]` via an interleaved
+    /// fixed-window (width 4) algorithm: the squaring chain is **shared** across
+    /// all bases (one chain instead of one per base), which is the dominant cost
+    /// at class-group sizes. Per base it precomputes a small `base^d` table
+    /// (`d < 2^4`) and adds one window contribution per block. Handles negative
+    /// exponents (by inverting the base) and skips zero exponents. For a single
+    /// term prefer [`exp`](Self::exp); this shines for the `∏ gᵢ^{xᵢ}` products
+    /// in VSS/threshold-decryption aggregation where it turns `n` independent
+    /// exponentiations into one shared chain.
+    pub fn multiexp(&self, bases: &[&QFI], exps: &[Mpz]) -> QFI {
+        assert_eq!(
+            bases.len(),
+            exps.len(),
+            "multiexp: bases and exps must have equal length"
+        );
+        const W: usize = 4;
+        const TABLE_LEN: usize = 1 << W;
+
+        // Per-base table `base^d` for `d in 0..2^W` (sign-normalized) + exponent.
+        let mut tables: Vec<Vec<QFI>> = Vec::with_capacity(bases.len());
+        let mut es: Vec<Mpz> = Vec::with_capacity(exps.len());
+        let mut maxbits: u32 = 0;
+        for (b, e) in bases.iter().zip(exps.iter()) {
+            if e.is_zero() {
+                continue;
+            }
+            let (base, exp) = if e.sgn() < 0 {
+                (self.inverse(b), e.neg())
+            } else {
+                ((*b).clone(), e.clone())
+            };
+            maxbits = maxbits.max(exp.nbits() as u32);
+            let mut table = Vec::with_capacity(TABLE_LEN);
+            table.push(self.identity());
+            table.push(base.clone());
+            for d in 2..TABLE_LEN {
+                let prev = &table[d - 1];
+                table.push(self.compose(prev, &base));
+            }
+            tables.push(table);
+            es.push(exp);
+        }
+        if maxbits == 0 {
+            return self.identity();
+        }
+
+        let nblocks = (maxbits as usize).div_ceil(W);
+        let mut result = self.identity();
+        for blk in (0..nblocks).rev() {
+            for _ in 0..W {
+                result = self.square(&result);
+            }
+            let shift = blk * W;
+            for (table, exp) in tables.iter().zip(es.iter()) {
+                let mut d = 0usize;
+                for bit in 0..W {
+                    if exp.get_bit((shift + bit) as u32) {
+                        d |= 1 << bit;
+                    }
+                }
+                if d != 0 {
+                    result = self.compose(&result, &table[d]);
+                }
+            }
+        }
+        result
+    }
 }
 
 #[cfg(test)]
@@ -858,6 +926,73 @@ mod tests {
         let left = cg.compose(&cg.compose(&f, &g), &h);
         let right = cg.compose(&f, &cg.compose(&g, &h));
         assert_eq!(left, right);
+    }
+
+    #[test]
+    fn multiexp_matches_naive_product() {
+        let cg = cg_large();
+        let f = cg.prime_form(&cg.smallest_split_prime());
+        let g = cg.square(&f);
+        let h = cg.compose(&g, &f);
+        let owned = [f.clone(), g.clone(), h.clone(), cg.compose(&h, &f)];
+        let bases: Vec<&QFI> = owned.iter().collect();
+        // Mix positive, zero, multi-word, and negative exponents.
+        let exps = [
+            Mpz::from(12345u64),
+            Mpz::from(0u64),
+            Mpz::from_str_auto("0x9abcdef0123456789abcdef0").unwrap(),
+            Mpz::from(7u64).neg(),
+        ];
+        let got = cg.multiexp(&bases, &exps);
+        let mut naive = cg.identity();
+        for (b, e) in bases.iter().zip(exps.iter()) {
+            naive = cg.compose(&naive, &cg.exp(b, e));
+        }
+        assert_eq!(got, naive);
+    }
+
+    #[test]
+    #[ignore = "perf micro-benchmark for B1a; run with --ignored --nocapture"]
+    fn multiexp_vs_naive_timing() {
+        use std::time::Instant;
+        let cg = cg_large();
+        let base0 = cg.prime_form(&cg.smallest_split_prime());
+        const ITERS: u32 = 30;
+        for n in [5usize, 11, 20] {
+            // n distinct bases and ~256-bit distinct exponents.
+            let mut owned = Vec::with_capacity(n);
+            let mut cur = base0.clone();
+            for _ in 0..n {
+                cur = cg.compose(&cur, &base0);
+                owned.push(cur.clone());
+            }
+            let bases: Vec<&QFI> = owned.iter().collect();
+            let exps: Vec<Mpz> = (0..n)
+                .map(|i| {
+                    Mpz::from((i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)).mul_2exp(192)
+                })
+                .collect();
+
+            let t0 = Instant::now();
+            for _ in 0..ITERS {
+                let _ = cg.multiexp(&bases, &exps);
+            }
+            let t_multi = t0.elapsed() / ITERS;
+
+            let t1 = Instant::now();
+            for _ in 0..ITERS {
+                let mut r = cg.identity();
+                for (b, e) in bases.iter().zip(exps.iter()) {
+                    r = cg.compose(&r, &cg.exp(b, e));
+                }
+            }
+            let t_naive = t1.elapsed() / ITERS;
+
+            println!(
+                "B1a multiexp n={n:>2}: naive={t_naive:>10.3?}  multiexp={t_multi:>10.3?}  speedup={:.2}x",
+                t_naive.as_secs_f64() / t_multi.as_secs_f64()
+            );
+        }
     }
 
     #[test]

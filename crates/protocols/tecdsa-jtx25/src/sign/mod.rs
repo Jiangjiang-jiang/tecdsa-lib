@@ -142,6 +142,28 @@ impl Jtx25OnlineSignMachine {
         message: &[u8],
         public_key: k256::ProjectivePoint,
     ) -> tecdsa_core::Result<Self> {
+        // Rebuild the (global) CL public parameters from the stored seed, then
+        // delegate. Benches holding the shared `ClSetup` call `new_with_setup`
+        // to avoid timing this one-time global setup as online-sign cost.
+        let setup = if presignature.use_128bit_security {
+            ClSetup::new_secp256k1_128bit(&presignature.cl_setup_seed)
+        } else {
+            ClSetup::new_secp256k1(&presignature.cl_setup_seed)
+        }
+        .map_err(|e| TecdsaError::Other(format!("ClSetup: {e}")))?;
+        Self::new_with_setup(my_id, all_parties, presignature, message, public_key, setup)
+    }
+
+    /// Like [`new`](Self::new) but reuses a pre-built [`ClSetup`] (the global CL
+    /// public parameters) instead of reconstructing it from the presignature seed.
+    pub fn new_with_setup(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        presignature: Jtx25Presignature,
+        message: &[u8],
+        public_key: k256::ProjectivePoint,
+        mut setup: ClSetup,
+    ) -> tecdsa_core::Result<Self> {
         if !all_parties.contains(&my_id) {
             return Err(TecdsaError::Other("my_id not in all_parties".into()));
         }
@@ -151,13 +173,6 @@ impl Jtx25OnlineSignMachine {
         let message_data = DataToSign::from_digest(m);
         let r_x = presignature.r_x;
         let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_x);
-
-        let mut setup = if presignature.use_128bit_security {
-            ClSetup::new_secp256k1_128bit(&presignature.cl_setup_seed)
-        } else {
-            ClSetup::new_secp256k1(&presignature.cl_setup_seed)
-        }
-        .map_err(|e| TecdsaError::Other(format!("ClSetup: {e}")))?;
 
         // Reconstruct phi_bar ciphertext.
         let pb_c1 = Qfi::from_bytes(&presignature.phi_bar_c1_bytes);

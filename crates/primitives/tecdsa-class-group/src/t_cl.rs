@@ -125,29 +125,23 @@ pub fn final_decrypt(
     let indices: Vec<usize> = partial_decs.iter().map(|pd| pd.party_index).collect();
     let coeffs = lagrange_coefficients_delta(&indices, &delta);
 
-    // Compute combined = product(pd_i^{lambda_i}).
-    // Since shares come from F(j) = delta*sk + r1*j + ..., and
-    // lambda_i includes a delta factor, the combined exponent
-    // is sk * delta^2.
-    let id = setup.identity()?;
-    let mut combined = id;
-
+    // Compute combined = product(pd_i^{lambda_i}) via one shared-squaring
+    // multi-exponentiation (lambda_i are signed Lagrange-delta coefficients).
+    // Since shares come from F(j) = delta*sk + r1*j + ..., and lambda_i includes
+    // a delta factor, the combined exponent is sk * delta^2.
+    let mut bases: Vec<&Qfi> = Vec::with_capacity(coeffs.len());
+    let mut exps: Vec<(bool, Vec<u8>)> = Vec::with_capacity(coeffs.len());
     for (idx, lambda) in &coeffs {
         let pd = partial_decs
             .iter()
             .find(|p| p.party_index == *idx)
             .expect("party index mismatch");
-
+        bases.push(&pd.dec_share);
         // `to_digits` yields the magnitude (sign discarded); track sign separately.
         let should_invert = lambda.cmp0() == core::cmp::Ordering::Less;
-        let exp_bytes = lambda.to_digits::<u8>(Order::Msf);
-
-        let mut pd_lambda = setup.exp_bytes(&pd.dec_share, &exp_bytes)?;
-        if should_invert {
-            pd_lambda.neg();
-        }
-        combined = setup.compose(&combined, &pd_lambda)?;
+        exps.push((should_invert, lambda.to_digits::<u8>(Order::Msf)));
     }
+    let mut combined = setup.multiexp_signed_bytes(&bases, &exps)?;
 
     // plaintext element = c2^{delta^2} * combined^{-1}
     //

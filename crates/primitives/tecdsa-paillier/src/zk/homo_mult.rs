@@ -216,9 +216,10 @@ impl HomoMultProof {
         );
 
         // u2 = Gamma^alpha * beta^N mod N^2  (Paillier encryption of alpha)
-        let gamma_paillier = &statement.ek_n + Integer::one(); // Gamma = 1 + N
+        let _gamma_paillier = &statement.ek_n + Integer::one(); // Gamma = 1 + N
         let u2 = {
-            let g_alpha = pow_mod_signed(&gamma_paillier, &alpha, &statement.ek_nn);
+            // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
+            let g_alpha = (Integer::one() + &alpha * &statement.ek_n).modulo(&statement.ek_nn);
             let beta_n = pow_mod_signed(&beta, &statement.ek_n, &statement.ek_nn);
             (g_alpha * beta_n).modulo(&statement.ek_nn)
         };
@@ -291,9 +292,10 @@ impl HomoMultProof {
         let neg_e = -e.clone();
 
         // --- Paillier check 1: Gamma^{s1} * s2^N * c1^{-e} == u2 mod N^2 ---
-        let gamma_paillier = &statement.ek_n + Integer::one();
+        let _gamma_paillier = &statement.ek_n + Integer::one();
         let u2_check = {
-            let g_s1 = pow_mod_signed(&gamma_paillier, &self.s1, &statement.ek_nn);
+            // (1 + N)^s1 = (1 + s1*N) mod N^2 (binomial) — one mul, no modexp.
+            let g_s1 = (Integer::one() + &self.s1 * &statement.ek_n).modulo(&statement.ek_nn);
             let s2_n = pow_mod_signed(&self.s2, &statement.ek_n, &statement.ek_nn);
             let c1_neg_e = pow_mod_signed(&statement.c1, &neg_e, &statement.ek_nn);
             (g_s1 * s2_n % &statement.ek_nn * c1_neg_e).modulo(&statement.ek_nn)

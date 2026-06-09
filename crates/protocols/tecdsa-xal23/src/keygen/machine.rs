@@ -106,6 +106,36 @@ where
         jl_p_bits: u64,
         jl_k: u32,
     ) -> tecdsa_core::Result<Self> {
+        // Generate the per-party long-term JL keypair, then delegate. Benches time
+        // this (n,t)-independent keygen separately (see `setup_benchmarks`) and call
+        // `new_with_jl_keypair` so DKG measures only the interactive sharing.
+        let mut rng = rand::rngs::OsRng;
+        let (jl_pk, jl_sk, jl_qnr) =
+            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(jl_p_bits, jl_k, &mut rng);
+        Self::new_with_jl_keypair(
+            my_id,
+            all_parties,
+            threshold,
+            jl_pk,
+            jl_sk,
+            jl_qnr,
+            jl_p_bits,
+            jl_k,
+        )
+    }
+
+    /// Like [`new`](Self::new) but reuses a pre-generated JL keypair (the per-party
+    /// long-term key material) instead of generating it inside the constructor.
+    pub fn new_with_jl_keypair(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        threshold: u16,
+        jl_pk: tecdsa_joye_libert::JlPublicKey,
+        jl_sk: tecdsa_joye_libert::JlSecretKey,
+        jl_qnr: rug::Integer,
+        jl_p_bits: u64,
+        jl_k: u32,
+    ) -> tecdsa_core::Result<Self> {
         if !all_parties.contains(&my_id) {
             return Err(TecdsaError::Other("my_id not in all_parties".into()));
         }
@@ -121,10 +151,6 @@ where
 
         let n = all_parties.len() as u16;
         let mut rng = rand::rngs::OsRng;
-
-        // 1. Generate JL keypair (with QNR witness for modulus proof)
-        let (jl_pk, jl_sk, jl_qnr) =
-            tecdsa_joye_libert::kgen::generate_keypair_with_qnr(jl_p_bits, jl_k, &mut rng);
 
         // 1b. Generate ZkJlModProof (proves N is well-formed for JL encryption)
         let jl_mod_proof = ZkJlModProof::prove(&jl_pk, &jl_sk, &jl_qnr, &mut rng);

@@ -108,6 +108,43 @@ impl TroutKeygenMachine {
         use_128bit: bool,
         mut setup: ClSetup,
     ) -> tecdsa_core::Result<Self> {
+        // Generate the per-party long-term key material (eVRF keypair + CL public
+        // contribution), then delegate. Benches time this (n,t)-independent keygen
+        // separately (see `setup_benchmarks`) and call `new_with_key_material` so
+        // DKG measures only the interactive sharing.
+        let mut rng = rand::rngs::OsRng;
+        let (evrf_sk, evrf_pk) = EvrfSecretKey::<k256::Secp256k1>::generate(&mut rng);
+        let (_cl_sk_i, cl_pk_i) = setup
+            .keygen()
+            .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
+        Self::new_with_key_material(
+            my_id,
+            all_parties,
+            threshold,
+            cl_setup_seed,
+            use_128bit,
+            setup,
+            evrf_sk,
+            evrf_pk,
+            cl_pk_i,
+        )
+    }
+
+    /// Like [`new_with_setup`](Self::new_with_setup) but reuses pre-generated
+    /// per-party key material (eVRF keypair + CL public contribution) instead of
+    /// generating it inside the constructor.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_key_material(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        threshold: u16,
+        cl_setup_seed: &str,
+        use_128bit: bool,
+        setup: ClSetup,
+        evrf_sk: tecdsa_evrf::EvrfSecretKey<k256::Secp256k1>,
+        evrf_pk: tecdsa_evrf::EvrfPublicKey<k256::Secp256k1>,
+        cl_pk_i: tecdsa_class_group::cl::PublicKey,
+    ) -> tecdsa_core::Result<Self> {
         if !all_parties.contains(&my_id) {
             return Err(TecdsaError::Other("my_id not in all_parties".into()));
         }
@@ -116,13 +153,6 @@ impl TroutKeygenMachine {
 
         let mut rng = rand::rngs::OsRng;
 
-        // 1. Generate eVRF keypair
-        let (evrf_sk, evrf_pk) = EvrfSecretKey::<k256::Secp256k1>::generate(&mut rng);
-
-        // 2. Generate CL key contribution
-        let (_cl_sk_i, cl_pk_i) = setup
-            .keygen()
-            .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
         let y_i = cl_pk_i.elt();
         let cl_contribution_abc =
             qfi_to_abc(y_i).map_err(|e| TecdsaError::Other(format!("{e}")))?;

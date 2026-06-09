@@ -130,6 +130,20 @@ pub fn generate_n_tilde(
     }
 }
 
+impl PaillierPrecomputed {
+    /// Generate fresh per-party long-term key material: a Paillier keypair plus
+    /// Ring-Pedersen parameters (derived from a second Paillier modulus). Factored
+    /// out so benchmarks can time this (n,t)-independent setup separately from the
+    /// interactive DKG (which should consume it via `new_with_precomputed`).
+    pub fn generate(rng: &mut impl CryptoRngCore) -> Self {
+        let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen must succeed");
+        let dk_tilde =
+            tecdsa_paillier::keygen(rng).expect("Paillier keygen for N_tilde must succeed");
+        let n_tilde_params = generate_n_tilde(&dk_tilde, rng);
+        PaillierPrecomputed { dk, n_tilde_params }
+    }
+}
+
 impl<C: TecdsaCurve> Round1State<C>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -139,16 +153,7 @@ where
     ///
     /// This is the production constructor that generates full-size Paillier keys.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
-        // Generate Paillier key pair
-        let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen must succeed");
-
-        // Generate N_tilde parameters using a separate Paillier keypair
-        let dk_tilde =
-            tecdsa_paillier::keygen(rng).expect("Paillier keygen for N_tilde must succeed");
-        let n_tilde_params = generate_n_tilde(&dk_tilde, rng);
-
-        let precomputed = PaillierPrecomputed { dk, n_tilde_params };
-
+        let precomputed = PaillierPrecomputed::generate(rng);
         Self::new_with_precomputed(config, precomputed, rng)
     }
 

@@ -12,16 +12,13 @@ pub mod setup;
 pub(crate) mod state_rounds;
 
 // --- New real StateMachine path exports ---
-pub use machine::{Ln18OfflineSignMachine, Ln18OnlineSignMachine};
-pub use msg::{Ln18OfflineSignMsg, Ln18OnlineSignMsg};
-pub use mta_hybrid::{Ln18MtaBackend, Ln18MtaHybrid};
-pub use setup::build_signing_setup;
-pub use state_rounds::{Ln18OfflineSignParams, Ln18OnlineSignParams};
-
 // --- Legacy wrapper exports (backward compatibility) ---
 pub use machine::{Ln18FullSignMachine, Ln18PresignMachine, Ln18SignMachine};
-pub use msg::{Ln18FullSignMsg, Ln18PresignMsg, Ln18SignMsg};
-
+pub use machine::{Ln18OfflineSignMachine, Ln18OnlineSignMachine};
+pub use msg::{
+    Ln18FullSignMsg, Ln18OfflineSignMsg, Ln18OnlineSignMsg, Ln18PresignMsg, Ln18SignMsg,
+};
+pub use mta_hybrid::{Ln18MtaBackend, Ln18MtaHybrid};
 // --- Legacy simulation helper exports ---
 pub use rounds::{
     ln18_full_sign_parallel, ln18_online_sign_parallel, ln18_presign_parallel, ln18_sign_parallel,
@@ -32,3 +29,5 @@ pub use rounds::{
     ln18_full_sign_parallel_ot, ln18_online_sign_parallel_ot, ln18_presign_parallel_ot,
     ln18_sign_parallel_ot, Ln18OtOnlineSignParams, Ln18OtPresignParams, Ln18OtSignParams,
 };
+pub use setup::build_signing_setup;
+pub use state_rounds::{Ln18OfflineSignParams, Ln18OnlineSignParams};

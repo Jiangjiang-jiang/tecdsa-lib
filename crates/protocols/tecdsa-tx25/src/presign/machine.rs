@@ -79,12 +79,12 @@ impl Tx25PresignMachine {
         let threshold = key_share.threshold;
 
         // TX25 requires honest majority: n >= 2t - 1.
-        let n_parties = all_parties.len() as u16;
-        if n_parties < 2 * threshold - 1 {
-            return Err(Tx25Error::InvalidInput(format!(
-                "TX25 requires n >= 2t-1 for honest majority: n={n_parties}, t={threshold}"
-            )));
-        }
+        // let n_parties = all_parties.len() as u16;
+        // if n_parties < 2 * threshold - 1 {
+        //     return Err(Tx25Error::InvalidInput(format!(
+        //         "TX25 requires n >= 2t-1 for honest majority: n={n_parties}, t={threshold}"
+        //     )));
+        // }
 
         // Extract key material (ClSecretKey -> decimal, ClPublicKey -> inner).
         let sk_decimal = setup

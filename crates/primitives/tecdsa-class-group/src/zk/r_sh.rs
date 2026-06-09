@@ -151,9 +151,11 @@ fn aggregate_products(
 
     let q_minus_2 = Integer::from(&q - 2);
 
-    let mut prod_U = setup.identity()?;
-    let mut prod_V = setup.identity()?;
-
+    // Compute every party's aggregation exponent `exp_i = c_i*M + den_i`, then
+    // fold each product with a single shared-squaring multi-exponentiation
+    // (`prod_U = ∏ pk_i^{exp_i}`, `prod_V = ∏ c2_i^{exp_i}`) instead of `n`
+    // independent exp+compose pairs — the dominant O(n^2) keygen cost.
+    let mut exps: Vec<Vec<u8>> = Vec::with_capacity(n);
     for (idx, &i_id) in party_ids.iter().enumerate() {
         let i_big = Integer::from(i_id);
 
@@ -180,16 +182,12 @@ fn aggregate_products(
 
         // exp_i = c_i * M + den.
         let exp_i = Integer::from(&challenges[idx] * &M) + &den;
-        let exp_i_bytes = exp_i.to_digits::<u8>(Order::Msf);
-
-        // Accumulate: prod_U *= pk_i^{exp_i}.
-        let pk_exp = setup.exp_bytes(&pk_elts[idx], &exp_i_bytes)?;
-        prod_U = setup.compose(&prod_U, &pk_exp)?;
-
-        // Accumulate: prod_V *= c2_i^{exp_i}.
-        let c2_exp = setup.exp_bytes(c2s[idx], &exp_i_bytes)?;
-        prod_V = setup.compose(&prod_V, &c2_exp)?;
+        exps.push(exp_i.to_digits::<u8>(Order::Msf));
     }
+
+    let pk_refs: Vec<&Qfi> = pk_elts.iter().collect();
+    let prod_U = setup.multiexp_bytes(&pk_refs, &exps)?;
+    let prod_V = setup.multiexp_bytes(c2s, &exps)?;
 
     Ok((prod_U, prod_V))
 }

@@ -819,6 +819,7 @@ where
 #[test]
 fn state_machine_sign_2plus6_2of2_paillier_verifies() {
     use std::sync::Arc;
+
     use tecdsa_ln18::sign::{
         Ln18MtaBackend, Ln18MtaHybrid, Ln18OfflineSignMachine, Ln18OfflineSignParams,
         Ln18OnlineSignMachine, Ln18OnlineSignParams,
@@ -906,6 +907,7 @@ fn state_machine_sign_2plus6_2of2_paillier_verifies() {
 #[test]
 fn state_machine_sign_2plus6_2of2_ot_verifies() {
     use std::sync::Arc;
+
     use tecdsa_ln18::sign::{
         Ln18MtaBackend, Ln18MtaHybrid, Ln18OfflineSignMachine, Ln18OfflineSignParams,
         Ln18OnlineSignMachine, Ln18OnlineSignParams,
@@ -984,6 +986,7 @@ fn state_machine_sign_2plus6_2of2_ot_verifies() {
 #[test]
 fn offline_sign_rejects_duplicate_round1_message() {
     use std::sync::Arc;
+
     use tecdsa_ln18::sign::{
         Ln18MtaBackend, Ln18MtaHybrid, Ln18OfflineSignMachine, Ln18OfflineSignParams,
     };
@@ -1038,6 +1041,7 @@ fn offline_sign_rejects_duplicate_round1_message() {
 #[test]
 fn offline_sign_rejects_out_of_round_message() {
     use std::sync::Arc;
+
     use tecdsa_ln18::sign::{
         Ln18MtaBackend, Ln18MtaHybrid, Ln18OfflineSignMachine, Ln18OfflineSignMsg,
         Ln18OfflineSignParams,

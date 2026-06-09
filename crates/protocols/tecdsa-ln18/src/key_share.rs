@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
@@ -8,8 +7,7 @@ use tecdsa_paillier::{zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey}
 use tecdsa_protocol::PartyId;
 use zeroize::Zeroize;
 
-use crate::f_mult::input::InputOutput;
-use crate::sign::mta_hybrid::Ln18MtaHybrid;
+use crate::{f_mult::input::InputOutput, sign::mta_hybrid::Ln18MtaHybrid};
 
 /// Key share for the LN18 protocol (Feldman VSS DKG).
 ///

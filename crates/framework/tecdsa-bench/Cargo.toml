@@ -34,7 +34,7 @@ tecdsa-gg18 = { workspace = true }
 tecdsa-ggn16 = { workspace = true }
 tecdsa-ln18 = { workspace = true, features = ["mta-ot"] }
 tecdsa-tx25 = { workspace = true }
-tecdsa-jtx25 = { workspace = true }
+tecdsa-jtx25 = { workspace = true, features = ["robust"] }
 tecdsa-wmy23 = { workspace = true }
 tecdsa-wmc24 = { workspace = true }
 tecdsa-llz25 = { workspace = true }

@@ -321,6 +321,33 @@ impl ClSetup {
         Ok(cl_delta.exp(f, &Mpz::from_str(n_decimal)?))
     }
 
+    /// Simultaneous multi-exponentiation `∏ bases[i]^exps[i]` in `Cl(Δ)`, with
+    /// each exponent given as big-endian bytes. Shares one squaring chain across
+    /// all bases (see [`ClassGroup::multiexp`]); far cheaper than folding `n`
+    /// independent [`exp_bytes`](Self::exp_bytes) results with [`compose`](Self::compose).
+    pub fn multiexp_bytes(&self, bases: &[&Qfi], exps: &[Vec<u8>]) -> ClResult<Qfi> {
+        let exps_mpz: Vec<Mpz> = exps.iter().map(|e| Mpz::from_bytes_be(e)).collect();
+        Ok(self.cl.cl_delta().multiexp(bases, &exps_mpz))
+    }
+
+    /// Like [`multiexp_bytes`](Self::multiexp_bytes) but each exponent carries an
+    /// explicit sign (`true` = negative); the magnitude is big-endian bytes.
+    /// Useful for Lagrange-weighted products `∏ gᵢ^{λᵢ}` where `λᵢ` may be negative.
+    pub fn multiexp_signed_bytes(&self, bases: &[&Qfi], exps: &[(bool, Vec<u8>)]) -> ClResult<Qfi> {
+        let exps_mpz: Vec<Mpz> = exps
+            .iter()
+            .map(|(neg, e)| {
+                let m = Mpz::from_bytes_be(e);
+                if *neg {
+                    m.neg()
+                } else {
+                    m
+                }
+            })
+            .collect();
+        Ok(self.cl.cl_delta().multiexp(bases, &exps_mpz))
+    }
+
     /// Returns the identity element of `Cl(Delta)`.
     pub fn identity(&self) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();

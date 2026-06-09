@@ -148,7 +148,8 @@ impl AliceProof {
         //   = (1 + alpha*N) * beta^N mod N^2
         let g_paillier = ek_n + Integer::one();
         let u = {
-            let g_alpha = pow_mod_signed(&g_paillier, &alpha, ek_nn);
+            // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
+            let g_alpha = (Integer::one() + &alpha * ek_n).modulo(ek_nn);
             let beta_n = pow_mod_signed(&beta, ek_n, ek_nn);
             (g_alpha * beta_n).modulo(ek_nn)
         };
@@ -206,7 +207,8 @@ impl AliceProof {
         // Reconstruct u: u = (1+N)^s1 * s^N * C^{-e} mod N^2
         let g_paillier = ek_n + Integer::one();
         let u = {
-            let gs1 = pow_mod_signed(&g_paillier, &self.s1, ek_nn);
+            // (1 + N)^s1 = (1 + s1*N) mod N^2 (binomial) — one mul, no modexp.
+            let gs1 = (Integer::one() + &self.s1 * ek_n).modulo(ek_nn);
             let s_n = pow_mod_signed(&self.s, ek_n, ek_nn);
             let neg_e = -self.e.clone();
             let c_neg_e = pow_mod_signed(cipher, &neg_e, ek_nn);
@@ -741,6 +743,35 @@ mod tests {
     use super::*;
 
     type TestCurve = k256::Secp256k1;
+
+    #[test]
+    #[ignore = "perf micro-benchmark for B2b; run with --ignored --nocapture"]
+    fn paillier_g_pow_linear_vs_modexp() {
+        use std::time::Instant;
+        // ~3072-bit odd modulus N (primality irrelevant to timing); N^2 ~6144-bit.
+        let n = (Integer::one() << 3072) - Integer::one(); // ~3072-bit odd
+        let nn = &n * &n;
+        let g = &n + Integer::one(); // 1 + N
+        let alpha = (Integer::one() << 768) - Integer::one(); // ~768-bit exponent
+        const ITERS: u32 = 200;
+
+        let t0 = Instant::now();
+        for _ in 0..ITERS {
+            let _ = pow_mod_signed(&g, &alpha, &nn);
+        }
+        let t_modexp = t0.elapsed() / ITERS;
+
+        let t1 = Instant::now();
+        for _ in 0..ITERS {
+            let _ = (Integer::one() + &alpha * &n).modulo(&nn);
+        }
+        let t_linear = t1.elapsed() / ITERS;
+
+        println!(
+            "B2b (1+N)^x: modexp={t_modexp:>10.3?}  linear={t_linear:>10.3?}  speedup={:.0}x",
+            t_modexp.as_secs_f64() / t_linear.as_secs_f64().max(1e-12)
+        );
+    }
 
     /// Set up Paillier keys for testing (small primes for speed).
     fn setup_paillier(
