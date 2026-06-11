@@ -93,7 +93,7 @@ pub struct Jtx25RobustPresignature {
     pub n_signers: usize,
     /// Threshold.
     pub threshold: u16,
-    /// The combined phi_bar ciphertext (serialized as abc pairs).
+    /// The combined phi_bar ciphertext (serialized as binary QFI blobs).
     pub phi_bar_c1_bytes: Vec<u8>,
     pub phi_bar_c2_bytes: Vec<u8>,
     /// Per-party phi_bar_x_j ciphertexts (keyed by party_id u16).

@@ -33,6 +33,7 @@ use crate::cl::{
 ///
 /// Links a CL-HSM ciphertext to an EC Pedersen commitment by proving both
 /// use the same plaintext `chi`.
+#[derive(Clone)]
 pub struct REncPcProof {
     /// EC Pedersen commitment randomness: `R_PC = g^{a1} * h^{a2}` (compressed, 33 bytes).
     pub r_pc_bytes: Vec<u8>,

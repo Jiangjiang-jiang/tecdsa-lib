@@ -1,55 +1,51 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMY23 presigning protocol (Rounds 1-4).
+//! WMY23 presigning protocol (DRG-based, WMY23 Figure 5).
 //!
-//! Produces a message-independent [`Wmy23Presignature`] using CL-based MtAwc
-//! for multiplicative-to-additive conversion.
+//! Produces a message-independent [`Wmy23Presignature`] using the paper's
+//! three presign phases:
 //!
-//! ## Protocol Rounds (from WMY23, Section 3.3)
+//! 1. **DRG (Phase 1):** Round 1 broadcasts the DRG.Gen public material
+//!    for both `k_i` and `gamma_i` (Pedersen VSS commitments, CL
+//!    ciphertext, R_Enc-PC proof) plus a hash commitment to
+//!    `Gamma_i = gamma_i * G`, and sends the Pedersen VSS shares P2P.
+//!    On the Round 1 -> 2 transition each party runs DRG.GenVf
+//!    (VSS share check + R_Enc-PC verification) and DRG.Comb.
+//! 2. **MtAwc (Phase 2):** Round 2 decommits `Gamma_i` and sends the
+//!    MtAwc Alice ciphertexts of `hat_k_i` and `hat_x_i`; Round 3 answers
+//!    with the MtAwc Bob response ciphertexts.
+//! 3. **Share revelation (Phase 3):** Round 4 broadcasts `delta_i` and
+//!    `D_i = Gamma^{hat_k_i}`. Finalization checks
+//!    `g^delta == prod_j D_j` and reconstructs `R = Gamma^{1/delta}`.
 //!
-//! 1. **Nonce commitment:** each party samples $k_i, \gamma_i$, broadcasts
-//!    a commitment to $\Gamma_i = \gamma_i \cdot G$.
-//! 2. **Decommit + MtAwc Alice step 1:** decommit $\Gamma_i$, encrypt
-//!    $\gamma_i$ and $x_i$ under own CL key.  Broadcast decommit +
-//!    serialised CL ciphertexts.
-//! 3. **MtAwc Bob step:** for each counterparty $j$, homomorphically
-//!    compute $k_i \cdot \gamma_j$ and $k_i \cdot x_j$.  Broadcast
-//!    response ciphertexts.
-//! 4. **MtAwc Alice step 2 + finalize:** decrypt $\alpha$ values, compute
-//!    $\delta_i$ and $\sigma_i$, broadcast $\delta_i$.  After collecting
-//!    all $\delta_j$ values, reconstruct $R$.
+//! ## Serialization
 //!
-//! ## StateMachine implementation
+//! All class-group elements (ciphertext components, proof commitments)
+//! travel as compact binary `Qfi::to_bytes()` blobs; EC points as 33-byte
+//! compressed SEC1; scalars as 32-byte big-endian. Payloads are encoded
+//! with `bincode`.
 //!
-//! With bicycl-rs v0.2.2, all CL types including `ClSetup` implement `Send`.
-//! The presign machine stores the `ClSetup` directly and uses it across
-//! round transitions, eliminating the per-round setup recreation overhead.
-//!
-//! CL ciphertexts in **messages** are serialised as QFI abc-decimal tuples
-//! `(String, String, String)` per component, since CL types do not implement
-//! serde.  Ciphertexts in **internal state** are stored as `ClCiphertext`
-//! directly (they are `Send`).
-//!
-//! Reference: Wang, Mei, Yu. "Real Threshold ECDSA." NDSS 2023, Section 3.3.
+//! Reference: Wong, Ma, Yin, Chow. "Real Threshold ECDSA." NDSS 2023.
 
 pub mod rounds;
 pub mod types;
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::{group::GroupEncoding, CurveArithmetic, PrimeField};
-use rand_core::RngCore;
+use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
-use tecdsa_class_group::cl::{ClCiphertext, ClSetup, Qfi};
+use tecdsa_class_group::{
+    cl::{ClCiphertext, ClSetup, Qfi},
+    drg::PedersenVssShare,
+    zk::r_enc_pc::REncPcProof,
+};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 pub use types::Wmy23Presignature;
 
-use crate::{
-    key_share::Wmy23KeyShare,
-    mtawc::{self, MtAwcAliceState},
+use crate::key_share::Wmy23KeyShare;
+use rounds::{
+    DrgPresignR1Bcast, DrgPresignR1P2P, DrgPresignR1State, DrgPresignR2Bcast, DrgPresignR2State,
+    DrgPresignR3Data, DrgPresignR4State,
 };
 
 // ---------------------------------------------------------------------------
@@ -59,18 +55,22 @@ use crate::{
 /// Messages exchanged during WMY23 presigning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Wmy23PresignMsg {
-    /// Round 1: commitment (32 bytes).
-    Round1(Vec<u8>),
-    /// Round 2: decommit + MtAwc Alice step1 ciphertexts (serialised).
+    /// Round 1 broadcast part: DRG.Gen public data + Gamma commitment
+    /// (serialised [`R1BcastPayload`]).
+    Round1Bcast(Vec<u8>),
+    /// Round 1 P2P part: Pedersen VSS shares for the recipient
+    /// (serialised [`R1P2pPayload`]).
+    Round1P2p(Vec<u8>),
+    /// Round 2 (per recipient): Gamma decommit + MtAwc Alice ciphertexts.
     Round2(Vec<u8>),
-    /// Round 3: MtAwc Bob response ciphertexts (serialised).
+    /// Round 3 (per recipient): MtAwc Bob response ciphertexts.
     Round3(Vec<u8>),
-    /// Round 4: delta_i scalar (32 bytes).
+    /// Round 4 broadcast: revealed `delta_i` + `D_i`.
     Round4(Vec<u8>),
 }
 
 // ---------------------------------------------------------------------------
-// Serialised CL ciphertext for messages
+// Binary serialization helpers (Qfi::to_bytes / from_bytes based)
 // ---------------------------------------------------------------------------
 
 /// A CL ciphertext serialised as two compact binary QFI blobs.
@@ -81,44 +81,164 @@ struct SerializedClCt {
 }
 
 impl SerializedClCt {
-    /// Serialise a `ClCiphertext` using the given `ClSetup` context.
-    fn from_ct(ct: &ClCiphertext) -> Result<Self, String> {
-        Ok(Self {
+    fn from_ct(ct: &ClCiphertext) -> Self {
+        Self {
             c1: ct.c1().to_bytes(),
             c2: ct.c2().to_bytes(),
-        })
+        }
     }
 
-    /// Reconstruct a `ClCiphertext` from serialised form.
-    fn to_ct(&self) -> Result<ClCiphertext, String> {
-        let c1 = Qfi::from_bytes(&self.c1);
-        let c2 = Qfi::from_bytes(&self.c2);
-        Ok(ClCiphertext::new(c1, c2))
+    fn to_ct(&self) -> ClCiphertext {
+        ClCiphertext::new(Qfi::from_bytes(&self.c1), Qfi::from_bytes(&self.c2))
     }
 }
 
+/// An R_Enc-PC proof serialised with binary QFI commitments.
+///
+/// The Fiat-Shamir transcript hashes the `Qfi` values themselves (via the
+/// CL setup), and `Qfi::from_bytes(to_bytes(q)) == q`, so prover and
+/// verifier stay transcript-symmetric across serialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SerializedREncPc {
+    r_pc: Vec<u8>,
+    r_c0: Vec<u8>,
+    r_c1: Vec<u8>,
+    z1: Vec<u8>,
+    z2: Vec<u8>,
+    z3: Vec<u8>,
+    e: Vec<u8>,
+}
+
+impl SerializedREncPc {
+    fn from_proof(p: &REncPcProof) -> Self {
+        Self {
+            r_pc: p.r_pc_bytes.clone(),
+            r_c0: p.r_c0.to_bytes(),
+            r_c1: p.r_c1.to_bytes(),
+            z1: p.z1.clone(),
+            z2: p.z2.clone(),
+            z3: p.z3.clone(),
+            e: p.e.clone(),
+        }
+    }
+
+    fn to_proof(&self) -> REncPcProof {
+        REncPcProof {
+            r_pc_bytes: self.r_pc.clone(),
+            r_c0: Qfi::from_bytes(&self.r_c0),
+            r_c1: Qfi::from_bytes(&self.r_c1),
+            z1: self.z1.clone(),
+            z2: self.z2.clone(),
+            z3: self.z3.clone(),
+            e: self.e.clone(),
+        }
+    }
+}
+
+/// A Pedersen VSS share serialised as two 32-byte scalars.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SerializedVssShare {
+    /// Recipient's local 1-based index.
+    index: u16,
+    value: Vec<u8>,
+    randomness: Vec<u8>,
+}
+
+impl SerializedVssShare {
+    fn from_share(s: &PedersenVssShare) -> Self {
+        Self {
+            index: s.index,
+            value: s.value.to_repr().to_vec(),
+            randomness: s.randomness.to_repr().to_vec(),
+        }
+    }
+
+    fn to_share(&self) -> Result<PedersenVssShare, String> {
+        Ok(PedersenVssShare {
+            index: self.index,
+            value: scalar_from_bytes(&self.value, "vss value")?,
+            randomness: scalar_from_bytes(&self.randomness, "vss randomness")?,
+        })
+    }
+}
+
+/// Deserialize a 32-byte big-endian scalar.
+fn scalar_from_bytes(bytes: &[u8], label: &str) -> Result<k256::Scalar, String> {
+    if bytes.len() != 32 {
+        return Err(format!("invalid scalar length for {label}"));
+    }
+    let mut repr = k256::FieldBytes::default();
+    repr.copy_from_slice(bytes);
+    Option::from(k256::Scalar::from_repr(repr)).ok_or_else(|| format!("invalid scalar: {label}"))
+}
+
+/// Deserialize a compressed EC point from bytes.
+fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String> {
+    let repr = k256::CompressedPoint::try_from(bytes)
+        .map_err(|e| format!("invalid point bytes ({label}): {e}"))?;
+    Option::from(k256::ProjectivePoint::from_bytes(&repr))
+        .ok_or_else(|| format!("invalid EC point: {label}"))
+}
+
+fn points_to_bytes(points: &[k256::ProjectivePoint]) -> Vec<Vec<u8>> {
+    points.iter().map(|p| p.to_bytes().to_vec()).collect()
+}
+
+fn points_from_bytes(
+    bytes: &[Vec<u8>],
+    label: &str,
+) -> Result<Vec<k256::ProjectivePoint>, String> {
+    bytes
+        .iter()
+        .enumerate()
+        .map(|(i, b)| point_from_bytes(b, &format!("{label}[{i}]")))
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
-// Round 2 message payload
+// Round payloads
 // ---------------------------------------------------------------------------
 
-/// Serialised Round 2 message: decommit + MtAwc Alice step1 ciphertexts.
+/// Round 1 broadcast payload: DRG.Gen public data for k and gamma.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct R1BcastPayload {
+    /// Hash commitment to `Gamma_i`.
+    commitment: [u8; 32],
+    /// Pedersen VSS polynomial commitments for k_i (33-byte points).
+    k_commitments: Vec<Vec<u8>>,
+    /// Pedersen VSS polynomial commitments for gamma_i.
+    gamma_commitments: Vec<Vec<u8>>,
+    /// CL ciphertext of k_i under the sender's key.
+    k_ct: SerializedClCt,
+    /// R_Enc-PC proof for the k ciphertext.
+    k_proof: SerializedREncPc,
+    /// CL ciphertext of gamma_i under the sender's key.
+    gamma_ct: SerializedClCt,
+    /// R_Enc-PC proof for the gamma ciphertext.
+    gamma_proof: SerializedREncPc,
+}
+
+/// Round 1 P2P payload: the recipient's Pedersen VSS shares.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct R1P2pPayload {
+    k_share: SerializedVssShare,
+    gamma_share: SerializedVssShare,
+}
+
+/// Round 2 payload (per recipient): decommit + MtAwc Alice ciphertexts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct R2Payload {
     /// Commitment nonce (32 bytes).
     nonce: [u8; 32],
     /// Gamma point bytes (compressed).
     gamma_point_bytes: Vec<u8>,
-    /// MtAwc ciphertext for gamma_i (encrypted under sender's CL key).
-    ct_gamma: SerializedClCt,
-    /// MtAwc ciphertext for x_i (encrypted under sender's CL key).
+    /// MtAwc Alice ciphertext of `hat_k_i` addressed to the recipient.
+    ct_k: SerializedClCt,
+    /// MtAwc Alice ciphertext of `hat_x_i` addressed to the recipient.
     ct_x: SerializedClCt,
 }
 
-// ---------------------------------------------------------------------------
-// Round 3 message payload
-// ---------------------------------------------------------------------------
-
-/// Serialised Round 3 message: MtAwc Bob response for one counterparty.
+/// Round 3 payload (per recipient): MtAwc Bob responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct R3Payload {
     /// MtAwc response ciphertext c_alpha for the gamma MtA.
@@ -127,54 +247,74 @@ struct R3Payload {
     gamma_g_beta_bytes: Vec<u8>,
     /// MtAwc response ciphertext c_alpha for the key MtA.
     x_c_alpha: SerializedClCt,
-    /// g^beta point for key MtA (compressed bytes).
+    /// g^nu point for key MtA (compressed bytes).
     x_g_beta_bytes: Vec<u8>,
+}
+
+/// Round 4 broadcast payload: share revelation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct R4Payload {
+    /// Revealed `delta_i` (32-byte scalar).
+    delta_i: Vec<u8>,
+    /// `D_i = Gamma^{hat_k_i}` (33-byte point).
+    big_d_i: Vec<u8>,
+}
+
+fn encode<T: Serialize>(value: &T, label: &str) -> tecdsa_core::Result<Vec<u8>> {
+    bincode::serde::encode_to_vec(value, bincode::config::standard())
+        .map_err(|e| TecdsaError::Other(format!("serialize {label}: {e}")))
+}
+
+fn decode<T: serde::de::DeserializeOwned>(data: &[u8], label: &str) -> tecdsa_core::Result<T> {
+    let (value, _) = bincode::serde::decode_from_slice(data, bincode::config::standard())
+        .map_err(|e| TecdsaError::Other(format!("deserialize {label}: {e}")))?;
+    Ok(value)
 }
 
 // ---------------------------------------------------------------------------
 // Internal per-party received data
 // ---------------------------------------------------------------------------
 
-/// Received Round 2 data from a single party (ciphertexts reconstructed).
+/// Received Round 2 data from a single party.
 struct ReceivedR2 {
     nonce: [u8; 32],
     gamma_point_bytes: Vec<u8>,
-    /// CL ciphertext of gamma_j under party j's key.
-    ct_gamma: ClCiphertext,
-    /// CL ciphertext of x_j under party j's key.
+    /// MtAwc Alice ciphertext of the sender's `hat_k_j`, addressed to us.
+    ct_k: ClCiphertext,
+    /// MtAwc Alice ciphertext of the sender's `hat_x_j`, addressed to us.
     ct_x: ClCiphertext,
 }
 
-/// Received Round 3 data from a single party (MtAwc Bob output).
+/// Received Round 3 data from a single party (MtAwc Bob response).
 struct ReceivedR3 {
-    /// MtAwc Bob output for gamma MtA.
     gamma_c_alpha: ClCiphertext,
     gamma_g_beta: k256::ProjectivePoint,
-    /// MtAwc Bob output for key MtA.
     x_c_alpha: ClCiphertext,
     x_g_beta: k256::ProjectivePoint,
+}
+
+/// Received Round 4 data from a single party (share revelation).
+struct ReceivedR4 {
+    delta_i: k256::Scalar,
+    big_d_i: k256::ProjectivePoint,
 }
 
 // ---------------------------------------------------------------------------
 // State machine internal states
 // ---------------------------------------------------------------------------
 
-/// Round 1 state: waiting for commitments from all parties.
+/// Round 1 state: waiting for DRG broadcasts + VSS shares from all parties.
 struct Round1State {
     key_share: Wmy23KeyShare,
     my_id: PartyId,
     all_parties: Vec<PartyId>,
-    /// Nonce share k_i.
-    k_i: k256::Scalar,
-    /// Mask share gamma_i.
-    gamma_i: k256::Scalar,
-    /// Gamma point = gamma_i * G.
-    gamma_point_i: k256::ProjectivePoint,
-    /// Commitment nonce.
-    nonce: [u8; 32],
-    /// Received commitments from all parties (including self).
-    received: BTreeMap<PartyId, [u8; 32]>,
-    /// Outgoing messages.
+    r1_state: DrgPresignR1State,
+    /// Own Round 1 broadcast (kept for the local view of `r1_bcasts`).
+    my_bcast: DrgPresignR1Bcast,
+    /// Received Round 1 broadcasts from other parties.
+    bcasts: BTreeMap<PartyId, DrgPresignR1Bcast>,
+    /// Received Round 1 P2P shares from other parties.
+    p2ps: BTreeMap<PartyId, DrgPresignR1P2P>,
     outgoing: Vec<Outgoing<Wmy23PresignMsg>>,
 }
 
@@ -183,15 +323,12 @@ struct Round2State {
     key_share: Wmy23KeyShare,
     my_id: PartyId,
     all_parties: Vec<PartyId>,
-    k_i: k256::Scalar,
-    gamma_i: k256::Scalar,
-    /// All commitments (from Round 1), indexed by PartyId.
-    commitments: BTreeMap<PartyId, [u8; 32]>,
-    /// MtAwc Alice states for gamma MtA (from our own step1).
-    gamma_alice_state: MtAwcAliceState,
-    /// MtAwc Alice states for key MtA (from our own step1).
-    x_alice_state: MtAwcAliceState,
-    /// Received R2 messages.
+    /// Round 1 hash commitments of all parties (local order).
+    r1_commitments: Vec<[u8; 32]>,
+    r1_state: DrgPresignR1State,
+    r2_state: DrgPresignR2State,
+    /// Own full Round 2 broadcast (per-recipient ciphertext vectors).
+    my_r2_bcast: DrgPresignR2Bcast,
     received: BTreeMap<PartyId, ReceivedR2>,
     outgoing: Vec<Outgoing<Wmy23PresignMsg>>,
 }
@@ -201,33 +338,24 @@ struct Round3State {
     key_share: Wmy23KeyShare,
     my_id: PartyId,
     all_parties: Vec<PartyId>,
-    k_i: k256::Scalar,
-    gamma_i: k256::Scalar,
-    /// Our own Bob beta values for gamma MtA (one per counterparty).
-    gamma_betas: BTreeMap<PartyId, k256::Scalar>,
-    /// Our own Bob beta values for key MtA (one per counterparty).
-    x_betas: BTreeMap<PartyId, k256::Scalar>,
-    /// MtAwc Alice states for gamma MtA (kept for Round 4 decryption).
-    gamma_alice_state: MtAwcAliceState,
-    /// MtAwc Alice states for key MtA.
-    x_alice_state: MtAwcAliceState,
-    /// All decommitted gamma points, indexed by party.
-    gamma_points: BTreeMap<PartyId, k256::ProjectivePoint>,
-    /// Received R3 data from other parties.
+    r1_commitments: Vec<[u8; 32]>,
+    r1_state: DrgPresignR1State,
+    r2_state: DrgPresignR2State,
+    /// All parties' Round 2 broadcasts in local order (own entry is
+    /// complete; others carry only the ciphertexts addressed to us).
+    r2_bcasts: Vec<DrgPresignR2Bcast>,
+    /// Own MtAwc Bob outputs (with real betas).
+    my_r3: DrgPresignR3Data,
     received: BTreeMap<PartyId, ReceivedR3>,
     outgoing: Vec<Outgoing<Wmy23PresignMsg>>,
 }
 
-/// Round 4 state: waiting for delta_i values from all parties.
+/// Round 4 state: waiting for revealed delta_i / D_i from all parties.
 struct Round4State {
-    _my_id: PartyId,
+    my_id: PartyId,
     all_parties: Vec<PartyId>,
-    k_i: k256::Scalar,
-    sigma_i: k256::Scalar,
-    /// All gamma points (for reconstructing Gamma).
-    gamma_points: BTreeMap<PartyId, k256::ProjectivePoint>,
-    /// Received delta_i values.
-    deltas: BTreeMap<PartyId, k256::Scalar>,
+    r4_state: DrgPresignR4State,
+    received: BTreeMap<PartyId, ReceivedR4>,
     outgoing: Vec<Outgoing<Wmy23PresignMsg>>,
 }
 
@@ -262,44 +390,12 @@ pub struct PresignConfig {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Deserialize a compressed EC point from bytes.
-fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String> {
-    let repr = k256::CompressedPoint::try_from(bytes)
-        .map_err(|e| format!("invalid point bytes ({label}): {e}"))?;
-    Option::from(k256::ProjectivePoint::from_bytes(&repr))
-        .ok_or_else(|| format!("invalid EC point: {label}"))
-}
-
-/// The 0-based *global* key-generation index of a party.
+/// Global 1-based keygen indices of the quorum, in signer order.
 ///
-/// `cl_pks` and `public_shares` in the key share are indexed in global keygen
-/// order, and each party's Shamir evaluation point is its 1-based global index.
-/// By convention WMY23 uses `PartyId(i)` for the party whose global 1-based
-/// index is `i`, so the global 0-based index is `PartyId.0 - 1`.
-fn global_idx(party: PartyId) -> usize {
-    debug_assert!(party.0 >= 1, "WMY23 requires 1-based PartyIds");
-    (party.0 - 1) as usize
-}
-
-/// Convert this party's Shamir key share into its additive contribution for the
-/// active signing quorum: `w_i = λ_i · x_i`, where `λ_i` is the Lagrange
-/// coefficient (evaluated at 0) for this party's point within the quorum.
-///
-/// Summed over any quorum of `≥ t` signers, `Σ_i w_i = x` (the joint key), so
-/// the additive presign/sign machinery reconstructs the correct signature for a
-/// `t`-of-`n` subset — the same mechanism used for XAL23.
-fn lagrange_weighted_share(
-    all_parties: &[PartyId],
-    my_id: PartyId,
-    key_share: &Wmy23KeyShare,
-) -> k256::Scalar {
-    let points: Vec<u16> = all_parties.iter().map(|p| p.0).collect();
-    let lambdas = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&points);
-    let my_pos = all_parties
-        .iter()
-        .position(|p| *p == my_id)
-        .expect("my_id must be in all_parties");
-    lambdas[my_pos] * key_share.secret_share
+/// By convention WMY23 uses `PartyId(i)` for the party whose global
+/// 1-based keygen index is `i`.
+fn signer_ids(all_parties: &[PartyId]) -> Vec<u16> {
+    all_parties.iter().map(|p| p.0).collect()
 }
 
 /// Number of other parties (total - 1).
@@ -307,14 +403,25 @@ fn n_others(all_parties: &[PartyId]) -> usize {
     all_parties.len() - 1
 }
 
+/// 0-based local position of `party` within the quorum.
+fn local_pos(all_parties: &[PartyId], party: PartyId) -> Option<usize> {
+    all_parties.iter().position(|p| *p == party)
+}
+
 // ---------------------------------------------------------------------------
 // WMY23 presigning state machine
 // ---------------------------------------------------------------------------
 
-/// WMY23 presigning state machine (4 rounds).
+/// WMY23 presigning state machine (4 rounds, DRG-based).
 ///
-/// Implements the simplified presign variant using CL-based MtAwc for
-/// multiplicative-to-additive conversion.
+/// Round structure (offline):
+///
+/// | Round | Phase (paper) | Content |
+/// |-------|---------------|---------|
+/// | 1 | DRG Gen | VSS commitments, CL ct + R_Enc-PC proofs (bcast), VSS shares (P2P) |
+/// | 2 | DRG GenVf/Comb + MtA | Gamma decommit + MtAwc Alice ciphertexts |
+/// | 3 | MtA | MtAwc Bob responses |
+/// | 4 | Reveal | delta_i + D_i broadcast |
 ///
 /// Since bicycl-rs v0.2.2, `ClSetup` is `Send`, so it is stored directly
 /// in the machine and reused across round transitions.
@@ -326,73 +433,89 @@ pub struct Wmy23PresignMachine {
 impl Wmy23PresignMachine {
     /// Create a new WMY23 presign state machine.
     ///
-    /// Immediately runs presign Round 1 (sample k_i, gamma_i, commit) and
-    /// queues the Round 1 commitment broadcast.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Presign configuration (key share, party info, CL setup).
+    /// Immediately runs presign Round 1 (DRG.Gen for `k_i` and `gamma_i`)
+    /// and queues the Round 1 broadcast + P2P share messages.
     ///
     /// # Errors
     ///
-    /// Returns an error if this party is not in `signer_parties`.
+    /// Returns an error if this party is not in `signer_parties`, the
+    /// quorum is smaller than the key-share threshold, or CL operations
+    /// fail.
     pub fn new(config: PresignConfig) -> tecdsa_core::Result<Self> {
         let PresignConfig {
             key_share,
             my_id,
             signer_parties,
-            cl_setup,
+            mut cl_setup,
         } = config;
 
-        if !signer_parties.contains(&my_id) {
-            return Err(TecdsaError::Other(
-                "my_id not found in signer_parties".into(),
-            ));
+        let my_idx = local_pos(&signer_parties, my_id).ok_or_else(|| {
+            TecdsaError::Other("my_id not found in signer_parties".into())
+        })?;
+        let n = signer_parties.len();
+        let threshold = key_share.threshold;
+        if usize::from(threshold) > n {
+            return Err(TecdsaError::Other(format!(
+                "quorum of {n} signers is below the key threshold {threshold}"
+            )));
         }
 
+        let ids = signer_ids(&signer_parties);
         let mut rng = rand::thread_rng();
 
-        // Sample k_i and gamma_i
-        let k_i = k256::Secp256k1::random_scalar(&mut rng);
-        let gamma_i = k256::Secp256k1::random_scalar(&mut rng);
-        let gamma_point_i =
-            <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * gamma_i;
+        let (r1_state, my_bcast, p2p) = rounds::drg_presign_round1(
+            my_idx,
+            n,
+            threshold,
+            &ids,
+            &key_share,
+            &mut cl_setup,
+            &mut rng,
+        )
+        .map_err(|e| TecdsaError::Other(format!("drg_presign_round1: {e}")))?;
 
-        // Commit: H(nonce || gamma_point_bytes)
-        let gamma_point_bytes = gamma_point_i.to_bytes();
-        let mut nonce = [0u8; 32];
-        rng.fill_bytes(&mut nonce);
-        let commitment: [u8; 32] = Sha256::new()
-            .chain_update(nonce)
-            .chain_update(gamma_point_bytes)
-            .finalize()
-            .into();
+        // Serialise the broadcast part once.
+        let bcast_payload = R1BcastPayload {
+            commitment: my_bcast.commitment,
+            k_commitments: points_to_bytes(&my_bcast.k_commitments),
+            gamma_commitments: points_to_bytes(&my_bcast.gamma_commitments),
+            k_ct: SerializedClCt::from_ct(&my_bcast.k_ciphertext),
+            k_proof: SerializedREncPc::from_proof(&my_bcast.k_proof),
+            gamma_ct: SerializedClCt::from_ct(&my_bcast.gamma_ciphertext),
+            gamma_proof: SerializedREncPc::from_proof(&my_bcast.gamma_proof),
+        };
+        let bcast_bytes = encode(&bcast_payload, "R1 bcast payload")?;
 
-        // Queue Round 1 broadcast
         let mut outgoing = Vec::new();
-        let payload = commitment.to_vec();
-        for party in &signer_parties {
-            if *party != my_id {
-                outgoing.push(Outgoing {
-                    to: Recipient::Party(*party),
-                    msg: Wmy23PresignMsg::Round1(payload.clone()),
-                });
+        outgoing.push(Outgoing {
+            to: Recipient::Broadcast,
+            msg: Wmy23PresignMsg::Round1Bcast(bcast_bytes),
+        });
+        for (pos, party) in signer_parties.iter().enumerate() {
+            if *party == my_id {
+                continue;
             }
+            let share = p2p[pos]
+                .as_ref()
+                .ok_or_else(|| TecdsaError::Other("missing P2P share for recipient".into()))?;
+            let p2p_payload = R1P2pPayload {
+                k_share: SerializedVssShare::from_share(&share.k_share),
+                gamma_share: SerializedVssShare::from_share(&share.gamma_share),
+            };
+            outgoing.push(Outgoing {
+                to: Recipient::Party(*party),
+                msg: Wmy23PresignMsg::Round1P2p(encode(&p2p_payload, "R1 p2p payload")?),
+            });
         }
-
-        // Store our own commitment
-        let mut received = BTreeMap::new();
-        received.insert(my_id, commitment);
 
         let state = Round1State {
             key_share,
             my_id,
             all_parties: signer_parties,
-            k_i,
-            gamma_i,
-            gamma_point_i,
-            nonce,
-            received,
+            r1_state,
+            my_bcast,
+            bcasts: BTreeMap::new(),
+            p2ps: BTreeMap::new(),
             outgoing,
         };
 
@@ -402,169 +525,159 @@ impl Wmy23PresignMachine {
         })
     }
 
-    /// Transition from Round 1 to Round 2.
-    ///
-    /// Uses the stored `ClSetup` to run MtAwc Alice step 1.
+    /// Transition from Round 1 to Round 2: DRG.GenVf + DRG.Comb + MtAwc
+    /// Alice step 1.
     fn transition_r1_to_r2(
         state: Round1State,
         setup: &mut ClSetup,
     ) -> tecdsa_core::Result<Round2State> {
-        // CL keys are indexed in global key-generation order; address them by
-        // the party's global index, not its position in the (possibly partial)
-        // signer set, so subset signing uses the correct keys.
-        let my_pk = &state.key_share.cl_pks[global_idx(state.my_id)];
+        let n = state.all_parties.len();
+        let my_idx = local_pos(&state.all_parties, state.my_id)
+            .ok_or_else(|| TecdsaError::Other("my_id not in quorum".into()))?;
+        let ids = signer_ids(&state.all_parties);
 
-        // Convert the Shamir key share into this party's additive contribution
-        // for the active quorum (w_i = λ_i · x_i); see `lagrange_weighted_share`.
-        let w_i = lagrange_weighted_share(&state.all_parties, state.my_id, &state.key_share);
-
-        // MtAwc Alice step 1: encrypt k_i (gamma MtA) and w_i (key MtA)
-        // Paper convention: Alice holds k, Bob holds gamma.
-        let (gamma_alice_state, ct_gamma) = mtawc::mtawc_alice_step1(setup, my_pk, &state.k_i)
-            .map_err(|e| TecdsaError::Other(format!("mtawc_alice_step1 gamma: {e}")))?;
-        let (x_alice_state, ct_x) = mtawc::mtawc_alice_step1(setup, my_pk, &w_i)
-            .map_err(|e| TecdsaError::Other(format!("mtawc_alice_step1 x: {e}")))?;
-
-        // Serialise ciphertexts for the message
-        let ct_gamma_ser = SerializedClCt::from_ct(&ct_gamma)
-            .map_err(|e| TecdsaError::Other(format!("serialize ct_gamma: {e}")))?;
-        let ct_x_ser = SerializedClCt::from_ct(&ct_x)
-            .map_err(|e| TecdsaError::Other(format!("serialize ct_x: {e}")))?;
-
-        let r2_payload = R2Payload {
-            nonce: state.nonce,
-            gamma_point_bytes: state.gamma_point_i.to_bytes().to_vec(),
-            ct_gamma: ct_gamma_ser,
-            ct_x: ct_x_ser,
-        };
-        let payload_bytes = bincode::serde::encode_to_vec(&r2_payload, bincode::config::standard())
-            .map_err(|e| TecdsaError::Other(format!("serialize R2 payload: {e}")))?;
-
-        // Store our own R2 data
-        let mut received_r2 = BTreeMap::new();
-        received_r2.insert(
-            state.my_id,
-            ReceivedR2 {
-                nonce: state.nonce,
-                gamma_point_bytes: state.gamma_point_i.to_bytes().to_vec(),
-                ct_gamma,
-                ct_x,
-            },
-        );
-
-        // Queue Round 2 messages to all other parties
-        let mut outgoing = Vec::new();
-        for party in &state.all_parties {
-            if *party != state.my_id {
-                outgoing.push(Outgoing {
-                    to: Recipient::Party(*party),
-                    msg: Wmy23PresignMsg::Round2(payload_bytes.clone()),
-                });
+        // Assemble the local-order views of broadcasts and received shares.
+        let mut r1_bcasts: Vec<DrgPresignR1Bcast> = Vec::with_capacity(n);
+        let mut received_p2p: Vec<Option<DrgPresignR1P2P>> = Vec::with_capacity(n);
+        for (pos, party) in state.all_parties.iter().enumerate() {
+            if pos == my_idx {
+                r1_bcasts.push(state.my_bcast.clone());
+                received_p2p.push(None);
+            } else {
+                let b = state.bcasts.get(party).ok_or_else(|| {
+                    TecdsaError::Other(format!("missing R1 broadcast from {party}"))
+                })?;
+                let p = state.p2ps.get(party).ok_or_else(|| {
+                    TecdsaError::Other(format!("missing R1 shares from {party}"))
+                })?;
+                r1_bcasts.push(b.clone());
+                received_p2p.push(Some(p.clone()));
             }
         }
+
+        let (r2_state, my_r2_bcast) = rounds::drg_presign_round2(
+            &state.r1_state,
+            &r1_bcasts,
+            &received_p2p,
+            &ids,
+            &state.key_share,
+            setup,
+        )
+        .map_err(|e| TecdsaError::Other(format!("drg_presign_round2: {e}")))?;
+
+        // Queue Round 2 messages: each counterparty gets its own MtAwc
+        // Alice ciphertexts plus the Gamma decommitment.
+        let mut outgoing = Vec::new();
+        for (pos, party) in state.all_parties.iter().enumerate() {
+            if pos == my_idx {
+                continue;
+            }
+            let ct_k = my_r2_bcast.c_gamma[pos]
+                .as_ref()
+                .ok_or_else(|| TecdsaError::Other("missing R2 k ciphertext".into()))?;
+            let ct_x = my_r2_bcast.c_x[pos]
+                .as_ref()
+                .ok_or_else(|| TecdsaError::Other("missing R2 x ciphertext".into()))?;
+            let payload = R2Payload {
+                nonce: my_r2_bcast.nonce,
+                gamma_point_bytes: my_r2_bcast.gamma_point_bytes.clone(),
+                ct_k: SerializedClCt::from_ct(ct_k),
+                ct_x: SerializedClCt::from_ct(ct_x),
+            };
+            outgoing.push(Outgoing {
+                to: Recipient::Party(*party),
+                msg: Wmy23PresignMsg::Round2(encode(&payload, "R2 payload")?),
+            });
+        }
+
+        let r1_commitments: Vec<[u8; 32]> = r1_bcasts.iter().map(|b| b.commitment).collect();
 
         Ok(Round2State {
             key_share: state.key_share,
             my_id: state.my_id,
             all_parties: state.all_parties,
-            k_i: state.k_i,
-            gamma_i: state.gamma_i,
-            commitments: state.received,
-            gamma_alice_state,
-            x_alice_state,
-            received: received_r2,
+            r1_commitments,
+            r1_state: state.r1_state,
+            r2_state,
+            my_r2_bcast,
+            received: BTreeMap::new(),
             outgoing,
         })
     }
 
-    /// Transition from Round 2 to Round 3.
-    ///
-    /// Uses the stored `ClSetup` to run MtAwc Bob step for each
-    /// counterparty.
+    /// Transition from Round 2 to Round 3: MtAwc Bob step.
     fn transition_r2_to_r3(
         state: Round2State,
         setup: &mut ClSetup,
     ) -> tecdsa_core::Result<Round3State> {
+        let n = state.all_parties.len();
+        let my_idx = local_pos(&state.all_parties, state.my_id)
+            .ok_or_else(|| TecdsaError::Other("my_id not in quorum".into()))?;
+        let ids = signer_ids(&state.all_parties);
         let mut rng = rand::thread_rng();
 
-        // First verify all commitments
-        for (&party_id, r2) in &state.received {
-            let expected_commitment = state.commitments.get(&party_id).ok_or_else(|| {
-                TecdsaError::Other(format!("missing commitment for party {party_id}"))
-            })?;
-            let recomputed: [u8; 32] = Sha256::new()
-                .chain_update(r2.nonce)
-                .chain_update(&r2.gamma_point_bytes)
-                .finalize()
-                .into();
-            if bool::from(!recomputed.ct_eq(expected_commitment)) {
-                return Err(TecdsaError::Other(format!(
-                    "gamma commitment verification failed for party {party_id}"
-                )));
-            }
-        }
-
-        // Collect gamma points
-        let mut gamma_points = BTreeMap::new();
-        for (&party_id, r2) in &state.received {
-            let gp = point_from_bytes(&r2.gamma_point_bytes, &format!("gamma point {party_id}"))
-                .map_err(TecdsaError::Other)?;
-            gamma_points.insert(party_id, gp);
-        }
-
-        // MtAwc Bob step: for each other party j (Alice), we (Bob) compute
-        // homomorphic products.
-        // Gamma MtA: Bob uses gamma_i (paper convention: Bob holds gamma).
-        // Key MtA: Bob uses k_i.
-        let mut gamma_betas = BTreeMap::new();
-        let mut x_betas = BTreeMap::new();
-        let mut outgoing = Vec::new();
-
-        for &party_j in &state.all_parties {
-            if party_j == state.my_id {
+        // Build the local-order view of Round 2 broadcasts: own entry is
+        // the full per-recipient vector; for other parties only the
+        // ciphertexts addressed to us are populated.
+        let mut my_r2_bcast = Some(state.my_r2_bcast);
+        let mut r2_bcasts: Vec<DrgPresignR2Bcast> = Vec::with_capacity(n);
+        for (pos, party) in state.all_parties.iter().enumerate() {
+            if pos == my_idx {
+                r2_bcasts.push(
+                    my_r2_bcast
+                        .take()
+                        .ok_or_else(|| TecdsaError::Other("own R2 bcast already taken".into()))?,
+                );
                 continue;
             }
+            let r2 = state
+                .received
+                .get(party)
+                .ok_or_else(|| TecdsaError::Other(format!("missing R2 data from {party}")))?;
+            let mut c_gamma: Vec<Option<ClCiphertext>> = vec![None; n];
+            let mut c_x: Vec<Option<ClCiphertext>> = vec![None; n];
+            c_gamma[my_idx] = Some(r2.ct_k.clone());
+            c_x[my_idx] = Some(r2.ct_x.clone());
+            r2_bcasts.push(DrgPresignR2Bcast {
+                nonce: r2.nonce,
+                gamma_point_bytes: r2.gamma_point_bytes.clone(),
+                c_gamma,
+                c_x,
+            });
+        }
 
-            let pk_j = &state.key_share.cl_pks[global_idx(party_j)];
+        let my_r3 = rounds::drg_presign_round3_bob(
+            &state.r2_state,
+            &state.r1_state,
+            &ids,
+            &state.key_share,
+            &r2_bcasts,
+            setup,
+            &mut rng,
+        )
+        .map_err(|e| TecdsaError::Other(format!("drg_presign_round3_bob: {e}")))?;
 
-            let r2_j = state.received.get(&party_j).ok_or_else(|| {
-                TecdsaError::Other(format!("missing R2 data from party {party_j}"))
-            })?;
-
-            // MtAwc Bob for gamma_i * k_j (paper convention: Bob holds gamma)
-            let gamma_bob = mtawc::mtawc_bob(setup, pk_j, &r2_j.ct_gamma, &state.gamma_i, &mut rng)
-                .map_err(|e| {
-                    TecdsaError::Other(format!("mtawc_bob gamma for party {party_j}: {e}"))
-                })?;
-
-            // MtAwc Bob for k_i * x_j (key MtA unchanged)
-            let x_bob = mtawc::mtawc_bob(setup, pk_j, &r2_j.ct_x, &state.k_i, &mut rng)
-                .map_err(|e| TecdsaError::Other(format!("mtawc_bob x for party {party_j}: {e}")))?;
-
-            // Serialise Bob outputs for the message to party j
-            let gamma_c_alpha_ser = SerializedClCt::from_ct(&gamma_bob.c_alpha)
-                .map_err(|e| TecdsaError::Other(format!("serialize gamma_c_alpha: {e}")))?;
-            let x_c_alpha_ser = SerializedClCt::from_ct(&x_bob.c_alpha)
-                .map_err(|e| TecdsaError::Other(format!("serialize x_c_alpha: {e}")))?;
-
-            let r3_payload = R3Payload {
-                gamma_c_alpha: gamma_c_alpha_ser,
+        // Queue Round 3 messages (each Alice gets her Bob responses).
+        let mut outgoing = Vec::new();
+        for (pos, party) in state.all_parties.iter().enumerate() {
+            if pos == my_idx {
+                continue;
+            }
+            let gamma_bob = my_r3.gamma_bob_outputs[pos]
+                .as_ref()
+                .ok_or_else(|| TecdsaError::Other("missing gamma bob output".into()))?;
+            let x_bob = my_r3.x_bob_outputs[pos]
+                .as_ref()
+                .ok_or_else(|| TecdsaError::Other("missing x bob output".into()))?;
+            let payload = R3Payload {
+                gamma_c_alpha: SerializedClCt::from_ct(&gamma_bob.c_alpha),
                 gamma_g_beta_bytes: gamma_bob.g_beta.to_bytes().to_vec(),
-                x_c_alpha: x_c_alpha_ser,
+                x_c_alpha: SerializedClCt::from_ct(&x_bob.c_alpha),
                 x_g_beta_bytes: x_bob.g_beta.to_bytes().to_vec(),
             };
-            let payload_bytes =
-                bincode::serde::encode_to_vec(&r3_payload, bincode::config::standard())
-                    .map_err(|e| TecdsaError::Other(format!("serialize R3 payload: {e}")))?;
-
-            // Store Bob's beta values for Round 4
-            gamma_betas.insert(party_j, gamma_bob.beta);
-            x_betas.insert(party_j, x_bob.beta);
-
-            // Send R3 message to party j (each party gets their specific message)
             outgoing.push(Outgoing {
-                to: Recipient::Party(party_j),
-                msg: Wmy23PresignMsg::Round3(payload_bytes),
+                to: Recipient::Party(*party),
+                msg: Wmy23PresignMsg::Round3(encode(&payload, "R3 payload")?),
             });
         }
 
@@ -572,159 +685,128 @@ impl Wmy23PresignMachine {
             key_share: state.key_share,
             my_id: state.my_id,
             all_parties: state.all_parties,
-            k_i: state.k_i,
-            gamma_i: state.gamma_i,
-            gamma_betas,
-            x_betas,
-            gamma_alice_state: state.gamma_alice_state,
-            x_alice_state: state.x_alice_state,
-            gamma_points,
+            r1_commitments: state.r1_commitments,
+            r1_state: state.r1_state,
+            r2_state: state.r2_state,
+            r2_bcasts,
+            my_r3,
             received: BTreeMap::new(),
             outgoing,
         })
     }
 
-    /// Transition from Round 3 to Round 4.
-    ///
-    /// Uses the stored `ClSetup` to decrypt alpha values, then applies
-    /// Phase 3 zero-sharing to construct structured delta shares.
-    ///
-    /// **Phase 3 (WMY23 Figure 5):** Delta shares are blinded with a
-    /// zero-sharing `{theta_{ij}}` so individual shares reveal nothing,
-    /// while the sum is preserved. The party broadcasts its own `delta_i`
-    /// (sum of its structured shares) for reconstruction.
+    /// Transition from Round 3 to Round 4: decrypt MtAwc responses and
+    /// reveal `delta_i` / `D_i` (Phase 3).
     fn transition_r3_to_r4(
         state: Round3State,
         setup: &mut ClSetup,
     ) -> tecdsa_core::Result<Round4State> {
-        let my_pk = &state.key_share.cl_pks[global_idx(state.my_id)];
         let n = state.all_parties.len();
-
-        // Collect per-counterparty MtAwc shares
-        let mut alphas = BTreeMap::new(); // alpha_{ij}: I am Alice, j is Bob (gamma MtA)
-        let mut mu_sum = k256::Scalar::ZERO; // key MtA
-
-        for (&party_j, r3) in &state.received {
-            // Party j was Bob, I was Alice.
-            let alpha_out = mtawc::mtawc_alice_step2_no_gb_check(
-                setup,
-                my_pk,
-                &state.key_share.cl_sk,
-                &r3.gamma_c_alpha,
-                &r3.gamma_g_beta,
-                &state.gamma_alice_state,
-            )
-            .map_err(|e| {
-                TecdsaError::Other(format!("mtawc_alice_step2 gamma for party {party_j}: {e}"))
-            })?;
-            alphas.insert(party_j, alpha_out.alpha);
-
-            let mu_out = mtawc::mtawc_alice_step2_no_gb_check(
-                setup,
-                my_pk,
-                &state.key_share.cl_sk,
-                &r3.x_c_alpha,
-                &r3.x_g_beta,
-                &state.x_alice_state,
-            )
-            .map_err(|e| {
-                TecdsaError::Other(format!("mtawc_alice_step2 x for party {party_j}: {e}"))
-            })?;
-            mu_sum += mu_out.alpha;
-        }
-
-        let nu_sum: k256::Scalar = state.x_betas.values().copied().sum();
-
-        // --- Phase 3: Zero-sharing + structured delta shares ---
-        // WMY23 Figure 5, Phase 3, Step 3: {theta_{ij}} <- SS.Share(0)
+        let my_idx = local_pos(&state.all_parties, state.my_id)
+            .ok_or_else(|| TecdsaError::Other("my_id not in quorum".into()))?;
+        let ids = signer_ids(&state.all_parties);
         let mut rng = rand::thread_rng();
-        let theta = rounds::share_zero(n, &mut rng);
 
-        // Build structured delta shares indexed by party position.
-        // delta_{ii} = k_i * gamma_i + theta_{ii}
-        // delta_{ij} = alpha_{ij} + beta_{ji} + theta_{ij} (for j != i)
-        let mut delta_i = k256::Scalar::ZERO;
-        for (pos, &party_j) in state.all_parties.iter().enumerate() {
-            let share = if party_j == state.my_id {
-                // Self share: k_i * gamma_i + theta_{ii}
-                state.k_i * state.gamma_i + theta[pos]
-            } else {
-                // Cross share: alpha_{ij} + beta_{ji} + theta_{ij}
-                let alpha_ij = alphas.get(&party_j).copied().unwrap_or(k256::Scalar::ZERO);
-                let beta_ji = state
-                    .gamma_betas
-                    .get(&party_j)
-                    .copied()
-                    .unwrap_or(k256::Scalar::ZERO);
-                alpha_ij + beta_ji + theta[pos]
-            };
-            delta_i += share;
-        }
-
-        // sigma_i = k_i * w_i + sum(mu_{ij}) + sum(nu_{ji}), where w_i is the
-        // Lagrange-weighted key share for the active quorum (matches the value
-        // encrypted in the key MtA during Round 2).
-        let w_i = lagrange_weighted_share(&state.all_parties, state.my_id, &state.key_share);
-        let sigma_i = state.k_i * w_i + mu_sum + nu_sum;
-
-        // Broadcast delta_i (= sum of structured shares, same value as before
-        // since sum(theta_{ij}) = 0)
-        let delta_bytes = delta_i.to_repr().to_vec();
-        let mut outgoing = Vec::new();
-        for party in &state.all_parties {
-            if *party != state.my_id {
-                outgoing.push(Outgoing {
-                    to: Recipient::Party(*party),
-                    msg: Wmy23PresignMsg::Round4(delta_bytes.clone()),
-                });
+        // Build the local-order view of Round 3 data. Received entries
+        // carry only (c_alpha, g_beta); beta is never transmitted, so it
+        // is zero-filled and unused by the round function.
+        let mut my_r3 = Some(state.my_r3);
+        let mut r3_datas: Vec<DrgPresignR3Data> = Vec::with_capacity(n);
+        for (pos, party) in state.all_parties.iter().enumerate() {
+            if pos == my_idx {
+                r3_datas.push(
+                    my_r3
+                        .take()
+                        .ok_or_else(|| TecdsaError::Other("own R3 data already taken".into()))?,
+                );
+                continue;
             }
+            let r3 = state
+                .received
+                .get(party)
+                .ok_or_else(|| TecdsaError::Other(format!("missing R3 data from {party}")))?;
+            let mut gamma_bob_outputs: Vec<Option<crate::mtawc::MtAwcBobOutput>> = vec![];
+            let mut x_bob_outputs: Vec<Option<crate::mtawc::MtAwcBobOutput>> = vec![];
+            for k in 0..n {
+                if k == my_idx {
+                    gamma_bob_outputs.push(Some(crate::mtawc::MtAwcBobOutput {
+                        c_alpha: r3.gamma_c_alpha.clone(),
+                        g_beta: r3.gamma_g_beta,
+                        beta: k256::Scalar::ZERO,
+                    }));
+                    x_bob_outputs.push(Some(crate::mtawc::MtAwcBobOutput {
+                        c_alpha: r3.x_c_alpha.clone(),
+                        g_beta: r3.x_g_beta,
+                        beta: k256::Scalar::ZERO,
+                    }));
+                } else {
+                    gamma_bob_outputs.push(None);
+                    x_bob_outputs.push(None);
+                }
+            }
+            r3_datas.push(DrgPresignR3Data {
+                gamma_bob_outputs,
+                x_bob_outputs,
+            });
         }
 
-        // Store our own delta_i
-        let mut deltas = BTreeMap::new();
-        deltas.insert(state.my_id, delta_i);
+        let (r4_state, _phase3) = rounds::drg_presign_round4_compute(
+            &state.r1_state,
+            &state.r1_commitments,
+            &state.r2_state,
+            &state.r2_bcasts,
+            &r3_datas,
+            &ids,
+            &state.key_share,
+            setup,
+            &mut rng,
+        )
+        .map_err(|e| TecdsaError::Other(format!("drg_presign_round4_compute: {e}")))?;
+
+        // Broadcast delta_i + D_i.
+        let payload = R4Payload {
+            delta_i: r4_state.delta_i.to_repr().to_vec(),
+            big_d_i: r4_state.big_d_i.to_bytes().to_vec(),
+        };
+        let outgoing = vec![Outgoing {
+            to: Recipient::Broadcast,
+            msg: Wmy23PresignMsg::Round4(encode(&payload, "R4 payload")?),
+        }];
+
+        // Store own revelation.
+        let mut received = BTreeMap::new();
+        received.insert(
+            state.my_id,
+            ReceivedR4 {
+                delta_i: r4_state.delta_i,
+                big_d_i: r4_state.big_d_i,
+            },
+        );
 
         Ok(Round4State {
-            _my_id: state.my_id,
+            my_id: state.my_id,
             all_parties: state.all_parties,
-            k_i: state.k_i,
-            sigma_i,
-            gamma_points: state.gamma_points,
-            deltas,
+            r4_state,
+            received,
             outgoing,
         })
     }
 
-    /// Finalize: reconstruct delta, Gamma, and R to produce the presignature.
+    /// Finalize: reconstruct delta and R to produce the presignature.
     fn finalize_r4(state: &Round4State) -> tecdsa_core::Result<Wmy23Presignature> {
-        // delta = sum(delta_j)
-        let delta: k256::Scalar = state.deltas.values().copied().sum();
+        let mut all_delta = Vec::with_capacity(state.all_parties.len());
+        let mut all_big_d = Vec::with_capacity(state.all_parties.len());
+        for party in &state.all_parties {
+            let r4 = state
+                .received
+                .get(party)
+                .ok_or_else(|| TecdsaError::Other(format!("missing R4 data from {party}")))?;
+            all_delta.push(r4.delta_i);
+            all_big_d.push(r4.big_d_i);
+        }
 
-        // delta^{-1}
-        let delta_inv = delta
-            .invert()
-            .into_option()
-            .ok_or_else(|| TecdsaError::Other("delta is zero, cannot invert".into()))?;
-
-        // Gamma = sum(Gamma_j)
-        let gamma_sum: k256::ProjectivePoint = state.gamma_points.values().fold(
-            <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY,
-            |acc, gp| acc + gp,
-        );
-
-        // R = delta^{-1} * Gamma
-        let big_r = gamma_sum * delta_inv;
-
-        // r = x_coord(R) mod q
-        let r_x = <k256::Secp256k1 as TecdsaCurve>::xcoord_mod_q(&big_r.to_affine());
-
-        Ok(Wmy23Presignature {
-            k_i: state.k_i,
-            big_r,
-            r_x,
-            sigma_i: state.sigma_i,
-            n_signers: state.all_parties.len(),
-        })
+        rounds::drg_presign_finalize(&state.r4_state, &all_delta, &all_big_d)
+            .map_err(|e| TecdsaError::Other(format!("drg_presign_finalize: {e}")))
     }
 }
 
@@ -739,7 +821,7 @@ impl StateMachine for Wmy23PresignMachine {
             PresignRound::Round1(s) => s.my_id,
             PresignRound::Round2(s) => s.my_id,
             PresignRound::Round3(s) => s.my_id,
-            PresignRound::Round4(s) => s._my_id,
+            PresignRound::Round4(s) => s.my_id,
             _ => PartyId(u16::MAX),
         };
         if from == my_id {
@@ -751,43 +833,87 @@ impl StateMachine for Wmy23PresignMachine {
 
         match round {
             PresignRound::Round1(mut state) => {
-                if let Wmy23PresignMsg::Round1(data) = msg {
-                    if !state.all_parties.contains(&from) {
-                        self.round = PresignRound::Round1(state);
-                        return Err(TecdsaError::Other(format!("unknown party: {from}")));
-                    }
-                    if state.received.contains_key(&from) {
-                        self.round = PresignRound::Round1(state);
-                        return Err(TecdsaError::Other(format!(
-                            "duplicate message from party {from}"
-                        )));
-                    }
-                    if data.len() != 32 {
-                        self.round = PresignRound::Round1(state);
-                        return Err(TecdsaError::Other("invalid R1 commitment length".into()));
-                    }
-                    let mut commitment = [0u8; 32];
-                    commitment.copy_from_slice(&data);
-                    state.received.insert(from, commitment);
+                if local_pos(&state.all_parties, from).is_none() {
+                    self.round = PresignRound::Round1(state);
+                    return Err(TecdsaError::Other(format!("unknown party: {from}")));
+                }
+                let my_idx = local_pos(&state.all_parties, state.my_id)
+                    .ok_or_else(|| TecdsaError::Other("my_id not in quorum".into()))?;
 
-                    // Check if all commitments collected
-                    if state.received.len() == state.all_parties.len() {
-                        let r2_state = Self::transition_r1_to_r2(state, &mut self.setup)?;
-                        self.round = PresignRound::Round2(r2_state);
-                    } else {
-                        self.round = PresignRound::Round1(state);
+                match msg {
+                    Wmy23PresignMsg::Round1Bcast(data) => {
+                        if state.bcasts.contains_key(&from) {
+                            self.round = PresignRound::Round1(state);
+                            return Err(TecdsaError::Other(format!(
+                                "duplicate R1 broadcast from party {from}"
+                            )));
+                        }
+                        let payload: R1BcastPayload = decode(&data, "R1 bcast payload")?;
+                        let bcast = DrgPresignR1Bcast {
+                            commitment: payload.commitment,
+                            k_commitments: points_from_bytes(
+                                &payload.k_commitments,
+                                "k commitments",
+                            )
+                            .map_err(TecdsaError::Other)?,
+                            gamma_commitments: points_from_bytes(
+                                &payload.gamma_commitments,
+                                "gamma commitments",
+                            )
+                            .map_err(TecdsaError::Other)?,
+                            k_ciphertext: payload.k_ct.to_ct(),
+                            k_proof: payload.k_proof.to_proof(),
+                            gamma_ciphertext: payload.gamma_ct.to_ct(),
+                            gamma_proof: payload.gamma_proof.to_proof(),
+                        };
+                        state.bcasts.insert(from, bcast);
                     }
+                    Wmy23PresignMsg::Round1P2p(data) => {
+                        if state.p2ps.contains_key(&from) {
+                            self.round = PresignRound::Round1(state);
+                            return Err(TecdsaError::Other(format!(
+                                "duplicate R1 shares from party {from}"
+                            )));
+                        }
+                        let payload: R1P2pPayload = decode(&data, "R1 p2p payload")?;
+                        let k_share = payload.k_share.to_share().map_err(TecdsaError::Other)?;
+                        let gamma_share =
+                            payload.gamma_share.to_share().map_err(TecdsaError::Other)?;
+                        let expected_index = (my_idx + 1) as u16;
+                        if k_share.index != expected_index || gamma_share.index != expected_index {
+                            self.round = PresignRound::Round1(state);
+                            return Err(TecdsaError::Other(format!(
+                                "R1 share from party {from} has wrong recipient index"
+                            )));
+                        }
+                        state.p2ps.insert(
+                            from,
+                            DrgPresignR1P2P {
+                                k_share,
+                                gamma_share,
+                            },
+                        );
+                    }
+                    _ => {
+                        self.round = PresignRound::Round1(state);
+                        return Err(TecdsaError::Other(
+                            "unexpected message type in round 1".into(),
+                        ));
+                    }
+                }
+
+                let expected = n_others(&state.all_parties);
+                if state.bcasts.len() == expected && state.p2ps.len() == expected {
+                    let r2_state = Self::transition_r1_to_r2(state, &mut self.setup)?;
+                    self.round = PresignRound::Round2(r2_state);
                 } else {
                     self.round = PresignRound::Round1(state);
-                    return Err(TecdsaError::Other(
-                        "unexpected message type in round 1".into(),
-                    ));
                 }
             }
 
             PresignRound::Round2(mut state) => {
                 if let Wmy23PresignMsg::Round2(data) = msg {
-                    if !state.all_parties.contains(&from) {
+                    if local_pos(&state.all_parties, from).is_none() {
                         self.round = PresignRound::Round2(state);
                         return Err(TecdsaError::Other(format!("unknown party: {from}")));
                     }
@@ -798,32 +924,18 @@ impl StateMachine for Wmy23PresignMachine {
                         )));
                     }
 
-                    // Deserialise R2 payload
-                    let (payload, _): (R2Payload, _) =
-                        bincode::serde::decode_from_slice(&data, bincode::config::standard())
-                            .map_err(|e| {
-                                TecdsaError::Other(format!("deserialize R2 payload: {e}"))
-                            })?;
-
-                    let ct_gamma = payload.ct_gamma.to_ct().map_err(|e| {
-                        TecdsaError::Other(format!("reconstruct ct_gamma from party {from}: {e}"))
-                    })?;
-                    let ct_x = payload.ct_x.to_ct().map_err(|e| {
-                        TecdsaError::Other(format!("reconstruct ct_x from party {from}: {e}"))
-                    })?;
-
+                    let payload: R2Payload = decode(&data, "R2 payload")?;
                     state.received.insert(
                         from,
                         ReceivedR2 {
                             nonce: payload.nonce,
                             gamma_point_bytes: payload.gamma_point_bytes,
-                            ct_gamma,
-                            ct_x,
+                            ct_k: payload.ct_k.to_ct(),
+                            ct_x: payload.ct_x.to_ct(),
                         },
                     );
 
-                    // Check if all R2 data collected
-                    if state.received.len() == state.all_parties.len() {
+                    if state.received.len() == n_others(&state.all_parties) {
                         let r3_state = Self::transition_r2_to_r3(state, &mut self.setup)?;
                         self.round = PresignRound::Round3(r3_state);
                     } else {
@@ -839,7 +951,7 @@ impl StateMachine for Wmy23PresignMachine {
 
             PresignRound::Round3(mut state) => {
                 if let Wmy23PresignMsg::Round3(data) = msg {
-                    if !state.all_parties.contains(&from) {
+                    if local_pos(&state.all_parties, from).is_none() {
                         self.round = PresignRound::Round3(state);
                         return Err(TecdsaError::Other(format!("unknown party: {from}")));
                     }
@@ -850,27 +962,12 @@ impl StateMachine for Wmy23PresignMachine {
                         )));
                     }
 
-                    // Deserialise R3 payload
-                    let (payload, _): (R3Payload, _) =
-                        bincode::serde::decode_from_slice(&data, bincode::config::standard())
-                            .map_err(|e| {
-                                TecdsaError::Other(format!("deserialize R3 payload: {e}"))
-                            })?;
-
-                    let gamma_c_alpha = payload.gamma_c_alpha.to_ct().map_err(|e| {
-                        TecdsaError::Other(format!(
-                            "reconstruct gamma_c_alpha from party {from}: {e}"
-                        ))
-                    })?;
+                    let payload: R3Payload = decode(&data, "R3 payload")?;
                     let gamma_g_beta = point_from_bytes(
                         &payload.gamma_g_beta_bytes,
                         &format!("gamma_g_beta from {from}"),
                     )
                     .map_err(TecdsaError::Other)?;
-
-                    let x_c_alpha = payload.x_c_alpha.to_ct().map_err(|e| {
-                        TecdsaError::Other(format!("reconstruct x_c_alpha from party {from}: {e}"))
-                    })?;
                     let x_g_beta =
                         point_from_bytes(&payload.x_g_beta_bytes, &format!("x_g_beta from {from}"))
                             .map_err(TecdsaError::Other)?;
@@ -878,14 +975,13 @@ impl StateMachine for Wmy23PresignMachine {
                     state.received.insert(
                         from,
                         ReceivedR3 {
-                            gamma_c_alpha,
+                            gamma_c_alpha: payload.gamma_c_alpha.to_ct(),
                             gamma_g_beta,
-                            x_c_alpha,
+                            x_c_alpha: payload.x_c_alpha.to_ct(),
                             x_g_beta,
                         },
                     );
 
-                    // Check if all R3 data collected (from all other parties)
                     if state.received.len() == n_others(&state.all_parties) {
                         let r4_state = Self::transition_r3_to_r4(state, &mut self.setup)?;
                         self.round = PresignRound::Round4(r4_state);
@@ -902,30 +998,26 @@ impl StateMachine for Wmy23PresignMachine {
 
             PresignRound::Round4(mut state) => {
                 if let Wmy23PresignMsg::Round4(data) = msg {
-                    if !state.all_parties.contains(&from) {
+                    if local_pos(&state.all_parties, from).is_none() {
                         self.round = PresignRound::Round4(state);
                         return Err(TecdsaError::Other(format!("unknown party: {from}")));
                     }
-                    if state.deltas.contains_key(&from) {
+                    if state.received.contains_key(&from) {
                         self.round = PresignRound::Round4(state);
                         return Err(TecdsaError::Other(format!(
                             "duplicate message from party {from}"
                         )));
                     }
-                    if data.len() != 32 {
-                        self.round = PresignRound::Round4(state);
-                        return Err(TecdsaError::Other("invalid R4 delta_i length".into()));
-                    }
 
-                    let mut repr = k256::FieldBytes::default();
-                    repr.copy_from_slice(&data);
-                    let delta_j = k256::Scalar::from_repr(repr)
-                        .into_option()
-                        .ok_or_else(|| TecdsaError::Other("invalid scalar in delta_i".into()))?;
-                    state.deltas.insert(from, delta_j);
+                    let payload: R4Payload = decode(&data, "R4 payload")?;
+                    let delta_i = scalar_from_bytes(&payload.delta_i, "delta_i")
+                        .map_err(TecdsaError::Other)?;
+                    let big_d_i =
+                        point_from_bytes(&payload.big_d_i, &format!("D_i from {from}"))
+                            .map_err(TecdsaError::Other)?;
+                    state.received.insert(from, ReceivedR4 { delta_i, big_d_i });
 
-                    // Check if all delta values collected
-                    if state.deltas.len() == state.all_parties.len() {
+                    if state.received.len() == state.all_parties.len() {
                         let presignature = Self::finalize_r4(&state)?;
                         self.round = PresignRound::Done(presignature);
                     } else {

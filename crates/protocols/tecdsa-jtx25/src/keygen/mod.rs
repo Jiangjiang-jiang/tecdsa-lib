@@ -41,12 +41,12 @@
 //! - Aggregates CL pk via `dkg_cl_aggregate()`.
 //! - Stores the `Jtx25KeyShare` with DKG-CL combined shares.
 
-use std::{collections::BTreeMap, str::FromStr};
+use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use rug::{integer::Order, Integer};
 use tecdsa_class_group::{
-    cl::{ClPublicKey, ClSecretKey, ClSetup, Mpz, Qfi},
+    cl::{ClPublicKey, ClSecretKey, ClSetup, Qfi},
     dkg_cl::{self, DkgClGenOutput, DkgClGenPerRecipient, DkgClRevealOutput},
     zk::{r_dec_dl::RDecDlProof, r_key::RKeyProof, r_sh::RShProof},
 };
@@ -79,7 +79,7 @@ struct Round1State {
     cl_sk_raw: ClSecretKey,
     cl_pk_raw: ClPublicKey,
     cl_sk_bytes: Vec<u8>,
-    cl_pk_abc: (String, String, String),
+    cl_pk_qfi: Qfi,
     received: BTreeMap<PartyId, Round1Msg>,
     outgoing: Vec<Outgoing<Jtx25KeygenMsg>>,
     cl_setup_seed: String,
@@ -87,7 +87,7 @@ struct Round1State {
 }
 
 struct Round1Msg {
-    cl_pk_abc: (String, String, String),
+    cl_pk_qfi: Qfi,
 }
 
 struct Round2State {
@@ -97,7 +97,7 @@ struct Round2State {
     _cl_sk_raw: ClSecretKey,
     cl_pk_raw: ClPublicKey,
     cl_sk_bytes: Vec<u8>,
-    cl_pk_abcs: BTreeMap<PartyId, (String, String, String)>,
+    cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     my_pvss: tecdsa_class_group::pvss_share::PvssShareOutput,
     received: BTreeMap<PartyId, Round2Msg>,
     /// DKG-CL Gen output (kept for Reveal phase).
@@ -136,8 +136,8 @@ struct Round3State {
     /// (indexed by dealer party ID). Stored for RevealVf reconstruction
     /// of each party's combined ciphertext.
     _all_dkg_cl_chunk_cts: BTreeMap<PartyId, Vec<(Qfi, Qfi)>>,
-    cl_pk_abcs: BTreeMap<PartyId, (String, String, String)>,
-    pvss_c1_abcs: BTreeMap<PartyId, (String, String, String)>,
+    cl_pk_qfis: BTreeMap<PartyId, Qfi>,
+    pvss_c1_qfis: BTreeMap<PartyId, Qfi>,
 }
 
 struct Round3Msg {
@@ -248,16 +248,14 @@ impl Jtx25KeygenMachine {
             .sk_to_bytes(&cl_sk_raw)
             .map_err(|e| TecdsaError::Other(format!("sk_to_bytes: {e}")))?;
 
-        let pk_elt = cl_pk_raw.elt();
-        let cl_pk_abc =
-            qfi_to_abc(pk_elt).map_err(|e| TecdsaError::Other(format!("qfi_to_abc: {e}")))?;
+        let cl_pk_qfi = cl_pk_raw.elt().clone();
 
         // Generate R_key proof.
         let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_bytes)
             .map_err(|e| TecdsaError::Other(format!("R_key prove: {e}")))?;
 
         // Serialize and queue Round 1 broadcast.
-        let r1_payload = serialize_round1(&cl_pk_abc, &proof)
+        let r1_payload = serialize_round1(&cl_pk_qfi, &proof)
             .map_err(|e| TecdsaError::Other(format!("R1 serialize: {e}")))?;
 
         let outgoing = vec![Outgoing {
@@ -272,7 +270,7 @@ impl Jtx25KeygenMachine {
             cl_sk_raw,
             cl_pk_raw,
             cl_sk_bytes,
-            cl_pk_abc,
+            cl_pk_qfi,
             received: BTreeMap::new(),
             outgoing,
             cl_setup_seed: cl_setup_seed.to_string(),
@@ -352,11 +350,9 @@ impl StateMachine for Jtx25KeygenMachine {
                     return Err(TecdsaError::Other(format!("duplicate R1 from {from}")));
                 }
 
-                let (peer_pk_abc, peer_proof) = deserialize_round1(&data)
+                let (peer_pk_qfi, peer_proof) = deserialize_round1(&data)
                     .map_err(|e| TecdsaError::Other(format!("R1 deserialize from {from}: {e}")))?;
 
-                let peer_pk_qfi = abc_to_qfi(&peer_pk_abc)
-                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi from {from}: {e}")))?;
                 let peer_pk_raw = self
                     .setup
                     .pk_from_qfi(&peer_pk_qfi)
@@ -374,7 +370,7 @@ impl StateMachine for Jtx25KeygenMachine {
                 state.received.insert(
                     from,
                     Round1Msg {
-                        cl_pk_abc: peer_pk_abc,
+                        cl_pk_qfi: peer_pk_qfi,
                     },
                 );
 
@@ -411,15 +407,13 @@ impl StateMachine for Jtx25KeygenMachine {
 
                 let mut ordered_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
                 for pid in &state.all_parties {
-                    let abc = state
-                        .cl_pk_abcs
+                    let qfi = state
+                        .cl_pk_qfis
                         .get(pid)
-                        .ok_or_else(|| TecdsaError::Other(format!("missing pk_abc for {pid}")))?;
-                    let qfi = abc_to_qfi(abc)
-                        .map_err(|e| TecdsaError::Other(format!("abc_to_qfi for {pid}: {e}")))?;
+                        .ok_or_else(|| TecdsaError::Other(format!("missing pk qfi for {pid}")))?;
                     let pk = self
                         .setup
-                        .pk_from_qfi(&qfi)
+                        .pk_from_qfi(qfi)
                         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi for {pid}: {e}")))?;
                     ordered_pks.push(pk);
                 }
@@ -529,23 +523,19 @@ impl StateMachine for Jtx25KeygenMachine {
                     .map_err(|e| TecdsaError::Other(format!("R3 deserialize from {from}: {e}")))?;
 
                 // Verify R_Dec_DL for PVSS.
-                let from_pk_abc = state
-                    .cl_pk_abcs
+                let from_pk_qfi = state
+                    .cl_pk_qfis
                     .get(&from)
-                    .ok_or_else(|| TecdsaError::Other(format!("missing CL pk abc for {from}")))?;
-                let from_pk_qfi = abc_to_qfi(from_pk_abc)
-                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi pk from {from}: {e}")))?;
+                    .ok_or_else(|| TecdsaError::Other(format!("missing CL pk qfi for {from}")))?;
                 let from_pk_raw = self
                     .setup
-                    .pk_from_qfi(&from_pk_qfi)
+                    .pk_from_qfi(from_pk_qfi)
                     .map_err(|e| TecdsaError::Other(format!("pk_from_qfi from {from}: {e}")))?;
 
-                let from_c1_abc = state
-                    .pvss_c1_abcs
+                let from_c1 = state
+                    .pvss_c1_qfis
                     .get(&from)
-                    .ok_or_else(|| TecdsaError::Other(format!("missing PVSS c1 abc for {from}")))?;
-                let from_c1 = abc_to_qfi(from_c1_abc)
-                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi c1 from {from}: {e}")))?;
+                    .ok_or_else(|| TecdsaError::Other(format!("missing PVSS c1 qfi for {from}")))?;
 
                 let dummy_c2 = self
                     .setup
@@ -553,7 +543,7 @@ impl StateMachine for Jtx25KeygenMachine {
                     .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
                 let ct_for_verify = self
                     .setup
-                    .ct_from_components(&from_c1, &dummy_c2)
+                    .ct_from_components(from_c1, &dummy_c2)
                     .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
 
                 let valid = proof
@@ -681,7 +671,7 @@ impl Jtx25KeygenMachine {
             .position(|p| *p == my_id)
             .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
 
-        let mut cl_pk_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
+        let mut cl_pk_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
         let mut ordered_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
 
         for pid in &state.all_parties {
@@ -692,20 +682,18 @@ impl Jtx25KeygenMachine {
                     .pk_from_qfi(pk_elt)
                     .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
                 ordered_pks.push(pk_clone);
-                cl_pk_abcs.insert(*pid, state.cl_pk_abc.clone());
+                cl_pk_qfis.insert(*pid, state.cl_pk_qfi.clone());
             } else {
                 let r1_msg = state
                     .received
                     .get(pid)
                     .ok_or_else(|| TecdsaError::Other(format!("missing R1 from {pid}")))?;
-                let qfi = abc_to_qfi(&r1_msg.cl_pk_abc)
-                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
                 let pk = self
                     .setup
-                    .pk_from_qfi(&qfi)
+                    .pk_from_qfi(&r1_msg.cl_pk_qfi)
                     .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
                 ordered_pks.push(pk);
-                cl_pk_abcs.insert(*pid, r1_msg.cl_pk_abc.clone());
+                cl_pk_qfis.insert(*pid, r1_msg.cl_pk_qfi.clone());
             }
         }
 
@@ -792,7 +780,7 @@ impl Jtx25KeygenMachine {
             _cl_sk_raw: state.cl_sk_raw,
             cl_pk_raw: my_pk_clone,
             cl_sk_bytes: state.cl_sk_bytes,
-            cl_pk_abcs,
+            cl_pk_qfis,
             my_pvss: pvss_output,
             received: BTreeMap::new(),
             dkg_cl_gen_output,
@@ -931,14 +919,10 @@ impl Jtx25KeygenMachine {
         }];
 
         // Carry forward PVSS c1 values for R_Dec_DL verification.
-        let mut pvss_c1_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
-        let own_c1_abc = qfi_to_abc(&state.my_pvss.c1)
-            .map_err(|e| TecdsaError::Other(format!("qfi_to_abc own c1: {e}")))?;
-        pvss_c1_abcs.insert(my_id, own_c1_abc);
+        let mut pvss_c1_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
+        pvss_c1_qfis.insert(my_id, state.my_pvss.c1.clone());
         for (pid, r2_msg) in &state.received {
-            let c1_abc = qfi_to_abc(&r2_msg.c1)
-                .map_err(|e| TecdsaError::Other(format!("qfi_to_abc c1 from {pid}: {e}")))?;
-            pvss_c1_abcs.insert(*pid, c1_abc);
+            pvss_c1_qfis.insert(*pid, r2_msg.c1.clone());
         }
 
         Ok(Round3State {
@@ -955,8 +939,8 @@ impl Jtx25KeygenMachine {
             my_dkg_cl_lifted_share: dkg_cl_reveal.pk_share,
             _my_dkg_cl_combined_ct: dkg_cl_reveal.combined_ct,
             _all_dkg_cl_chunk_cts: all_dkg_cl_chunk_cts,
-            cl_pk_abcs: state.cl_pk_abcs,
-            pvss_c1_abcs,
+            cl_pk_qfis: state.cl_pk_qfis,
+            pvss_c1_qfis,
         })
     }
 }
@@ -1002,13 +986,12 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
         .identity()
         .map_err(|e| TecdsaError::Other(format!("CL identity: {e}")))?;
     for pid in &state.all_parties {
-        let abc = state
-            .cl_pk_abcs
+        let qfi = state
+            .cl_pk_qfis
             .get(pid)
-            .ok_or_else(|| TecdsaError::Other(format!("missing pk_abc for {pid}")))?;
-        let qfi = abc_to_qfi(abc).map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
+            .ok_or_else(|| TecdsaError::Other(format!("missing pk qfi for {pid}")))?;
         agg_pk_qfi = setup
-            .compose(&agg_pk_qfi, &qfi)
+            .compose(&agg_pk_qfi, qfi)
             .map_err(|e| TecdsaError::Other(format!("compose CL pk: {e}")))?;
     }
     let cl_pk = setup
@@ -1044,25 +1027,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
         total: n as u16,
         n_parties_dkg: n,
     })
-}
-
-// ---------------------------------------------------------------------------
-// QFI serialization helpers
-// ---------------------------------------------------------------------------
-
-fn qfi_to_abc(qfi: &Qfi) -> Result<(String, String, String), Jtx25Error> {
-    let a = qfi.a().to_string();
-    let b = qfi.b().to_string();
-    let c = qfi.c().to_string();
-    Ok((a, b, c))
-}
-
-fn abc_to_qfi((a, b, c): &(String, String, String)) -> Result<Qfi, Jtx25Error> {
-    Ok(Qfi::from_abc(
-        Mpz::from_str(a).map_err(|e| Jtx25Error::ClError(e.into()))?,
-        Mpz::from_str(b).map_err(|e| Jtx25Error::ClError(e.into()))?,
-        Mpz::from_str(c).map_err(|e| Jtx25Error::ClError(e.into()))?,
-    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,27 +1103,6 @@ fn read_field(data: &[u8], pos: usize) -> Result<(&[u8], usize), Jtx25Error> {
     Ok((&data[start..end], end))
 }
 
-fn read_string_field(data: &[u8], pos: usize) -> Result<(String, usize), Jtx25Error> {
-    let (bytes, new_pos) = read_field(data, pos)?;
-    let s = std::str::from_utf8(bytes)
-        .map_err(|e| Jtx25Error::InvalidInput(format!("invalid UTF-8: {e}")))?
-        .to_string();
-    Ok((s, new_pos))
-}
-
-fn write_qfi_abc(buf: &mut Vec<u8>, abc: &(String, String, String)) {
-    write_field(buf, abc.0.as_bytes());
-    write_field(buf, abc.1.as_bytes());
-    write_field(buf, abc.2.as_bytes());
-}
-
-fn read_qfi_abc(data: &[u8], pos: usize) -> Result<((String, String, String), usize), Jtx25Error> {
-    let (a, pos) = read_string_field(data, pos)?;
-    let (b, pos) = read_string_field(data, pos)?;
-    let (c, pos) = read_string_field(data, pos)?;
-    Ok(((a, b, c), pos))
-}
-
 /// Write a Qfi as binary (length-prefixed to_bytes()).
 fn write_qfi_bin(buf: &mut Vec<u8>, qfi: &Qfi) {
     let bytes = qfi.to_bytes();
@@ -1172,31 +1115,26 @@ fn read_qfi_bin(data: &[u8], pos: usize) -> Result<(Qfi, usize), Jtx25Error> {
     Ok((Qfi::from_bytes(bytes), new_pos))
 }
 
-fn serialize_round1(
-    pk_abc: &(String, String, String),
-    proof: &RKeyProof,
-) -> Result<Vec<u8>, Jtx25Error> {
+fn serialize_round1(pk: &Qfi, proof: &RKeyProof) -> Result<Vec<u8>, Jtx25Error> {
     let mut buf = Vec::new();
-    write_qfi_abc(&mut buf, pk_abc);
-    let t_abc = qfi_to_abc(&proof.t)?;
-    write_qfi_abc(&mut buf, &t_abc);
+    write_qfi_bin(&mut buf, pk);
+    write_qfi_bin(&mut buf, &proof.t);
     write_field(&mut buf, &proof.z);
     write_field(&mut buf, &proof.e);
     Ok(buf)
 }
 
-fn deserialize_round1(data: &[u8]) -> Result<((String, String, String), RKeyProof), Jtx25Error> {
-    let (pk_abc, pos) = read_qfi_abc(data, 0)?;
-    let (t_abc, pos) = read_qfi_abc(data, pos)?;
+fn deserialize_round1(data: &[u8]) -> Result<(Qfi, RKeyProof), Jtx25Error> {
+    let (pk, pos) = read_qfi_bin(data, 0)?;
+    let (t, pos) = read_qfi_bin(data, pos)?;
     let (z_bytes, pos) = read_field(data, pos)?;
     let (e_bytes, _pos) = read_field(data, pos)?;
-    let t = abc_to_qfi(&t_abc)?;
     let proof = RKeyProof {
         t,
         z: z_bytes.to_vec(),
         e: e_bytes.to_vec(),
     };
-    Ok((pk_abc, proof))
+    Ok((pk, proof))
 }
 
 /// Serialize Round 2 broadcast: PVSS data + DKG-CL Gen per-recipient data for
@@ -1210,11 +1148,9 @@ fn serialize_round2_with_dkg_cl(
 
     // ---- PVSS section ----
     buf.extend_from_slice(&(pvss.c2s.len() as u32).to_le_bytes());
-    let c1_abc = qfi_to_abc(&pvss.c1)?;
-    write_qfi_abc(&mut buf, &c1_abc);
+    write_qfi_bin(&mut buf, &pvss.c1);
     for c2 in &pvss.c2s {
-        let c2_abc = qfi_to_abc(c2)?;
-        write_qfi_abc(&mut buf, &c2_abc);
+        write_qfi_bin(&mut buf, c2);
     }
     write_field(&mut buf, &pvss.proof.k);
     write_field(&mut buf, &pvss.proof.rho_response);
@@ -1397,14 +1333,13 @@ fn deserialize_round2_full(
             .map_err(|_| Jtx25Error::InvalidInput("bad n".into()))?,
     ) as usize;
     let mut pos = 4;
-    let (c1_abc, new_pos) = read_qfi_abc(data, pos)?;
+    let (c1, new_pos) = read_qfi_bin(data, pos)?;
     pos = new_pos;
-    let c1 = abc_to_qfi(&c1_abc)?;
     let mut c2s = Vec::with_capacity(n_pvss);
     for _ in 0..n_pvss {
-        let (c2_abc, new_pos) = read_qfi_abc(data, pos)?;
+        let (c2, new_pos) = read_qfi_bin(data, pos)?;
         pos = new_pos;
-        c2s.push(abc_to_qfi(&c2_abc)?);
+        c2s.push(c2);
     }
     let (k_bytes, new_pos) = read_field(data, pos)?;
     pos = new_pos;
@@ -1497,12 +1432,9 @@ fn serialize_round3(
 ) -> Result<Vec<u8>, Jtx25Error> {
     let mut buf = Vec::new();
     write_field(&mut buf, public_share_bytes);
-    let pd_abc = qfi_to_abc(pd)?;
-    write_qfi_abc(&mut buf, &pd_abc);
-    let t1_abc = qfi_to_abc(&proof.t1)?;
-    let t2_abc = qfi_to_abc(&proof.t2)?;
-    write_qfi_abc(&mut buf, &t1_abc);
-    write_qfi_abc(&mut buf, &t2_abc);
+    write_qfi_bin(&mut buf, pd);
+    write_qfi_bin(&mut buf, &proof.t1);
+    write_qfi_bin(&mut buf, &proof.t2);
     write_field(&mut buf, &proof.z);
     write_field(&mut buf, &proof.e);
 
@@ -1528,14 +1460,11 @@ fn deserialize_round3(
         .map_err(|e| Jtx25Error::InvalidInput(format!("invalid point bytes: {e}")))?;
     let point: k256::ProjectivePoint = Option::from(k256::ProjectivePoint::from_bytes(&repr))
         .ok_or_else(|| Jtx25Error::InvalidInput("invalid EC point".into()))?;
-    let (pd_abc, pos) = read_qfi_abc(data, pos)?;
-    let pd = abc_to_qfi(&pd_abc)?;
-    let (t1_abc, pos) = read_qfi_abc(data, pos)?;
-    let (t2_abc, pos) = read_qfi_abc(data, pos)?;
+    let (pd, pos) = read_qfi_bin(data, pos)?;
+    let (t1, pos) = read_qfi_bin(data, pos)?;
+    let (t2, pos) = read_qfi_bin(data, pos)?;
     let (z_bytes, pos) = read_field(data, pos)?;
     let (e_bytes, pos) = read_field(data, pos)?;
-    let t1 = abc_to_qfi(&t1_abc)?;
-    let t2 = abc_to_qfi(&t2_abc)?;
     let dec_dl_proof = RDecDlProof {
         t1,
         t2,

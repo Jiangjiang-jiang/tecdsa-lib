@@ -22,7 +22,7 @@ use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_class_group::{
-    cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup},
+    cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup, Qfi},
     nim::{Nim, NimEncodeBOutput},
     zk::r_cl_dl_ec::RClDlEcProof,
 };
@@ -31,10 +31,7 @@ use tecdsa_curve::zk::dlog::DlogProof;
 use tecdsa_protocol::PartyId;
 use zeroize::Zeroize;
 
-use crate::{
-    error::{qfi_from_abc, qfi_to_abc},
-    key_share::Llz25KeyShare,
-};
+use crate::key_share::Llz25KeyShare;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,29 +69,11 @@ pub(crate) fn proj_from_bytes(bytes: &[u8]) -> tecdsa_core::Result<k256::Project
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SerQfi {
-    pub a: String,
-    pub b: String,
-    pub c: String,
-}
-
-impl SerQfi {
-    pub fn from_abc(abc: &(String, String, String)) -> Self {
-        Self {
-            a: abc.0.clone(),
-            b: abc.1.clone(),
-            c: abc.2.clone(),
-        }
-    }
-    pub fn to_abc(&self) -> (String, String, String) {
-        (self.a.clone(), self.b.clone(), self.c.clone())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerRClDlEcProof {
-    pub t1: SerQfi,
-    pub t2: SerQfi,
+    /// Compact binary QFI encoding (`Qfi::to_bytes`).
+    pub t1: Vec<u8>,
+    /// Compact binary QFI encoding (`Qfi::to_bytes`).
+    pub t2: Vec<u8>,
     pub v_tilde_bytes: Vec<u8>,
     pub u1: Vec<u8>,
     pub u2: Vec<u8>,
@@ -104,14 +83,8 @@ pub(crate) struct SerRClDlEcProof {
 impl SerRClDlEcProof {
     pub fn from_proof(proof: &RClDlEcProof) -> Result<Self, String> {
         Ok(Self {
-            t1: {
-                let abc = qfi_to_abc(&proof.t1).map_err(|e| format!("{e}"))?;
-                SerQfi::from_abc(&abc)
-            },
-            t2: {
-                let abc = qfi_to_abc(&proof.t2).map_err(|e| format!("{e}"))?;
-                SerQfi::from_abc(&abc)
-            },
+            t1: proof.t1.to_bytes(),
+            t2: proof.t2.to_bytes(),
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
             u1: proof.u1.clone(),
             u2: proof.u2.clone(),
@@ -121,8 +94,8 @@ impl SerRClDlEcProof {
 
     pub fn to_proof(&self) -> Result<RClDlEcProof, String> {
         Ok(RClDlEcProof {
-            t1: qfi_from_abc(&self.t1.a, &self.t1.b, &self.t1.c).map_err(|e| format!("{e}"))?,
-            t2: qfi_from_abc(&self.t2.a, &self.t2.b, &self.t2.c).map_err(|e| format!("{e}"))?,
+            t1: Qfi::from_bytes(&self.t1),
+            t2: Qfi::from_bytes(&self.t2),
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             u1: self.u1.clone(),
             u2: self.u2.clone(),
@@ -183,8 +156,10 @@ pub(crate) struct R2BcastPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R3Payload {
     pub x_i_bytes: Vec<u8>,
-    pub pe_x_c1_abc: SerQfi,
-    pub pe_x_c2_abc: SerQfi,
+    /// $pe_{x,i}$ c1 component as compact binary QFI encoding.
+    pub pe_x_c1: Vec<u8>,
+    /// $pe_{x,i}$ c2 component as compact binary QFI encoding.
+    pub pe_x_c2: Vec<u8>,
     pub proof: SerRClDlEcProof,
 }
 
@@ -217,8 +192,10 @@ pub(crate) struct R2ReceivedBcast {
 
 pub(crate) struct R3ReceivedData {
     pub x_i_point: k256::ProjectivePoint,
-    pub pe_x_c1_abc: (String, String, String),
-    pub pe_x_c2_abc: (String, String, String),
+    /// $pe_{x}$ c1 component as compact binary QFI encoding.
+    pub pe_x_c1: Vec<u8>,
+    /// $pe_{x}$ c2 component as compact binary QFI encoding.
+    pub pe_x_c2: Vec<u8>,
     pub proof: RClDlEcProof,
 }
 
@@ -356,8 +333,8 @@ pub(crate) fn transition_to_r3(
     let (c1, c2) = setup
         .ct_components(&pe_b)
         .map_err(|e| TecdsaError::Other(format!("ct_components: {e}")))?;
-    let pe_x_c1_abc = qfi_to_abc(&c1).map_err(|e| TecdsaError::Other(format!("{e}")))?;
-    let pe_x_c2_abc = qfi_to_abc(&c2).map_err(|e| TecdsaError::Other(format!("{e}")))?;
+    let pe_x_c1_bytes = c1.to_bytes();
+    let pe_x_c2_bytes = c2.to_bytes();
 
     // 8. R_CL_DL_EC proof: proves pe_{x,i} encrypts dlog of X_i
     let proof = RClDlEcProof::prove(
@@ -375,8 +352,8 @@ pub(crate) fn transition_to_r3(
 
     let r3_payload = R3Payload {
         x_i_bytes: my_x_i_bytes,
-        pe_x_c1_abc: SerQfi::from_abc(&pe_x_c1_abc),
-        pe_x_c2_abc: SerQfi::from_abc(&pe_x_c2_abc),
+        pe_x_c1: pe_x_c1_bytes.clone(),
+        pe_x_c2: pe_x_c2_bytes.clone(),
         proof: ser_proof,
     };
 
@@ -388,8 +365,8 @@ pub(crate) fn transition_to_r3(
         my_id,
         R3ReceivedData {
             x_i_point: my_x_i_point,
-            pe_x_c1_abc,
-            pe_x_c2_abc,
+            pe_x_c1: pe_x_c1_bytes,
+            pe_x_c2: pe_x_c2_bytes,
             proof,
         },
     );
@@ -435,10 +412,8 @@ pub(crate) fn finalize(
                 "X_i mismatch for party {pid}: received point differs from VSS-derived share"
             )));
         }
-        let c1 = qfi_from_abc(&r3.pe_x_c1_abc.0, &r3.pe_x_c1_abc.1, &r3.pe_x_c1_abc.2)
-            .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
-        let c2 = qfi_from_abc(&r3.pe_x_c2_abc.0, &r3.pe_x_c2_abc.1, &r3.pe_x_c2_abc.2)
-            .map_err(|e| TecdsaError::Other(format!("qfi: {e}")))?;
+        let c1 = Qfi::from_bytes(&r3.pe_x_c1);
+        let c2 = Qfi::from_bytes(&r3.pe_x_c2);
         let ct = setup
             .ct_from_components(&c1, &c2)
             .map_err(|e| TecdsaError::Other(format!("ct: {e}")))?;
@@ -460,14 +435,7 @@ pub(crate) fn finalize(
         let r3 = r3_data
             .get(&pid)
             .ok_or_else(|| TecdsaError::Other(format!("missing R3 data for party {pid}")))?;
-        all_pe_x_components.push((
-            r3.pe_x_c1_abc.0.clone(),
-            r3.pe_x_c1_abc.1.clone(),
-            r3.pe_x_c1_abc.2.clone(),
-            r3.pe_x_c2_abc.0.clone(),
-            r3.pe_x_c2_abc.1.clone(),
-            r3.pe_x_c2_abc.2.clone(),
-        ));
+        all_pe_x_components.push((r3.pe_x_c1.clone(), r3.pe_x_c2.clone()));
     }
 
     let my_0based = (my_1based - 1) as usize;

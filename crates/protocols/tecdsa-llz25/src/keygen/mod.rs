@@ -34,10 +34,7 @@ use tecdsa_class_group::{
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_vss::shamir;
 
-use crate::{
-    error::{qfi_to_abc, Llz25Error},
-    key_share::Llz25KeyShare,
-};
+use crate::{error::Llz25Error, key_share::Llz25KeyShare};
 
 /// Output of the keygen NIM encoding step for one party.
 ///
@@ -89,8 +86,7 @@ pub fn keygen_with_dealer(
     // 2-4. For each party: NIM.Encode_B + ZK proof.
     let mut key_shares = Vec::with_capacity(n as usize);
     let mut aux_infos = Vec::with_capacity(n as usize);
-    let mut all_pe_x_components: Vec<(String, String, String, String, String, String)> =
-        Vec::with_capacity(n as usize);
+    let mut all_pe_x_components: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(n as usize);
 
     for (i, share) in shares.iter().enumerate() {
         let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&share.value);
@@ -105,16 +101,7 @@ pub fn keygen_with_dealer(
         let (c1, c2) = setup
             .ct_components(&pe_b)
             .map_err(|e| Llz25Error::ClassGroup(format!("ct_components: {e}")))?;
-        let c1_abc = qfi_to_abc(&c1)?;
-        let c2_abc = qfi_to_abc(&c2)?;
-        all_pe_x_components.push((
-            c1_abc.0.clone(),
-            c1_abc.1.clone(),
-            c1_abc.2.clone(),
-            c2_abc.0.clone(),
-            c2_abc.1.clone(),
-            c2_abc.2.clone(),
-        ));
+        all_pe_x_components.push((c1.to_bytes(), c2.to_bytes()));
 
         // Compute X_i = x_i * G (compressed point for ZK proof).
         let big_x_i_bytes = public_shares[i].to_bytes().to_vec();
@@ -136,14 +123,7 @@ pub fn keygen_with_dealer(
             public_key,
             public_shares: public_shares.clone(),
             st_x_bytes: st_b.s_bytes,
-            pe_x_components: (
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-            ),
+            pe_x_components: (Vec::new(), Vec::new()),
             all_pe_x_components: Vec::new(),
             cl_setup_seed: cl_setup_seed.to_string(),
             use_128bit_security: use_128bit,

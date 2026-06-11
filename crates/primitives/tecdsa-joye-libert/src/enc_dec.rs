@@ -24,6 +24,7 @@ use crate::kgen::{JlPublicKey, JlSecretKey};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JlCiphertext {
     /// The ciphertext value `c` in `Z*_N`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub c: Integer,
 }
 

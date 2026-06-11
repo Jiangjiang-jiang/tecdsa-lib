@@ -219,7 +219,7 @@ impl Wmy23KeygenMachine {
         let own_coms = r1_state.drg_gen.commitments.clone();
         self.r2_verified[my_idx] = Some(VerifiedR2 {
             commitments: own_coms,
-            cl_pk_abc: r1_state.cl_pk_abc.clone(),
+            cl_pk_bytes: r1_state.cl_pk_bytes.clone(),
         });
 
         // Emit R2 decommit as broadcast
@@ -327,7 +327,7 @@ impl Wmy23KeygenMachine {
         // Run DRG.Comb + RevealExp
         let (r3_state, r3_bcast) = rounds::keygen_round3_with_shares(
             &mut self.setup,
-            &r1_state.cl_pk_abc,
+            &r1_state.cl_pk_bytes,
             (my_idx + 1) as u16,
             &received_shares,
             &all_commitments,
@@ -373,13 +373,13 @@ impl Wmy23KeygenMachine {
                 let r3_state = self.r3_state.as_ref().expect("own R3 state");
                 x_points.push(r3_state.x_point);
             } else {
-                let cl_pk_abc = &self.r2_verified[j]
+                let cl_pk_bytes = &self.r2_verified[j]
                     .as_ref()
                     .expect("verified data")
-                    .cl_pk_abc;
+                    .cl_pk_bytes;
                 let x_point = rounds::verify_r3(
                     &self.setup,
-                    cl_pk_abc,
+                    cl_pk_bytes,
                     (j + 1) as u16,
                     &all_commitments,
                     r3_bcast,
@@ -401,18 +401,18 @@ impl Wmy23KeygenMachine {
             .take()
             .ok_or_else(|| TecdsaError::Other("r3_state missing in finalize".into()))?;
 
-        let all_cl_pk_abcs: Vec<(String, String, String)> = (0..n)
+        let all_cl_pk_bytes: Vec<Vec<u8>> = (0..n)
             .map(|j| {
                 self.r2_verified[j]
                     .as_ref()
                     .expect("verified data")
-                    .cl_pk_abc
+                    .cl_pk_bytes
                     .clone()
             })
             .collect();
 
         let key_share =
-            rounds::keygen_finalize(r1_state, r3_state, &x_points, &self.setup, &all_cl_pk_abcs)
+            rounds::keygen_finalize(r1_state, r3_state, &x_points, &self.setup, &all_cl_pk_bytes)
                 .map_err(|e| TecdsaError::Other(format!("keygen_finalize failed: {e}")))?;
 
         self.output = Some(key_share);

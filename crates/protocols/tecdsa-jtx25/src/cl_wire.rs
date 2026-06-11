@@ -19,7 +19,7 @@ use tecdsa_class_group::{
 use crate::error::Jtx25Error;
 
 // ---------------------------------------------------------------------------
-// Serialized class-group element (abc triplet)
+// Serialized class-group element (compact binary `Qfi::to_bytes`)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

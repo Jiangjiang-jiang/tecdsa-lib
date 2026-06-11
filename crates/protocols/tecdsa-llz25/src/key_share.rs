@@ -24,10 +24,11 @@ pub struct Llz25KeyShare {
     /// NIM `Encode_B` state (encryption randomness for $pe_{x,i}$).
     /// This is the secret key material for NIM decoding in the sign phase.
     pub st_x_bytes: Vec<u8>,
-    /// This party's $pe_{x,i}$ ciphertext components (c1_a, c1_b, c1_c, c2_a, c2_b, c2_c).
-    pub pe_x_components: (String, String, String, String, String, String),
+    /// This party's $pe_{x,i}$ ciphertext components (c1, c2) as compact
+    /// binary QFI encodings (`Qfi::to_bytes`).
+    pub pe_x_components: (Vec<u8>, Vec<u8>),
     /// All parties' $pe_{x,j}$ ciphertext components, needed for NIM decoding in sign phase.
-    pub all_pe_x_components: Vec<(String, String, String, String, String, String)>,
+    pub all_pe_x_components: Vec<(Vec<u8>, Vec<u8>)>,
     /// Seed for CL setup recreation.
     pub cl_setup_seed: String,
     /// Whether to use 128-bit security CL parameters.

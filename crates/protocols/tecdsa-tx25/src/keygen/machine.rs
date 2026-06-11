@@ -8,9 +8,8 @@ use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{
-    abc_to_qfi, deserialize_round1, deserialize_round2, deserialize_round3,
+    deserialize_round1, deserialize_round2, deserialize_round3,
     msg::Tx25KeygenMsg,
-    qfi_to_abc,
     rounds::{
         finalize_keygen, transition_r1_to_r2, transition_r2_to_r3, KeygenRound, Round1Msg,
         Round1State, Round2Msg, Round3Msg,
@@ -105,17 +104,15 @@ impl Tx25KeygenMachine {
             .sk_to_bytes(&cl_sk_raw)
             .map_err(|e| TecdsaError::Other(format!("sk_to_bytes failed: {e}")))?;
 
-        // Serialize CL public key as (a, b, c) decimal strings.
-        let pk_elt = cl_pk_raw.elt();
-        let cl_pk_abc = qfi_to_abc(pk_elt)
-            .map_err(|e| TecdsaError::Other(format!("qfi_to_abc failed: {e}")))?;
+        // Keep the CL public key element for wire serialization.
+        let cl_pk_qfi = cl_pk_raw.elt().clone();
 
         // Step 2: Generate R_key proof.
         let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_decimal)
             .map_err(|e| TecdsaError::Other(format!("R_key prove failed: {e}")))?;
 
         // Step 3: Serialize and queue Round 1 broadcast.
-        let r1_payload = serialize_round1(&cl_pk_abc, &proof)
+        let r1_payload = serialize_round1(&cl_pk_qfi, &proof)
             .map_err(|e| TecdsaError::Other(format!("R1 serialize failed: {e}")))?;
 
         let mut outgoing = Vec::new();
@@ -135,7 +132,7 @@ impl Tx25KeygenMachine {
             cl_sk_raw,
             cl_pk_raw,
             cl_sk_decimal,
-            cl_pk_abc,
+            cl_pk_qfi,
             received: BTreeMap::new(),
             outgoing,
             cl_setup_seed: cl_setup_seed.to_string(),
@@ -235,12 +232,10 @@ impl StateMachine for Tx25KeygenMachine {
                 }
 
                 // Deserialize the R1 message.
-                let (peer_pk_abc, peer_proof) = deserialize_round1(&data)
+                let (peer_pk_qfi, peer_proof) = deserialize_round1(&data)
                     .map_err(|e| TecdsaError::Other(format!("R1 deserialize from {from}: {e}")))?;
 
-                // Reconstruct ClPublicKey from abc.
-                let peer_pk_qfi = abc_to_qfi(&peer_pk_abc)
-                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi from {from}: {e}")))?;
+                // Reconstruct ClPublicKey from the QFI element.
                 let peer_pk_raw = self
                     .setup
                     .pk_from_qfi(&peer_pk_qfi)
@@ -259,7 +254,7 @@ impl StateMachine for Tx25KeygenMachine {
                 state.received.insert(
                     from,
                     Round1Msg {
-                        cl_pk_abc: peer_pk_abc,
+                        cl_pk_qfi: peer_pk_qfi,
                     },
                 );
 
@@ -295,14 +290,12 @@ impl StateMachine for Tx25KeygenMachine {
                 let mut ordered_pks: Vec<tecdsa_class_group::cl::ClPublicKey> =
                     Vec::with_capacity(n);
                 for pid in &state.all_parties {
-                    let abc = state.cl_pk_abcs.get(pid).ok_or_else(|| {
-                        TecdsaError::Other(format!("missing pk_abc for party {pid}"))
+                    let qfi = state.cl_pk_qfis.get(pid).ok_or_else(|| {
+                        TecdsaError::Other(format!("missing pk qfi for party {pid}"))
                     })?;
-                    let qfi = abc_to_qfi(abc)
-                        .map_err(|e| TecdsaError::Other(format!("abc_to_qfi for {pid}: {e}")))?;
                     let pk = self
                         .setup
-                        .pk_from_qfi(&qfi)
+                        .pk_from_qfi(qfi)
                         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi for {pid}: {e}")))?;
                     ordered_pks.push(pk);
                 }
@@ -356,22 +349,18 @@ impl StateMachine for Tx25KeygenMachine {
                 // CL public key.
 
                 // Reconstruct the sender's CL public key.
-                let from_pk_abc = state.cl_pk_abcs.get(&from).ok_or_else(|| {
-                    TecdsaError::Other(format!("missing CL pk abc for party {from}"))
+                let from_pk_qfi = state.cl_pk_qfis.get(&from).ok_or_else(|| {
+                    TecdsaError::Other(format!("missing CL pk qfi for party {from}"))
                 })?;
-                let from_pk_qfi = abc_to_qfi(from_pk_abc)
-                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi pk from {from}: {e}")))?;
                 let from_pk_raw = self
                     .setup
-                    .pk_from_qfi(&from_pk_qfi)
+                    .pk_from_qfi(from_pk_qfi)
                     .map_err(|e| TecdsaError::Other(format!("pk_from_qfi from {from}: {e}")))?;
 
-                // Reconstruct the PVSS c1 from the sender's Round 2 distribution.
-                let from_c1_abc = state.pvss_c1_abcs.get(&from).ok_or_else(|| {
-                    TecdsaError::Other(format!("missing PVSS c1 abc for party {from}"))
+                // The PVSS c1 from the sender's Round 2 distribution.
+                let from_c1 = state.pvss_c1_qfis.get(&from).ok_or_else(|| {
+                    TecdsaError::Other(format!("missing PVSS c1 qfi for party {from}"))
                 })?;
-                let from_c1 = abc_to_qfi(from_c1_abc)
-                    .map_err(|e| TecdsaError::Other(format!("abc_to_qfi c1 from {from}: {e}")))?;
 
                 // Build the ciphertext (c1, dummy_c2) -- the verify() function
                 // only extracts c1 from the ciphertext internally.

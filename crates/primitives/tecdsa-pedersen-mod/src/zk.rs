@@ -35,7 +35,9 @@ fn integer_to_bytes(val: &Integer) -> Vec<u8> {
 /// using m = 80 binary Fiat-Shamir challenges per CGGMP20 Figure 13.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiPrm {
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     commitment: Vec<Integer>,
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     zs: Vec<Integer>,
 }
 
@@ -171,15 +173,18 @@ impl PiPrm {
 /// and N-th roots. Soundness error: 2^{-81}.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiMod {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     w: Integer,
     proof_points: Vec<PiModPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PiModPoint {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     x: Integer,
     a: bool,
     b: bool,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     z: Integer,
 }
 

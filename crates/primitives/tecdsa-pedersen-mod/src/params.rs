@@ -20,10 +20,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PedersenModParams {
     /// RSA modulus `N = p * q`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub n: Integer,
     /// Ring-Pedersen base `s = t^lambda mod N`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub s: Integer,
     /// Ring-Pedersen base `t = r^2 mod N` (quadratic residue).
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub t: Integer,
 }
 

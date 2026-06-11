@@ -29,16 +29,21 @@ const STAT_SEC: u32 = 80;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkQr2kDlProof {
     /// Public: h (the QR_{2^k} element, h = x^{2^k})
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub h: Integer,
     /// Public: N (RSA modulus)
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub n: Integer,
     /// Public: y = x^alpha mod N
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub y: Integer,
     /// Public: parameter k
     pub k: u32,
     /// Commitment values: a_i = h^{beta_i} mod N
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     a_vec: Vec<Integer>,
     /// Response values: z_i = beta_i + e_i * alpha
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     z_vec: Vec<Integer>,
 }
 

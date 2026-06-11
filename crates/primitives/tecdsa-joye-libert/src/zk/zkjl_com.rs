@@ -20,10 +20,13 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlComProof {
     /// Commitment: d = y^{2^k*v} * h^{2^k*w} mod N
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d: Integer,
     /// Response for the message: z_m = e*m + v
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_m: Integer,
     /// Response for the randomness: z_r = e*r + w
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r: Integer,
 }
 

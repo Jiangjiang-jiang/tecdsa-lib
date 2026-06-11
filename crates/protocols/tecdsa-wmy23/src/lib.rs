@@ -6,10 +6,11 @@
 //! "Real Threshold ECDSA" (NDSS 2023). This protocol uses CL-based
 //! encryption for MtA (MtAwc) and provides:
 //!
-//! - **4-round presign (offline):** message-independent preprocessing
-//!   using CL-based MtAwc for multiplicative-to-additive conversion.
+//! - **4-round presign (offline):** DRG (Pedersen VSS + CL verifiable
+//!   encryption + R_Enc-PC proofs), CL-based MtAwc for
+//!   multiplicative-to-additive conversion, and share revelation.
 //! - **1-round sign (online):** partial signature broadcast + assembly.
-//! - **4-round keygen:** Feldman VSS + CL-HSM key distribution.
+//! - **4-round keygen:** DRG-based Pedersen VSS + CL-HSM key distribution.
 //! - **Self-healing + cheater identification:** dishonest minority security.
 //!
 //! # Security Warning

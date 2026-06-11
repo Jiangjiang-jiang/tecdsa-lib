@@ -13,7 +13,8 @@ use tecdsa_wmy23::{
     key_share::Wmy23KeyShare,
     keygen::Wmy23KeygenMachine,
     presign::rounds::{
-        drg_presign_round1, drg_presign_round2, drg_presign_round3_bob, drg_presign_round4_finalize,
+        drg_presign_finalize, drg_presign_round1, drg_presign_round2, drg_presign_round3_bob,
+        drg_presign_round4_compute, DrgPresignR1P2P,
     },
     sign::rounds::{combine_signatures, compute_partial_signature},
 };
@@ -74,67 +75,74 @@ fn run_drg_presign(
 ) -> Vec<tecdsa_wmy23::presign::Wmy23Presignature> {
     let n = shares.len();
     let t = shares[0].threshold;
+    let signer_ids: Vec<u16> = (1..=n as u16).collect();
     let mut rng = rand::thread_rng();
 
+    // Round 1: DRG.Gen for k and gamma.
     let mut r1s = Vec::new();
     let mut r1b = Vec::new();
     let mut r1p = Vec::new();
     for i in 0..n {
-        let (s, b, p) = drg_presign_round1(i, n, t, &shares[i], setup, &mut rng).unwrap();
+        let (s, b, p) =
+            drg_presign_round1(i, n, t, &signer_ids, &shares[i], setup, &mut rng).unwrap();
         r1s.push(s);
         r1b.push(b);
         r1p.push(p);
     }
 
+    // Round 2: DRG.GenVf + DRG.Comb + MtAwc Alice step 1.
     let mut r2s = Vec::new();
     let mut r2b = Vec::new();
     for i in 0..n {
-        let (s, b) = drg_presign_round2(&r1s[i], &r1b, &r1p, &r1s, &shares[i], setup).unwrap();
+        // Shares received by party i, indexed by sender.
+        let received: Vec<Option<DrgPresignR1P2P>> = (0..n).map(|j| r1p[j][i].clone()).collect();
+        let (s, b) =
+            drg_presign_round2(&r1s[i], &r1b, &received, &signer_ids, &shares[i], setup).unwrap();
         r2s.push(s);
         r2b.push(b);
     }
 
+    // Round 3: MtAwc Bob responses.
     let mut r3 = Vec::new();
     for i in 0..n {
-        let d =
-            drg_presign_round3_bob(&r2s[i], &r1s[i], &shares[i], &r2b, setup, &mut rng).unwrap();
-        r3.push(d);
-    }
-
-    let mut delta = vec![k256::Scalar::ZERO; n];
-    for i in 0..n {
-        let mut asum = k256::Scalar::ZERO;
-        let mut bsum = k256::Scalar::ZERO;
-        for j in 0..n {
-            if j == i {
-                continue;
-            }
-            let bob = r3[j].gamma_bob_outputs[i].as_ref().unwrap();
-            let a_bytes = setup.decrypt_bytes(&shares[i].cl_sk, &bob.c_alpha).unwrap();
-            asum += tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&a_bytes);
-            bsum += r3[i].gamma_bob_outputs[j].as_ref().unwrap().beta;
-        }
-        delta[i] = r2s[i].hat_k_i * r2s[i].hat_gamma_i + asum + bsum;
-    }
-
-    let mut presigs = Vec::new();
-    for i in 0..n {
-        let p = drg_presign_round4_finalize(
-            &r1s[i],
-            &r1b,
+        let d = drg_presign_round3_bob(
             &r2s[i],
-            &r2b,
-            &r3,
+            &r1s[i],
+            &signer_ids,
             &shares[i],
-            &mut delta.clone(),
-            None,
+            &r2b,
             setup,
             &mut rng,
         )
         .unwrap();
-        presigs.push(p);
+        r3.push(d);
     }
-    presigs
+
+    // Round 4: Alice decrypt + Phase 3 share revelation.
+    let r1_commitments: Vec<[u8; 32]> = r1b.iter().map(|b| b.commitment).collect();
+    let mut r4s = Vec::new();
+    for i in 0..n {
+        let (r4, _phase3) = drg_presign_round4_compute(
+            &r1s[i],
+            &r1_commitments,
+            &r2s[i],
+            &r2b,
+            &r3,
+            &signer_ids,
+            &shares[i],
+            setup,
+            &mut rng,
+        )
+        .unwrap();
+        r4s.push(r4);
+    }
+
+    // Output phase: reconstruct delta and R from the revealed shares.
+    let deltas: Vec<k256::Scalar> = r4s.iter().map(|r| r.delta_i).collect();
+    let big_ds: Vec<k256::ProjectivePoint> = r4s.iter().map(|r| r.big_d_i).collect();
+    r4s.iter()
+        .map(|r4| drg_presign_finalize(r4, &deltas, &big_ds).unwrap())
+        .collect()
 }
 
 fn run_sign(
@@ -164,6 +172,105 @@ fn test_wmy23_full_sign() {
     let msg = hash_message(b"WMY23 correctness test");
     let sig = run_sign(&presigs, msg, &shares[0].public_key);
     println!("WMY23 3-of-3 sign OK: r={:?}", sig.r);
+}
+
+// ---------------------------------------------------------------------------
+// Full DRG presign via the state machines, all 3 parties signing.
+//
+// Exercises the paper-compliant message-driven path end to end:
+// keygen machines -> DRG-based presign machines (DRG.Gen/GenVf/Comb with
+// Pedersen VSS + R_Enc-PC, MtAwc, share revelation) -> online sign
+// machines, and verifies the final ECDSA signature against the joint
+// public key.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_wmy23_machine_3party_e2e() {
+    use tecdsa_protocol::PartyId;
+    use tecdsa_testkit::Orchestrator;
+    use tecdsa_wmy23::{
+        presign::{PresignConfig, Wmy23PresignMachine},
+        sign::Wmy23OnlineSignMachine,
+    };
+
+    let seed = "12345";
+    let n = 3u16;
+    let t = 2u16;
+    let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+
+    // --- KeyGen via the DRG state machine ---
+    let key_shares = run_keygen(n as usize, t, false);
+    let public_key = key_shares[0].public_key;
+    for ks in &key_shares {
+        assert_eq!(ks.public_key, public_key, "parties must agree on joint PK");
+    }
+
+    // --- Presign with all 3 parties via the DRG presign machine ---
+    let presign_machines: Vec<(PartyId, Wmy23PresignMachine)> = all_parties
+        .iter()
+        .map(|&pid| {
+            let setup = ClSetup::new_secp256k1(seed).expect("cl setup");
+            let config = PresignConfig {
+                key_share: key_shares[(pid.0 - 1) as usize].clone(),
+                my_id: pid,
+                signer_parties: all_parties.clone(),
+                cl_setup: setup,
+            };
+            (
+                pid,
+                Wmy23PresignMachine::new(config).expect("presign machine"),
+            )
+        })
+        .collect();
+    let presigs: Vec<_> = Orchestrator::new(presign_machines, 10)
+        .run()
+        .expect("presign orchestrator")
+        .outputs
+        .into_iter()
+        .map(|r| r.expect("presign finish"))
+        .collect();
+
+    let r_x = presigs[0].r_x;
+    for p in &presigs {
+        assert_eq!(p.r_x, r_x, "signers must agree on r");
+        assert_eq!(p.big_r, presigs[0].big_r, "signers must agree on R");
+    }
+
+    // --- Online sign with all 3 parties ---
+    let msg = hash_message(b"WMY23 3-party machine e2e");
+    let msg_data = DataToSign::from_digest(msg);
+    let sign_machines: Vec<(PartyId, Wmy23OnlineSignMachine)> = all_parties
+        .iter()
+        .zip(presigs)
+        .map(|(&pid, presig)| {
+            (
+                pid,
+                Wmy23OnlineSignMachine::new(
+                    pid,
+                    all_parties.clone(),
+                    presig,
+                    msg_data,
+                    public_key,
+                )
+                .expect("sign machine"),
+            )
+        })
+        .collect();
+    let sigs: Vec<_> = Orchestrator::new(sign_machines, 10)
+        .run()
+        .expect("sign orchestrator")
+        .outputs
+        .into_iter()
+        .map(|r| r.expect("sign finish"))
+        .collect();
+
+    for sig in &sigs {
+        assert_eq!(sig.r, sigs[0].r, "all signers produce the same r");
+        assert_eq!(sig.s, sigs[0].s, "all signers produce the same s");
+    }
+    verify_ecdsa::<k256::Secp256k1>(&sigs[0], &public_key, &msg_data)
+        .expect("ECDSA verification must pass for the 3-party machine run");
+    println!("WMY23 3-party machine e2e OK: r={:?}", sigs[0].r);
 }
 
 // ---------------------------------------------------------------------------

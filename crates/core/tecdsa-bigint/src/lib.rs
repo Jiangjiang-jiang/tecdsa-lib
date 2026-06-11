@@ -4,6 +4,7 @@
 //! Provides a set of number-theoretic utilities used across Paillier, CL, and JL primitives.
 
 mod arith;
+pub mod int_wire;
 mod prime;
 
 pub use arith::{gcd, jacobi, mul_mod, multi_exp, pow_mod, tonelli_shanks};

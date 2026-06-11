@@ -25,12 +25,16 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlAffProof {
     /// Commitment: d = C^v1 * y^v2 * h^w mod N
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d: Integer,
     /// Response for `a`: z_a = e*a + v1
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_a: Integer,
     /// Response for `alpha`: z_alpha = e*alpha + v2
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_alpha: Integer,
     /// Response for `r`: z_r = e*r + w
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r: Integer,
 }
 

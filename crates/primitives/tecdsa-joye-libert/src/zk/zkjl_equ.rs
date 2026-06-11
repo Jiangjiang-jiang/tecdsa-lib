@@ -24,14 +24,19 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlEquProof {
     /// Commitment under pk: d = y^{2^k*v} * h^{2^k*w} mod N
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d: Integer,
     /// Commitment under pk0: d' = y0^{2^k*v} * h0^{2^k*w0} mod N0
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d_prime: Integer,
     /// Response for the message: z_m = e*m + v
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_m: Integer,
     /// Response for randomness under pk: z_r = e*r + w
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r: Integer,
     /// Response for randomness under pk0: z_r0 = e*r0 + w0
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r0: Integer,
 }
 

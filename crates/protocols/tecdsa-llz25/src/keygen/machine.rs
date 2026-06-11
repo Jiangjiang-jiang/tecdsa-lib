@@ -541,8 +541,8 @@ impl StateMachine for Llz25KeygenMachine {
                     from,
                     R3ReceivedData {
                         x_i_point,
-                        pe_x_c1_abc: payload.pe_x_c1_abc.to_abc(),
-                        pe_x_c2_abc: payload.pe_x_c2_abc.to_abc(),
+                        pe_x_c1: payload.pe_x_c1,
+                        pe_x_c2: payload.pe_x_c2,
                         proof,
                     },
                 );
@@ -729,37 +729,17 @@ mod tests {
             );
         }
 
-        // 4. Verify pe_x components are populated (not empty strings).
+        // 4. Verify pe_x components are populated (non-empty binary blobs).
         for ks in &key_shares {
-            let (a, b, c, d, e, f) = &ks.pe_x_components;
+            let (c1, c2) = &ks.pe_x_components;
             assert!(
-                !a.is_empty(),
-                "pe_x c1_a is empty for party {}",
+                !c1.is_empty(),
+                "pe_x c1 is empty for party {}",
                 ks.party_index
             );
             assert!(
-                !b.is_empty(),
-                "pe_x c1_b is empty for party {}",
-                ks.party_index
-            );
-            assert!(
-                !c.is_empty(),
-                "pe_x c1_c is empty for party {}",
-                ks.party_index
-            );
-            assert!(
-                !d.is_empty(),
-                "pe_x c2_a is empty for party {}",
-                ks.party_index
-            );
-            assert!(
-                !e.is_empty(),
-                "pe_x c2_b is empty for party {}",
-                ks.party_index
-            );
-            assert!(
-                !f.is_empty(),
-                "pe_x c2_c is empty for party {}",
+                !c2.is_empty(),
+                "pe_x c2 is empty for party {}",
                 ks.party_index
             );
         }

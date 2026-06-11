@@ -24,10 +24,13 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlvComProof {
     /// Commitment: d = prod y_i^{2^k * v_i} * h^{2^k * w} mod N
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d: Integer,
     /// Response for randomness: z_r = e*r + w
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r: Integer,
     /// Responses for each message: z_i = e*m_i + v_i
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     pub z_vec: Vec<Integer>,
 }
 

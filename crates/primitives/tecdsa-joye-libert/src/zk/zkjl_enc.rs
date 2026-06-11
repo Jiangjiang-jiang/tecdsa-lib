@@ -19,10 +19,13 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlEncProof {
     /// Commitment: `a = y^v * h^w mod N`
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub a: Integer,
     /// Response for the message: `z_m = v + e * m`
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_m: Integer,
     /// Response for the randomness: `z_r = w + e * r`
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r: Integer,
 }
 

@@ -41,7 +41,8 @@
 //!
 //! The state machine collects messages per round, transitions when all
 //! expected messages have arrived, and stores outgoing broadcasts.  CL
-//! types are serialized as decimal strings (QFI -> (a, b, c) triplets).
+//! types are serialized with the compact binary QFI codec
+//! (`Qfi::to_bytes` / `Qfi::from_bytes`).
 //!
 //! Reference: Tang & Xue. "Robust Threshold ECDSA." S&P 2025, Section 4.
 
@@ -49,45 +50,23 @@ pub mod machine;
 pub mod msg;
 pub mod rounds;
 
-use std::str::FromStr;
-
 use elliptic_curve::group::GroupEncoding;
 pub use machine::Tx25KeygenMachine;
 pub use msg::Tx25KeygenMsg;
 use tecdsa_class_group::{
-    cl::{Mpz, Qfi},
+    cl::Qfi,
     zk::{r_dec_dl::RDecDlProof, r_key::RKeyProof, r_sh::RShProof},
 };
 
 use crate::{error::Tx25Error, pvss::PvssOutput};
 
 // ---------------------------------------------------------------------------
-// QFI serialization helpers
-// ---------------------------------------------------------------------------
-
-/// Extracts (a, b, c) decimal strings from a QFI element.
-fn qfi_to_abc(qfi: &Qfi) -> Result<(String, String, String), Tx25Error> {
-    let a = qfi.a().to_string();
-    let b = qfi.b().to_string();
-    let c = qfi.c().to_string();
-    Ok((a, b, c))
-}
-
-/// Reconstructs a QFI element from (a, b, c) decimal strings.
-fn abc_to_qfi((a, b, c): &(String, String, String)) -> Result<Qfi, Tx25Error> {
-    Ok(Qfi::from_abc(
-        Mpz::from_str(a).map_err(|e| Tx25Error::ClError(e.into()))?,
-        Mpz::from_str(b).map_err(|e| Tx25Error::ClError(e.into()))?,
-        Mpz::from_str(c).map_err(|e| Tx25Error::ClError(e.into()))?,
-    ))
-}
-
-// ---------------------------------------------------------------------------
 // Wire-format serialization / deserialization
 //
 // Messages are serialized as length-prefixed fields:
 //   [4-byte LE length][field bytes]
-// QFI elements are stored as three consecutive length-prefixed decimal strings.
+// QFI elements are stored as a single length-prefixed binary blob
+// (`Qfi::to_bytes`).
 // ---------------------------------------------------------------------------
 
 /// Writes a length-prefixed byte field to a buffer.
@@ -115,43 +94,27 @@ fn read_field(data: &[u8], pos: usize) -> Result<(&[u8], usize), Tx25Error> {
     Ok((&data[start..end], end))
 }
 
-/// Reads a length-prefixed UTF-8 string field.
-fn read_string_field(data: &[u8], pos: usize) -> Result<(String, usize), Tx25Error> {
+/// Writes a QFI as a single length-prefixed binary blob (`Qfi::to_bytes`).
+fn write_qfi_bin(buf: &mut Vec<u8>, qfi: &Qfi) {
+    let bytes = qfi.to_bytes();
+    write_field(buf, &bytes);
+}
+
+/// Reads a QFI from a single length-prefixed binary blob (`Qfi::from_bytes`).
+fn read_qfi_bin(data: &[u8], pos: usize) -> Result<(Qfi, usize), Tx25Error> {
     let (bytes, new_pos) = read_field(data, pos)?;
-    let s = std::str::from_utf8(bytes)
-        .map_err(|e| Tx25Error::InvalidInput(format!("invalid UTF-8: {e}")))?
-        .to_string();
-    Ok((s, new_pos))
+    Ok((Qfi::from_bytes(bytes), new_pos))
 }
 
-/// Serializes a QFI's (a, b, c) decimal strings.
-fn write_qfi_abc(buf: &mut Vec<u8>, abc: &(String, String, String)) {
-    write_field(buf, abc.0.as_bytes());
-    write_field(buf, abc.1.as_bytes());
-    write_field(buf, abc.2.as_bytes());
-}
-
-/// Deserializes a QFI's (a, b, c) decimal strings.
-fn read_qfi_abc(data: &[u8], pos: usize) -> Result<((String, String, String), usize), Tx25Error> {
-    let (a, pos) = read_string_field(data, pos)?;
-    let (b, pos) = read_string_field(data, pos)?;
-    let (c, pos) = read_string_field(data, pos)?;
-    Ok(((a, b, c), pos))
-}
-
-/// Serializes a Round 1 message: pk_abc + R_key proof (t_abc, z, e).
-fn serialize_round1(
-    pk_abc: &(String, String, String),
-    proof: &RKeyProof,
-) -> Result<Vec<u8>, Tx25Error> {
+/// Serializes a Round 1 message: pk + R_key proof (t, z, e).
+fn serialize_round1(pk: &Qfi, proof: &RKeyProof) -> Result<Vec<u8>, Tx25Error> {
     let mut buf = Vec::new();
 
-    // CL public key (a, b, c).
-    write_qfi_abc(&mut buf, pk_abc);
+    // CL public key.
+    write_qfi_bin(&mut buf, pk);
 
-    // R_key proof: t (QFI abc), z (string), e (string).
-    let t_abc = qfi_to_abc(&proof.t)?;
-    write_qfi_abc(&mut buf, &t_abc);
+    // R_key proof: t (QFI), z (bytes), e (bytes).
+    write_qfi_bin(&mut buf, &proof.t);
     write_field(&mut buf, &proof.z);
     write_field(&mut buf, &proof.e);
 
@@ -159,37 +122,34 @@ fn serialize_round1(
 }
 
 /// Deserializes a Round 1 message.
-fn deserialize_round1(data: &[u8]) -> Result<((String, String, String), RKeyProof), Tx25Error> {
-    let (pk_abc, pos) = read_qfi_abc(data, 0)?;
-    let (t_abc, pos) = read_qfi_abc(data, pos)?;
+fn deserialize_round1(data: &[u8]) -> Result<(Qfi, RKeyProof), Tx25Error> {
+    let (pk, pos) = read_qfi_bin(data, 0)?;
+    let (t, pos) = read_qfi_bin(data, pos)?;
     let (z_bytes, pos) = read_field(data, pos)?;
     let (e_bytes, _pos) = read_field(data, pos)?;
 
-    let t = abc_to_qfi(&t_abc)?;
     let proof = RKeyProof {
         t,
         z: z_bytes.to_vec(),
         e: e_bytes.to_vec(),
     };
 
-    Ok((pk_abc, proof))
+    Ok((pk, proof))
 }
 
-/// Serializes a Round 2 message: c1_abc + n * c2_abc + R_Sh proof (k, rho_response).
+/// Serializes a Round 2 message: c1 + n * c2 + R_Sh proof (k, rho_response).
 fn serialize_round2(pvss: &PvssOutput) -> Result<Vec<u8>, Tx25Error> {
     let mut buf = Vec::new();
 
     // Number of c2 elements.
     buf.extend_from_slice(&(pvss.c2s.len() as u32).to_le_bytes());
 
-    // c1 (QFI abc).
-    let c1_abc = qfi_to_abc(&pvss.c1)?;
-    write_qfi_abc(&mut buf, &c1_abc);
+    // c1 (QFI).
+    write_qfi_bin(&mut buf, &pvss.c1);
 
-    // c2s (each as QFI abc).
+    // c2s (each as QFI).
     for c2 in &pvss.c2s {
-        let c2_abc = qfi_to_abc(c2)?;
-        write_qfi_abc(&mut buf, &c2_abc);
+        write_qfi_bin(&mut buf, c2);
     }
 
     // R_Sh proof: k (bytes), rho_response (bytes).
@@ -212,16 +172,15 @@ fn deserialize_round2(data: &[u8]) -> Result<(Qfi, Vec<Qfi>, RShProof), Tx25Erro
     let mut pos = 4;
 
     // c1.
-    let (c1_abc, new_pos) = read_qfi_abc(data, pos)?;
+    let (c1, new_pos) = read_qfi_bin(data, pos)?;
     pos = new_pos;
-    let c1 = abc_to_qfi(&c1_abc)?;
 
     // c2s.
     let mut c2s = Vec::with_capacity(n);
     for _ in 0..n {
-        let (c2_abc, new_pos) = read_qfi_abc(data, pos)?;
+        let (c2, new_pos) = read_qfi_bin(data, pos)?;
         pos = new_pos;
-        c2s.push(abc_to_qfi(&c2_abc)?);
+        c2s.push(c2);
     }
 
     // R_Sh proof.
@@ -237,7 +196,7 @@ fn deserialize_round2(data: &[u8]) -> Result<(Qfi, Vec<Qfi>, RShProof), Tx25Erro
     Ok((c1, c2s, proof))
 }
 
-/// Serializes a Round 3 message: X_i bytes + pd (QFI abc) + R_Dec_DL proof.
+/// Serializes a Round 3 message: X_i bytes + pd (QFI) + R_Dec_DL proof.
 fn serialize_round3(
     public_share_bytes: &[u8],
     pd: &Qfi,
@@ -248,15 +207,12 @@ fn serialize_round3(
     // Public share (compressed EC point).
     write_field(&mut buf, public_share_bytes);
 
-    // Partial decryption pd = c1^{sk} (QFI abc).
-    let pd_abc = qfi_to_abc(pd)?;
-    write_qfi_abc(&mut buf, &pd_abc);
+    // Partial decryption pd = c1^{sk} (QFI).
+    write_qfi_bin(&mut buf, pd);
 
-    // R_Dec_DL proof: t1 (QFI abc), t2 (QFI abc), z (string), e (string).
-    let t1_abc = qfi_to_abc(&proof.t1)?;
-    let t2_abc = qfi_to_abc(&proof.t2)?;
-    write_qfi_abc(&mut buf, &t1_abc);
-    write_qfi_abc(&mut buf, &t2_abc);
+    // R_Dec_DL proof: t1 (QFI), t2 (QFI), z (bytes), e (bytes).
+    write_qfi_bin(&mut buf, &proof.t1);
+    write_qfi_bin(&mut buf, &proof.t2);
     write_field(&mut buf, &proof.z);
     write_field(&mut buf, &proof.e);
 
@@ -273,18 +229,15 @@ fn deserialize_round3(data: &[u8]) -> Result<(k256::ProjectivePoint, RDecDlProof
     let point: k256::ProjectivePoint = Option::from(k256::ProjectivePoint::from_bytes(&repr))
         .ok_or_else(|| Tx25Error::InvalidInput("invalid EC point".into()))?;
 
-    // Partial decryption pd (QFI abc).
-    let (pd_abc, pos) = read_qfi_abc(data, pos)?;
-    let pd = abc_to_qfi(&pd_abc)?;
+    // Partial decryption pd (QFI).
+    let (pd, pos) = read_qfi_bin(data, pos)?;
 
     // R_Dec_DL proof.
-    let (t1_abc, pos) = read_qfi_abc(data, pos)?;
-    let (t2_abc, pos) = read_qfi_abc(data, pos)?;
+    let (t1, pos) = read_qfi_bin(data, pos)?;
+    let (t2, pos) = read_qfi_bin(data, pos)?;
     let (z_bytes, pos) = read_field(data, pos)?;
     let (e_bytes, _) = read_field(data, pos)?;
 
-    let t1 = abc_to_qfi(&t1_abc)?;
-    let t2 = abc_to_qfi(&t2_abc)?;
     let proof = RDecDlProof {
         t1,
         t2,

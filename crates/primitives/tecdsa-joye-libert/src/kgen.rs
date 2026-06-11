@@ -21,10 +21,13 @@ use zeroize::Zeroize;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JlPublicKey {
     /// Modulus N = p * q.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub n: Integer,
     /// Generator y = x^alpha mod N, used for encoding messages.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub y: Integer,
     /// Element h = x^{2^k} mod N, used for randomisation.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub h: Integer,
     /// Parameter k: plaintexts live in Z_{2^k}.
     pub k: u32,
@@ -34,9 +37,12 @@ pub struct JlPublicKey {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct JlSecretKey {
     /// Prime factor p of N, where p = 2^k * p' + 1.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub p: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub y_to_neg_pp: Integer,
     /// Discrete log alpha such that y = x^alpha mod N.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub alpha: Integer,
 }
 

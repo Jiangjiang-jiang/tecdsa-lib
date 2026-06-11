@@ -24,47 +24,23 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
-    cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup},
+    cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup, Qfi},
     zk::{r_cl_dl_ec::RClDlEcProof, r_ped_ec::RPedEcProof},
 };
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{presign_round1, verify_presign_message, PresignMessage, PresignState};
-use crate::{
-    error::{qfi_from_abc, qfi_to_abc, Llz25Error},
-    key_share::Llz25KeyShare,
-};
+use crate::{error::Llz25Error, key_share::Llz25KeyShare};
 
 // ---------------------------------------------------------------------------
-// Serialized QFI (a, b, c) for wire messages
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SerQfi {
-    a: String,
-    b: String,
-    c: String,
-}
-
-impl SerQfi {
-    fn from_abc(abc: &(String, String, String)) -> Self {
-        Self {
-            a: abc.0.clone(),
-            b: abc.1.clone(),
-            c: abc.2.clone(),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Serialized proofs
+// Serialized proofs (QFI elements as compact binary `Qfi::to_bytes`)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerRClDlEcProof {
-    t1: SerQfi,
-    t2: SerQfi,
+    t1: Vec<u8>,
+    t2: Vec<u8>,
     v_tilde_bytes: Vec<u8>,
     u1: Vec<u8>,
     u2: Vec<u8>,
@@ -74,14 +50,8 @@ struct SerRClDlEcProof {
 impl SerRClDlEcProof {
     fn from_proof(proof: &RClDlEcProof) -> Result<Self, String> {
         Ok(Self {
-            t1: {
-                let abc = qfi_to_abc(&proof.t1).map_err(|e| format!("{e}"))?;
-                SerQfi::from_abc(&abc)
-            },
-            t2: {
-                let abc = qfi_to_abc(&proof.t2).map_err(|e| format!("{e}"))?;
-                SerQfi::from_abc(&abc)
-            },
+            t1: proof.t1.to_bytes(),
+            t2: proof.t2.to_bytes(),
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
             u1: proof.u1.clone(),
             u2: proof.u2.clone(),
@@ -91,8 +61,8 @@ impl SerRClDlEcProof {
 
     fn to_proof(&self) -> Result<RClDlEcProof, String> {
         Ok(RClDlEcProof {
-            t1: qfi_from_abc(&self.t1.a, &self.t1.b, &self.t1.c).map_err(|e| format!("{e}"))?,
-            t2: qfi_from_abc(&self.t2.a, &self.t2.b, &self.t2.c).map_err(|e| format!("{e}"))?,
+            t1: Qfi::from_bytes(&self.t1),
+            t2: Qfi::from_bytes(&self.t2),
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             u1: self.u1.clone(),
             u2: self.u2.clone(),
@@ -103,7 +73,7 @@ impl SerRClDlEcProof {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerRPedEcProof {
-    c_tilde: SerQfi,
+    c_tilde: Vec<u8>,
     v_tilde_bytes: Vec<u8>,
     s_r: Vec<u8>,
     s_v: Vec<u8>,
@@ -113,10 +83,7 @@ struct SerRPedEcProof {
 impl SerRPedEcProof {
     fn from_proof(proof: &RPedEcProof) -> Result<Self, String> {
         Ok(Self {
-            c_tilde: {
-                let abc = qfi_to_abc(&proof.c_tilde).map_err(|e| format!("{e}"))?;
-                SerQfi::from_abc(&abc)
-            },
+            c_tilde: proof.c_tilde.to_bytes(),
             v_tilde_bytes: proof.v_tilde_bytes.clone(),
             s_r: proof.s_r.clone(),
             s_v: proof.s_v.clone(),
@@ -126,8 +93,7 @@ impl SerRPedEcProof {
 
     fn to_proof(&self) -> Result<RPedEcProof, String> {
         Ok(RPedEcProof {
-            c_tilde: qfi_from_abc(&self.c_tilde.a, &self.c_tilde.b, &self.c_tilde.c)
-                .map_err(|e| format!("{e}"))?,
+            c_tilde: Qfi::from_bytes(&self.c_tilde),
             v_tilde_bytes: self.v_tilde_bytes.clone(),
             s_r: self.s_r.clone(),
             s_v: self.s_v.clone(),
@@ -142,8 +108,8 @@ impl SerRPedEcProof {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerCiphertext {
-    c1: SerQfi,
-    c2: SerQfi,
+    c1: Vec<u8>,
+    c2: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -164,10 +130,10 @@ struct R1Payload {
     big_k_bytes: Vec<u8>,
     /// Gamma_i = gamma_i * G (compressed point bytes).
     big_gamma_bytes: Vec<u8>,
-    /// pe_k ciphertext (c1, c2) as QFI components.
+    /// pe_k ciphertext (c1, c2) as compact binary QFI encodings.
     pe_k: SerCiphertext,
-    /// pe_gamma commitment (single QFI).
-    pe_gamma: SerQfi,
+    /// pe_gamma commitment (single QFI, compact binary encoding).
+    pe_gamma: Vec<u8>,
     /// R_{CL-DL-EC} proof for (pe_k, K_i).
     proof_cl: SerRClDlEcProof,
     /// R_{Ped-EC} proof for (pe_gamma, Gamma_i).
@@ -198,8 +164,8 @@ pub struct Llz25Presignature {
     /// This party's 0-based position in the quorum.
     pub my_pos: usize,
     /// pe_x ciphertext components for each quorum party, needed for sign phase.
-    /// Each entry is (c1_a, c1_b, c1_c, c2_a, c2_b, c2_c).
-    pub pe_x_components: Vec<(String, String, String, String, String, String)>,
+    /// Each entry is (c1, c2) as compact binary QFI encodings.
+    pub pe_x_components: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 impl std::fmt::Debug for Llz25Presignature {
@@ -290,10 +256,10 @@ impl Llz25PresignMachine {
         let (pe_k_c1, pe_k_c2) = setup
             .ct_components(&my_message.pe_k)
             .map_err(|e| Llz25Error::ClassGroup(format!("ct_components: {e}")))?;
-        let pe_k_c1_abc = qfi_to_abc(&pe_k_c1)?;
-        let pe_k_c2_abc = qfi_to_abc(&pe_k_c2)?;
+        let pe_k_c1_bytes = pe_k_c1.to_bytes();
+        let pe_k_c2_bytes = pe_k_c2.to_bytes();
 
-        let pe_gamma_abc = qfi_to_abc(&my_message.pe_gamma)?;
+        let pe_gamma_bytes = my_message.pe_gamma.to_bytes();
 
         let proof_cl_ser = SerRClDlEcProof::from_proof(&my_message.proof_cl)
             .map_err(|e| Llz25Error::Protocol(format!("serialize proof_cl: {e}")))?;
@@ -304,10 +270,10 @@ impl Llz25PresignMachine {
             big_k_bytes,
             big_gamma_bytes,
             pe_k: SerCiphertext {
-                c1: SerQfi::from_abc(&pe_k_c1_abc),
-                c2: SerQfi::from_abc(&pe_k_c2_abc),
+                c1: pe_k_c1_bytes,
+                c2: pe_k_c2_bytes,
             },
-            pe_gamma: SerQfi::from_abc(&pe_gamma_abc),
+            pe_gamma: pe_gamma_bytes,
             proof_cl: proof_cl_ser,
             proof_ped: proof_ped_ser,
         };
@@ -355,22 +321,15 @@ impl Llz25PresignMachine {
         let big_gamma = point_from_bytes(&payload.big_gamma_bytes)?;
 
         // Deserialize pe_k ciphertext.
-        let pe_k_c1 = qfi_from_abc(&payload.pe_k.c1.a, &payload.pe_k.c1.b, &payload.pe_k.c1.c)
-            .map_err(|e| TecdsaError::Other(format!("pe_k c1: {e}")))?;
-        let pe_k_c2 = qfi_from_abc(&payload.pe_k.c2.a, &payload.pe_k.c2.b, &payload.pe_k.c2.c)
-            .map_err(|e| TecdsaError::Other(format!("pe_k c2: {e}")))?;
+        let pe_k_c1 = Qfi::from_bytes(&payload.pe_k.c1);
+        let pe_k_c2 = Qfi::from_bytes(&payload.pe_k.c2);
         let pe_k = self
             .setup
             .ct_from_components(&pe_k_c1, &pe_k_c2)
             .map_err(|e| TecdsaError::Other(format!("pe_k ct: {e}")))?;
 
         // Deserialize pe_gamma QFI.
-        let pe_gamma = qfi_from_abc(
-            &payload.pe_gamma.a,
-            &payload.pe_gamma.b,
-            &payload.pe_gamma.c,
-        )
-        .map_err(|e| TecdsaError::Other(format!("pe_gamma: {e}")))?;
+        let pe_gamma = Qfi::from_bytes(&payload.pe_gamma);
 
         // Deserialize proofs.
         let proof_cl = payload
@@ -413,7 +372,7 @@ impl Llz25PresignMachine {
             state.received.into_values().map(|r| r.message).collect();
 
         // Collect pe_x components for the quorum parties.
-        let pe_x_components: Vec<(String, String, String, String, String, String)> = self
+        let pe_x_components: Vec<(Vec<u8>, Vec<u8>)> = self
             .quorum_indices
             .iter()
             .map(|&idx| {

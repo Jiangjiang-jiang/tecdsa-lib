@@ -138,11 +138,9 @@ impl Llz25SignMachine {
         let pe_x_list: Vec<_> = presignature
             .pe_x_components
             .iter()
-            .map(|(c1a, c1b, c1c, c2a, c2b, c2c)| {
-                let c1 = crate::error::qfi_from_abc(c1a, c1b, c1c)
-                    .map_err(|e| Llz25Error::ClassGroup(format!("pe_x c1: {e}")))?;
-                let c2 = crate::error::qfi_from_abc(c2a, c2b, c2c)
-                    .map_err(|e| Llz25Error::ClassGroup(format!("pe_x c2: {e}")))?;
+            .map(|(c1_bytes, c2_bytes)| {
+                let c1 = tecdsa_class_group::cl::Qfi::from_bytes(c1_bytes);
+                let c2 = tecdsa_class_group::cl::Qfi::from_bytes(c2_bytes);
                 setup
                     .ct_from_components(&c1, &c2)
                     .map_err(|e| Llz25Error::ClassGroup(format!("pe_x ct: {e}")))

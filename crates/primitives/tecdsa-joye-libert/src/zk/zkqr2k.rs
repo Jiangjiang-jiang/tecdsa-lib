@@ -27,14 +27,18 @@ const REPEAT: usize = 80;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkQr2kProof {
     /// Public: the element `h` being proven to be a QR_{2^k}
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub h: Integer,
     /// Public: modulus N
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub n: Integer,
     /// Public: parameter k
     pub k: u32,
     /// Commitment values: a_i = r_i^{2^k} mod N
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     a_vec: Vec<Integer>,
     /// Response values: z_i = r_i * x^{e_i} (plain product, not reduced)
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     z_vec: Vec<Integer>,
 }
 

@@ -11,7 +11,7 @@ use tecdsa_class_group::{
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, PartyId, Recipient};
 
-use super::{abc_to_qfi, msg::Tx25KeygenMsg, qfi_to_abc, serialize_round2, serialize_round3};
+use super::{msg::Tx25KeygenMsg, serialize_round2, serialize_round3};
 use crate::{
     key_share::Tx25KeyShare,
     pvss::{pvss_decrypt_share, pvss_distribute, PvssOutput},
@@ -29,7 +29,7 @@ pub(crate) struct Round1State {
     pub(crate) cl_sk_raw: ClSecretKey,
     pub(crate) cl_pk_raw: ClPublicKey,
     pub(crate) cl_sk_decimal: Vec<u8>,
-    pub(crate) cl_pk_abc: (String, String, String),
+    pub(crate) cl_pk_qfi: Qfi,
     pub(crate) received: BTreeMap<PartyId, Round1Msg>,
     pub(crate) outgoing: Vec<Outgoing<Tx25KeygenMsg>>,
     pub(crate) cl_setup_seed: String,
@@ -38,7 +38,7 @@ pub(crate) struct Round1State {
 
 /// Deserialized Round 1 message from a peer.
 pub(crate) struct Round1Msg {
-    pub(crate) cl_pk_abc: (String, String, String),
+    pub(crate) cl_pk_qfi: Qfi,
 }
 
 /// Round 2 state: after distributing PVSS shares.
@@ -49,8 +49,8 @@ pub(crate) struct Round2State {
     pub(crate) cl_sk_raw: ClSecretKey,
     pub(crate) cl_pk_raw: ClPublicKey,
     pub(crate) cl_sk_decimal: Vec<u8>,
-    /// All parties' PK abcs in party order (including self).
-    pub(crate) cl_pk_abcs: BTreeMap<PartyId, (String, String, String)>,
+    /// All parties' PK elements in party order (including self).
+    pub(crate) cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     pub(crate) my_pvss: PvssOutput,
     pub(crate) received: BTreeMap<PartyId, Round2Msg>,
     pub(crate) outgoing: Vec<Outgoing<Tx25KeygenMsg>>,
@@ -78,9 +78,9 @@ pub(crate) struct Round3State {
     pub(crate) cl_sk: ClSecretKey,
     pub(crate) cl_pks: Vec<ClPublicKey>,
     /// Per-party PVSS c1 values from Round 2 (needed for R_Dec_DL verification).
-    pub(crate) pvss_c1_abcs: BTreeMap<PartyId, (String, String, String)>,
-    /// Per-party CL public key abcs (needed for R_Dec_DL verification).
-    pub(crate) cl_pk_abcs: BTreeMap<PartyId, (String, String, String)>,
+    pub(crate) pvss_c1_qfis: BTreeMap<PartyId, Qfi>,
+    /// Per-party CL public key elements (needed for R_Dec_DL verification).
+    pub(crate) cl_pk_qfis: BTreeMap<PartyId, Qfi>,
 }
 
 /// Deserialized Round 3 message from a peer.
@@ -117,8 +117,8 @@ pub(crate) fn transition_r1_to_r2(
         .position(|p| *p == my_id)
         .expect("my_id must be in all_parties");
 
-    // Collect all CL public keys and abcs in party order.
-    let mut cl_pk_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
+    // Collect all CL public keys and elements in party order.
+    let mut cl_pk_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
     let mut ordered_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
 
     for pid in &state.all_parties {
@@ -129,19 +129,16 @@ pub(crate) fn transition_r1_to_r2(
                 .pk_from_qfi(pk_elt)
                 .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
             ordered_pks.push(pk_clone);
-            cl_pk_abcs.insert(*pid, state.cl_pk_abc.clone());
+            cl_pk_qfis.insert(*pid, state.cl_pk_qfi.clone());
         } else {
             let r1_msg = state.received.get(pid).ok_or_else(|| {
                 TecdsaError::Other(format!("missing R1 message from party {pid}"))
             })?;
-            // Clone the peer's PK by re-reconstructing from abc.
-            let qfi = abc_to_qfi(&r1_msg.cl_pk_abc)
-                .map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
             let pk = setup
-                .pk_from_qfi(&qfi)
+                .pk_from_qfi(&r1_msg.cl_pk_qfi)
                 .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
             ordered_pks.push(pk);
-            cl_pk_abcs.insert(*pid, r1_msg.cl_pk_abc.clone());
+            cl_pk_qfis.insert(*pid, r1_msg.cl_pk_qfi.clone());
         }
     }
 
@@ -187,7 +184,7 @@ pub(crate) fn transition_r1_to_r2(
         cl_sk_raw: state.cl_sk_raw,
         cl_pk_raw: my_pk_clone,
         cl_sk_decimal: state.cl_sk_decimal,
-        cl_pk_abcs,
+        cl_pk_qfis,
         my_pvss: pvss_output,
         received: BTreeMap::new(),
         outgoing,
@@ -276,32 +273,27 @@ pub(crate) fn transition_r2_to_r3(
         .sk_from_bytes(&state.cl_sk_decimal)
         .map_err(|e| TecdsaError::Other(format!("sk_from_decimal: {e}")))?;
 
-    // Reconstruct all CL public keys from stored abcs.
+    // Reconstruct all CL public keys from stored elements.
     let mut cl_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
     for pid in &state.all_parties {
-        let abc = state
-            .cl_pk_abcs
+        let qfi = state
+            .cl_pk_qfis
             .get(pid)
-            .ok_or_else(|| TecdsaError::Other(format!("missing pk abc for party {pid}")))?;
-        let qfi = abc_to_qfi(abc).map_err(|e| TecdsaError::Other(format!("abc_to_qfi: {e}")))?;
+            .ok_or_else(|| TecdsaError::Other(format!("missing pk qfi for party {pid}")))?;
         let pk_raw = setup
-            .pk_from_qfi(&qfi)
+            .pk_from_qfi(qfi)
             .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
         cl_pks.push(pk_raw);
     }
 
-    // Carry forward per-party PVSS c1 values (as abc strings) for
-    // R_Dec_DL verification in Round 3.
-    let mut pvss_c1_abcs: BTreeMap<PartyId, (String, String, String)> = BTreeMap::new();
+    // Carry forward per-party PVSS c1 values for R_Dec_DL verification in
+    // Round 3.
+    let mut pvss_c1_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
     // Our own PVSS c1.
-    let own_c1_abc = qfi_to_abc(&state.my_pvss.c1)
-        .map_err(|e| TecdsaError::Other(format!("qfi_to_abc own c1: {e}")))?;
-    pvss_c1_abcs.insert(my_id, own_c1_abc);
+    pvss_c1_qfis.insert(my_id, state.my_pvss.c1.clone());
     // Other parties' PVSS c1 values.
     for (pid, r2_msg) in &state.received {
-        let c1_abc = qfi_to_abc(&r2_msg.c1)
-            .map_err(|e| TecdsaError::Other(format!("qfi_to_abc c1 from {pid}: {e}")))?;
-        pvss_c1_abcs.insert(*pid, c1_abc);
+        pvss_c1_qfis.insert(*pid, r2_msg.c1.clone());
     }
 
     Ok(Round3State {
@@ -316,8 +308,8 @@ pub(crate) fn transition_r2_to_r3(
         use_128bit_security: state.use_128bit_security,
         cl_sk,
         cl_pks,
-        pvss_c1_abcs,
-        cl_pk_abcs: state.cl_pk_abcs,
+        pvss_c1_qfis,
+        cl_pk_qfis: state.cl_pk_qfis,
     })
 }
 

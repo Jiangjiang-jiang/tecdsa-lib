@@ -23,14 +23,19 @@ use crate::kgen::JlPublicKey;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlvEquProof {
     /// Commitment under pk: d
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d: Integer,
     /// Commitments under pk0: d'_i
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     pub d_prime_vec: Vec<Integer>,
     /// Response for each message: z_m_i = e*m_i + v_i
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     pub z_m_vec: Vec<Integer>,
     /// Response for randomness under pk: z_r = e*r + w
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r: Integer,
     /// Responses for randomness under pk0: z_r0_i = e*r0_i + w0_i
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     pub z_r0_vec: Vec<Integer>,
 }
 

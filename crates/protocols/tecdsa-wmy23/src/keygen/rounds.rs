@@ -16,14 +16,12 @@
 
 #![allow(non_snake_case)]
 
-use std::str::FromStr;
-
 use elliptic_curve::{group::GroupEncoding, ops::Reduce, CurveArithmetic, PrimeField};
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_class_group::{
-    cl::{ClCiphertext, ClPublicKey, ClSecretKey, ClSetup, Mpz, Qfi},
+    cl::{ClCiphertext, ClPublicKey, ClSecretKey, ClSetup, Qfi},
     drg::{drg_comb, drg_gen, drg_gen_verify, DrgGenOutput, PedersenVssShare},
     zk::{r_enc_pc::REncPcProof, r_key::RKeyProof},
 };
@@ -51,17 +49,6 @@ fn read_var<'a>(data: &'a [u8], pos: &mut usize) -> Result<&'a [u8], String> {
     let result = &data[*pos..*pos + len];
     *pos += len;
     Ok(result)
-}
-
-fn write_string(buf: &mut Vec<u8>, s: &str) {
-    write_var(buf, s.as_bytes());
-}
-
-fn read_string(data: &[u8], pos: &mut usize) -> Result<String, String> {
-    let bytes = read_var(data, pos)?;
-    std::str::from_utf8(bytes)
-        .map(|s| s.to_string())
-        .map_err(|e| format!("invalid UTF-8: {e}"))
 }
 
 fn write_qfi(buf: &mut Vec<u8>, q: &Qfi) {
@@ -293,7 +280,8 @@ pub struct KeygenR1State {
     pub n: u16,
     pub threshold: u16,
     pub cl_sk: Option<ClSecretKey>,
-    pub cl_pk_abc: (String, String, String),
+    /// This party's CL public key element, serialised via `Qfi::to_bytes`.
+    pub cl_pk_bytes: Vec<u8>,
     pub sk_bytes: Vec<u8>,
     pub drg_gen: DrgGenOutput,
     pub r_key_proof: RKeyProof,
@@ -327,7 +315,7 @@ pub struct KeygenR1Bcast {
 /// Build the commitment message from all R2 broadcast content.
 fn commitment_message(
     pedersen_commitments: &[Vec<u8>],
-    cl_pk_abc: &(String, String, String),
+    cl_pk_bytes: &[u8],
     r_key_data: &[u8],
     ct_data: &[u8],
     enc_pc_data: &[u8],
@@ -338,9 +326,7 @@ fn commitment_message(
     for c in pedersen_commitments {
         write_var(&mut msg, c);
     }
-    write_string(&mut msg, &cl_pk_abc.0);
-    write_string(&mut msg, &cl_pk_abc.1);
-    write_string(&mut msg, &cl_pk_abc.2);
+    write_var(&mut msg, cl_pk_bytes);
     write_var(&mut msg, r_key_data);
     write_var(&mut msg, ct_data);
     write_var(&mut msg, enc_pc_data);
@@ -369,12 +355,7 @@ pub fn keygen_round1(
     let sk_bytes = setup.sk_to_bytes(&cl_sk)?;
     let r_key_proof = RKeyProof::prove(setup, &cl_pk, &sk_bytes)?;
 
-    let pk_qfi = cl_pk.elt();
-    let cl_pk_abc = (
-        pk_qfi.a().to_string(),
-        pk_qfi.b().to_string(),
-        pk_qfi.c().to_string(),
-    );
+    let cl_pk_bytes = cl_pk.elt().to_bytes();
 
     // Phase 2a: DRG.Gen (Pedersen VSS + CL encrypt + R_Enc-PC)
     let drg_gen = drg_gen(setup, &cl_pk, threshold, n, rng)?;
@@ -387,7 +368,7 @@ pub fn keygen_round1(
 
     let msg = commitment_message(
         &pc_com_bytes,
-        &cl_pk_abc,
+        &cl_pk_bytes,
         &r_key_data,
         &ct_data,
         &enc_pc_data,
@@ -407,7 +388,7 @@ pub fn keygen_round1(
         n,
         threshold,
         cl_sk: Some(cl_sk),
-        cl_pk_abc,
+        cl_pk_bytes,
         sk_bytes,
         drg_gen,
         r_key_proof,
@@ -429,7 +410,8 @@ pub fn keygen_round1(
 pub struct KeygenR2Bcast {
     pub nonce: [u8; 32],
     pub pedersen_commitments: Vec<Vec<u8>>,
-    pub cl_pk_abc: (String, String, String),
+    /// CL public key element, serialised via `Qfi::to_bytes`.
+    pub cl_pk_bytes: Vec<u8>,
     pub r_key_data: Vec<u8>,
     pub ct_data: Vec<u8>,
     pub enc_pc_data: Vec<u8>,
@@ -452,7 +434,7 @@ pub fn keygen_round2_bcast(state: &KeygenR1State, setup: &ClSetup) -> KeygenR2Bc
     KeygenR2Bcast {
         nonce: state.nonce,
         pedersen_commitments,
-        cl_pk_abc: state.cl_pk_abc.clone(),
+        cl_pk_bytes: state.cl_pk_bytes.clone(),
         r_key_data,
         ct_data,
         enc_pc_data,
@@ -474,7 +456,7 @@ pub fn keygen_round2_share(
 pub fn serialize_r2(r2: &KeygenR2Bcast) -> Vec<u8> {
     let msg_data = commitment_message(
         &r2.pedersen_commitments,
-        &r2.cl_pk_abc,
+        &r2.cl_pk_bytes,
         &r2.r_key_data,
         &r2.ct_data,
         &r2.enc_pc_data,
@@ -508,9 +490,7 @@ pub fn deserialize_r2(data: &[u8]) -> Result<KeygenR2Bcast, String> {
         pedersen_commitments.push(read_var(data, &mut pos)?.to_vec());
     }
 
-    let a = read_string(data, &mut pos)?;
-    let b = read_string(data, &mut pos)?;
-    let c = read_string(data, &mut pos)?;
+    let cl_pk_bytes = read_var(data, &mut pos)?.to_vec();
     let r_key_data = read_var(data, &mut pos)?.to_vec();
     let ct_data = read_var(data, &mut pos)?.to_vec();
     let enc_pc_data = read_var(data, &mut pos)?.to_vec();
@@ -523,7 +503,7 @@ pub fn deserialize_r2(data: &[u8]) -> Result<KeygenR2Bcast, String> {
     Ok(KeygenR2Bcast {
         nonce,
         pedersen_commitments,
-        cl_pk_abc: (a, b, c),
+        cl_pk_bytes,
         r_key_data,
         ct_data,
         enc_pc_data,
@@ -535,7 +515,8 @@ pub fn deserialize_r2(data: &[u8]) -> Result<KeygenR2Bcast, String> {
 #[derive(Clone)]
 pub struct VerifiedR2 {
     pub commitments: Vec<k256::ProjectivePoint>,
-    pub cl_pk_abc: (String, String, String),
+    /// CL public key element, serialised via `Qfi::to_bytes`.
+    pub cl_pk_bytes: Vec<u8>,
 }
 
 /// Verify an R2 broadcast: commitment, R_Key, R_Enc-PC, Pedersen VSS.
@@ -548,7 +529,7 @@ pub fn verify_r2(
     // 1. Verify commitment opening
     let msg = commitment_message(
         &r2.pedersen_commitments,
-        &r2.cl_pk_abc,
+        &r2.cl_pk_bytes,
         &r2.r_key_data,
         &r2.ct_data,
         &r2.enc_pc_data,
@@ -572,7 +553,7 @@ pub fn verify_r2(
         .collect::<Result<_, _>>()?;
 
     // 3. Reconstruct CL public key
-    let cl_pk = reconstruct_cl_pk(setup, &r2.cl_pk_abc)?;
+    let cl_pk = reconstruct_cl_pk(setup, &r2.cl_pk_bytes)?;
 
     // 4. Verify R_Key proof
     let r_key_proof = deserialize_r_key_proof(&r2.r_key_data)?;
@@ -604,7 +585,7 @@ pub fn verify_r2(
 
     Ok(VerifiedR2 {
         commitments,
-        cl_pk_abc: r2.cl_pk_abc.clone(),
+        cl_pk_bytes: r2.cl_pk_bytes.clone(),
     })
 }
 
@@ -631,12 +612,12 @@ pub struct KeygenR3Bcast {
 /// Run DRG.Comb + RevealExp with explicit shares and commitments.
 pub fn keygen_round3_with_shares(
     setup: &mut ClSetup,
-    cl_pk_abc: &(String, String, String),
+    cl_pk_bytes: &[u8],
     my_index_1based: u16,
     received_shares: &[(u16, PedersenVssShare)],
     all_commitments: &[(u16, Vec<k256::ProjectivePoint>)],
 ) -> Result<(KeygenR3State, KeygenR3Bcast), Box<dyn std::error::Error>> {
-    let cl_pk = reconstruct_cl_pk(setup, cl_pk_abc)?;
+    let cl_pk = reconstruct_cl_pk(setup, cl_pk_bytes)?;
 
     // DRG.Comb: combine shares + CL encrypt + R_Enc-PC proof
     let comb = drg_comb(
@@ -709,7 +690,7 @@ pub fn deserialize_r3(data: &[u8]) -> Result<KeygenR3Bcast, String> {
 /// Verify an R3 broadcast: CombVf + ExpVf.
 pub fn verify_r3(
     setup: &ClSetup,
-    sender_cl_pk_abc: &(String, String, String),
+    sender_cl_pk_bytes: &[u8],
     sender_index_1based: u16,
     all_commitments: &[(u16, Vec<k256::ProjectivePoint>)],
     r3: &KeygenR3Bcast,
@@ -732,7 +713,7 @@ pub fn verify_r3(
     }
 
     // 3. Verify combined R_Enc-PC proof
-    let cl_pk = reconstruct_cl_pk(setup, sender_cl_pk_abc)?;
+    let cl_pk = reconstruct_cl_pk(setup, sender_cl_pk_bytes)?;
     let mut ct_pos = 0;
     let combined_ct = deserialize_ciphertext(setup, &r3.combined_ct_data, &mut ct_pos)?;
     let combined_proof = deserialize_r_enc_pc_proof(&r3.combined_enc_pc_data)?;
@@ -766,7 +747,7 @@ pub fn keygen_finalize(
     r3_state: KeygenR3State,
     x_points: &[k256::ProjectivePoint],
     setup: &ClSetup,
-    all_cl_pk_abcs: &[(String, String, String)],
+    all_cl_pk_bytes: &[Vec<u8>],
 ) -> Result<Wmy23KeyShare, Box<dyn std::error::Error>> {
     let my_1based = (state.index + 1) as u16;
 
@@ -782,9 +763,9 @@ pub fn keygen_finalize(
     );
 
     // Reconstruct all CL public keys
-    let cl_pks: Vec<ClPublicKey> = all_cl_pk_abcs
+    let cl_pks: Vec<ClPublicKey> = all_cl_pk_bytes
         .iter()
-        .map(|abc| reconstruct_cl_pk(setup, abc))
+        .map(|bytes| reconstruct_cl_pk(setup, bytes))
         .collect::<Result<Vec<_>, _>>()?;
 
     let cl_sk = state.cl_sk.take().ok_or("CL secret key already taken")?;
@@ -812,14 +793,7 @@ pub fn keygen_finalize(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn reconstruct_cl_pk(
-    setup: &ClSetup,
-    (a, b, c): &(String, String, String),
-) -> Result<ClPublicKey, String> {
-    let qfi = Qfi::from_abc(
-        Mpz::from_str(a).map_err(|e| format!("Mpz parse a: {e}"))?,
-        Mpz::from_str(b).map_err(|e| format!("Mpz parse b: {e}"))?,
-        Mpz::from_str(c).map_err(|e| format!("Mpz parse c: {e}"))?,
-    );
+fn reconstruct_cl_pk(setup: &ClSetup, bytes: &[u8]) -> Result<ClPublicKey, String> {
+    let qfi = Qfi::from_bytes(bytes);
     ClPublicKey::from_qfi(setup.cl(), qfi).map_err(|e| format!("ClPublicKey: {e}"))
 }

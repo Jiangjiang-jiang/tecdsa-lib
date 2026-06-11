@@ -13,11 +13,13 @@ rand_core = { workspace = true }
 rand = { workspace = true }
 zeroize = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 subtle = { workspace = true }
 rug = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
+bincode = { workspace = true }
 
 [lints]
 workspace = true

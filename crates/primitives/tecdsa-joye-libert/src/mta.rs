@@ -34,6 +34,7 @@ use crate::{
 #[derive(Clone, Serialize, Deserialize)]
 pub struct JlMtaSender {
     /// The sender's multiplicative share.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     share: Integer,
 }
 
@@ -63,6 +64,7 @@ impl std::fmt::Debug for JlMtaSender {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct JlMtaReceiver {
     /// The receiver's multiplicative share.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     share: Integer,
 }
 
@@ -305,8 +307,10 @@ pub struct JlMtaSetup {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JlMtaSenderState {
     /// The encryption randomness (for potential proof construction).
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub nonce: Integer,
     /// The sender's plaintext (needed for affine proof verification context).
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub plaintext: Integer,
 }
 
