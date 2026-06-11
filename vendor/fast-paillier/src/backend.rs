@@ -182,9 +182,9 @@ pub fn sieve_generate_safe_primes(
             let mut p = q.clone();
             p <<= 1;
             p += 1; // p = 2q + 1
-            // Pocklington: `q = (p-1)/2` is a (probable) prime with `q > sqrt(p)`, and
-            // `gcd(2^2 - 1, p) = gcd(3, p) = 1` (3 is in the sieve), so a single base-2
-            // Fermat test is a primality *proof* for `p` given `q` is prime.
+                    // Pocklington: `q = (p-1)/2` is a (probable) prime with `q > sqrt(p)`, and
+                    // `gcd(2^2 - 1, p) = gcd(3, p) = 1` (3 is in the sieve), so a single base-2
+                    // Fermat test is a primality *proof* for `p` given `q` is prime.
             if p.mod_u(3) == 0 {
                 continue; // 3 | p => p composite (defensive; the sieve already drops these)
             }
@@ -247,6 +247,8 @@ impl quickcheck::Arbitrary for Sign {
 
 #[cfg(feature = "serde")]
 mod serialize {
+    use alloc::vec::Vec;
+    use crate::backend::Sign;
     /// Currently rug serializes the numbers into a format like
     /// ```json
     /// {
@@ -270,9 +272,8 @@ mod serialize {
                 where
                     S: serde::Serializer,
                 {
-                    let value = self.to_str_radix(16).into();
-                    let dict = DictFormat { radix: 16, value };
-                    dict.serialize(serializer)
+                    let (bytes, sign) = self.to_bytes_msf_signed();
+                    (bytes, (sign == Sign::Negative)).serialize(serializer)
                 }
             }
 
@@ -281,10 +282,8 @@ mod serialize {
                 where
                     D: serde::Deserializer<'de>,
                 {
-                    let dict = DictFormat::deserialize(deserializer)?;
-
-                    <$integer>::from_str_radix(&dict.value, dict.radix)
-                        .ok_or(serde::de::Error::custom("Invalid hex number"))
+                    let (bytes, sign) = <(Vec::<u8>, bool)>::deserialize(deserializer)?;
+                    Ok(<$integer>::from_bytes_msf_signed(&bytes, if sign { Sign::Negative } else { Sign::NonNegative }))
                 }
             }
         };
