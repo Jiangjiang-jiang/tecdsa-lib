@@ -64,13 +64,12 @@ impl RDecDlProof {
         ct: &ClHsmqkCiphertext,
         pd: &Qfi,
     ) -> ClResult<bool> {
-        let pk_elt = pk.elt();
         let (c1, _c2) = setup.ct_components(ct)?;
 
         let e_check = challenge_from_qfi(
             setup,
             b"R_dec_dl",
-            &[pk_elt, &c1, pd, &self.t1, &self.t2],
+            &[pk.elt(), &c1, pd, &self.t1, &self.t2],
             &[],
         )?;
         if e_check != self.e {
@@ -79,17 +78,18 @@ impl RDecDlProof {
 
         // Check 1: h^z == pk^e * t1
         let lhs1 = setup.power_of_h_bytes(&self.z)?;
-        let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
+        let pk_e = setup.exp_bytes(pk.elt(), &self.e)?;
         let rhs1 = setup.compose(&pk_e, &self.t1)?;
         if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: c1^z == pd^e * t2
-        let lhs2 = setup.exp_bytes(&c1, &self.z)?;
-        let pd_e = setup.exp_bytes(pd, &self.e)?;
-        let rhs2 = setup.compose(&pd_e, &self.t2)?;
-        if lhs2 != rhs2 {
+        // c1^z == pd^e * t2 ⟺ c1^z * pd^{-e} == t2 (shared-squaring multi-exp;
+        // both bases vary per proof).
+        if setup.multiexp_signed_bytes(&[&c1, pd], &[(false, &self.z[..]), (true, &self.e)])?
+            != self.t2
+        {
             return Ok(false);
         }
 
@@ -157,10 +157,13 @@ impl RDecDlProof {
             return Ok(false);
         }
 
-        let lhs2 = setup.exp_bytes(&c1, &self.z)?;
-        let pd_e = setup.exp_bytes(pd, &self.e)?;
-        let rhs2 = setup.compose(&pd_e, &self.t2)?;
-        if lhs2 != rhs2 {
+        // c1^z == pd^e * t2 ⟺ c1^z * pd^{-e} == t2 (shared-squaring multi-exp;
+        // both bases vary per proof).
+        let lhs2 = setup.multiexp_signed_bytes(
+            &[&c1, pd],
+            &[(false, self.z.clone()), (true, self.e.clone())],
+        )?;
+        if lhs2 != self.t2 {
             return Ok(false);
         }
 

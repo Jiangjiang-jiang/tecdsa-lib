@@ -31,6 +31,70 @@ pub fn mul_mod(a: &Integer, b: &Integer, modulus: &Integer) -> Integer {
     (a * b).complete().modulo(modulus)
 }
 
+/// Simultaneous multi-exponentiation `∏ bases[i]^exps[i] mod modulus` via an
+/// interleaved fixed-window (Straus/Shamir) algorithm: a single squaring chain
+/// is shared across all bases (`max_bits` squarings instead of one full chain
+/// per base), which is the dominant cost. Each base contributes one
+/// multiplication per nonzero `W`-bit window.
+///
+/// Modular inversion is *not* free here (unlike class groups), so this uses
+/// plain unsigned windows rather than signed-digit (NAF/JSF) recoding. All
+/// exponents must be non-negative.
+///
+/// # Panics
+/// Panics if `bases.len() != exps.len()`.
+#[must_use]
+pub fn multi_exp(bases: &[&Integer], exps: &[&Integer], modulus: &Integer) -> Integer {
+    assert_eq!(
+        bases.len(),
+        exps.len(),
+        "multi_exp: bases and exps must have equal length"
+    );
+    const W: u32 = 4;
+    const TABLE: usize = 1 << W;
+
+    let mut maxbits = 0u32;
+    for e in exps {
+        maxbits = maxbits.max(e.significant_bits());
+    }
+    if maxbits == 0 {
+        return Integer::from(1);
+    }
+
+    // Per-base window table: base^d mod modulus for d in 0..2^W.
+    let mut tables: Vec<Vec<Integer>> = Vec::with_capacity(bases.len());
+    for b in bases {
+        let mut tab = Vec::with_capacity(TABLE);
+        tab.push(Integer::from(1));
+        tab.push((*b).clone());
+        for d in 2..TABLE {
+            tab.push(mul_mod(&tab[d - 1], b, modulus));
+        }
+        tables.push(tab);
+    }
+
+    let nblocks = maxbits.div_ceil(W);
+    let mut result = Integer::from(1);
+    for blk in (0..nblocks).rev() {
+        for _ in 0..W {
+            result = mul_mod(&result, &result, modulus);
+        }
+        let shift = blk * W;
+        for (tab, e) in tables.iter().zip(exps.iter()) {
+            let mut d = 0usize;
+            for bit in 0..W {
+                if e.get_bit(shift + bit) {
+                    d |= 1 << bit;
+                }
+            }
+            if d != 0 {
+                result = mul_mod(&result, &tab[d], modulus);
+            }
+        }
+    }
+    result
+}
+
 /// Computes the Jacobi symbol `(a/n)`.
 ///
 /// Returns `1`, `-1`, or `0`.  `n` must be a positive odd integer.
@@ -100,5 +164,41 @@ pub fn tonelli_shanks(n: &Integer, p: &Integer) -> Option<Integer> {
         c = Integer::from(&b * &b) % p;
         t = Integer::from(&t * &c) % p;
         r = Integer::from(&r * &b) % p;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multi_exp_matches_naive() {
+        let modulus = Integer::from_str_radix(
+            "115792089237316195423570985008687907853269984665640564039457584007913129640233",
+            10,
+        )
+        .unwrap();
+        let bases = [
+            Integer::from(3u32),
+            Integer::from(5u32),
+            Integer::from(7u32),
+            Integer::from(11u32),
+        ];
+        let exps = [
+            Integer::from(123456789u64),
+            Integer::from(1u32),
+            Integer::from_str_radix("9abcdef0123456789", 16).unwrap(),
+            Integer::from(0u32),
+        ];
+        for n in 1..=4 {
+            let b: Vec<&Integer> = bases[..n].iter().collect();
+            let e: Vec<&Integer> = exps[..n].iter().collect();
+            let got = multi_exp(&b, &e, &modulus);
+            let mut naive = Integer::from(1);
+            for (bi, ei) in b.iter().zip(&e) {
+                naive = mul_mod(&naive, &pow_mod(bi, ei, &modulus), &modulus);
+            }
+            assert_eq!(got, naive, "multi_exp mismatch at n={n}");
+        }
     }
 }

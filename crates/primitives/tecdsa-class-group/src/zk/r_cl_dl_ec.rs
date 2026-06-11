@@ -69,7 +69,7 @@ impl RClDlEcProof {
         // 2. Compute CL commitment: (t1, t2) = Enc(pk, a2; a1) components.
         let t1 = setup.power_of_h_bytes(&a1)?;
         let pk_elt = pk.elt();
-        let pk_a1 = setup.exp_bytes(pk_elt, &a1)?;
+        let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
 
@@ -137,7 +137,7 @@ impl RClDlEcProof {
         }
 
         // Check 2: pk^{u1} * f^{u2} == t2 * c2^e.
-        let pk_u1 = setup.exp_bytes(pk_elt, &self.u1)?;
+        let pk_u1 = setup.pk_pow_bytes(pk, &self.u1)?;
         let f_u2 = setup.power_of_f_bytes(&self.u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
         let c2_e = setup.exp_bytes(&c2, &self.e)?;

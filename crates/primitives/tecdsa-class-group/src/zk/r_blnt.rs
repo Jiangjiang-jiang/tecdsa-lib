@@ -265,7 +265,7 @@ impl RBlntProof {
 
             // Check 5: f^{z_{1l}} * pk^{z_{3l}} == S_l * c_{l,1}^{chal}
             let f_z1 = setup.power_of_f_bytes(&self.z1_chunks[idx])?;
-            let pk_z3 = setup.exp_bytes(pk_elt, &self.z3_chunks[idx])?;
+            let pk_z3 = setup.pk_pow_bytes(pk, &self.z3_chunks[idx])?;
             let lhs5 = setup.compose(&f_z1, &pk_z3)?;
             let c_l_1_e = setup.exp_bytes(c_l_1, &self.e)?;
             let rhs5 = setup.compose(&self.s_chunks[idx], &c_l_1_e)?;
@@ -293,7 +293,7 @@ impl RBlntProof {
         }
 
         // Check 8: pk^{z_4} * prod_l h^{q^l * z_{1l}} == S_0 * c_1^{chal}
-        let pk_z4 = setup.exp_bytes(pk_elt, &self.z4)?;
+        let pk_z4 = setup.pk_pow_bytes(pk, &self.z4)?;
         let lhs8 = setup.compose(&pk_z4, &h_q_pow_z1_product)?;
         let c_1_e = setup.exp_bytes(agg_c1, &self.e)?;
         let rhs8 = setup.compose(&self.s_0, &c_1_e)?;

@@ -8,7 +8,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below};
 
 use crate::kgen::JlPublicKey;
 
@@ -59,9 +59,7 @@ impl ZkJlEncProof {
         let blind_w = random_below(&w_bound, rng);
 
         // Commitment: a = y^v * h^w mod N
-        let y_v = pow_mod(&pk.y, &blind_v, &pk.n);
-        let h_w = pow_mod(&pk.h, &blind_w, &pk.n);
-        let commit_a = mul_mod(&y_v, &h_w, &pk.n);
+        let commit_a = multi_exp(&[&pk.y, &pk.h], &[&blind_v, &blind_w], &pk.n);
 
         // Fiat-Shamir challenge
         let challenge = fiat_shamir_challenge(pk, ct, &commit_a);
@@ -84,9 +82,7 @@ impl ZkJlEncProof {
         let challenge = fiat_shamir_challenge(pk, ct, &self.a);
 
         // Check: y^{z_m} * h^{z_r} == a * c^e mod N
-        let lhs_1 = pow_mod(&pk.y, &self.z_m, &pk.n);
-        let lhs_2 = pow_mod(&pk.h, &self.z_r, &pk.n);
-        let lhs = mul_mod(&lhs_1, &lhs_2, &pk.n);
+        let lhs = multi_exp(&[&pk.y, &pk.h], &[&self.z_m, &self.z_r], &pk.n);
 
         let c_e = pow_mod(ct, &challenge, &pk.n);
         let rhs = mul_mod(&self.a, &c_e, &pk.n);
@@ -159,9 +155,7 @@ impl ZkJlEncProof {
         let blind_v = random_below(&v_bound, rng);
         let blind_w = random_below(&w_bound, rng);
 
-        let y_v = pow_mod(&pk.y, &blind_v, &pk.n);
-        let h_w = pow_mod(&pk.h, &blind_w, &pk.n);
-        let commit_a = mul_mod(&y_v, &h_w, &pk.n);
+        let commit_a = multi_exp(&[&pk.y, &pk.h], &[&blind_v, &blind_w], &pk.n);
 
         let challenge = fiat_shamir_challenge_with_prefix(prefix, pk, ct, &commit_a);
 
@@ -181,9 +175,7 @@ impl ZkJlEncProof {
     pub fn verify_with_prefix(&self, prefix: &[u8], pk: &JlPublicKey, ct: &Integer) -> bool {
         let challenge = fiat_shamir_challenge_with_prefix(prefix, pk, ct, &self.a);
 
-        let lhs_1 = pow_mod(&pk.y, &self.z_m, &pk.n);
-        let lhs_2 = pow_mod(&pk.h, &self.z_r, &pk.n);
-        let lhs = mul_mod(&lhs_1, &lhs_2, &pk.n);
+        let lhs = multi_exp(&[&pk.y, &pk.h], &[&self.z_m, &self.z_r], &pk.n);
 
         let c_e = pow_mod(ct, &challenge, &pk.n);
         let rhs = mul_mod(&self.a, &c_e, &pk.n);

@@ -71,6 +71,7 @@ use crate::{
 ///
 /// `stored_x_input` must contain the **Lagrange-weighted** share for this
 /// signer subset (via `Input(λ_i · f(party_id))`), not the raw keygen share.
+#[derive(Clone)]
 pub struct Ln18PresignParams<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,

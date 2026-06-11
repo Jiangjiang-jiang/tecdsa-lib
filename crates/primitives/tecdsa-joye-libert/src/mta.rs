@@ -19,7 +19,7 @@
 use rand_core::CryptoRngCore;
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below};
 use zeroize::Zeroize;
 
 use crate::{
@@ -441,14 +441,12 @@ impl MtA for JlMtA {
         let y_shift = pow_mod(&setup.pk.y, &shift, &setup.pk.n);
         let c_shifted = mul_mod(&sender_msg.ciphertext.c, &y_shift, &setup.pk.n);
 
-        // C_1 = C_shifted^a * y^{alpha'} * h^r mod N
-        let c_shifted_a = pow_mod(&c_shifted, &a, &setup.pk.n);
-        let y_alpha = pow_mod(&setup.pk.y, &alpha_prime, &setup.pk.n);
+        // C_1 = C_shifted^a * y^{alpha'} * h^{r_aff} mod N, via one shared-
+        // squaring multi-exponentiation instead of three modexps + two muls.
         let r_aff = random_below(&setup.pk.n, rng);
-        let h_r = pow_mod(&setup.pk.h, &r_aff, &setup.pk.n);
-        let c_1 = mul_mod(
-            &mul_mod(&c_shifted_a, &y_alpha, &setup.pk.n),
-            &h_r,
+        let c_1 = multi_exp(
+            &[&c_shifted, &setup.pk.y, &setup.pk.h],
+            &[&a, &alpha_prime, &r_aff],
             &setup.pk.n,
         );
 

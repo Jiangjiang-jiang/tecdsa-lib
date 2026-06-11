@@ -165,8 +165,6 @@ impl RMAffDlEcProof {
         r_point: &ProjectivePoint,
         b_point: &ProjectivePoint,
     ) -> ClResult<bool> {
-        let q_bytes = setup.q_bytes()?;
-
         // Reconstruct EC commitment points from stored bytes.
         let b0 = decode_point(&self.b0_bytes)?;
         let r0 = decode_point(&self.r0_bytes)?;
@@ -185,21 +183,23 @@ impl RMAffDlEcProof {
             return Ok(false);
         }
 
-        // Check 1: c1^{k_hat} == d'1 * d1^{ch}
-        let c1_khat = setup.exp_bytes(c1, &self.k_hat)?;
-        let d1_e = setup.exp_bytes(d1, &self.e)?;
-        let rhs1 = setup.compose(&self.d_prime_1, &d1_e)?;
-        if c1_khat != rhs1 {
+        // Check 1: c1^{k_hat} == d'1 * d1^{ch} ⟺ c1^{k_hat} * d1^{-ch} == d'1.
+        let lhs1 = setup.multiexp_signed_bytes(
+            &[c1, d1],
+            &[(false, self.k_hat.clone()), (true, self.e.clone())],
+        )?;
+        if lhs1 != self.d_prime_1 {
             return Ok(false);
         }
 
         // Check 2: c2^{k_hat} * f^{-beta_hat} == d'2 * d2^{ch}
-        let c2_khat = setup.exp_bytes(c2, &self.k_hat)?;
-        let neg_beta_hat = negate_mod_q_bytes(&self.beta_hat, &q_bytes)?;
-        let f_neg_bhat = setup.power_of_f_bytes(&neg_beta_hat)?;
-        let lhs2 = setup.compose(&c2_khat, &f_neg_bhat)?;
-        let d2_e = setup.exp_bytes(d2, &self.e)?;
-        let rhs2 = setup.compose(&self.d_prime_2, &d2_e)?;
+        //        ⟺ c2^{k_hat} * d2^{-ch} == d'2 * f^{beta_hat}  (f^{} is free).
+        let lhs2 = setup.multiexp_signed_bytes(
+            &[c2, d2],
+            &[(false, self.k_hat.clone()), (true, self.e.clone())],
+        )?;
+        let f_beta_hat = setup.power_of_f_bytes(&self.beta_hat)?;
+        let rhs2 = setup.compose(&self.d_prime_2, &f_beta_hat)?;
         if lhs2 != rhs2 {
             return Ok(false);
         }

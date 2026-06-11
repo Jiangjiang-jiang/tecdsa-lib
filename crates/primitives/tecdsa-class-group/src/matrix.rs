@@ -69,11 +69,7 @@ pub fn prove_matrix(
                 num_witnesses
             )));
         }
-        let mut t = setup.identity()?;
-        for (j, base) in row.bases.iter().enumerate() {
-            let b_a = setup.exp_bytes(base, &alphas[j])?;
-            t = setup.compose(&t, &b_a)?;
-        }
+        let t = setup.multiexp_bytes(&row.bases, &alphas)?;
         commitments.push(t);
     }
 
@@ -126,11 +122,7 @@ pub fn verify_matrix(
 
     // For each row, check: product(bases[i,j]^{z_j}) == t_i * target_i^e.
     for (i, row) in rows.iter().enumerate() {
-        let mut lhs = setup.identity()?;
-        for (j, base) in row.bases.iter().enumerate() {
-            let b_z = setup.exp_bytes(base, &proof.responses[j])?;
-            lhs = setup.compose(&lhs, &b_z)?;
-        }
+        let lhs = setup.multiexp_bytes(&row.bases, &proof.responses)?;
 
         let target_e = setup.exp_bytes(&row.target, &proof.e)?;
         let rhs = setup.compose(&proof.commitments[i], &target_e)?;

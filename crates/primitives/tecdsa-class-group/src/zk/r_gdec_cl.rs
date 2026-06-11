@@ -105,10 +105,13 @@ impl RGdecClProof {
         let mut d_inv = dec_result.clone();
         d_inv.neg();
         let c2_d_inv = setup.compose(&c2, &d_inv)?;
-        let lhs2 = setup.exp_bytes(&c1, &self.z)?;
-        let rhs2_inner = setup.exp_bytes(&c2_d_inv, &self.e)?;
-        let rhs2 = setup.compose(&self.t2, &rhs2_inner)?;
-        if lhs2 != rhs2 {
+        // c1^z == t2 * (c2*D^-1)^e ⟺ c1^z * (c2*D^-1)^{-e} == t2 (shared-squaring
+        // multi-exp; both bases vary per proof).
+        let lhs2 = setup.multiexp_signed_bytes(
+            &[&c1, &c2_d_inv],
+            &[(false, self.z.clone()), (true, self.e.clone())],
+        )?;
+        if lhs2 != self.t2 {
             return Ok(false);
         }
 

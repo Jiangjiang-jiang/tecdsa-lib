@@ -3,12 +3,49 @@
 
 use std::{
     collections::BTreeMap,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
 use criterion::{measurement::WallTime, BenchmarkGroup, SamplingMode};
 use tecdsa_protocol::PartyId;
-use tecdsa_testkit::{Orchestrator, PartyTiming};
+use tecdsa_testkit::{CommStats, Orchestrator, PartyTiming};
+
+/// Global collector for per-party online communication (bytes), keyed by a
+/// `<proto>/n{n}_t{t}` string. Populated by [`run_online_comm`] /
+/// [`record_online_comm`] and flushed by [`write_online_comm`]. Used by the
+/// one-shot `protocol_once` binary (single-threaded), so a plain `Mutex<Vec>`
+/// suffices.
+static ONLINE_COMM: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
+
+thread_local! {
+    /// When set (by `protocol_once`'s `time_once` around a presign/offline-sign
+    /// phase), the timed-run helpers [`run_timed_with_init`] /
+    /// [`run_timed_without_init`] additionally collect communication stats and
+    /// record the representative party's `bytes_sent` under this key. It is never
+    /// set by the criterion benches, so their timed runs are unaffected (no
+    /// serialization overhead, no recording).
+    static COMM_KEY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Set (or clear with `None`) the per-phase comm key used by the timed-run
+/// helpers. Used by `protocol_once` to attribute offline (presign) communication.
+pub fn set_comm_key(key: Option<String>) {
+    COMM_KEY.with(|k| *k.borrow_mut() = key);
+}
+
+fn comm_key_is_set() -> bool {
+    COMM_KEY.with(|k| k.borrow().is_some())
+}
+
+fn record_keyed_comm(stats: &BTreeMap<PartyId, CommStats>) {
+    COMM_KEY.with(|k| {
+        if let Some(key) = k.borrow().as_ref() {
+            let bytes = stats.values().next().map(|c| c.bytes_sent).unwrap_or(0);
+            ONLINE_COMM.lock().unwrap().push((key.clone(), bytes));
+        }
+    });
+}
 
 /// Run a protocol from builder closures, timing machine construction (init)
 /// as well as protocol rounds (drain/handle/finish).
@@ -39,10 +76,13 @@ where
         })
         .collect();
 
-    let result = Orchestrator::new(machines, max_rounds)
-        .with_timing(true)
-        .run()
-        .expect("orchestrator must succeed");
+    let collect_comm = comm_key_is_set();
+    let orch = Orchestrator::new(machines, max_rounds).with_timing(true);
+    let orch = if collect_comm { orch.with_stats(true) } else { orch };
+    let result = orch.run().expect("orchestrator must succeed");
+    if collect_comm {
+        record_keyed_comm(&result.stats);
+    }
 
     let mut timings = result.timings.clone();
     for (pid, init_dur) in init_timings {
@@ -69,12 +109,107 @@ where
     M::Outbound: Clone + Into<M::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
     M::Inbound: Clone + serde::Serialize + serde::de::DeserializeOwned,
 {
-    let result = Orchestrator::new(machines, max_rounds)
-        .with_timing(true)
-        .run()
-        .expect("orchestrator must succeed");
+    let collect_comm = comm_key_is_set();
+    let orch = Orchestrator::new(machines, max_rounds).with_timing(true);
+    let orch = if collect_comm { orch.with_stats(true) } else { orch };
+    let result = orch.run().expect("orchestrator must succeed");
+    if collect_comm {
+        record_keyed_comm(&result.stats);
+    }
     let timings = result.timings.clone();
     (result.outputs, timings)
+}
+
+/// Like [`run_timed_without_init`] but also enables communication stats and
+/// records the representative (party-1) `bytes_sent` under `comm_key` for later
+/// [`write_online_comm`]. Returns `(outputs, timings)` so callers are unchanged.
+///
+/// Enabling stats does NOT perturb the per-party active timing: message
+/// serialization happens in the orchestrator's routing loop, outside the
+/// `drain_outgoing`/`handle`/`finish` timing brackets (only wall-clock grows).
+/// `bytes_sent` follows the orchestrator convention (a broadcast counts the
+/// payload once per recipient), i.e. one signer's total online egress.
+pub fn run_online_comm<M>(
+    comm_key: impl Into<String>,
+    machines: Vec<(PartyId, M)>,
+    max_rounds: u16,
+) -> (
+    Vec<tecdsa_core::Result<M::Output>>,
+    BTreeMap<PartyId, PartyTiming>,
+)
+where
+    M: tecdsa_protocol::StateMachine,
+    M::Outbound: Clone + Into<M::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
+    M::Inbound: Clone + serde::Serialize + serde::de::DeserializeOwned,
+{
+    let result = Orchestrator::new(machines, max_rounds)
+        .with_timing(true)
+        .with_stats(true)
+        .run()
+        .expect("orchestrator must succeed");
+    let bytes = result.stats.values().next().map(|c| c.bytes_sent).unwrap_or(0);
+    ONLINE_COMM.lock().unwrap().push((comm_key.into(), bytes));
+    (result.outputs, result.timings.clone())
+}
+
+/// Builder-based counterpart of [`run_online_comm`] (mirrors
+/// [`run_timed_with_init`]): constructs machines from `builders` (timing init),
+/// runs them with communication stats, and records party-1 `bytes_sent` under
+/// `comm_key`. Returns `(outputs, timings)`.
+pub fn run_online_comm_with_init<M, F>(
+    comm_key: impl Into<String>,
+    builders: Vec<(PartyId, F)>,
+    max_rounds: u16,
+) -> (
+    Vec<tecdsa_core::Result<M::Output>>,
+    BTreeMap<PartyId, PartyTiming>,
+)
+where
+    M: tecdsa_protocol::StateMachine,
+    M::Outbound: Clone + Into<M::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
+    M::Inbound: Clone + serde::Serialize + serde::de::DeserializeOwned,
+    F: FnOnce() -> M,
+{
+    let mut init_timings: BTreeMap<PartyId, Duration> = BTreeMap::new();
+    let machines: Vec<(PartyId, M)> = builders
+        .into_iter()
+        .map(|(pid, builder)| {
+            let t0 = Instant::now();
+            let machine = builder();
+            init_timings.insert(pid, t0.elapsed());
+            (pid, machine)
+        })
+        .collect();
+    let result = Orchestrator::new(machines, max_rounds)
+        .with_timing(true)
+        .with_stats(true)
+        .run()
+        .expect("orchestrator must succeed");
+    let mut timings = result.timings.clone();
+    for (pid, init_dur) in init_timings {
+        timings.entry(pid).or_default().init = init_dur;
+    }
+    let bytes = result.stats.values().next().map(|c| c.bytes_sent).unwrap_or(0);
+    ONLINE_COMM.lock().unwrap().push((comm_key.into(), bytes));
+    (result.outputs, timings)
+}
+
+/// Record an externally-computed per-party online communication figure (bytes),
+/// for protocols whose online phase sends no orchestrator-routed messages (e.g.
+/// CGGMP20, where each signer broadcasts one partial-signature scalar).
+pub fn record_online_comm(comm_key: impl Into<String>, bytes_sent: usize) {
+    ONLINE_COMM.lock().unwrap().push((comm_key.into(), bytes_sent));
+}
+
+/// Flush all recorded online-communication rows to `path` as `<key>\t<bytes>`
+/// TSV (one line per measurement).
+pub fn write_online_comm(path: &str) {
+    let rows = ONLINE_COMM.lock().unwrap();
+    let mut s = String::new();
+    for (k, b) in rows.iter() {
+        s.push_str(&format!("{k}\t{b}\n"));
+    }
+    std::fs::write(path, s).expect("write online comm file");
 }
 
 /// Extract the total active compute time for a specific party.
@@ -91,6 +226,20 @@ pub fn active_map(timings: BTreeMap<PartyId, PartyTiming>) -> BTreeMap<PartyId, 
     timings
         .into_iter()
         .map(|(pid, t)| (pid, t.total_active()))
+        .collect()
+}
+
+/// Like [`active_map`], but per-party ROUNDS-ONLY active time
+/// ([`PartyTiming::rounds_active`]): drain + handle + finish, EXCLUDING machine
+/// construction (`init`). Use to measure interactive round cost when the
+/// constructor is accounted for separately (e.g. CGGMP20 aux-info vs setup).
+#[must_use]
+pub fn active_map_rounds_only(
+    timings: BTreeMap<PartyId, PartyTiming>,
+) -> BTreeMap<PartyId, Duration> {
+    timings
+        .into_iter()
+        .map(|(pid, t)| (pid, t.rounds_active()))
         .collect()
 }
 
@@ -207,6 +356,33 @@ pub fn configure_replay_group(group: &mut BenchmarkGroup<'_, WallTime>, samples:
         .measurement_time(Duration::from_nanos(1));
 }
 
+/// Break the degeneracy of a zero-variance sample pool so Criterion can analyze
+/// it without panicking.
+///
+/// Criterion's bootstrap analysis divides by the sample standard deviation; a
+/// constant pool (std-dev = 0) yields `NaN` and trips an internal assertion
+/// (`slice.len() > 1 && !is_nan`). A constant pool arises when a party does no
+/// work in a phase (e.g. ABC24's client has no offline round, so its `presign`
+/// series is all-zero) or under a single-execution smoke run
+/// (`TECDSA_BENCH_RUNS=1`).
+///
+/// When every entry is identical (value `v`), we replace the pool with the two
+/// distinct values `v+1ns` and `v+2ns`. Replayed across Criterion's samples this
+/// gives a non-zero variance (avoiding the NaN) while keeping every sample
+/// strictly positive — Criterion separately errors on any iteration that
+/// measures exactly zero time, which is what a no-work party (`v = 0`) would
+/// otherwise produce. The ~1.5ns mean shift is far below the millisecond-scale
+/// display resolution, so the reported figure is unchanged in practice. Pools
+/// that already have any spread are left untouched.
+fn desingularize(pool: &mut Vec<Duration>) {
+    if pool.iter().all(|&d| d == pool[0]) {
+        let v = pool[0];
+        pool.clear();
+        pool.push(v + Duration::from_nanos(1));
+        pool.push(v + Duration::from_nanos(2));
+    }
+}
+
 /// Register a benchmark that replays pre-recorded active times from `runs`
 /// (produced by [`precompute_runs`]).
 ///
@@ -226,12 +402,43 @@ pub fn bench_party_replay(
     runs: &[BTreeMap<PartyId, Duration>],
     _pid: PartyId,
 ) {
-    let pool: Vec<Duration> = runs.iter().flat_map(|m| m.values().copied()).collect();
-    let pool = if pool.is_empty() {
-        vec![Duration::ZERO]
-    } else {
-        pool
-    };
+    let mut pool: Vec<Duration> = runs.iter().flat_map(|m| m.values().copied()).collect();
+    if pool.is_empty() {
+        pool.push(Duration::ZERO);
+    }
+    desingularize(&mut pool);
+    let mut next = 0usize;
+    group.bench_function(id.into(), |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                total += pool[next % pool.len()];
+                next += 1;
+            }
+            total
+        });
+    });
+}
+
+/// Replay a SINGLE party's pre-recorded active times, with NO cross-party
+/// pooling. Use for asymmetric protocols (e.g. two-party, where party1 and
+/// party2 perform different work) so each party is reported on its own.
+///
+/// Unlike [`bench_party_replay`] (which pools all parties into one
+/// representative "average per-party" sample set), this pools only the
+/// durations recorded for `pid`. An empty series (e.g. a party that does no
+/// work in this phase) replays as zero.
+pub fn bench_party_replay_single(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    id: impl Into<String>,
+    runs: &[BTreeMap<PartyId, Duration>],
+    pid: PartyId,
+) {
+    let mut pool: Vec<Duration> = runs.iter().filter_map(|m| m.get(&pid).copied()).collect();
+    if pool.is_empty() {
+        pool.push(Duration::ZERO);
+    }
+    desingularize(&mut pool);
     let mut next = 0usize;
     group.bench_function(id.into(), |b| {
         b.iter_custom(|iters| {

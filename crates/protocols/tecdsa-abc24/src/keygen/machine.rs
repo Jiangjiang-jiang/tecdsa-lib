@@ -29,8 +29,8 @@ use crate::{
     keygen::{
         interactive::{
             client_finalize_keygen, client_keygen_step2, client_verify_step3,
-            server_finalize_keygen, server_keygen_step1, server_keygen_step3, ClientStep2Msg,
-            ClientStep2State, ServerStep1State, ServerStep3Msg,
+            server_finalize_keygen, server_keygen_step1, server_keygen_step1_with_dk,
+            server_keygen_step3, ClientStep2Msg, ClientStep2State, ServerStep1State, ServerStep3Msg,
         },
         wire::{
             decode_step1, decode_step2, decode_step3, encode_step1, encode_step2, encode_step3,
@@ -173,13 +173,39 @@ where
         peer_id: PartyId,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Result<Self, TecdsaError> {
+        Self::new_with_setup(role, my_id, peer_id, None, rng)
+    }
+
+    /// Like [`Abc24KeygenMachine::new`], but lets the caller inject the Server's
+    /// **precomputed** Paillier decryption key.
+    ///
+    /// The server's Paillier keypair is part of the one-time `SetupData` it
+    /// publishes non-interactively; it is message-independent. By generating it
+    /// up front and passing it here, callers (e.g. benchmark harnesses) keep the
+    /// (multi-second) safe-prime generation out of the measured DKG steps.
+    /// `precomputed_dk` is only consumed by `Party1` (the Server, in step 1);
+    /// for `Party2` (the Client) it is ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `my_id == peer_id`.
+    pub fn new_with_setup(
+        role: TwoPartyRole,
+        my_id: PartyId,
+        peer_id: PartyId,
+        precomputed_dk: Option<tecdsa_paillier::DecryptionKey>,
+        rng: &mut impl rand_core::CryptoRngCore,
+    ) -> Result<Self, TecdsaError> {
         if my_id == peer_id {
             return Err(TecdsaError::Other("my_id and peer_id must differ".into()));
         }
 
         let (state, outgoing, round) = match role {
             TwoPartyRole::Party1 => {
-                let (s1_msg, s1_state) = server_keygen_step1::<C>(rng);
+                let (s1_msg, s1_state) = match precomputed_dk {
+                    Some(dk) => server_keygen_step1_with_dk::<C>(dk, rng),
+                    None => server_keygen_step1::<C>(rng),
+                };
                 let payload = encode_step1(&s1_msg)?;
                 let out = Outgoing {
                     to: Recipient::Party(peer_id),

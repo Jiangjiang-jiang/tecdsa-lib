@@ -27,8 +27,13 @@
 //!   thresholds in `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,15,20`); the
 //!   signing quorum is parties `1..=t`.
 //!
-//! LN18 is benchmarked by `protocol_once`, not Criterion, because its per-session
-//! Init + Lagrange setup does not fit the precompute/replay pattern used here.
+//! LN18 is benchmarked here too. Its per-session Init + Lagrange + Paillier/RP
+//! setup (`build_signing_setup`) is message-independent presigning prep, so its
+//! per-party cost (the whole call timed once, divided by the number of signers)
+//! is FOLDED INTO the Offline (presign) figure; the params are cloned per replay
+//! iteration (`Ln18PresignParams: Clone`), with a fresh per-session
+//! `Ln18MtaHybrid` built each run. `protocol_once` additionally covers the
+//! OT-backend variant and end-to-end wall-clock timing.
 
 use std::sync::Arc;
 
@@ -514,12 +519,21 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
         }
     }
 
-    // --- AuxInfo: depends only on n; sweep the distinct DKG party counts. ---
+    // --- AuxInfo: depends only on n; sweep the distinct DKG party counts.
+    // One execution per sample yields per-party init + round timings, from which
+    // we emit two series (no extra protocol runs):
+    //   aux_info/...        = total active  = constructor (init) + interactive rounds
+    //   aux_info_rounds/... = interactive rounds only (drain+handle+finish),
+    //                         EXCLUDING the constructor. The constructor is the
+    //                         local Paillier+RP keygen == the `setup` bench, so
+    //                         this is the directly measured "aux - setup" (the
+    //                         interactive aux-info rounds), with no cross-run
+    //                         subtraction noise. ---
     let mut aux_ns: Vec<u16> = dkg_configs.iter().map(|&(n, _)| n).collect();
     aux_ns.sort_unstable();
     aux_ns.dedup();
     for &n in &aux_ns {
-        let aux_runs = per_party::precompute_runs(SAMPLES, || {
+        let (aux_full_runs, aux_rounds_runs) = per_party::precompute_runs_2(SAMPLES, || {
             // Threshold is irrelevant to aux info; use a valid value (t = n).
             let configs = make_session_configs(n, n);
             let builders: Vec<_> = configs
@@ -533,13 +547,23 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
                     })
                 })
                 .collect();
-            per_party::active_with_init(builders, 10)
+            let timings = per_party::run_timed_with_init(builders, 10).1;
+            (
+                per_party::active_map(timings.clone()),
+                per_party::active_map_rounds_only(timings),
+            )
         });
         for party_idx in (1..=n).take(1) {
             per_party::bench_party_replay(
                 &mut group,
                 format!("aux_info/cggmp20/n{n}/party{party_idx}"),
-                &aux_runs,
+                &aux_full_runs,
+                PartyId(party_idx),
+            );
+            per_party::bench_party_replay(
+                &mut group,
+                format!("aux_info_rounds/cggmp20/n{n}/party{party_idx}"),
+                &aux_rounds_runs,
                 PartyId(party_idx),
             );
         }
@@ -1131,9 +1155,168 @@ fn ggn16_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-// LN18 is benchmarked via protocol_once (not Criterion). LN18 keygen now
-// produces Shamir shares via Feldman VSS DKG, and protocol_once sweeps (n, t)
-// for DKG + t-subset signing.
+fn ln18_benchmarks(c: &mut Criterion) {
+    use tecdsa_ln18::{
+        key_share::Ln18KeyShare,
+        keygen::Ln18KeygenMachine,
+        sign::{
+            build_signing_setup, Ln18MtaBackend, Ln18MtaHybrid, Ln18OfflineSignMachine,
+            Ln18OfflineSignParams, Ln18OnlineSignMachine, Ln18OnlineSignParams,
+        },
+    };
+
+    let dkg_configs = config::dkg_configs();
+    let sign_n = config::sign_n();
+    let sign_thresholds = config::sign_thresholds();
+    let message = make_data_to_sign(b"benchmark message");
+    let m_scalar = *message.digest();
+    // MtA backend: Paillier (the P1/Paillier paradigm reported in the comparison
+    // table). The OT backend is also available; protocol_once benches both.
+    let backend = Ln18MtaBackend::Paillier;
+
+    let mut group = c.benchmark_group("multiparty/ln18");
+    per_party::configure_replay_group(&mut group, SAMPLES);
+
+    // --- DKG: sweep (n, t); Feldman VSS DKG producing Shamir shares. ---
+    for &(n, t) in &dkg_configs {
+        let dkg_runs = per_party::precompute_runs(SAMPLES, || {
+            let configs = make_session_configs(n, t);
+            let builders: Vec<_> = configs
+                .iter()
+                .map(|cfg| {
+                    let cfg = cfg.clone();
+                    let pid = cfg.local_party.id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        Ln18KeygenMachine::<C>::new(&cfg, &mut rng)
+                    })
+                })
+                .collect();
+            per_party::active_with_init(builders, 10)
+        });
+        for party_idx in (1..=n).take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("dkg/ln18/n{n}_t{t}/party{party_idx}"),
+                &dkg_runs,
+                PartyId(party_idx),
+            );
+        }
+    }
+
+    // --- Presign (offline, 2 rounds) / Online sign (6 rounds): sweep t at n. ---
+    for &t in &sign_thresholds {
+        let n = sign_n;
+        let signers = config::first_signers(t);
+        let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
+
+        // Untimed setup: key shares at (n, t).
+        let key_shares: Vec<Ln18KeyShare<C>> = {
+            let configs = make_session_configs(n, t);
+            let mut rng = tecdsa_core::Csprng::new();
+            let machines: Vec<_> = configs
+                .iter()
+                .map(|cfg| (cfg.local_party.id, Ln18KeygenMachine::<C>::new(cfg, &mut rng)))
+                .collect();
+            Orchestrator::new(machines, 10)
+                .run()
+                .expect("orch")
+                .into_iter()
+                .map(|r| r.expect("ln18 keygen"))
+                .collect()
+        };
+
+        // Per-session signing setup: Lagrange weighting + Init (ElGamal DKG) +
+        // Input(w_i) + per-signer Paillier/Ring-Pedersen keygen. It is
+        // message-independent presigning prep (LN18's analogue of CGGMP20
+        // aux-info), so its per-party cost is FOLDED INTO the Offline column
+        // below. build_signing_setup performs every signer's work sequentially in
+        // one call, so we time the whole call once and attribute total/#signers
+        // to one party (the per-signer Paillier keygen dominates and is exactly a
+        // party's share). The params are then cloned per replay iteration
+        // (Ln18PresignParams: Clone).
+        let setup_t0 = std::time::Instant::now();
+        let base_params = {
+            let mut rng = rand_core::OsRng;
+            build_signing_setup::<C>(&key_shares, &signer_parties, &mut rng)
+                .expect("ln18 signing setup")
+        };
+        let setup_per_party = setup_t0.elapsed() / signer_parties.len() as u32;
+
+        // --- Offline + Online (pipelined, mirrors gg18/dkls23) ---
+        // Offline is timed once and its states feed the online-sign timing.
+        let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
+            // Fresh per-session MtA provider each run (it holds a Mutex-backed
+            // accumulator scoped to one signing session).
+            let mta = Arc::new(Ln18MtaHybrid::<C>::new(signer_parties.clone(), backend));
+
+            // Timed: offline sign (capture states to feed online sign).
+            let offline_builders: Vec<_> = signers
+                .iter()
+                .enumerate()
+                .map(|(pos, &s)| {
+                    let pid = PartyId(s);
+                    let base = base_params[pos].clone();
+                    let signer_parties = signer_parties.clone();
+                    let mta = Arc::clone(&mta);
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        let params = Ln18OfflineSignParams {
+                            base,
+                            signer_parties: signer_parties.clone(),
+                            mta,
+                        };
+                        Ln18OfflineSignMachine::<C>::new(pid, signer_parties, params, &mut rng)
+                    })
+                })
+                .collect();
+            let (offline_outputs, offline_timings) =
+                per_party::run_timed_with_init(offline_builders, 4);
+            let offline_states: Vec<_> = offline_outputs.into_iter().map(|r| r.unwrap()).collect();
+
+            // Timed: online sign, consuming the offline states just produced.
+            let sign_builders: Vec<_> = offline_states
+                .into_iter()
+                .map(|state| {
+                    let pid = state.my_id;
+                    (pid, move || {
+                        let mut rng = tecdsa_core::Csprng::new();
+                        let params = Ln18OnlineSignParams {
+                            offline_state: state,
+                            message_digest: m_scalar,
+                        };
+                        Ln18OnlineSignMachine::<C>::new(params, &mut rng)
+                    })
+                })
+                .collect();
+            let (_, sign_timings) = per_party::run_timed_with_init(sign_builders, 8);
+
+            // Fold the per-party signing-setup cost into Offline (message-
+            // independent presigning prep). Online is the message-dependent rounds.
+            let mut offline_map = per_party::active_map(offline_timings);
+            for d in offline_map.values_mut() {
+                *d += setup_per_party;
+            }
+            (offline_map, per_party::active_map(sign_timings))
+        });
+        for &signer in signers.iter().take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("presign/ln18/n{n}_t{t}/party{signer}"),
+                &presign_runs,
+                PartyId(signer),
+            );
+            per_party::bench_party_replay(
+                &mut group,
+                format!("online_sign/ln18/n{n}_t{t}/party{signer}"),
+                &online_runs,
+                PartyId(signer),
+            );
+        }
+    }
+
+    group.finish();
+}
 
 fn tx25_benchmarks(c: &mut Criterion) {
     use tecdsa_tx25::{
@@ -1306,18 +1489,18 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     let sign_thresholds = config::sign_thresholds();
 
     // --- Setup: class-group CRS + per-party CL key (lives with the protocol). ---
-    // {
-    //     let mut setup_group = c.benchmark_group("multiparty/jtx25");
-    //     setup_group.sample_size(10);
-    //     setup_group.bench_function("setup/jtx25", |b| {
-    //         b.iter(|| {
-    //             let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
-    //                 .expect("cl setup");
-    //             s.keygen().expect("cl keygen")
-    //         });
-    //     });
-    //     setup_group.finish();
-    // }
+    {
+        let mut setup_group = c.benchmark_group("multiparty/jtx25");
+        setup_group.sample_size(10);
+        setup_group.bench_function("setup/jtx25", |b| {
+            b.iter(|| {
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                    .expect("cl setup");
+                s.keygen().expect("cl keygen")
+            });
+        });
+        setup_group.finish();
+    }
 
     let mut group = c.benchmark_group("multiparty/jtx25");
     per_party::configure_replay_group(&mut group, SAMPLES);
@@ -1327,43 +1510,43 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
-    // for &(n, t) in &dkg_configs {
-    //     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
-    //     let dkg_runs = per_party::precompute_runs(SAMPLES, || {
-    //         let builders: Vec<_> = all_parties
-    //             .iter()
-    //             .map(|&pid| {
-    //                 let all_parties = all_parties.clone();
-    //                 let mut cl_setup = cl_setup.clone();
-    //                 // Untimed (Layer 2): per-party CL keypair, measured separately
-    //                 // in `setup_benchmarks`.
-    //                 let (cl_sk, cl_pk) = cl_setup.keygen().expect("jtx25 cl keygen");
-    //                 (pid, move || {
-    //                     Jtx25KeygenMachine::new_with_keypair(
-    //                         pid,
-    //                         all_parties,
-    //                         t,
-    //                         seed,
-    //                         true,
-    //                         cl_setup,
-    //                         cl_sk,
-    //                         cl_pk,
-    //                     )
-    //                     .expect("jtx25 keygen")
-    //                 })
-    //             })
-    //             .collect();
-    //         per_party::active_with_init(builders, 10)
-    //     });
-    //     for party_idx in (1..=n).take(1) {
-    //         per_party::bench_party_replay(
-    //             &mut group,
-    //             format!("dkg/jtx25/n{n}_t{t}/party{party_idx}"),
-    //             &dkg_runs,
-    //             PartyId(party_idx),
-    //         );
-    //     }
-    // }
+    for &(n, t) in &dkg_configs {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+        let dkg_runs = per_party::precompute_runs(SAMPLES, || {
+            let builders: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    let all_parties = all_parties.clone();
+                    let mut cl_setup = cl_setup.clone();
+                    // Untimed (Layer 2): per-party CL keypair, measured separately
+                    // in `setup_benchmarks`.
+                    let (cl_sk, cl_pk) = cl_setup.keygen().expect("jtx25 cl keygen");
+                    (pid, move || {
+                        Jtx25KeygenMachine::new_with_keypair(
+                            pid,
+                            all_parties,
+                            t,
+                            seed,
+                            true,
+                            cl_setup,
+                            cl_sk,
+                            cl_pk,
+                        )
+                        .expect("jtx25 keygen")
+                    })
+                })
+                .collect();
+            per_party::active_with_init(builders, 10)
+        });
+        for party_idx in (1..=n).take(1) {
+            per_party::bench_party_replay(
+                &mut group,
+                format!("dkg/jtx25/n{n}_t{t}/party{party_idx}"),
+                &dkg_runs,
+                PartyId(party_idx),
+            );
+        }
+    }
 
     // --- Presign / Online sign: sweep t at fixed n. ---
     let n = sign_n;
@@ -2555,16 +2738,15 @@ criterion_group!(
     cggmp20_benchmarks,
     dkls23_benchmarks,
     gg18_benchmarks,
+    ln18_benchmarks,
     ggn16_benchmarks,
-    // LN18's per-session Init + Lagrange setup does not fit the
-    // precompute_runs pattern. Use protocol_once for LN18.
     tx25_benchmarks,
     jtx25_benchmarks,
-    // jtx25_robust_benchmarks,
-    // wmy23_benchmarks,
-    // wmc24_benchmarks,
-    // llz25_benchmarks,
-    // trout_benchmarks,
-    // xal23_benchmarks
+    jtx25_robust_benchmarks,
+    wmy23_benchmarks,
+    wmc24_benchmarks,
+    llz25_benchmarks,
+    trout_benchmarks,
+    xal23_benchmarks
 );
 criterion_main!(benches);

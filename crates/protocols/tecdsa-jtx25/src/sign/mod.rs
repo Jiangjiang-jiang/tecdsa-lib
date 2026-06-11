@@ -246,18 +246,18 @@ impl Jtx25OnlineSignMachine {
         let (phb_c1, phb_c2) = setup
             .ct_components(&phi_bar)
             .map_err(|e| TecdsaError::Other(format!("phi_bar comp: {e}")))?;
-        let phb_c1_m = setup
-            .exp_bytes(&phb_c1, &m_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-        let phb_c2_m = setup
-            .exp_bytes(&phb_c2, &m_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-        let phi_bar_m = setup
-            .ct_from_components(&phb_c1_m, &phb_c2_m)
-            .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-        let mut c1_ct = phi_bar_m;
-
+        // c^1 = phi_bar^m · ∏_j phi_bar_x_j^{r_x}. Every phi_bar_x_j shares the
+        // same exponent r_x (lambda is baked in at presign), so
+        // ∏_j x_j^{r_x} = (∏_j x_j)^{r_x}: take the product first (composes only),
+        // then fold each ciphertext component with a single shared-squaring
+        // dual-exponentiation `phb^m · (∏x)^{r_x}` instead of one exp per party
+        // plus composes.
+        let mut prod_x1 = setup
+            .identity()
+            .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
+        let mut prod_x2 = setup
+            .identity()
+            .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
         for &pid in &party_ids {
             let xc1_bytes = presignature
                 .phi_bar_x_c1_bytes
@@ -267,43 +267,25 @@ impl Jtx25OnlineSignMachine {
                 .phi_bar_x_c2_bytes
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing phi_bar_x c2 for {pid}")))?;
-
             let xc1 = Qfi::from_bytes(xc1_bytes);
             let xc2 = Qfi::from_bytes(xc2_bytes);
-            let phi_bar_x_j = setup
-                .ct_from_components(&xc1, &xc2)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-            // Multiply by r_x only (lambda is already baked in from presign).
-            let (px1, px2) = setup
-                .ct_components(&phi_bar_x_j)
-                .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-            let px1_r = setup
-                .exp_bytes(&px1, &r_x_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-            let px2_r = setup
-                .exp_bytes(&px2, &r_x_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-            let term = setup
-                .ct_from_components(&px1_r, &px2_r)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-            let (a1, a2) = setup
-                .ct_components(&c1_ct)
-                .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-            let (b1, b2) = setup
-                .ct_components(&term)
-                .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-            let s1 = setup
-                .compose(&a1, &b1)
+            prod_x1 = setup
+                .compose(&prod_x1, &xc1)
                 .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
-            let s2 = setup
-                .compose(&a2, &b2)
+            prod_x2 = setup
+                .compose(&prod_x2, &xc2)
                 .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
-            c1_ct = setup
-                .ct_from_components(&s1, &s2)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
         }
+        let exps = [m_bytes.to_vec(), r_x_bytes.to_vec()];
+        let s1 = setup
+            .multiexp_bytes(&[&phb_c1, &prod_x1], &exps)
+            .map_err(|e| TecdsaError::Other(format!("dualexp c1: {e}")))?;
+        let s2 = setup
+            .multiexp_bytes(&[&phb_c2, &prod_x2], &exps)
+            .map_err(|e| TecdsaError::Other(format!("dualexp c2: {e}")))?;
+        let c1_ct = setup
+            .ct_from_components(&s1, &s2)
+            .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
 
         // --- Partial decryption ---
         // party_index is 1-based (matches PartyId convention and t-CL evaluation points).

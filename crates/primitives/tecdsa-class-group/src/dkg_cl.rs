@@ -283,8 +283,6 @@ pub fn dkg_cl_gen(
         let pc = setup.compose(&h_chi_prime, &h_q_product)?;
 
         // Per-chunk encryption under pk_j.
-        let pk_j = &all_pks[j];
-        let pk_j_elt = pk_j.elt();
         let mut chunk_cts: Vec<(Qfi, Qfi)> = Vec::with_capacity(num_chunks);
         let mut r_chunk_bytes: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
 
@@ -297,7 +295,7 @@ pub fn dkg_cl_gen(
 
             // c_{l,1} = f^{chi_l} * pk_j^{r_l}
             let f_chi_l = setup.power_of_f_bytes(chunk_b)?;
-            let pk_r_l = setup.exp_bytes(pk_j_elt, &r_l)?;
+            let pk_r_l = setup.pk_pow_bytes(&all_pks[j], &r_l)?;
             let c_l_1 = setup.compose(&f_chi_l, &pk_r_l)?;
 
             chunk_cts.push((c_l_0, c_l_1));
@@ -316,7 +314,7 @@ pub fn dkg_cl_gen(
         let h_r_agg = setup.power_of_h_bytes(&r_agg)?;
         let c_0 = setup.compose(&h_r_agg, &h_q_pow_product)?;
 
-        let pk_r_agg = setup.exp_bytes(pk_j_elt, &r_agg)?;
+        let pk_r_agg = setup.pk_pow_bytes(&all_pks[j], &r_agg)?;
         let c_1 = setup.compose(&pk_r_agg, &h_q_pow_product)?;
 
         let agg_ct = (c_0, c_1);
@@ -329,7 +327,7 @@ pub fn dkg_cl_gen(
         // R_Blnt statement elements matching the proof's internal check.
         let proof = RBlntProof::prove(
             setup,
-            pk_j,
+            &all_pks[j],
             &pc,
             &chunk_cts,
             &agg_ct,
@@ -434,8 +432,6 @@ pub fn dkg_cl_gen_with_secret(
         let h_q_product = compute_h_q_pow_product(setup, &q, &chi_chunk_bytes)?;
         let pc = setup.compose(&h_chi_prime, &h_q_product)?;
 
-        let pk_j = &all_pks[j];
-        let pk_j_elt = pk_j.elt();
         let mut chunk_cts: Vec<(Qfi, Qfi)> = Vec::with_capacity(num_chunks);
         let mut r_chunk_bytes: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
 
@@ -443,7 +439,7 @@ pub fn dkg_cl_gen_with_secret(
             let r_l = sample_random(setup)?;
             let c_l_0 = setup.power_of_h_bytes(&r_l)?;
             let f_chi_l = setup.power_of_f_bytes(chunk_b)?;
-            let pk_r_l = setup.exp_bytes(pk_j_elt, &r_l)?;
+            let pk_r_l = setup.pk_pow_bytes(&all_pks[j], &r_l)?;
             let c_l_1 = setup.compose(&f_chi_l, &pk_r_l)?;
             chunk_cts.push((c_l_0, c_l_1));
             r_chunk_bytes.push(r_l);
@@ -453,13 +449,13 @@ pub fn dkg_cl_gen_with_secret(
         let h_q_pow_product = compute_h_q_pow_product(setup, &q, &chi_chunk_bytes)?;
         let h_r_agg = setup.power_of_h_bytes(&r_agg)?;
         let c_0 = setup.compose(&h_r_agg, &h_q_pow_product)?;
-        let pk_r_agg = setup.exp_bytes(pk_j_elt, &r_agg)?;
+        let pk_r_agg = setup.pk_pow_bytes(&all_pks[j], &r_agg)?;
         let c_1 = setup.compose(&pk_r_agg, &h_q_pow_product)?;
         let agg_ct = (c_0, c_1);
 
         let proof = RBlntProof::prove(
             setup,
-            pk_j,
+            &all_pks[j],
             &pc,
             &chunk_cts,
             &agg_ct,
@@ -570,8 +566,9 @@ pub fn dkg_cl_reveal(
     let mut combined_share = Mpz::from(0);
 
     // Also accumulate the homomorphically-combined ciphertext for the proof.
-    let mut combined_c1 = setup.identity()?;
-    let mut combined_c2 = setup.identity()?;
+    let mut combined_c1_bases = vec![];
+    let mut combined_c2_bases = vec![];
+    let mut exps = vec![];
 
     for dealer_chunks in received_chunks {
         // Decrypt each chunk via standard CL decryption and recombine.
@@ -584,19 +581,19 @@ pub fn dkg_cl_reveal(
             let m_l_bytes = setup.decrypt_bytes(&sk, &ct_l)?;
             let m_l = Mpz::from_bytes_be(&m_l_bytes);
             let q_pow_bytes = q_pow.to_bytes_be();
-            let weighted_c1 = setup.exp_bytes(c_l_0, &q_pow_bytes)?;
-            let weighted_c2 = setup.exp_bytes(c_l_1, &q_pow_bytes)?;
 
             dealer_share = dealer_share + &q_pow * &m_l;
             q_pow = q_pow * &q;
 
-            // Accumulate the ciphertext components for the combined ct.
-            combined_c1 = setup.compose(&combined_c1, &weighted_c1)?;
-            combined_c2 = setup.compose(&combined_c2, &weighted_c2)?;
+            combined_c1_bases.push(c_l_0);
+            combined_c2_bases.push(c_l_1);
+            exps.push(q_pow_bytes);
         }
 
         combined_share = combined_share + dealer_share;
     }
+    let combined_c1 = setup.multiexp_bytes(&combined_c1_bases, &exps)?;
+    let combined_c2 = setup.multiexp_bytes(&combined_c2_bases, &exps)?;
 
     let combined_share_bytes = if combined_share.is_zero() {
         vec![0u8]

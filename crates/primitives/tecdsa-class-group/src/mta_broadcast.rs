@@ -427,9 +427,8 @@ impl tecdsa_protocol::MtABroadcast for ScaledDecryptMtA {
         let beta_i = cl.sk_to_bytes(&sk_tmp2)?;
 
         // Compute commitment U_i = h^{beta_i} * pk_elt^{b_i}
-        let pk_elt = setup.pk.elt();
         let h_beta = cl.power_of_h_bytes(&beta_i)?;
-        let pk_b = cl.exp_bytes(pk_elt, b_i_bytes)?;
+        let pk_b = cl.pk_pow_bytes(&setup.pk, b_i_bytes)?;
         let u_com = cl.compose(&h_beta, &pk_b)?;
 
         let encoding = ScaledDecryptEncoding { c1, c2, u_com };
@@ -467,14 +466,20 @@ impl tecdsa_protocol::MtABroadcast for ScaledDecryptMtA {
     ) -> Result<Vec<u8>, Self::Error> {
         let cl = setup.setup.borrow();
 
-        // F_i = A_2^{b_i} * A_1^{beta_i} * B^{-alpha_i}
-        let a2_bi = cl.exp_bytes(&other_encoding.c2, &my_state.b_i)?;
-        let a1_betai = cl.exp_bytes(&other_encoding.c1, &my_state.beta_i)?;
-        let mut b_alphai = cl.exp_bytes(&other_encoding.u_com, &my_state.alpha_i)?;
-        b_alphai.neg();
-
-        let tmp = cl.compose(&a2_bi, &a1_betai)?;
-        let f_i = cl.compose(&tmp, &b_alphai)?;
+        // F_i = A_2^{b_i} * A_1^{beta_i} * B^{-alpha_i}, via one shared-squaring
+        // multi-exponentiation instead of three exps + two composes.
+        let f_i = cl.multiexp_signed_bytes(
+            &[
+                &other_encoding.c2,
+                &other_encoding.c1,
+                &other_encoding.u_com,
+            ],
+            &[
+                (false, my_state.b_i.clone()),
+                (false, my_state.beta_i.clone()),
+                (true, my_state.alpha_i.clone()),
+            ],
+        )?;
 
         // Serialise F_i using binary Qfi::to_bytes for reconstruction.
         let serialised = f_i.to_bytes();

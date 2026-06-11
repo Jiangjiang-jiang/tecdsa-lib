@@ -216,19 +216,21 @@ impl RElClProof {
             return Ok(false);
         }
 
-        // Check 3: ck_0^{z1} == R_ck * cgk_0^e (CL check)
-        let ck_0_z1 = setup.exp_bytes(ck_0, &self.z1)?;
-        let cgk_0_e = setup.exp_bytes(cgk_0, &self.e)?;
-        let rhs3 = setup.compose(&self.r_ck, &cgk_0_e)?;
-        if ck_0_z1 != rhs3 {
+        // Check 3: ck_0^{z1} == R_ck * cgk_0^e ⟺ ck_0^{z1} * cgk_0^{-e} == R_ck.
+        let lhs3 = setup.multiexp_signed_bytes(
+            &[ck_0, cgk_0],
+            &[(false, self.z1.clone()), (true, self.e.clone())],
+        )?;
+        if lhs3 != self.r_ck {
             return Ok(false);
         }
 
-        // Check 4: ck_1^{z1} == S_ck * cgk_1^e (CL check)
-        let ck_1_z1 = setup.exp_bytes(ck_1, &self.z1)?;
-        let cgk_1_e = setup.exp_bytes(cgk_1, &self.e)?;
-        let rhs4 = setup.compose(&self.s_ck, &cgk_1_e)?;
-        if ck_1_z1 != rhs4 {
+        // Check 4: ck_1^{z1} == S_ck * cgk_1^e ⟺ ck_1^{z1} * cgk_1^{-e} == S_ck.
+        let lhs4 = setup.multiexp_signed_bytes(
+            &[ck_1, cgk_1],
+            &[(false, self.z1.clone()), (true, self.e.clone())],
+        )?;
+        if lhs4 != self.s_ck {
             return Ok(false);
         }
 

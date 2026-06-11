@@ -19,9 +19,9 @@ pub(crate) mod wire;
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     interactive_keygen, party1_finalize_keygen, party1_keygen_round1, party1_keygen_round3,
-    party1_keygen_round3_with_dk, party2_finalize_keygen, party2_keygen_round2,
-    party2_verify_round3, KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP1State, KeyGenP2Round2Msg,
-    KeyGenP2State,
+    party1_keygen_round3_with_dk, party1_keygen_round3_with_precomputed_dk, party2_finalize_keygen,
+    party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP1State,
+    KeyGenP2Round2Msg, KeyGenP2State,
 };
 pub use machine::{Lin17KeyShare, Lin17KeygenMachine, Lin17KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;

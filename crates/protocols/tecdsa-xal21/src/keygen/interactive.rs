@@ -142,6 +142,32 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
+    // Generate the one-time MtA setup (Paillier keypair + Ring-Pedersen params);
+    // see the precomputed variant below.
+    let dk = tecdsa_paillier::keygen(rng)
+        .map_err(|e| Xal21Error::Paillier(format!("Paillier keygen failed: {e}")))?;
+    let ntilde = super::generate_ntilde_params(rng);
+
+    party2_keygen_round2_with_setup::<C>(dk, ntilde, rng)
+}
+
+/// Like [`party2_keygen_round2`], but uses a **precomputed** MtA setup: P2's
+/// Paillier decryption key `dk` and Ring-Pedersen parameters `ntilde`.
+///
+/// XAL+21's MtA setup (Paillier keypair + Ring-Pedersen `N~`) is a one-time,
+/// message-independent step. This variant lets a caller (e.g. a benchmark
+/// harness) generate it up front and inject it, so the round measures only the
+/// share sampling, proof, and assembly work — not the (multi-second) safe-prime
+/// generation for both moduli.
+pub fn party2_keygen_round2_with_setup<C: TecdsaCurve>(
+    dk: tecdsa_paillier::DecryptionKey,
+    ntilde: tecdsa_paillier::zk::mta_range::NTildeParams,
+    rng: &mut impl CryptoRngCore,
+) -> Result<(KeyGenP2Round2Msg<C>, KeyGenP2State<C>), Xal21Error>
+where
+    FieldBytesSize<C>: ModulusSize,
+    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+{
     // Sample x2 and compute Q2 = x2 * G
     let x2 = C::random_scalar(rng);
     let q2 = C::generator() * x2;
@@ -150,15 +176,11 @@ where
     let ephemeral = C::random_scalar(rng);
     let dlog_proof = DlogProof::<C>::prove(&x2, &ephemeral, &q2, b"xal21-keygen-q2");
 
-    // Generate Paillier key pair (P2 owns the decryption key for MtA)
-    let dk = tecdsa_paillier::keygen(rng)
-        .map_err(|e| Xal21Error::Paillier(format!("Paillier keygen failed: {e}")))?;
+    // P2 owns the Paillier decryption key for MtA.
     let ek = dk.encryption_key().clone();
 
     // Create Pi_GCD proof (proves knowledge of factorization of N)
     let pi_gcd = NICorrectKeyProof::prove(&dk, b"xal21-correct-key-challenge");
-
-    let ntilde = super::generate_ntilde_params(rng);
 
     let msg = KeyGenP2Round2Msg {
         q2,

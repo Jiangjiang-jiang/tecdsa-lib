@@ -52,13 +52,16 @@ pub fn compute_f_share(
     input: &ScaledDecryptPartyInput,
     public: &ScaledDecryptPublic,
 ) -> ClResult<Qfi> {
-    let a2_bi = setup.exp_bytes(&public.a2, &input.b_i)?;
-    let a1_betai = setup.exp_bytes(&public.a1, &input.beta_i)?;
-    let mut b_alphai = setup.exp_bytes(&public.b_agg, &input.alpha_i)?;
-    b_alphai.neg();
-
-    let tmp = setup.compose(&a2_bi, &a1_betai)?;
-    let f_i = setup.compose(&tmp, &b_alphai)?;
+    // F_i = a2^{b_i} · a1^{beta_i} · b_agg^{-alpha_i}, via one shared-squaring
+    // multi-exponentiation instead of three exps + two composes.
+    let f_i = setup.multiexp_signed_bytes(
+        &[&public.a2, &public.a1, &public.b_agg],
+        &[
+            (false, input.b_i.clone()),
+            (false, input.beta_i.clone()),
+            (true, input.alpha_i.clone()),
+        ],
+    )?;
     Ok(f_i)
 }
 

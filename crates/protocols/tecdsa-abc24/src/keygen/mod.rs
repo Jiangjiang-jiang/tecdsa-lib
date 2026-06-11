@@ -19,8 +19,9 @@ pub(crate) mod wire;
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     client_finalize_keygen, client_keygen_step2, client_verify_step3, interactive_keygen,
-    server_finalize_keygen, server_keygen_step1, server_keygen_step3, ClientStep2Msg,
-    ClientStep2State, ServerStep1Msg, ServerStep1State, ServerStep3Msg, ServerStep3State,
+    server_finalize_keygen, server_keygen_step1, server_keygen_step1_with_dk, server_keygen_step3,
+    ClientStep2Msg, ClientStep2State, ServerStep1Msg, ServerStep1State, ServerStep3Msg,
+    ServerStep3State,
 };
 pub use machine::{Abc24KeyShare, Abc24KeygenMachine, Abc24KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;

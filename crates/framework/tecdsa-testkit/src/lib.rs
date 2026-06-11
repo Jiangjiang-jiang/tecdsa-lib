@@ -9,6 +9,6 @@ pub mod wire_gate;
 pub mod wire_orchestrator;
 
 pub use deviation::{Deviation, DeviationPlan};
-pub use orchestrator::{CommStats, Orchestrator, OrchestratorResult, PartyTiming};
+pub use orchestrator::{wire_size, CommStats, Orchestrator, OrchestratorResult, PartyTiming};
 pub use wire_gate::{check_wire_eligible, Phase};
 pub use wire_orchestrator::{WireOrchestrator, WireOrchestratorResult};

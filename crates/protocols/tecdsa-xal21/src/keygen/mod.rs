@@ -19,8 +19,8 @@ pub(crate) mod wire;
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     interactive_keygen, party1_finalize, party1_keygen_round1, party1_keygen_round3,
-    party2_finalize, party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg,
-    KeyGenP1Round3Msg, KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
+    party2_finalize, party2_keygen_round2, party2_keygen_round2_with_setup, party2_verify_round3,
+    KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
 };
 pub use machine::{TwoPartyRole, Xal21KeyShare, Xal21KeygenMachine, Xal21KeygenMsg};
 use rand_core::CryptoRngCore;
@@ -41,6 +41,26 @@ fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
         h1,
         h2,
     }
+}
+
+/// Generate XAL+21's one-time MtA setup material: P2's Paillier keypair and the
+/// Ring-Pedersen (`N~`) auxiliary parameters used by the MtA range proofs.
+///
+/// Both are message-independent, one-time setup (Paillier `keygen` and a
+/// Ring-Pedersen modulus each need a pair of safe primes). Exposing them lets
+/// callers (e.g. benchmarks) generate the material up front and inject it via
+/// [`Xal21KeygenMachine::new_with_setup`], keeping safe-prime generation out of
+/// the measured DKG rounds.
+///
+/// # Panics
+///
+/// Panics if Paillier key generation fails (should not happen with a valid RNG).
+pub fn generate_setup(
+    rng: &mut impl CryptoRngCore,
+) -> (tecdsa_paillier::DecryptionKey, NTildeParams) {
+    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let ntilde = generate_ntilde_params(rng);
+    (dk, ntilde)
 }
 
 /// Generate key shares for the XAL+21 two-party ECDSA protocol via a trusted dealer.

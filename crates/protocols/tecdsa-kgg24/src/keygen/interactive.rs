@@ -152,6 +152,28 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
+    // Generate Paillier key pair (one-time setup; see the precomputed variant).
+    let dk = tecdsa_paillier::keygen(rng)
+        .map_err(|e| Kgg24Error::Paillier(format!("Paillier keygen failed: {e}")))?;
+
+    party1_keygen_round2_with_dk::<C>(dk, rng)
+}
+
+/// Like [`party1_keygen_round2`], but uses a **precomputed** Paillier
+/// decryption key `dk` instead of generating one inside the round.
+///
+/// P1's Paillier keypair is a one-time, message-independent setup step. This
+/// variant lets a caller (e.g. a benchmark harness) generate the keypair up
+/// front and inject it, so the round measures only the share sampling,
+/// encryption, and proof work — not the (multi-second) safe-prime generation.
+pub fn party1_keygen_round2_with_dk<C: TecdsaCurve>(
+    dk: tecdsa_paillier::DecryptionKey,
+    rng: &mut impl CryptoRngCore,
+) -> Result<(KeyGenP1Round2Msg<C>, KeyGenP1State<C>), Kgg24Error>
+where
+    FieldBytesSize<C>: ModulusSize,
+    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+{
     // Sample x1 and compute X1 = x1 * G
     let x1 = C::random_scalar(rng);
     let x1_point = C::generator() * x1;
@@ -160,9 +182,6 @@ where
     let ephemeral = C::random_scalar(rng);
     let dlog_proof = DlogProof::<C>::prove(&x1, &ephemeral, &x1_point, b"kgg24-keygen-x1");
 
-    // Generate Paillier key pair
-    let dk = tecdsa_paillier::keygen(rng)
-        .map_err(|e| Kgg24Error::Paillier(format!("Paillier keygen failed: {e}")))?;
     let ek = dk.encryption_key().clone();
 
     // Get the curve order q

@@ -354,10 +354,16 @@ pub fn mpmta_round2(
     //
     // We aggregate the per-party (c1_j, c2_j) -> (d1_j, d2_j) into a single
     // aggregated relation for the R_m-AffDL-Ec proof.
-    let mut agg_c1 = setup.identity()?;
-    let mut agg_c2 = setup.identity()?;
-    let mut agg_d1 = setup.identity()?;
-    let mut agg_d2 = setup.identity()?;
+    // Collect each party's bases and the shared per-party challenge exponents,
+    // then fold each aggregate with a single shared-squaring multi-exponentiation.
+    // The bases differ per party (not reused), so this is a genuine variable-base
+    // multi-exp: `multiexp` shares one squaring chain across all n terms instead
+    // of doing n independent exp+compose pairs.
+    let mut c1s = Vec::new();
+    let mut c2s = Vec::new();
+    let mut d1s = Vec::new();
+    let mut d2s = Vec::new();
+    let mut e_js: Vec<Vec<u8>> = Vec::new();
     let mut agg_beta = k256::Scalar::ZERO;
     let mut agg_b_point = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
 
@@ -374,24 +380,22 @@ pub fn mpmta_round2(
             &[&j.to_string(), &my_index.to_string()],
         )?;
 
-        // Aggregate: agg_c1 *= c_{j,1}^{e_j}, etc.
-        let cj1_ej = setup.exp_bytes(&cj1, &e_j_bytes)?;
-        agg_c1 = setup.compose(&agg_c1, &cj1_ej)?;
-
-        let cj2_ej = setup.exp_bytes(&cj2, &e_j_bytes)?;
-        agg_c2 = setup.compose(&agg_c2, &cj2_ej)?;
-
-        let d1_ej = setup.exp_bytes(&all_d1s[j], &e_j_bytes)?;
-        agg_d1 = setup.compose(&agg_d1, &d1_ej)?;
-
-        let d2_ej = setup.exp_bytes(&all_d2s[j], &e_j_bytes)?;
-        agg_d2 = setup.compose(&agg_d2, &d2_ej)?;
-
         // Aggregate beta and B on the EC side.
         let e_j_scalar = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&e_j_bytes);
         agg_beta += betas[j] * e_j_scalar;
         agg_b_point += beta_points[j] * e_j_scalar;
+
+        c1s.push(cj1);
+        c2s.push(cj2);
+        d1s.push(all_d1s[j].clone());
+        d2s.push(all_d2s[j].clone());
+        e_js.push(e_j_bytes);
     }
+
+    let agg_c1 = setup.multiexp_bytes(&c1s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_c2 = setup.multiexp_bytes(&c2s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_d1 = setup.multiexp_bytes(&d1s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_d2 = setup.multiexp_bytes(&d2s.iter().collect::<Vec<_>>(), &e_js)?;
 
     // Compute aggregated beta decimal for the proof.
     let agg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&agg_beta);
@@ -480,10 +484,12 @@ pub fn mpmta_verify_round2(
     }
 
     // Recompute the aggregated values from public data.
-    let mut agg_c1 = setup.identity()?;
-    let mut agg_c2 = setup.identity()?;
-    let mut agg_d1 = setup.identity()?;
-    let mut agg_d2 = setup.identity()?;
+    // Same shared-squaring multi-exponentiation as the prover side (see above).
+    let mut c1s = Vec::new();
+    let mut c2s = Vec::new();
+    let mut d1s = Vec::new();
+    let mut d2s = Vec::new();
+    let mut e_js: Vec<Vec<u8>> = Vec::new();
     let mut agg_b_point = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
 
     for j in 0..n {
@@ -501,21 +507,20 @@ pub fn mpmta_verify_round2(
             &[&j.to_string(), &prover_index.to_string()],
         )?;
 
-        let cj1_ej = setup.exp_bytes(&cj1, &e_j_bytes)?;
-        agg_c1 = setup.compose(&agg_c1, &cj1_ej)?;
-
-        let cj2_ej = setup.exp_bytes(&cj2, &e_j_bytes)?;
-        agg_c2 = setup.compose(&agg_c2, &cj2_ej)?;
-
-        let dj1_ej = setup.exp_bytes(&dj1, &e_j_bytes)?;
-        agg_d1 = setup.compose(&agg_d1, &dj1_ej)?;
-
-        let dj2_ej = setup.exp_bytes(&dj2, &e_j_bytes)?;
-        agg_d2 = setup.compose(&agg_d2, &dj2_ej)?;
-
         let e_j_scalar = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&e_j_bytes);
         agg_b_point += round2.beta_points[j] * e_j_scalar;
+
+        c1s.push(cj1);
+        c2s.push(cj2);
+        d1s.push(dj1);
+        d2s.push(dj2);
+        e_js.push(e_j_bytes);
     }
+
+    let agg_c1 = setup.multiexp_bytes(&c1s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_c2 = setup.multiexp_bytes(&c2s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_d1 = setup.multiexp_bytes(&d1s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_d2 = setup.multiexp_bytes(&d2s.iter().collect::<Vec<_>>(), &e_js)?;
 
     // Verify the aggregated proof.
     let ok = round2.proof.verify(

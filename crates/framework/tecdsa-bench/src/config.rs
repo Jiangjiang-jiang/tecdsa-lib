@@ -35,9 +35,9 @@ const SIGN_N_VAR: &str = "TECDSA_BENCH_SIGN_N";
 const SIGN_THRESHOLDS_VAR: &str = "TECDSA_BENCH_SIGN_THRESHOLDS";
 const RUNS_VAR: &str = "TECDSA_BENCH_RUNS";
 
-const DEFAULT_DKG_CONFIGS: &[(u16, u16)] = &[(3, 3), (7, 7), (11, 11), (15, 15), (20, 20)];
+const DEFAULT_DKG_CONFIGS: &[(u16, u16)] = &[(2, 2), (3, 3), (7, 7), (11, 11), (15, 15), (20, 20)];
 const DEFAULT_SIGN_N: u16 = 20;
-const DEFAULT_SIGN_THRESHOLDS: &[u16] = &[2, 3, 7, 11, 15, 20];
+const DEFAULT_SIGN_THRESHOLDS: &[u16] = &[2, 3, 7, 11, 20];
 
 /// Parse a single `u16` field (trimmed), panicking with context on failure.
 fn parse_u16(var: &str, field: &str) -> u16 {

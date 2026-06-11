@@ -111,8 +111,7 @@ impl<'a> Nim<'a> {
 
         // Compute pe_A = h^r * pk^x
         let h_r = self.setup.power_of_h_bytes(&r_bytes)?;
-        let pk_elt = pk.elt();
-        let pk_x = self.setup.exp_bytes(pk_elt, x_bytes)?;
+        let pk_x = self.setup.pk_pow_bytes(&pk, x_bytes)?;
         let pe_a = self.setup.compose(&h_r, &pk_x)?;
 
         Ok(NimEncodeAOutput {
@@ -167,9 +166,10 @@ impl<'a> Nim<'a> {
     pub fn decode_a(&self, pe_b: &ClHsmqkCiphertext, state: &NimStateA) -> ClResult<Vec<u8>> {
         let (c1, c2) = self.setup.ct_components(pe_b)?;
 
-        let c1_r = self.setup.exp_bytes(&c1, &state.r_bytes)?;
-        let c2_x = self.setup.exp_bytes(&c2, &state.x_bytes)?;
-        let z_a_raw = self.setup.compose(&c1_r, &c2_x)?;
+        // z_A_raw = c1^r · c2^x, via one shared-squaring multi-exponentiation.
+        let z_a_raw = self
+            .setup
+            .multiexp_bytes(&[&c1, &c2], &[state.r_bytes.clone(), state.x_bytes.clone()])?;
 
         extract_f_component(self.setup, &z_a_raw, false)
     }

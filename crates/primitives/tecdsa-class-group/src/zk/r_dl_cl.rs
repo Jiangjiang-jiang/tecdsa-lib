@@ -140,19 +140,23 @@ impl RDlClProof {
             return Ok(false);
         }
 
-        // Check 1: c_{01}^z == t1 * c_{11}^e
-        let c01_z = setup.exp_bytes(&c01, &self.z)?;
-        let c11_e = setup.exp_bytes(&c11, &self.e)?;
-        let rhs1 = setup.compose(&self.t1, &c11_e)?;
-        if c01_z != rhs1 {
+        // Check 1: c_{01}^z == t1 * c_{11}^e ⟺ c_{01}^z * c_{11}^{-e} == t1.
+        // Both bases vary per proof, so one shared-squaring multi-exp beats two
+        // separate exps.
+        let lhs1 = setup.multiexp_signed_bytes(
+            &[&c01, &c11],
+            &[(false, self.z.clone()), (true, self.e.clone())],
+        )?;
+        if lhs1 != self.t1 {
             return Ok(false);
         }
 
-        // Check 2: c_{02}^z == t2 * c_{12}^e
-        let c02_z = setup.exp_bytes(&c02, &self.z)?;
-        let c12_e = setup.exp_bytes(&c12, &self.e)?;
-        let rhs2 = setup.compose(&self.t2, &c12_e)?;
-        if c02_z != rhs2 {
+        // Check 2: c_{02}^z == t2 * c_{12}^e ⟺ c_{02}^z * c_{12}^{-e} == t2.
+        let lhs2 = setup.multiexp_signed_bytes(
+            &[&c02, &c12],
+            &[(false, self.z.clone()), (true, self.e.clone())],
+        )?;
+        if lhs2 != self.t2 {
             return Ok(false);
         }
 

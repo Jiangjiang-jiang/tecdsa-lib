@@ -57,7 +57,7 @@ impl RMAffDlProof {
         let t1 = setup.compose(&ci1_a3, &h_a1)?;
 
         // t2 = pk^a1 * f^a2 * ci2^a3
-        let pk_a1 = setup.exp_bytes(pk_elt, &a1)?;
+        let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let ci2_a3 = setup.exp_bytes(&ci2, &a3)?;
         let tmp = setup.compose(&pk_a1, &f_a2)?;
@@ -126,7 +126,7 @@ impl RMAffDlProof {
         }
 
         // Check 2: pk^z1 * f^z2 * ci2^z3 == t2 * co2^e
-        let pk_z1 = setup.exp_bytes(pk_elt, &self.z1)?;
+        let pk_z1 = setup.pk_pow_bytes(pk, &self.z1)?;
         let f_z2 = setup.power_of_f_bytes(&self.z2)?;
         let ci2_z3 = setup.exp_bytes(&ci2, &self.z3)?;
         let tmp = setup.compose(&pk_z1, &f_z2)?;

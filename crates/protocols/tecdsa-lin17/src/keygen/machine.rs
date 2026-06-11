@@ -42,8 +42,9 @@ use crate::{
     keygen::{
         interactive::{
             party1_finalize_keygen, party1_keygen_round1, party1_keygen_round3_with_dk,
-            party2_finalize_keygen, party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg,
-            KeyGenP1Round3Msg, KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
+            party1_keygen_round3_with_precomputed_dk, party2_finalize_keygen, party2_keygen_round2,
+            party2_verify_round3, KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP1State,
+            KeyGenP2Round2Msg, KeyGenP2State,
         },
         wire::{
             decode_r1, decode_r2, decode_r3, decode_r4, decode_r5, decode_r6, decode_r7, encode_r1,
@@ -212,6 +213,11 @@ where
     output: Option<Lin17KeyShare<C>>,
     round: u16,
     ia_report: Option<IaReport>,
+    /// Optional precomputed Paillier key for P1, injected via
+    /// [`Lin17KeygenMachine::new_with_setup`]. When present, P1 uses it in
+    /// round 3 instead of generating a fresh keypair (the keypair is a one-time
+    /// setup step, kept out of the DKG round timing).
+    precomputed_dk: Option<tecdsa_paillier::DecryptionKey>,
 }
 
 impl<C: TecdsaCurve> Lin17KeygenMachine<C>
@@ -233,6 +239,28 @@ where
         role: TwoPartyRole,
         my_id: PartyId,
         peer_id: PartyId,
+        rng: &mut impl rand_core::CryptoRngCore,
+    ) -> Result<Self, TecdsaError> {
+        Self::new_with_setup(role, my_id, peer_id, None, rng)
+    }
+
+    /// Like [`Lin17KeygenMachine::new`], but lets the caller inject P1's
+    /// **precomputed** Paillier decryption key.
+    ///
+    /// P1's Paillier keypair is a one-time, message-independent setup step. By
+    /// generating it up front and passing it here, callers (e.g. benchmark
+    /// harnesses) keep the (multi-second) safe-prime generation out of the
+    /// measured DKG rounds. `precomputed_dk` is only consumed by `Party1`
+    /// (in round 3); for `Party2` it is ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `my_id == peer_id`.
+    pub fn new_with_setup(
+        role: TwoPartyRole,
+        my_id: PartyId,
+        peer_id: PartyId,
+        precomputed_dk: Option<tecdsa_paillier::DecryptionKey>,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Result<Self, TecdsaError> {
         if my_id == peer_id {
@@ -274,6 +302,7 @@ where
             output: None,
             round,
             ia_report: None,
+            precomputed_dk,
         })
     }
 
@@ -323,8 +352,15 @@ where
         self.validate_sender(from)?;
         let p2_r2_msg: KeyGenP2Round2Msg<C> = decode_r2::<C>(&payload)?;
 
-        let (p1_r3_msg, dk) = party1_keygen_round3_with_dk::<C>(&p1_state, &p2_r2_msg, rng)
-            .map_err(|e| TecdsaError::Other(format!("P1 round3 failed: {e}")))?;
+        // Use the precomputed Paillier key if one was injected via
+        // `new_with_setup`; otherwise generate a fresh keypair in-round.
+        let (p1_r3_msg, dk) = match self.precomputed_dk.take() {
+            Some(dk) => {
+                party1_keygen_round3_with_precomputed_dk::<C>(&p1_state, &p2_r2_msg, dk, rng)
+            }
+            None => party1_keygen_round3_with_dk::<C>(&p1_state, &p2_r2_msg, rng),
+        }
+        .map_err(|e| TecdsaError::Other(format!("P1 round3 failed: {e}")))?;
 
         let ek = p1_r3_msg.ek.clone();
         let c_key = p1_r3_msg.c_key.clone();

@@ -8,7 +8,7 @@
 //! and provides access to the class group context, random-number generator, and
 //! scheme parameters.
 
-use std::{str::FromStr, sync::Arc};
+use std::{borrow::Borrow, str::FromStr, sync::Arc};
 
 pub use self::{Ciphertext as ClCiphertext, PublicKey as ClPublicKey, SecretKey as ClSecretKey};
 pub use crate::class_group::{
@@ -325,19 +325,47 @@ impl ClSetup {
     /// each exponent given as big-endian bytes. Shares one squaring chain across
     /// all bases (see [`ClassGroup::multiexp`]); far cheaper than folding `n`
     /// independent [`exp_bytes`](Self::exp_bytes) results with [`compose`](Self::compose).
-    pub fn multiexp_bytes(&self, bases: &[&Qfi], exps: &[Vec<u8>]) -> ClResult<Qfi> {
-        let exps_mpz: Vec<Mpz> = exps.iter().map(|e| Mpz::from_bytes_be(e)).collect();
+    pub fn multiexp_bytes(
+        &self,
+        bases: &[impl Borrow<Qfi>],
+        exps: &[impl Borrow<[u8]>],
+    ) -> ClResult<Qfi> {
+        let exps_mpz: Vec<Mpz> = exps
+            .iter()
+            .map(|e| Mpz::from_bytes_be(e.borrow()))
+            .collect();
         Ok(self.cl.cl_delta().multiexp(bases, &exps_mpz))
+    }
+
+    /// `pk^e` (`e` big-endian bytes) using the public key's fixed-base comb when
+    /// possible. The comb is built lazily on `pk` and reused, so the O(n)
+    /// per-peer Schnorr verifies that raise the *same* `pk` to a response `z`
+    /// amortise one table build instead of doing `n` bare variable-base exps.
+    /// Falls back to a bare exp for the compact variant (where `pk ∈ Cl(Δ_K)`)
+    /// or for exponents beyond the comb's range.
+    pub fn pk_pow_bytes(&self, pk: &PublicKey, e: &[u8]) -> ClResult<Qfi> {
+        let n = Mpz::from_bytes_be(e);
+        if !self.cl.compact_variant {
+            let comb = pk.comb(&self.cl);
+            if n.nbits() <= comb.max_bits() {
+                return Ok(self.cl.cl_delta.exp_comb(comb, &n));
+            }
+        }
+        Ok(self.cl.cl_delta.exp(pk.elt(), &n))
     }
 
     /// Like [`multiexp_bytes`](Self::multiexp_bytes) but each exponent carries an
     /// explicit sign (`true` = negative); the magnitude is big-endian bytes.
     /// Useful for Lagrange-weighted products `∏ gᵢ^{λᵢ}` where `λᵢ` may be negative.
-    pub fn multiexp_signed_bytes(&self, bases: &[&Qfi], exps: &[(bool, Vec<u8>)]) -> ClResult<Qfi> {
+    pub fn multiexp_signed_bytes(
+        &self,
+        bases: &[impl Borrow<Qfi>],
+        exps: &[(bool, impl Borrow<[u8]>)],
+    ) -> ClResult<Qfi> {
         let exps_mpz: Vec<Mpz> = exps
             .iter()
             .map(|(neg, e)| {
-                let m = Mpz::from_bytes_be(e);
+                let m = Mpz::from_bytes_be(e.borrow());
                 if *neg {
                     m.neg()
                 } else {
@@ -484,8 +512,12 @@ impl CL_HSMqk {
         let secretkey_bound = cn_bound.mul_2exp((dist - 2) as u32);
         let encrypt_randomness_bound = secretkey_bound.clone();
 
-        // Fixed-base comb for h, covering both sk and r exponents.
-        let exp_bits = secretkey_bound.nbits() + 1;
+        // Fixed-base comb for h. Sized to also cover unbounded ZK responses
+        // z = a + e·sk (a ~ secretkey_bound, e ~ q, sk ~ secretkey_bound), so the
+        // Schnorr verify checks `power_of_h(z)` stay on the comb instead of
+        // falling back to a bare exp. The comb's table size is fixed (2^blocks);
+        // only the per-block length grows, so the extra cost is marginal.
+        let exp_bits = secretkey_bound.nbits() + q.nbits() + 2;
         let h_comb = cl_delta.precompute_comb(&h, exp_bits, COMB_BLOCKS);
 
         // Compact-variant generator γ = π(h)^M ∈ Cl(Δ_K).
@@ -1278,9 +1310,14 @@ impl PublicKey {
     pub fn elt(&self) -> &QFI {
         &self.elt
     }
-    pub(crate) fn comb(&self, c: &CL_HSMqk) -> &FixedBaseComb {
+
+    pub fn comb(&self, c: &CL_HSMqk) -> &FixedBaseComb {
         self.comb.get_or_init(|| {
-            let exp_bits = c.encrypt_randomness_bound.nbits() + 1;
+            // Cover both encryption randomness `r` (~secretkey_bound) and the
+            // unbounded ZK responses `z = a + e·sk` (~secretkey_bound + q), so
+            // `pk^z` in Schnorr verifies uses this fixed-base comb instead of a
+            // bare exp. Same table size (2^blocks); only block length grows.
+            let exp_bits = c.secretkey_bound.nbits() + c.q.nbits() + 2;
             c.cl_delta.precompute_comb(&self.elt, exp_bits, COMB_BLOCKS)
         })
     }
@@ -1404,5 +1441,39 @@ mod tests {
         let m = Cleartext::from_mpz(&c, Mpz::from(14u64)).unwrap();
         let ct = c.encrypt(&pk, &m, &mut rng);
         assert_eq!(c.decrypt(&sk, &ct).as_mpz(), &Mpz::from(14u64));
+    }
+
+    #[test]
+    #[ignore = "perf micro-benchmark: pk-comb routing; run with --ignored --nocapture"]
+    fn pk_pow_comb_vs_bare_timing() {
+        use std::time::Instant;
+        let mut setup = ClSetup::new_secp256k1_128bit("42").expect("setup");
+        let (_sk, pk) = setup.keygen().expect("keygen");
+        // Response-sized exponent z = a + e·sk: ~secretkey_bound + ~28 bytes of
+        // challenge, staying within the (enlarged) comb range.
+        let z = {
+            let (s2, _) = setup.keygen().expect("k2");
+            let body = setup.sk_to_bytes(&s2).expect("bytes");
+            let mut ext = vec![0xABu8; 28];
+            ext.extend_from_slice(&body);
+            ext
+        };
+        let elt = pk.elt().clone();
+        const N: u32 = 20; // simulate reuse across an n-peer verify loop
+        let t0 = Instant::now();
+        for _ in 0..N {
+            let _ = setup.pk_pow_bytes(&pk, &z).expect("comb");
+        }
+        let t_comb = t0.elapsed() / N;
+        let t1 = Instant::now();
+        for _ in 0..N {
+            let _ = setup.exp_bytes(&elt, &z).expect("bare");
+        }
+        let t_bare = t1.elapsed() / N;
+        println!(
+            "pk^z ({}-bit) amortised over {N} reuses: comb={t_comb:?} bare={t_bare:?} speedup={:.2}x",
+            z.len() * 8,
+            t_bare.as_secs_f64() / t_comb.as_secs_f64()
+        );
     }
 }

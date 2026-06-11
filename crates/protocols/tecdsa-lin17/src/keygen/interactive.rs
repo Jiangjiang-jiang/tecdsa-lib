@@ -248,9 +248,52 @@ where
         ));
     }
 
-    // Generate Paillier key pair
+    // Generate Paillier key pair (one-time setup; see the precomputed variant).
     let dk = tecdsa_paillier::keygen(rng)
         .map_err(|e| Lin17Error::Paillier(format!("Paillier keygen failed: {e}")))?;
+
+    party1_keygen_round3_core::<C>(state, dk, rng)
+}
+
+/// Like [`party1_keygen_round3_with_dk`], but uses a **precomputed** Paillier
+/// decryption key `dk` instead of generating one inside the round.
+///
+/// P1's Paillier keypair is a one-time, message-independent setup step. This
+/// variant lets a caller (e.g. a benchmark harness) generate the keypair
+/// up front and inject it, so the round itself measures only the encryption,
+/// proofs, and decommitment work — not the (multi-second) safe-prime generation.
+pub fn party1_keygen_round3_with_precomputed_dk<C: TecdsaCurve>(
+    state: &KeyGenP1State<C>,
+    p2_msg: &KeyGenP2Round2Msg<C>,
+    dk: tecdsa_paillier::DecryptionKey,
+    rng: &mut impl CryptoRngCore,
+) -> Result<(KeyGenP1Round3Msg<C>, tecdsa_paillier::DecryptionKey), Lin17Error>
+where
+    FieldBytesSize<C>: ModulusSize,
+    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+{
+    // Verify P2's DLog proof for Q_2
+    if !p2_msg.dlog_proof.verify(&p2_msg.q2, b"lin17-keygen-q2") {
+        return Err(Lin17Error::DlogVerification(
+            "Keygen: P2's DLog proof for Q_2 failed".into(),
+        ));
+    }
+
+    party1_keygen_round3_core::<C>(state, dk, rng)
+}
+
+/// Shared body of P1's round 3: encrypt `x_1` under `dk`, build the correct-key
+/// and range proofs, and assemble the round-3 message. The `dk` is threaded
+/// through and returned unchanged so the caller can retain it for PDL/finalize.
+fn party1_keygen_round3_core<C: TecdsaCurve>(
+    state: &KeyGenP1State<C>,
+    dk: tecdsa_paillier::DecryptionKey,
+    rng: &mut impl CryptoRngCore,
+) -> Result<(KeyGenP1Round3Msg<C>, tecdsa_paillier::DecryptionKey), Lin17Error>
+where
+    FieldBytesSize<C>: ModulusSize,
+    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+{
     let ek = dk.encryption_key().clone();
 
     // Encrypt x_1

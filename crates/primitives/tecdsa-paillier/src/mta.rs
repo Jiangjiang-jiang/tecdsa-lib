@@ -561,6 +561,11 @@ pub struct PaillierSenderState<P: PaillierMtaProofs = SimpleProofs> {
 }
 
 /// Message from sender (P2) to receiver (P1): encrypted input + proof.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "P::SenderProof: serde::Serialize",
+    deserialize = "P::SenderProof: serde::de::DeserializeOwned"
+))]
 pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_B = Enc(pk, b; r)`: Paillier ciphertext of the sender's input.
     pub ciphertext: fast_paillier::Ciphertext,
@@ -569,6 +574,11 @@ pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
 }
 
 /// Message from receiver (P1) to sender (P2): affine result + proof.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "P::ReceiverProof: serde::Serialize",
+    deserialize = "P::ReceiverProof: serde::de::DeserializeOwned"
+))]
 pub struct PaillierReceiverMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_A = c_B^a * Enc(pk, alpha'; r')`: the affine ciphertext.
     pub ciphertext: fast_paillier::Ciphertext,

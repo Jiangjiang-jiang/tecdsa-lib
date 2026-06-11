@@ -167,7 +167,6 @@ fn test_scaled_decrypt_standalone() {
     let mut setup = ClSetup::new_secp256k1("8001").expect("setup");
     let mut rng = rand::rngs::OsRng;
     let (_cl_sk, cl_pk) = setup.keygen().expect("keygen");
-    let pk_elt = &cl_pk.elt();
 
     let n = 4;
     let a: Vec<k256::Scalar> = (0..n)
@@ -202,7 +201,7 @@ fn test_scaled_decrypt_standalone() {
         let beta_i = setup.sk_to_bytes(&sk_tmp2).expect("sk_bytes");
 
         let h_beta = setup.power_of_h_bytes(&beta_i).expect("power_of_h");
-        let pk_b = setup.exp_bytes(pk_elt, &b_bytes).expect("exp");
+        let pk_b = setup.pk_pow_bytes(&cl_pk, &b_bytes).expect("exp");
         let com = setup.compose(&h_beta, &pk_b).expect("compose");
         com_qfis.push(com);
 

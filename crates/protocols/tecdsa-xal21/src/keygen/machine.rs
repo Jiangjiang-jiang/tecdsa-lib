@@ -30,8 +30,8 @@ use crate::{
     keygen::{
         interactive::{
             party1_finalize, party1_keygen_round1, party1_keygen_round3, party2_finalize,
-            party2_keygen_round2, party2_verify_round3, KeyGenP1Round1Msg, KeyGenP1Round3Msg,
-            KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
+            party2_keygen_round2, party2_keygen_round2_with_setup, party2_verify_round3,
+            KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP1State, KeyGenP2Round2Msg, KeyGenP2State,
         },
         wire::{decode_r1, decode_r2, decode_r3, encode_r1, encode_r2, encode_r3},
     },
@@ -153,6 +153,12 @@ where
     output: Option<Xal21KeyShare<C>>,
     round: u16,
     ia_report: Option<IaReport>,
+    /// Optional precomputed MtA setup for P2 (Paillier key + Ring-Pedersen
+    /// params), injected via [`Xal21KeygenMachine::new_with_setup`]. When
+    /// present, P2 uses it in round 2 instead of generating fresh material (the
+    /// setup is a one-time step, kept out of the DKG round timing).
+    precomputed_setup:
+        Option<(tecdsa_paillier::DecryptionKey, tecdsa_paillier::zk::mta_range::NTildeParams)>,
 }
 
 impl<C: TecdsaCurve> Xal21KeygenMachine<C>
@@ -173,6 +179,32 @@ where
         role: TwoPartyRole,
         my_id: PartyId,
         peer_id: PartyId,
+        rng: &mut impl rand_core::CryptoRngCore,
+    ) -> Result<Self, TecdsaError> {
+        Self::new_with_setup(role, my_id, peer_id, None, rng)
+    }
+
+    /// Like [`Xal21KeygenMachine::new`], but lets the caller inject P2's
+    /// **precomputed** MtA setup (Paillier decryption key + Ring-Pedersen
+    /// parameters).
+    ///
+    /// XAL+21's MtA setup is a one-time, message-independent step. By generating
+    /// it up front (see [`super::generate_setup`]) and passing it here, callers
+    /// (e.g. benchmark harnesses) keep the (multi-second) safe-prime generation
+    /// out of the measured DKG rounds. `precomputed_setup` is only consumed by
+    /// `Party2` (in round 2); for `Party1` it is ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `my_id == peer_id`.
+    pub fn new_with_setup(
+        role: TwoPartyRole,
+        my_id: PartyId,
+        peer_id: PartyId,
+        precomputed_setup: Option<(
+            tecdsa_paillier::DecryptionKey,
+            tecdsa_paillier::zk::mta_range::NTildeParams,
+        )>,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Result<Self, TecdsaError> {
         if my_id == peer_id {
@@ -201,6 +233,7 @@ where
             output: None,
             round,
             ia_report: None,
+            precomputed_setup,
         })
     }
 
@@ -214,8 +247,13 @@ where
 
         let p1_r1_msg = decode_r1(&payload)?;
 
-        let (r2_msg, p2_state) = party2_keygen_round2::<C>(rng)
-            .map_err(|e| TecdsaError::Other(format!("P2 round2 failed: {e}")))?;
+        // Use the precomputed MtA setup if one was injected via
+        // `new_with_setup`; otherwise generate fresh material in-round.
+        let (r2_msg, p2_state) = match self.precomputed_setup.take() {
+            Some((dk, ntilde)) => party2_keygen_round2_with_setup::<C>(dk, ntilde, rng),
+            None => party2_keygen_round2::<C>(rng),
+        }
+        .map_err(|e| TecdsaError::Other(format!("P2 round2 failed: {e}")))?;
 
         let payload = encode_r2::<C>(&r2_msg)?;
 

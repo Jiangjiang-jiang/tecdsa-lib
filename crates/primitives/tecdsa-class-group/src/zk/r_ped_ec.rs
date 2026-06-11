@@ -54,7 +54,7 @@ impl RPedEcProof {
         // CL Pedersen commitment: c_tilde = h^{a1} * pk^{a2}.
         let h_a1 = setup.power_of_h_bytes(&a1)?;
         let pk_elt = pk.elt();
-        let pk_a2 = setup.exp_bytes(pk_elt, &a2)?;
+        let pk_a2 = setup.pk_pow_bytes(pk, &a2)?;
         let c_tilde = setup.compose(&h_a1, &pk_a2)?;
 
         // EC commitment: V_tilde = a2 * G.
@@ -104,7 +104,7 @@ impl RPedEcProof {
 
         // Check 1: h^{s_r} * pk^{s_v} == c_tilde * c^e.
         let h_sr = setup.power_of_h_bytes(&self.s_r)?;
-        let pk_sv = setup.exp_bytes(pk_elt, &self.s_v)?;
+        let pk_sv = setup.pk_pow_bytes(pk, &self.s_v)?;
         let lhs = setup.compose(&h_sr, &pk_sv)?;
         let c_e = setup.exp_bytes(c, &self.e)?;
         let rhs = setup.compose(&self.c_tilde, &c_e)?;

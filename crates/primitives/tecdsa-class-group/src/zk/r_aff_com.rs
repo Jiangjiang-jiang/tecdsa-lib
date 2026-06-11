@@ -67,7 +67,7 @@ impl RAffComProof {
         let h_a1 = setup.power_of_h_bytes(&a1)?;
         let t1 = setup.compose(&ci1_a3, &h_a1)?;
         // t2 = pk^a1 * f^a2 * ci2^a3
-        let pk_a1 = setup.exp_bytes(pk_elt, &a1)?;
+        let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let tmp = setup.compose(&pk_a1, &f_a2)?;
         let ci2_a3 = setup.exp_bytes(&ci2, &a3)?;
@@ -131,24 +131,29 @@ impl RAffComProof {
         }
 
         // Check 1: ci1^z3 * h^z1 == t1 * co1^e
-        let ci1_z3 = setup.exp_bytes(&ci1, &self.z3)?;
-        let h_z1 = setup.power_of_h_bytes(&self.z1)?;
-        let lhs1 = setup.compose(&ci1_z3, &h_z1)?;
-        let co1_e = setup.exp_bytes(&co1, &self.e)?;
-        let rhs1 = setup.compose(&self.t1, &co1_e)?;
-        if lhs1 != rhs1 {
+        if &setup.compose(
+            &setup.multiexp_signed_bytes(
+                &[&ci1, &co1],
+                &[(false, self.z3.clone()), (true, self.e.clone())],
+            )?,
+            &setup.power_of_h_bytes(&self.z1)?,
+        )? != &self.t1
+        {
             return Ok(false);
         }
 
         // Check 2: pk^z1 * f^z2 * ci2^z3 == t2 * co2^e
-        let pk_z1 = setup.exp_bytes(pk_elt, &self.z1)?;
-        let f_z2 = setup.power_of_f_bytes(&self.z2)?;
-        let ci2_z3 = setup.exp_bytes(&ci2, &self.z3)?;
-        let tmp1 = setup.compose(&pk_z1, &f_z2)?;
-        let lhs2 = setup.compose(&tmp1, &ci2_z3)?;
-        let co2_e = setup.exp_bytes(&co2, &self.e)?;
-        let rhs2 = setup.compose(&self.t2, &co2_e)?;
-        if lhs2 != rhs2 {
+        if &setup.compose(
+            &setup.pk_pow_bytes(pk, &self.z1)?,
+            &setup.compose(
+                &setup.power_of_f_bytes(&self.z2)?,
+                &setup.multiexp_signed_bytes(
+                    &[&ci2, &co2],
+                    &[(false, self.z3.clone()), (true, self.e.clone())],
+                )?,
+            )?,
+        )? != &self.t2
+        {
             return Ok(false);
         }
 

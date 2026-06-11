@@ -199,17 +199,19 @@ impl Jtx25RobustOnlineSignMachine {
         }
 
         // --- Compute c^0 = sum_{j in T} (phi_bar_k_j * lambda_j) ---
-        // This is the homomorphic sum of component-wise scalar multiples.
+        // = (∏_j kc1_j^{lambda_j}, ∏_j kc2_j^{lambda_j}). Distinct base AND
+        // exponent per party, so fold each component with one shared-squaring
+        // multi-exponentiation instead of an exp + compose per party. (lambda_j
+        // is a scalar mod q, hence a non-negative bounded exponent.)
         let party_ids: Vec<u16> = all_parties.iter().map(|p| p.0).collect();
-        let mut c0_opt: Option<ClCiphertext> = None;
-
+        let mut kc1s = Vec::new();
+        let mut kc2s = Vec::new();
+        let mut lambdas: Vec<Vec<u8>> = Vec::new();
         for &pid in &party_ids {
             let lambda_j = presignature
                 .lagrange_coeffs
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing lagrange coeff for {pid}")))?;
-            let lambda_j_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(lambda_j);
-
             let kc1_bytes = presignature
                 .phi_bar_k_c1_bytes
                 .get(&pid)
@@ -218,83 +220,36 @@ impl Jtx25RobustOnlineSignMachine {
                 .phi_bar_k_c2_bytes
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing phi_bar_k c2 for {pid}")))?;
-
-            let kc1 = Qfi::from_bytes(kc1_bytes);
-            let kc2 = Qfi::from_bytes(kc2_bytes);
-            let phi_bar_k_j = setup
-                .ct_from_components(&kc1, &kc2)
-                .map_err(|e| TecdsaError::Other(format!("phi_bar_k ct: {e}")))?;
-
-            // Scalar multiply by lambda_j: component-wise.
-            let (pk1, pk2) = setup
-                .ct_components(&phi_bar_k_j)
-                .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-            let pk1_l = setup
-                .exp_bytes(&pk1, &lambda_j_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-            let pk2_l = setup
-                .exp_bytes(&pk2, &lambda_j_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-            let term = setup
-                .ct_from_components(&pk1_l, &pk2_l)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-            c0_opt = Some(match c0_opt.take() {
-                None => term,
-                Some(acc) => {
-                    let (a1, a2) = setup
-                        .ct_components(&acc)
-                        .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-                    let (b1, b2) = setup
-                        .ct_components(&term)
-                        .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-                    let s1 = setup
-                        .compose(&a1, &b1)
-                        .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
-                    let s2 = setup
-                        .compose(&a2, &b2)
-                        .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
-                    setup
-                        .ct_from_components(&s1, &s2)
-                        .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?
-                }
-            });
+            kc1s.push(Qfi::from_bytes(kc1_bytes));
+            kc2s.push(Qfi::from_bytes(kc2_bytes));
+            lambdas.push(tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(lambda_j).to_vec());
         }
-        let c0 = c0_opt.ok_or_else(|| TecdsaError::Other("no c0 data".into()))?;
+        let c0_c1 = setup
+            .multiexp_bytes(&kc1s.iter().collect::<Vec<_>>(), &lambdas)
+            .map_err(|e| TecdsaError::Other(format!("multiexp c0 c1: {e}")))?;
+        let c0_c2 = setup
+            .multiexp_bytes(&kc2s.iter().collect::<Vec<_>>(), &lambdas)
+            .map_err(|e| TecdsaError::Other(format!("multiexp c0 c2: {e}")))?;
+        let c0 = setup
+            .ct_from_components(&c0_c1, &c0_c2)
+            .map_err(|e| TecdsaError::Other(format!("ct_from c0: {e}")))?;
 
         // --- Compute c^1 = (phi_bar * H(m)) + sum_{j in T} (phi_bar_x_j * (lambda_j * r_x)) ---
         // First term: phi_bar * H(m) = component-wise exponentiation.
         let (phb_c1, phb_c2) = setup
             .ct_components(&phi_bar)
             .map_err(|e| TecdsaError::Other(format!("phi_bar comp: {e}")))?;
-        let phb_c1_m = setup
-            .exp_bytes(&phb_c1, &m_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-        let phb_c2_m = setup
-            .exp_bytes(&phb_c2, &m_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-        let phi_bar_m = setup
-            .ct_from_components(&phb_c1_m, &phb_c2_m)
-            .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-        let mut c1_ct = phi_bar_m;
-
-        // Sum term: sum_{j in T} (phi_bar_x_j * (lambda_j * r_x))
+        // c^1 = phi_bar^m · ∏_j phi_bar_x_j^{r_x}. Lambda is baked into
+        // phi_bar_x_j at presign, so every term shares the same exponent r_x and
+        // ∏_j x_j^{r_x} = (∏_j x_j)^{r_x}: product first (composes), then one
+        // shared-squaring dual-exponentiation `phb^m · (∏x)^{r_x}` per component.
+        let mut prod_x1 = setup
+            .identity()
+            .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
+        let mut prod_x2 = setup
+            .identity()
+            .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
         for &pid in &party_ids {
-            let _lambda_j = presignature
-                .lagrange_coeffs
-                .get(&pid)
-                .ok_or_else(|| TecdsaError::Other(format!("missing lagrange coeff for {pid}")))?;
-            // Note: In the paper, the Lagrange coefficient is already applied during
-            // presign (phi_bar_x_i = phi_bar * (lambda_i * x_i)). So here we only
-            // multiply by r_x (not lambda_j * r_x) since the lambda is already baked in.
-            // Actually re-reading the protocol spec: the lambda_j are re-applied during
-            // online sign because the signing set may differ from the presign set.
-            // But in our implementation the presign already uses the same party set,
-            // and each party computed phi_bar_x_i = phi_bar * (lambda_i * x_i).
-            // So we just need to add them without additional lambda weighting,
-            // but DO need to multiply each by r_x.
-
             let xc1_bytes = presignature
                 .phi_bar_x_c1_bytes
                 .get(&pid)
@@ -303,44 +258,25 @@ impl Jtx25RobustOnlineSignMachine {
                 .phi_bar_x_c2_bytes
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing phi_bar_x c2 for {pid}")))?;
-
             let xc1 = Qfi::from_bytes(xc1_bytes);
             let xc2 = Qfi::from_bytes(xc2_bytes);
-            let phi_bar_x_j = setup
-                .ct_from_components(&xc1, &xc2)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-            // Multiply by r_x.
-            let (px1, px2) = setup
-                .ct_components(&phi_bar_x_j)
-                .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-            let px1_r = setup
-                .exp_bytes(&px1, &r_x_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-            let px2_r = setup
-                .exp_bytes(&px2, &r_x_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
-            let term = setup
-                .ct_from_components(&px1_r, &px2_r)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
-
-            // Add to c1.
-            let (a1, a2) = setup
-                .ct_components(&c1_ct)
-                .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-            let (b1, b2) = setup
-                .ct_components(&term)
-                .map_err(|e| TecdsaError::Other(format!("ct_comp: {e}")))?;
-            let s1 = setup
-                .compose(&a1, &b1)
+            prod_x1 = setup
+                .compose(&prod_x1, &xc1)
                 .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
-            let s2 = setup
-                .compose(&a2, &b2)
+            prod_x2 = setup
+                .compose(&prod_x2, &xc2)
                 .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
-            c1_ct = setup
-                .ct_from_components(&s1, &s2)
-                .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
         }
+        let exps = [m_bytes.to_vec(), r_x_bytes.to_vec()];
+        let cc1 = setup
+            .multiexp_bytes(&[&phb_c1, &prod_x1], &exps)
+            .map_err(|e| TecdsaError::Other(format!("dualexp c1: {e}")))?;
+        let cc2 = setup
+            .multiexp_bytes(&[&phb_c2, &prod_x2], &exps)
+            .map_err(|e| TecdsaError::Other(format!("dualexp c2: {e}")))?;
+        let c1_ct = setup
+            .ct_from_components(&cc1, &cc2)
+            .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
 
         // --- Partial decryption ---
         // party_index for t-CL partial decryption is 1-based (matching

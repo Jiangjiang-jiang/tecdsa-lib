@@ -10,6 +10,7 @@
 //! group (composition, squaring, exponentiation, reduction, prime forms).
 
 use core::{cell::RefCell, cmp::Ordering, fmt};
+use std::borrow::Borrow;
 
 use gmp_mpfr_sys::gmp;
 use rug::Integer;
@@ -674,41 +675,37 @@ impl ClassGroup {
         self.exp_window(&base, &e)
     }
 
-    /// Sliding-window exponentiation for a non-negative exponent `e`.
+    /// Variable-base exponentiation for a non-negative exponent `e` via a
+    /// left-to-right **width-`w` NAF** (signed-digit) scan. Class-group inversion
+    /// is free (negate the form's middle coefficient), so signed digits in
+    /// `{±1, ±3, …}` halve the precomputed table and lower the nonzero-digit
+    /// density versus an unsigned sliding window (BICYCL, eprint 2022/1466 §5.2,
+    /// the Decrypt `c1^{sk}` case). The window width adapts to `e`'s size so
+    /// short exponents don't pay for a large odd-power table.
     fn exp_window(&self, base: &QFI, e: &Mpz) -> QFI {
-        const W: usize = 5;
-        // Odd-power table: odds[i] = base^(2i+1), i = 0 .. 2^(W-1)-1.
+        let w = naf_width(e.nbits());
+        // Positive odd-power table: odds[i] = base^(2i+1), i = 0 .. 2^(w-2)-1.
+        let table_len = 1usize << (w - 2);
         let base_sq = self.square(base);
-        let mut odds = Vec::with_capacity(1 << (W - 1));
+        let mut odds = Vec::with_capacity(table_len);
         odds.push(base.clone());
-        for _ in 1..(1 << (W - 1)) {
+        for _ in 1..table_len {
             let prev = odds.last().unwrap();
             odds.push(self.compose(prev, &base_sq));
         }
 
+        let naf = wnaf(e, w);
         let mut result = self.identity();
-        let mut i = e.nbits() as isize - 1;
-        while i >= 0 {
-            if !e.get_bit(i as u32) {
-                result = self.square(&result);
-                i -= 1;
-                continue;
+        for &d in naf.iter().rev() {
+            result = self.square(&result);
+            if d != 0 {
+                let idx = (d.unsigned_abs() as usize - 1) / 2;
+                if d > 0 {
+                    result = self.compose(&result, &odds[idx]);
+                } else {
+                    result = self.compose(&result, &self.inverse(&odds[idx]));
+                }
             }
-            // Longest window of width ≤ W ending in a set bit.
-            let low = (i - W as isize + 1).max(0);
-            let mut l = low;
-            while !e.get_bit(l as u32) {
-                l += 1;
-            }
-            for _ in 0..(i - l + 1) {
-                result = self.square(&result);
-            }
-            let mut wval = 0usize;
-            for k in (l..=i).rev() {
-                wval = (wval << 1) | (e.get_bit(k as u32) as usize);
-            }
-            result = self.compose(&result, &odds[(wval - 1) / 2]);
-            i = l - 1;
         }
         result
     }
@@ -773,29 +770,40 @@ impl ClassGroup {
         result
     }
 
-    /// Simultaneous multi-exponentiation `∏ bases[i]^exps[i]` via an interleaved
-    /// fixed-window (width 4) algorithm: the squaring chain is **shared** across
-    /// all bases (one chain instead of one per base), which is the dominant cost
-    /// at class-group sizes. Per base it precomputes a small `base^d` table
-    /// (`d < 2^4`) and adds one window contribution per block. Handles negative
-    /// exponents (by inverting the base) and skips zero exponents. For a single
-    /// term prefer [`exp`](Self::exp); this shines for the `∏ gᵢ^{xᵢ}` products
-    /// in VSS/threshold-decryption aggregation where it turns `n` independent
-    /// exponentiations into one shared chain.
-    pub fn multiexp(&self, bases: &[&QFI], exps: &[Mpz]) -> QFI {
+    /// Simultaneous multi-exponentiation `∏ bases[i]^exps[i]` via **interleaved
+    /// width-`w` NAF** (Straus–Shamir with signed digits): one squaring chain is
+    /// shared across all bases, and each base contributes one NUCOMP per nonzero
+    /// NAF digit (density `~1/(w+1)`). Class-group inversion is free, so negative
+    /// digits reuse the precomputed positive odd-power table rather than a
+    /// separate one (BICYCL, eprint 2022/1466 §5.2 — the JSF/Straus approach).
+    /// Handles negative exponents (by inverting the base) and skips zero ones.
+    /// For a single term prefer [`exp`](Self::exp); this shines for the
+    /// `∏ gᵢ^{xᵢ}` products in VSS / threshold-decryption aggregation.
+    pub fn multiexp(&self, bases: &[impl Borrow<QFI>], exps: &[Mpz]) -> QFI {
         assert_eq!(
             bases.len(),
             exps.len(),
             "multiexp: bases and exps must have equal length"
         );
-        const W: usize = 4;
-        const TABLE_LEN: usize = 1 << W;
+        let mut maxbits = 0usize;
+        for e in exps.iter() {
+            if !e.is_zero() {
+                maxbits = maxbits.max(e.nbits());
+            }
+        }
+        if maxbits == 0 {
+            return self.identity();
+        }
+        let w = naf_width(maxbits);
+        let table_len = 1usize << (w - 2); // base^1, base^3, …, base^(2^{w-1}-1)
 
-        // Per-base table `base^d` for `d in 0..2^W` (sign-normalized) + exponent.
+        // Sign-normalize each term, build its positive odd-power table, recode
+        // its exponent to NAF.
         let mut tables: Vec<Vec<QFI>> = Vec::with_capacity(bases.len());
-        let mut es: Vec<Mpz> = Vec::with_capacity(exps.len());
-        let mut maxbits: u32 = 0;
+        let mut nafs: Vec<Vec<i32>> = Vec::with_capacity(bases.len());
+        let mut maxlen = 0usize;
         for (b, e) in bases.iter().zip(exps.iter()) {
+            let b = b.borrow();
             if e.is_zero() {
                 continue;
             }
@@ -804,41 +812,79 @@ impl ClassGroup {
             } else {
                 ((*b).clone(), e.clone())
             };
-            maxbits = maxbits.max(exp.nbits() as u32);
-            let mut table = Vec::with_capacity(TABLE_LEN);
-            table.push(self.identity());
-            table.push(base.clone());
-            for d in 2..TABLE_LEN {
-                let prev = &table[d - 1];
-                table.push(self.compose(prev, &base));
+            let base_sq = self.square(&base);
+            let mut odds = Vec::with_capacity(table_len);
+            odds.push(base);
+            for _ in 1..table_len {
+                odds.push(self.compose(odds.last().unwrap(), &base_sq));
             }
-            tables.push(table);
-            es.push(exp);
-        }
-        if maxbits == 0 {
-            return self.identity();
+            let naf = wnaf(&exp, w);
+            maxlen = maxlen.max(naf.len());
+            tables.push(odds);
+            nafs.push(naf);
         }
 
-        let nblocks = (maxbits as usize).div_ceil(W);
         let mut result = self.identity();
-        for blk in (0..nblocks).rev() {
-            for _ in 0..W {
-                result = self.square(&result);
-            }
-            let shift = blk * W;
-            for (table, exp) in tables.iter().zip(es.iter()) {
-                let mut d = 0usize;
-                for bit in 0..W {
-                    if exp.get_bit((shift + bit) as u32) {
-                        d |= 1 << bit;
-                    }
-                }
+        for pos in (0..maxlen).rev() {
+            result = self.square(&result);
+            for (odds, naf) in tables.iter().zip(nafs.iter()) {
+                let d = naf.get(pos).copied().unwrap_or(0);
                 if d != 0 {
-                    result = self.compose(&result, &table[d]);
+                    let idx = (d.unsigned_abs() as usize - 1) / 2;
+                    if d > 0 {
+                        result = self.compose(&result, &odds[idx]);
+                    } else {
+                        result = self.compose(&result, &self.inverse(&odds[idx]));
+                    }
                 }
             }
         }
         result
+    }
+}
+
+/// Width-`w` non-adjacent form (NAF) of a non-negative `e`, returned LSB-first.
+/// Each digit is `0` or odd in `(-2^{w-1}, 2^{w-1})`, with at most one nonzero
+/// in any `w` consecutive positions (nonzero density `~1/(w+1)`).
+fn wnaf(e: &Mpz, w: u32) -> Vec<i32> {
+    debug_assert!(w >= 2 && e.sgn() >= 0);
+    let two_w = 1i64 << w;
+    let half = 1i64 << (w - 1);
+    let mut digits = Vec::with_capacity(e.nbits() + 1);
+    let mut k = e.clone();
+    while k.sgn() > 0 {
+        if k.is_odd() {
+            // Low `w` bits of k, mapped to a signed odd digit in (-2^{w-1}, 2^{w-1}).
+            let mut r = 0i64;
+            for i in 0..w {
+                if k.get_bit(i) {
+                    r |= 1i64 << i;
+                }
+            }
+            let d = if r >= half { r - two_w } else { r };
+            k = if d >= 0 {
+                &k - &Mpz::from(d as u64)
+            } else {
+                &k + &Mpz::from((-d) as u64)
+            };
+            digits.push(d as i32);
+        } else {
+            digits.push(0);
+        }
+        k = k.fdiv_2exp(1);
+    }
+    digits
+}
+
+/// Adaptive NAF window width: short exponents must not pay for a large
+/// odd-power table, while large ones (secret keys, ZK responses) benefit from a
+/// wider window. Chosen to roughly minimise `2^{w-2} + nbits/(w+1)`.
+fn naf_width(nbits: usize) -> u32 {
+    match nbits {
+        0..=160 => 4,
+        161..=448 => 5,
+        449..=1024 => 6,
+        _ => 7,
     }
 }
 

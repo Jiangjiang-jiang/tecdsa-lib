@@ -46,6 +46,33 @@ impl PartyTiming {
     pub fn total_active(&self) -> Duration {
         self.init + self.drain_outgoing + self.handle + self.finish
     }
+
+    /// Active time spent in the interactive protocol rounds only
+    /// (drain + handle + finish), EXCLUDING machine construction (`init`).
+    ///
+    /// Useful when the constructor cost (e.g. local key-material generation) is
+    /// measured separately and should not be double-counted — e.g. CGGMP20
+    /// aux-info, where `init` is the Paillier+Ring-Pedersen keygen and the round
+    /// time is the interactive ZK proving/verification.
+    #[must_use]
+    pub fn rounds_active(&self) -> Duration {
+        self.drain_outgoing + self.handle + self.finish
+    }
+}
+
+/// Serialized wire size (bytes) of a message under the [`Orchestrator`]'s bincode
+/// configuration (standard, big-endian, fixed-int) -- the same encoding used for
+/// its communication stats. Use to account for communication that does NOT flow
+/// through the orchestrator, e.g. two-party round messages exchanged by direct
+/// function calls, or a locally-computed partial signature that is broadcast.
+#[must_use]
+pub fn wire_size<T: serde::Serialize>(value: &T) -> usize {
+    let cfg = bincode::config::standard()
+        .with_big_endian()
+        .with_fixed_int_encoding();
+    bincode::serde::encode_to_vec(value, cfg)
+        .map(|v| v.len())
+        .unwrap_or(0)
 }
 
 /// Drives a set of [`StateMachine`]s through rounds deterministically.

@@ -49,7 +49,6 @@ fn paillier_mta(c: &mut Criterion) {
     let b = Secp256k1::random_scalar(&mut OsRng).to_repr();
 
     let mut g = c.benchmark_group("mta/paillier");
-    g.sample_size(10);
 
     g.bench_function("sender_encrypt", |bench| {
         bench.iter(|| M::sender_encrypt(&setup, b.as_ref(), &q, &mut OsRng).expect("se"))
@@ -108,7 +107,6 @@ fn cl_mta(c: &mut Criterion) {
     let b = Secp256k1::random_scalar(&mut OsRng).to_repr();
 
     let mut g = c.benchmark_group("mta/cl");
-    g.sample_size(10);
 
     g.bench_function("sender_encrypt", |bench| {
         bench.iter(|| M::sender_encrypt(&setup, b.as_ref(), &q, &mut OsRng).expect("se"))
@@ -149,7 +147,6 @@ fn jl_mta(c: &mut Criterion) {
     let b = Secp256k1::random_scalar(&mut OsRng).to_repr();
 
     let mut g = c.benchmark_group("mta/jl");
-    g.sample_size(10);
 
     g.bench_function("sender_encrypt", |bench| {
         bench.iter(|| M::sender_encrypt(&setup, b.as_ref(), &q, &mut OsRng).expect("se"))
@@ -185,7 +182,6 @@ fn rvole_mta(c: &mut Criterion) {
     let b = Secp256k1::random_scalar(&mut OsRng).to_repr();
 
     let mut g = c.benchmark_group("mta/rvole");
-    g.sample_size(10);
 
     g.bench_function("sender_init", |bench| {
         bench.iter(|| M::sender_init(&setup, &mut OsRng).expect("init"))
@@ -234,7 +230,6 @@ fn nim_mta(c: &mut Criterion) {
     let y = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&Secp256k1::random_scalar(&mut OsRng));
 
     let mut g = c.benchmark_group("mta/nim");
-    g.sample_size(10);
 
     g.bench_function("encode_a", |bench| {
         bench.iter(|| {

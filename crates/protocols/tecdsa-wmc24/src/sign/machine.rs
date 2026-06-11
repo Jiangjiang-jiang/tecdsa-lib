@@ -116,31 +116,20 @@ impl Wmc24OnlineSignMachine {
         let (kb_c1_comp, kb_c2_comp) = setup
             .ct_components(&k_bar)
             .map_err(|e| TecdsaError::Other(format!("k_bar comp: {e}")))?;
-        let mk_c1 = setup
-            .exp_bytes(&kb_c1_comp, &m_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp mk c1: {e}")))?;
-        let mk_c2 = setup
-            .exp_bytes(&kb_c2_comp, &m_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp mk c2: {e}")))?;
-
-        // r * xk_bar: component-wise exponentiation.
         let (xk_c1_comp, xk_c2_comp) = setup
             .ct_components(&xk_bar)
             .map_err(|e| TecdsaError::Other(format!("xk_bar comp: {e}")))?;
-        let rxk_c1 = setup
-            .exp_bytes(&xk_c1_comp, &r_x_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp rxk c1: {e}")))?;
-        let rxk_c2 = setup
-            .exp_bytes(&xk_c2_comp, &r_x_bytes)
-            .map_err(|e| TecdsaError::Other(format!("exp rxk c2: {e}")))?;
 
-        // Add: Enc(km) + Enc(rkx) = Enc(km + rkx).
+        // Each signature ciphertext component is the two-base product
+        // `k_bar^m · xk_bar^{r_x}`; fold it with one shared-squaring
+        // dual-exponentiation instead of two exps + a compose.
+        let exps = [m_bytes.to_vec(), r_x_bytes.to_vec()];
         let sig_c1 = setup
-            .compose(&mk_c1, &rxk_c1)
-            .map_err(|e| TecdsaError::Other(format!("compose c1: {e}")))?;
+            .multiexp_bytes(&[&kb_c1_comp, &xk_c1_comp], &exps)
+            .map_err(|e| TecdsaError::Other(format!("dualexp sig c1: {e}")))?;
         let sig_c2 = setup
-            .compose(&mk_c2, &rxk_c2)
-            .map_err(|e| TecdsaError::Other(format!("compose c2: {e}")))?;
+            .multiexp_bytes(&[&kb_c2_comp, &xk_c2_comp], &exps)
+            .map_err(|e| TecdsaError::Other(format!("dualexp sig c2: {e}")))?;
         let c_sig = setup
             .ct_from_components(&sig_c1, &sig_c2)
             .map_err(|e| TecdsaError::Other(format!("ct_from sig: {e}")))?;

@@ -37,9 +37,23 @@ use tecdsa_protocol::{DataToSign, PartyId, PartyInfo, SessionConfig, SessionId};
 type C = Secp256k1;
 
 fn time_once<T>(name: &str, f: impl FnOnce() -> T) -> T {
+    // For presign/offline-sign phases, attribute the per-party OFFLINE
+    // communication: the timed-run helpers serialize messages and record the
+    // representative party's bytes_sent under "<proto>/<config>/presign" while
+    // this key is set. Parsed from names like "<proto>/presign/n{n}_t{t}/wall"
+    // or "<proto>/offline_sign/n{n}_t{t}/wall". (Online comm is recorded
+    // explicitly via per_party::record_online_comm.)
+    let parts: Vec<&str> = name.split('/').collect();
+    let comm_key = if parts.len() >= 3 && (parts[1] == "presign" || parts[1] == "offline_sign") {
+        Some(format!("{}/{}/presign", parts[0], parts[2]))
+    } else {
+        None
+    };
+    per_party::set_comm_key(comm_key);
     let start = Instant::now();
     let out = f();
     let elapsed = start.elapsed();
+    per_party::set_comm_key(None);
     println!("{name}\t{}\t{}", elapsed.as_nanos(), HumanDuration(elapsed));
     out
 }
@@ -112,26 +126,95 @@ fn make_data_to_sign(msg: &[u8]) -> DataToSign<C> {
     DataToSign::from_digest(scalar)
 }
 
+/// Wire size (bytes) of a curve point in its compressed SEC1 encoding (33 B on
+/// secp256k1). Two-party round messages store bare `ProjectivePoint`s (not
+/// `Serialize`), so their communication is sized as compressed points plus
+/// `wire_size` of the serializable fields (DlogProof, ciphertexts, scalars).
+fn point_wire_len(p: &k256::ProjectivePoint) -> usize {
+    use elliptic_curve::group::GroupEncoding;
+    AsRef::<[u8]>::as_ref(&p.to_bytes()).len()
+}
+
+type GroupFn = fn();
+
+/// All protocol groups. Each is independent (its own keygen/presign/sign).
+fn all_groups() -> Vec<(&'static str, GroupFn)> {
+    vec![
+        ("mta", mta_once),
+        ("cggmp20", cggmp20_once),
+        ("dkls23", dkls23_once),
+        ("gg18", gg18_once),
+        ("ggn16", ggn16_once),
+        ("ln18", ln18_once),
+        ("tx25", tx25_once),
+        ("jtx25", jtx25_once),
+        ("jtx25_robust", jtx25_robust_once),
+        ("wmy23", wmy23_once),
+        ("wmc24", wmc24_once),
+        ("llz25", llz25_once),
+        ("trout", trout_once),
+        ("xal23", xal23_once),
+        ("lin17", lin17_once),
+        ("kgg24", kgg24_once),
+        ("xal21", xal21_once),
+        ("abc24", abc24_once),
+    ]
+}
+
 fn main() {
     println!("name\telapsed_ns\telapsed");
 
-    run_group("mta", mta_once);
-    run_group("cggmp20", cggmp20_once);
-    run_group("dkls23", dkls23_once);
-    run_group("gg18", gg18_once);
-    run_group("ggn16", ggn16_once);
-    run_group("ln18", ln18_once);
-    run_group("tx25", tx25_once);
-    run_group("jtx25", jtx25_once);
-    run_group("wmy23", wmy23_once);
-    run_group("wmc24", wmc24_once);
-    run_group("llz25", llz25_once);
-    run_group("trout", trout_once);
-    run_group("xal23", xal23_once);
-    run_group("lin17", lin17_once);
-    run_group("kgg24", kgg24_once);
-    run_group("xal21", xal21_once);
-    run_group("abc24", abc24_once);
+    // Optional subset filter (comma-separated names), e.g.
+    // TECDSA_BENCH_PROTOCOLS=cggmp20,gg18 — avoids hand-editing this list.
+    let filter = std::env::var("TECDSA_BENCH_PROTOCOLS").ok();
+    let groups: Vec<(&'static str, GroupFn)> = all_groups()
+        .into_iter()
+        .filter(|(name, _)| {
+            filter
+                .as_ref()
+                .map_or(true, |f| f.split(',').map(str::trim).any(|p| p == *name))
+        })
+        .collect();
+
+    // Run groups concurrently via a small worker pool. The comm collector is a
+    // global Mutex and the per-phase comm key is thread-local, so parallel groups
+    // don't interfere. Concurrency defaults to the CPU count; override with
+    // TECDSA_BENCH_JOBS (1 = sequential).
+    let jobs = std::env::var("TECDSA_BENCH_JOBS")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()))
+        .min(groups.len().max(1));
+
+    let queue = std::sync::Arc::new(std::sync::Mutex::new(groups));
+    let workers: Vec<_> = (0..jobs)
+        .map(|_| {
+            let queue = std::sync::Arc::clone(&queue);
+            std::thread::spawn(move || loop {
+                // Pop without holding the lock during the (heavy) group run, so a
+                // panicking group can't poison the queue for the other workers.
+                let next = queue.lock().expect("queue lock").pop();
+                match next {
+                    Some((name, f)) => run_group(name, f),
+                    None => break,
+                }
+            })
+        })
+        .collect();
+    for w in workers {
+        if w.join().is_err() {
+            eprintln!("# a protocol group thread panicked");
+        }
+    }
+
+    // Write a PER-PROCESS file into target/comm_online/ so concurrent runs (or
+    // re-runs of subsets) never clobber each other; the table generators merge
+    // every target/comm_online/*.tsv (newest file wins per key).
+    let dir = std::path::Path::new("target/comm_online");
+    std::fs::create_dir_all(dir).expect("create comm dir");
+    let out = dir.join(format!("{}.tsv", std::process::id()));
+    per_party::write_online_comm(out.to_str().expect("utf-8 path"));
 }
 
 fn run_group(name: &str, f: impl FnOnce()) {
@@ -477,6 +560,15 @@ fn cggmp20_once() {
         time_once(&format!("cggmp20/online_sign/n{n}_t{t}/combine"), || {
             PartialSignature::combine(&partials, pub_data, public_key, &message).expect("combine")
         });
+
+        // CGGMP20 online is local (partial_sign + combine): each signer broadcasts
+        // one sigma scalar (32 B on secp256k1) to the other t-1 signers. No
+        // orchestrator messages, so account for it directly, matching the
+        // broadcast convention used elsewhere (payload x #recipients).
+        per_party::record_online_comm(
+            format!("cggmp20/n{n}_t{t}"),
+            32 * (t as usize).saturating_sub(1),
+        );
     }
 }
 
@@ -586,7 +678,7 @@ fn dkls23_once() {
                     })
                 })
                 .collect();
-            per_party::run_timed_with_init(builders, 10)
+            per_party::run_online_comm_with_init(format!("dkls23/n{n}_t{t}"), builders, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(
@@ -705,7 +797,7 @@ fn gg18_once() {
                     })
                 })
                 .collect();
-            per_party::run_timed_with_init(builders, 10)
+            per_party::run_online_comm_with_init(format!("gg18/n{n}_t{t}"), builders, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(
@@ -922,7 +1014,7 @@ fn ggn16_once() {
                     )
                 })
                 .collect();
-            per_party::run_timed_without_init(machines, 10)
+            per_party::run_online_comm(format!("ggn16/n{n}_t{t}"), machines, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(
@@ -1063,7 +1155,7 @@ fn ln18_once_with_backend(name: &str, backend: Ln18MtaBackend) {
                     (pid, Ln18OnlineSignMachine::<C>::new(params, &mut rng))
                 })
                 .collect();
-            per_party::run_timed_without_init(machines, 8)
+            per_party::run_online_comm(format!("{name}/n{n}_t{t}"), machines, 8)
         });
         let sigs: Vec<_> = sign_out.0.into_iter().map(|r| r.unwrap()).collect();
         assert!(!sigs.is_empty(), "must produce signatures");
@@ -1151,6 +1243,27 @@ fn lin17_once() {
     let p2_total = p2_r2 + p2_r4;
     print_timing("lin17/full_sign/n2_t2", PartyId(1), p1_total);
     print_timing("lin17/full_sign/n2_t2", PartyId(2), p2_total);
+
+    // Offline (presigning) communication. P1 sends round-1 commitment + round-3
+    // decommit (R_1 + DLog proof + nonce); P2 sends round-2 (R_2 + DLog proof).
+    per_party::record_online_comm(
+        "lin17/n2_t2/party1/presign",
+        tecdsa_testkit::wire_size(&p1_r1_msg)
+            + point_wire_len(&p1_decommit.r1)
+            + tecdsa_testkit::wire_size(&p1_decommit.dlog_proof)
+            + p1_decommit.nonce.len(),
+    );
+    per_party::record_online_comm(
+        "lin17/n2_t2/party2/presign",
+        point_wire_len(&p2_r2_msg.r2) + tecdsa_testkit::wire_size(&p2_r2_msg.dlog_proof),
+    );
+    // Online communication: P2 sends one round-4 message; P1 only finalizes
+    // locally (sends nothing online).
+    per_party::record_online_comm("lin17/n2_t2/party1", 0);
+    per_party::record_online_comm(
+        "lin17/n2_t2/party2",
+        tecdsa_testkit::wire_size(&p2_r4_msg),
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1231,6 +1344,25 @@ fn kgg24_once() {
     let p2_total = p2_r2 + p2_partial_dur;
     print_timing("kgg24/full_sign/n2_t2", PartyId(1), p1_total);
     print_timing("kgg24/full_sign/n2_t2", PartyId(2), p2_total);
+
+    // Offline (presigning) communication, same message shapes as Lin17.
+    per_party::record_online_comm(
+        "kgg24/n2_t2/party1/presign",
+        tecdsa_testkit::wire_size(&p1_r1_msg)
+            + point_wire_len(&p1_decommit.r1)
+            + tecdsa_testkit::wire_size(&p1_decommit.dlog_proof)
+            + p1_decommit.nonce.len(),
+    );
+    per_party::record_online_comm(
+        "kgg24/n2_t2/party2/presign",
+        point_wire_len(&p2_r2_msg.r2) + tecdsa_testkit::wire_size(&p2_r2_msg.dlog_proof),
+    );
+    // Online communication: P2 sends one partial-signature message; P1 finalizes.
+    per_party::record_online_comm("kgg24/n2_t2/party1", 0);
+    per_party::record_online_comm(
+        "kgg24/n2_t2/party2",
+        tecdsa_testkit::wire_size(&p2_partial),
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1266,14 +1398,79 @@ fn xal21_once() {
         print_timing("xal21/dkg/n2_t2", pid, timing.total_active());
     }
 
-    // Offline sign (presign) — combined total (step functions don't separate parties cleanly)
+    // Offline sign (presign) via the per-step functions (mirrors twoparty.rs), so
+    // each party's offline message can be sized for communication.
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = tecdsa_xal21::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
 
-    let (p1_presig, p2_presig) = time_once("xal21/presign/n2_t2/combined", || {
-        offline_sign::offline_sign::<C>(&p1_key, &p2_key, &mut rng).expect("offline_sign")
-    });
+    let mta_setup = tecdsa_paillier::mta::PaillierMtaSetup {
+        ek: p2_key.ek.clone(),
+        dk: p2_key.dk.clone(),
+        proof_setup: tecdsa_paillier::mta::Gg18ProofSetup {
+            ntilde: p2_key.ntilde.clone(),
+        },
+    };
+
+    let (step1_msg, step1_state) = offline_sign::step1_p2_commit::<C>(&mut rng); // P2
+    let (sender_msg, sender_state) =
+        offline_sign::step2_p2_encrypt_k2::<C, offline_sign::DefaultMtA>(
+            &mta_setup,
+            &step1_state.k2,
+            &mut rng,
+        )
+        .expect("step2_p2_encrypt_k2"); // P2 (MtA)
+    let (step2_msg, step2_state) = offline_sign::step2_p1_compute::<C, offline_sign::DefaultMtA>(
+        &p1_key,
+        &mta_setup,
+        &sender_msg,
+        &mut rng,
+    )
+    .expect("step2_p1_compute"); // P1 (MtA)
+    let x2_prime = offline_sign::step2_p2_verify::<C, offline_sign::DefaultMtA>(
+        &p2_key,
+        &mta_setup,
+        &sender_state,
+        &step1_state.k2,
+        &step2_msg,
+    )
+    .expect("step2_p2_verify"); // P2 (local)
+    let (step3_p1_msg, k1) = offline_sign::step3_p1_send_nonce::<C>(&mut rng); // P1
+    let (step3_p2_decommit, p2_presig) = offline_sign::step3_p2_decommit_and_compute_R::<C>(
+        &step1_state,
+        &step3_p1_msg,
+        &step2_msg.r1,
+        x2_prime,
+    )
+    .expect("step3_p2_decommit_and_compute_R"); // P2
+    let p1_presig = offline_sign::step3_p1_verify_and_compute_R::<C>(
+        &step1_msg,
+        &step3_p2_decommit,
+        k1,
+        &step2_state,
+    )
+    .expect("step3_p1_verify_and_compute_R"); // P1 (local)
+
+    // Offline communication (presigning):
+    //   P2 -> P1: step1 commit + MtA sender msg + step3 decommit (R_2 + proof + nonce)
+    //   P1 -> P2: step2 (Q1' + r1 + cc + MtA receiver msg) + step3 nonce (R_1 + proof)
+    const SCALAR_LEN: usize = 32; // secp256k1 scalar repr
+    per_party::record_online_comm(
+        "xal21/n2_t2/party2/presign",
+        tecdsa_testkit::wire_size(&step1_msg)
+            + tecdsa_testkit::wire_size(&sender_msg)
+            + point_wire_len(&step3_p2_decommit.R2)
+            + tecdsa_testkit::wire_size(&step3_p2_decommit.nizk3)
+            + step3_p2_decommit.commit_nonce.len(),
+    );
+    per_party::record_online_comm(
+        "xal21/n2_t2/party1/presign",
+        point_wire_len(&step2_msg.Q1_prime)
+            + 2 * SCALAR_LEN
+            + tecdsa_testkit::wire_size(&step2_msg.mta_msg)
+            + point_wire_len(&step3_p1_msg.R1)
+            + tecdsa_testkit::wire_size(&step3_p1_msg.nizk4),
+    );
 
     // Online sign
     time_once("xal21/online_sign/n2_t2/party2", || {
@@ -1284,6 +1481,10 @@ fn xal21_once() {
         online_sign::party1_compute_signature::<C>(&p1_key, &p1_presig, &p2_msg, &message)
             .expect("sig")
     });
+
+    // Online communication: P2 sends one s2 message; P1 finalizes locally.
+    per_party::record_online_comm("xal21/n2_t2/party1", 0);
+    per_party::record_online_comm("xal21/n2_t2/party2", tecdsa_testkit::wire_size(&p2_msg));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1341,6 +1542,24 @@ fn abc24_once() {
     let p1_total = p1_r1 + p1_fin;
     print_timing("abc24/full_sign/n2_t2", PartyId(1), p1_total);
     print_timing("abc24/full_sign/n2_t2", PartyId(2), p2_r2);
+
+    // Offline (presigning) communication: the server (P1) sends round 1
+    // (R_2 + Y, two compressed points); the client (P2) has no offline round.
+    per_party::record_online_comm(
+        "abc24/n2_t2/party1/presign",
+        point_wire_len(&server_msg.r2) + point_wire_len(&server_msg.y),
+    );
+    per_party::record_online_comm("abc24/n2_t2/party2/presign", 0);
+    // Online communication: the client (P2) sends one round-2 message; the server
+    // (P1) finalizes locally. ClientRound2Msg isn't Serialize (raw ProjectivePoint
+    // fields), so size its parts: two compressed points + the OLE Paillier ct.
+    per_party::record_online_comm("abc24/n2_t2/party1", 0);
+    per_party::record_online_comm(
+        "abc24/n2_t2/party2",
+        point_wire_len(&client_msg.r1)
+            + point_wire_len(&client_msg.r_point)
+            + tecdsa_testkit::wire_size(&client_msg.s_ct),
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1463,7 +1682,7 @@ fn cl_presign_sign_sweep<KM, PM, SM>(
                     )
                 })
                 .collect();
-            per_party::run_timed_without_init(machines, 10)
+            per_party::run_online_comm(format!("{name}/n{n}_t{t}"), machines, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(
@@ -1546,6 +1765,38 @@ fn jtx25_once() {
         },
         |pid, all, presig, msg_bytes, pk| {
             Jtx25OnlineSignMachine::new(pid, all, presig, msg_bytes, pk).expect("jtx25 sign")
+        },
+        |share| share.public_key,
+    );
+}
+
+fn jtx25_robust_once() {
+    use tecdsa_jtx25::{
+        keygen::Jtx25KeygenMachine, presign::robust::Jtx25RobustPresignMachine,
+        sign::robust::Jtx25RobustOnlineSignMachine,
+    };
+
+    let seed = "42042";
+    let msg = sha2::Sha256::digest(b"benchmark message");
+    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+
+    // Keygen is shared with the normal variant; only presign/online differ, so we
+    // run just the sign sweep to record the robust online communication.
+    cl_presign_sign_sweep(
+        "jtx25_robust",
+        &msg,
+        |pid, all, threshold| {
+            Jtx25KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
+                .expect("jtx25 keygen")
+        },
+        |_shares| {},
+        |pid, all, share| {
+            Jtx25RobustPresignMachine::new(pid, all, share, cl_setup.clone())
+                .expect("jtx25 robust presign")
+        },
+        |pid, all, presig, msg_bytes, pk| {
+            Jtx25RobustOnlineSignMachine::new(pid, all, presig, msg_bytes, pk)
+                .expect("jtx25 robust sign")
         },
         |share| share.public_key,
     );
@@ -1680,7 +1931,7 @@ fn wmy23_once() {
                     )
                 })
                 .collect();
-            per_party::run_timed_without_init(machines, 10)
+            per_party::run_online_comm(format!("wmy23/n{n}_t{t}"), machines, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(
@@ -1870,7 +2121,7 @@ fn llz25_once() {
                     )
                 })
                 .collect();
-            per_party::run_timed_without_init(machines, 10)
+            per_party::run_online_comm(format!("llz25/n{n}_t{t}"), machines, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(
@@ -2032,7 +2283,7 @@ fn trout_once() {
                     )
                 })
                 .collect();
-            per_party::run_timed_without_init(machines, 10)
+            per_party::run_online_comm(format!("trout/n{n}_t{t}"), machines, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(
@@ -2151,7 +2402,7 @@ fn xal23_once() {
                     (pid, Xal23SignMachine::<C>::new(presig, message))
                 })
                 .collect();
-            per_party::run_timed_without_init(machines, 10)
+            per_party::run_online_comm(format!("xal23/n{n}_t{t}"), machines, 10)
         });
         for (&pid, timing) in sign_out.1.iter().take(1) {
             print_timing(

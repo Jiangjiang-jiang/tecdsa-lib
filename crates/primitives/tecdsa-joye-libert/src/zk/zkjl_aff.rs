@@ -13,7 +13,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below};
 
 use crate::kgen::JlPublicKey;
 
@@ -73,11 +73,9 @@ impl ZkJlAffProof {
         let v2 = random_below(&v2_bound, rng);
         let w = random_below(&w_bound, rng);
 
-        // Commitment: d = C^v1 * y^v2 * h^w mod N
-        let c_v1 = pow_mod(c_base, &v1, &pk.n);
-        let y_v2 = pow_mod(&pk.y, &v2, &pk.n);
-        let h_w = pow_mod(&pk.h, &w, &pk.n);
-        let d = mul_mod(&mul_mod(&c_v1, &y_v2, &pk.n), &h_w, &pk.n);
+        // Commitment: d = C^v1 * y^v2 * h^w mod N, via one shared-squaring
+        // multi-exponentiation instead of three modexps + two muls.
+        let d = multi_exp(&[c_base, &pk.y, &pk.h], &[&v1, &v2, &w], &pk.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, c_base, c_aff, &d);
@@ -102,11 +100,13 @@ impl ZkJlAffProof {
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, c_base, c_aff, &self.d);
 
-        // Check: C^z_a * y^z_alpha * h^z_r == c_aff^e * d mod N
-        let lhs_1 = pow_mod(c_base, &self.z_a, &pk.n);
-        let lhs_2 = pow_mod(&pk.y, &self.z_alpha, &pk.n);
-        let lhs_3 = pow_mod(&pk.h, &self.z_r, &pk.n);
-        let lhs = mul_mod(&mul_mod(&lhs_1, &lhs_2, &pk.n), &lhs_3, &pk.n);
+        // Check: C^z_a * y^z_alpha * h^z_r == c_aff^e * d mod N. Reconstruct the
+        // left side with one shared-squaring multi-exponentiation.
+        let lhs = multi_exp(
+            &[c_base, &pk.y, &pk.h],
+            &[&self.z_a, &self.z_alpha, &self.z_r],
+            &pk.n,
+        );
 
         let c_aff_e = pow_mod(c_aff, &e, &pk.n);
         let rhs = mul_mod(&c_aff_e, &self.d, &pk.n);

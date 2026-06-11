@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use rand_core::CryptoRngCore;
 use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, multi_exp, random_below};
 
 use crate::kgen::{JlPublicKey, JlSecretKey};
 
@@ -59,10 +59,8 @@ pub fn encrypt_with_randomness(pk: &JlPublicKey, m: &Integer, r: &Integer) -> Jl
     let two_pow_k = Integer::from(1) << pk.k;
     assert!(m < &two_pow_k, "plaintext must be in Z_{{2^k}}");
 
-    // c = y^m * h^r mod N
-    let y_m = pow_mod(&pk.y, m, &pk.n);
-    let h_r = pow_mod(&pk.h, r, &pk.n);
-    let c = mul_mod(&y_m, &h_r, &pk.n);
+    // c = y^m * h^r mod N, via one shared-squaring multi-exponentiation.
+    let c = multi_exp(&[&pk.y, &pk.h], &[m, r], &pk.n);
 
     JlCiphertext { c }
 }

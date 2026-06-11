@@ -120,8 +120,7 @@ pub fn pvss_share_distribute(
     // c2_j = pk_j^rho * f^{v_j} for each party j.
     let mut c2s: Vec<Qfi> = Vec::with_capacity(n);
     for (idx, share) in shares.iter().enumerate() {
-        let pk_elt = &pks[idx].elt();
-        let pk_rho = setup.exp_bytes(pk_elt, &rho_bytes)?;
+        let pk_rho = setup.pk_pow_bytes(&pks[idx], &rho_bytes)?;
         let f_v = setup.power_of_f_bytes(share)?;
         let c2 = setup.compose(&pk_rho, &f_v)?;
         c2s.push(c2);
@@ -193,8 +192,7 @@ pub fn pvss_share_distribute_with_secret(
     // c2_j = pk_j^rho * f^{v_j} for each party j.
     let mut c2s: Vec<Qfi> = Vec::with_capacity(n);
     for (idx, share) in shares.iter().enumerate() {
-        let pk_elt = &pks[idx].elt();
-        let pk_rho = setup.exp_bytes(pk_elt, &rho_bytes)?;
+        let pk_rho = setup.pk_pow_bytes(&pks[idx], &rho_bytes)?;
         let f_v = setup.power_of_f_bytes(share)?;
         let c2 = setup.compose(&pk_rho, &f_v)?;
         c2s.push(c2);

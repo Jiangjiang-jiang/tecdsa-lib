@@ -82,12 +82,31 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
+    // Generate Paillier keys (one-time setup; see the precomputed variant).
+    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    server_keygen_step1_with_dk::<C>(dk, rng)
+}
+
+/// Like [`server_keygen_step1`], but uses a **precomputed** Paillier decryption
+/// key `dk` instead of generating one inside the step.
+///
+/// The server's Paillier keypair (part of the one-time `SetupData` it publishes
+/// non-interactively) is message-independent. This variant lets a caller (e.g.
+/// a benchmark harness) generate it up front and inject it, so the step measures
+/// only the commitment, correct-key proof, and share sampling — not the
+/// (multi-second) safe-prime generation.
+pub fn server_keygen_step1_with_dk<C: TecdsaCurve>(
+    dk: tecdsa_paillier::DecryptionKey,
+    rng: &mut impl CryptoRngCore,
+) -> (ServerStep1Msg, ServerStep1State<C>)
+where
+    FieldBytesSize<C>: ModulusSize,
+    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+{
     // Sample x'_2
     let x2 = C::random_scalar(rng);
     let x2_point = C::generator() * x2;
 
-    // Generate Paillier keys
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
     // Create NICorrectKeyProof (Pi_GCD)

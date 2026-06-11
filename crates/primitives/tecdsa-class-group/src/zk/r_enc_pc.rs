@@ -180,7 +180,7 @@ impl REncPcProof {
         // --- Check 3: CL second component (cross-domain link via z1) ---
         // f^{z1} * ek^{z3} == R_c1 * c_1^e
         let f_z1 = setup.power_of_f_bytes(&self.z1)?;
-        let pk_z3 = setup.exp_bytes(pk_elt, &self.z3)?;
+        let pk_z3 = setup.pk_pow_bytes(pk, &self.z3)?;
         let lhs_cl2 = setup.compose(&f_z1, &pk_z3)?;
         let c2_e = setup.exp_bytes(&c2, &self.e)?;
         let rhs_cl2 = setup.compose(&self.r_c1, &c2_e)?;

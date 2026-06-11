@@ -322,11 +322,12 @@ impl RShProof {
         c1_k.neg();
         let R_tmp = setup.compose(&R, &c1_k)?;
 
-        // 4. Reconstruct V0: V = prod_U^{rho_response}, V_tmp = V / prod_V^k.
-        let V = setup.exp_bytes(&prod_U, &rho_resp_bytes)?;
-        let mut prod_V_k = setup.exp_bytes(&prod_V, &self.k)?;
-        prod_V_k.neg();
-        let V_tmp = setup.compose(&V, &prod_V_k)?;
+        // 4. Reconstruct V0: V_tmp = prod_U^{rho_response} · prod_V^{-k}, via one
+        // shared-squaring multi-exp (both bases vary per proof).
+        let V_tmp = setup.multiexp_signed_bytes(
+            &[&prod_U, &prod_V],
+            &[(false, rho_resp_bytes.clone()), (true, self.k.clone())],
+        )?;
 
         // 5. Check: k == H(prod_U, prod_V, R_tmp, V_tmp).
         let k_check = schnorr_challenge(&prod_U, &prod_V, &R_tmp, &V_tmp)?;
