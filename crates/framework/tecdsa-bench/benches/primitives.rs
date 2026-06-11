@@ -12,13 +12,14 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use elliptic_curve::PrimeField;
 use k256::Secp256k1;
 use rand_core::OsRng;
-use tecdsa_bench::zk_fixtures::{NTildeFixture, PaillierFixture};
+use tecdsa_bench::zk_fixtures::{NTildeFixture, PaillierFixture, PedersenFixture};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::backend::Integer;
 use tecdsa_protocol::MtA;
 
 static PAILLIER: LazyLock<PaillierFixture> = LazyLock::new(PaillierFixture::generate);
 static NTILDE: LazyLock<NTildeFixture> = LazyLock::new(NTildeFixture::generate);
+static PEDERSEN: LazyLock<PedersenFixture> = LazyLock::new(PedersenFixture::generate);
 
 fn q_bytes() -> Vec<u8> {
     let neg_one = -k256::Scalar::ONE;
@@ -77,13 +78,79 @@ fn paillier_mta(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. CL MtA
+// 2. Paillier MtA with CGGMP20 proofs (pi_enc + pi_aff-g)
+// ---------------------------------------------------------------------------
+
+fn cggmp20_mta(c: &mut Criterion) {
+    use paillier_zk::{
+        paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
+    };
+    use tecdsa_paillier::{
+        mta::{Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup},
+        zk::bridge::pedersen_to_aux,
+    };
+    type M = PaillierMtA<Cggmp20Proofs>;
+
+    let pf = &*PAILLIER;
+    let ped = &*PEDERSEN;
+    let q = q_bytes();
+    let q_int = Integer::from_bytes_msf(&q);
+
+    // CGGMP20 MtA setup: Ring-Pedersen Aux (verifier's), CGGMP20 security
+    // parameters (l=256, l_y=1280, epsilon=512), and the prover's Paillier key.
+    let setup = PaillierMtaSetup::<Cggmp20Proofs> {
+        ek: pf.ek.clone(),
+        dk: pf.dk.clone(),
+        proof_setup: Cggmp20ProofSetup {
+            aux: pedersen_to_aux(&ped.params),
+            sender_security: pi_enc::SecurityParams {
+                l: 256,
+                epsilon: 512,
+                q: q_int.clone(),
+            },
+            receiver_security: pi_aff::SecurityParams {
+                l_x: 256,
+                l_y: 1280,
+                epsilon: 512,
+            },
+            prover_ek: pf.ek.clone(),
+        },
+    };
+    let a = Secp256k1::random_scalar(&mut OsRng).to_repr();
+    let b = Secp256k1::random_scalar(&mut OsRng).to_repr();
+
+    let mut g = c.benchmark_group("mta/cggmp20");
+    // pi_enc / pi_aff-g proving is heavy (~10^2 ms); 10 samples matches the
+    // zk/paillier_zk_facade benches and keeps total runtime bounded.
+    g.sample_size(10);
+
+    g.bench_function("sender_encrypt", |bench| {
+        bench.iter(|| M::sender_encrypt(&setup, b.as_ref(), &q, &mut OsRng).expect("se"))
+    });
+
+    let (sm, ss) = M::sender_encrypt(&setup, b.as_ref(), &q, &mut OsRng).expect("se");
+    g.bench_function("receiver_compute", |bench| {
+        bench.iter(|| M::receiver_compute(&setup, a.as_ref(), &q, &sm, &mut OsRng).expect("rc"))
+    });
+
+    let (rm, _) = M::receiver_compute(&setup, a.as_ref(), &q, &sm, &mut OsRng).expect("rc");
+    g.bench_function("sender_decrypt", |bench| {
+        bench.iter(|| M::sender_decrypt(&setup, &ss, &q, &rm).expect("sd"))
+    });
+
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
+// 3. CL MtA (with WMY23-style consistency check / MtAwc)
 // ---------------------------------------------------------------------------
 
 fn cl_mta(c: &mut Criterion) {
     use std::cell::RefCell;
 
+    use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
     use tecdsa_class_group::mta::{ClMtA, ClMtaSetup};
+    use tecdsa_protocol::MtAWithCheck;
     type M = ClMtA;
 
     let seed = "42042";
@@ -103,8 +170,14 @@ fn cl_mta(c: &mut Criterion) {
         },
     };
     let q = q_bytes();
-    let a = Secp256k1::random_scalar(&mut OsRng).to_repr();
-    let b = Secp256k1::random_scalar(&mut OsRng).to_repr();
+    let a_scalar = Secp256k1::random_scalar(&mut OsRng);
+    let b_scalar = Secp256k1::random_scalar(&mut OsRng);
+    let a = a_scalar.to_repr();
+    let b = b_scalar.to_repr();
+    // g^a is the public auxiliary input to the MtAwc consistency check.
+    let g_a = (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * a_scalar)
+        .to_bytes()
+        .to_vec();
 
     let mut g = c.benchmark_group("mta/cl");
 
@@ -113,13 +186,24 @@ fn cl_mta(c: &mut Criterion) {
     });
 
     let (sm, ss) = M::sender_encrypt(&setup, b.as_ref(), &q, &mut OsRng).expect("se");
-    g.bench_function("receiver_compute", |bench| {
-        bench.iter(|| M::receiver_compute(&setup, a.as_ref(), &q, &sm, &mut OsRng).expect("rc"))
+    // CL achieves malicious security via the WMY23-style MtAwc consistency
+    // check (g^alpha), not a separate ZK proof; measure the check-carrying
+    // receiver step (g^alpha generation) and its verification.
+    g.bench_function("receiver_compute_with_check", |bench| {
+        bench.iter(|| {
+            M::receiver_compute_with_check(&setup, a.as_ref(), &q, &sm, &mut OsRng).expect("rcwc")
+        })
     });
 
-    let (rm, _) = M::receiver_compute(&setup, a.as_ref(), &q, &sm, &mut OsRng).expect("rc");
+    let (rm, _alpha, check) =
+        M::receiver_compute_with_check(&setup, a.as_ref(), &q, &sm, &mut OsRng).expect("rcwc");
     g.bench_function("sender_decrypt", |bench| {
         bench.iter(|| M::sender_decrypt(&setup, &ss, &q, &rm).expect("sd"))
+    });
+
+    let beta = M::sender_decrypt(&setup, &ss, &q, &rm).expect("sd");
+    g.bench_function("verify_check", |bench| {
+        bench.iter(|| M::verify_check(&setup, &ss, &q, &beta, &check, &g_a).expect("vc"))
     });
 
     g.finish();
@@ -221,13 +305,19 @@ fn rvole_mta(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn nim_mta(c: &mut Criterion) {
-    use tecdsa_class_group::nim::Nim;
+    use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+    use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
 
     let seed = "42042";
     let mut nim_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
     let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
-    let x = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&Secp256k1::random_scalar(&mut OsRng));
+    let x_scalar = Secp256k1::random_scalar(&mut OsRng);
+    let x = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&x_scalar);
     let y = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&Secp256k1::random_scalar(&mut OsRng));
+    // V = x * G is the EC commitment that R_Ped binds the Encode_A output to.
+    let big_v = (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar)
+        .to_bytes()
+        .to_vec();
 
     let mut g = c.benchmark_group("mta/nim");
 
@@ -253,6 +343,27 @@ fn nim_mta(c: &mut Criterion) {
         let mut nim = Nim::new(&mut nim_setup);
         nim.encode_b(&y, &nim_pk).expect("encode_b")
     };
+    let r_bytes = ea.state.r_bytes.clone();
+
+    // R_Ped (R_Ped_EC, LLZ25 §4.3): proves the Encode_A output
+    // pe_A = h^r * pk^x is consistent with V = x*G. Party A proves; the
+    // counterparty verifies. This is what makes NIM maliciously secure.
+    g.bench_function("r_ped/prove", |bench| {
+        bench.iter(|| {
+            RPedEcProof::prove(&mut nim_setup, &nim_pk, &ea.pe_a, &big_v, &x, &r_bytes)
+                .expect("r_ped prove")
+        })
+    });
+
+    let ped_proof = RPedEcProof::prove(&mut nim_setup, &nim_pk, &ea.pe_a, &big_v, &x, &r_bytes)
+        .expect("r_ped prove");
+    g.bench_function("r_ped/verify", |bench| {
+        bench.iter(|| {
+            ped_proof
+                .verify(&nim_setup, &nim_pk, &ea.pe_a, &big_v)
+                .expect("r_ped verify")
+        })
+    });
 
     g.bench_function("decode_a", |bench| {
         bench.iter(|| {
@@ -275,5 +386,13 @@ fn nim_mta(c: &mut Criterion) {
 // Criterion groups and main
 // ---------------------------------------------------------------------------
 
-criterion_group!(benches, paillier_mta, cl_mta, jl_mta, rvole_mta, nim_mta,);
+criterion_group!(
+    benches,
+    paillier_mta,
+    cggmp20_mta,
+    cl_mta,
+    jl_mta,
+    rvole_mta,
+    nim_mta,
+);
 criterion_main!(benches);

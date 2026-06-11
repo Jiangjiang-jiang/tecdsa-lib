@@ -357,9 +357,22 @@ pub struct Cggmp20ProofSetup {
 /// (El-Gamal base points Y, a, b) not available at the MtA layer.
 pub type Cggmp20SenderProof = pi_enc::NiProof;
 
-/// CGGMP20 receiver proof: non-interactive `pi_aff-g` (Paillier affine
-/// operation in range with EC group commitment).
-pub type Cggmp20ReceiverProof = pi_aff::NiProof<GE>;
+/// CGGMP20 receiver proof: the non-interactive `pi_aff-g` proof bundled with
+/// the public statement data it is checked against.
+///
+/// `pi_aff-g`'s verifier needs the EC commitment `X = a*G` and the ciphertext
+/// `Y = Enc(key_i, alpha')`; neither is recoverable from the `NiProof` alone,
+/// so the receiver transmits them alongside the proof. (In the full CGGMP20
+/// presign these public values are already broadcast for other reasons.)
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Cggmp20ReceiverProof {
+    /// The `pi_aff-g` non-interactive proof.
+    pub proof: pi_aff::NiProof<GE>,
+    /// EC commitment `X = a * G` (public input to `pi_aff-g`).
+    pub x: generic_ec::Point<GE>,
+    /// Ciphertext `Y = Enc(key_i, alpha')` under the prover's own key.
+    pub y: fast_paillier::Ciphertext,
+}
 
 /// Fiat-Shamir domain separator for CGGMP20 MtA proofs generated through the
 /// PaillierMtaProofs trait. Uses a fixed tag so that proofs are deterministic
@@ -464,7 +477,7 @@ impl PaillierMtaProofs for Cggmp20Proofs {
             .encrypt_with_random(rng, alpha_prime)
             .expect("encryption of alpha_prime under prover key must succeed");
 
-        pi_aff::non_interactive::prove::<GE, Sha256>(
+        let proof = pi_aff::non_interactive::prove::<GE, Sha256>(
             &Cggmp20MtaFsTag,
             &proof_setup.aux,
             pi_aff::Data {
@@ -484,7 +497,14 @@ impl PaillierMtaProofs for Cggmp20Proofs {
             &proof_setup.receiver_security,
             rng,
         )
-        .expect("pi_aff proof generation must succeed for valid inputs")
+        .expect("pi_aff proof generation must succeed for valid inputs");
+
+        // Bundle X and Y so the sender can verify the proof.
+        Cggmp20ReceiverProof {
+            proof,
+            x: x_point,
+            y: y_ciphertext,
+        }
     }
 
     fn verify_receiver(
@@ -495,26 +515,25 @@ impl PaillierMtaProofs for Cggmp20Proofs {
         proof_setup: &Self::ProofSetup,
         _q: &Integer,
     ) -> bool {
-        // The EC commitment X and ciphertext Y are embedded in the proof's
-        // commitment structure. We reconstruct the Data from what the verifier
-        // knows.
-        //
-        // However, pi_aff-g's Data requires X (the EC point) and Y (the
-        // ciphertext under prover's key) which are NOT in the NiProof --
-        // they are public data the verifier must independently know.
-        //
-        // In the full CGGMP20 protocol, the prover sends X (= Gamma_i or
-        // x_i * G) and Y (= F_ji) alongside the proof. Through this trait,
-        // we cannot reconstruct them.
-        //
-        // LIMITATION: This verify_receiver CANNOT fully verify pi_aff-g
-        // because the trait interface does not carry the EC point X or the
-        // ciphertext Y. Protocol-level code must verify pi_aff-g directly.
-        //
-        // We return true here as a pass-through; the real verification
-        // happens at the protocol layer (tecdsa-cggmp20).
-        let _ = (ek, c_a, c_b, proof, proof_setup);
-        true
+        // The EC commitment `X` and ciphertext `Y` travel inside the bundled
+        // `Cggmp20ReceiverProof`, so the full pi_aff-g statement can be
+        // reconstructed and verified here: `c_a = c_B` (the input), `c_b = c_A`
+        // (the affine result), `Y = proof.y`, `X = proof.x`.
+        pi_aff::non_interactive::verify::<GE, Sha256>(
+            &Cggmp20MtaFsTag,
+            &proof_setup.aux,
+            pi_aff::Data {
+                key_j: ek,
+                key_i: &proof_setup.prover_ek,
+                c: c_a,
+                d: c_b,
+                y: &proof.y,
+                x: &proof.x,
+            },
+            &proof_setup.receiver_security,
+            &proof.proof,
+        )
+        .is_ok()
     }
 }
 
@@ -553,10 +572,14 @@ impl<P: PaillierMtaProofs> Clone for PaillierMtaSetup<P> {
     }
 }
 
-/// Sender's internal state between encrypt and decrypt: the Paillier nonce.
+/// Sender's internal state between encrypt and decrypt.
 pub struct PaillierSenderState<P: PaillierMtaProofs = SimpleProofs> {
     /// The nonce used to encrypt the sender's input.
     pub nonce: Integer,
+    /// The sender's own ciphertext `c_B = Enc(pk, b)`, retained so that
+    /// `sender_decrypt` can verify the receiver's proof (which is stated over
+    /// `c_B` and the affine result `c_A`).
+    pub ciphertext: Integer,
     _marker: PhantomData<P>,
 }
 
@@ -647,11 +670,12 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
             rng,
         );
 
-        let msg = PaillierSenderMsg { ciphertext, proof };
         let state = PaillierSenderState {
             nonce,
+            ciphertext: ciphertext.clone(),
             _marker: PhantomData,
         };
+        let msg = PaillierSenderMsg { ciphertext, proof };
 
         Ok((msg, state))
     }
@@ -735,19 +759,26 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
     /// `beta = Dec(dk, c_A) mod q = (a * b + alpha') mod q`
     fn sender_decrypt(
         setup: &Self::Setup,
-        _state: &Self::SenderState,
+        state: &Self::SenderState,
         q_bytes: &[u8],
         receiver_msg: &Self::ReceiverMsg,
     ) -> Result<Vec<u8>, Self::Error> {
         let q = Integer::from_bytes_msf(q_bytes);
 
-        // 1. Verify receiver proof
-        // Note: Receiver proof verification requires the original c_B ciphertext, but
-        // the trait interface does not carry it. Since the sender already knows
-        // c_B from its own state, in practice this check is done at the
-        // protocol layer. For the trait implementation, we skip this check.
-        // Protocol-level code should call verify_receiver directly if needed.
-        let _ = &q;
+        // 1. Verify the receiver's proof (GG18 Bob / CGGMP20 pi_aff-g) before
+        //    decrypting. The proof is stated over `c_B` (the sender's own
+        //    ciphertext, retained in state) and `c_A` (the affine result), so
+        //    the sender can verify it without any extra protocol-level data.
+        if !P::verify_receiver(
+            &setup.ek,
+            &state.ciphertext,
+            &receiver_msg.ciphertext,
+            &receiver_msg.proof,
+            &setup.proof_setup,
+            &q,
+        ) {
+            return Err(PaillierMtaError::ReceiverProofVerification);
+        }
 
         // 2. Decrypt
         let plaintext = setup

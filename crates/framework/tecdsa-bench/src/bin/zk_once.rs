@@ -8,6 +8,7 @@
 
 use std::{
     str::FromStr,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -18,6 +19,7 @@ use tecdsa::bigint::random_below;
 use tecdsa_bench::zk_fixtures::*;
 use tecdsa_class_group::cl::{Cleartext, Mpz, SECP256K1_ORDER};
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_testkit::wire_size;
 
 fn time_once<T>(name: &str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
@@ -25,6 +27,37 @@ fn time_once<T>(name: &str, f: impl FnOnce() -> T) -> T {
     let elapsed = start.elapsed();
     println!("{name}\t{}\t{}", elapsed.as_nanos(), HumanDuration(elapsed));
     out
+}
+
+/// Collected proof sizes (`proof-id -> bytes`), flushed to a per-process TSV at
+/// the end of `main` for `build_zk_table.py` to consume (mirrors how
+/// `protocol_once` persists comm under `target/comm_online/`).
+static SIZES: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
+
+/// Record a proof's serialized size (bytes): print a human-readable
+/// `<id>/size<TAB><bytes><TAB>bytes` row and stash `(<id>, bytes)` for the TSV.
+fn record_size(id: &str, bytes: usize) {
+    println!("{id}/size\t{bytes}\tbytes");
+    SIZES.lock().expect("sizes lock").push((id.to_string(), bytes));
+}
+
+/// Record the serialized wire size of a `serde`-serializable proof under the
+/// orchestrator's bincode config -- the same sizing as the MtA comm column.
+fn size_of<T: serde::Serialize>(id: &str, proof: &T) {
+    record_size(id, wire_size(proof));
+}
+
+/// Flush all recorded sizes to `target/zk_sizes/<pid>.tsv` as `<id>\t<bytes>`.
+fn write_sizes() {
+    let dir = std::path::Path::new("target/zk_sizes");
+    std::fs::create_dir_all(dir).expect("create zk_sizes dir");
+    let out = dir.join(format!("{}.tsv", std::process::id()));
+    let rows = SIZES.lock().expect("sizes lock");
+    let mut s = String::new();
+    for (k, b) in rows.iter() {
+        s.push_str(&format!("{k}\t{b}\n"));
+    }
+    std::fs::write(&out, s).expect("write zk sizes file");
 }
 
 struct HumanDuration(Duration);
@@ -64,6 +97,9 @@ fn main() {
     });
     run_group("zk/joye_libert", || joye_libert_zk_once(&jl, &jl_extra));
     run_group("zk/evrf", evrf_zk_once);
+
+    // Persist the collected proof sizes for build_zk_table.py.
+    write_sizes();
 }
 
 fn run_group(name: &str, f: impl FnOnce()) {
@@ -176,11 +212,13 @@ fn pedersen_mod_zk_once(ped: &PedersenFixture) {
     let piprm = time_once("zk/pedersen_mod/pi_prm/prove", || {
         PiPrm::prove(params, secret, rng)
     });
+    size_of("zk/pedersen_mod/pi_prm", &piprm);
     time_once("zk/pedersen_mod/pi_prm/verify", || piprm.verify(params));
 
     let pimod = time_once("zk/pedersen_mod/pi_mod/prove", || {
         PiMod::prove(params, secret, rng).expect("pimod prove")
     });
+    size_of("zk/pedersen_mod/pi_mod", &pimod);
     time_once("zk/pedersen_mod/pi_mod/verify", || {
         pimod.verify(params, rng)
     });
@@ -481,6 +519,16 @@ fn class_group_zk_once(
             RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v_bytes, &x_bytes, &r_bytes_nim)
                 .expect("prove")
         });
+        // RPedEcProof holds a Qfi (not serde-serializable); size it natively
+        // via to_bytes + the response byte-vectors, as in the MtA comm column.
+        record_size(
+            "zk/class_group/r_ped_ec",
+            proof.c_tilde.to_bytes().len()
+                + proof.v_tilde_bytes.len()
+                + proof.s_r.len()
+                + proof.s_v.len()
+                + proof.e.len(),
+        );
         time_once("zk/class_group/r_ped_ec/verify", || {
             proof
                 .verify(&setup, &pk, &pe_a, &big_v_bytes)
@@ -681,6 +729,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let proof = time_once("zk/paillier/correct_key_ni/prove", || {
             NICorrectKeyProof::prove(dk, b"bench")
         });
+        size_of("zk/paillier/correct_key_ni", &proof);
         time_once("zk/paillier/correct_key_ni/verify", || {
             proof.verify(ek, b"bench")
         });
@@ -772,6 +821,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let proof = time_once("zk/paillier/alice_range/prove", || {
             AliceProof::prove::<C>(&a, &cipher, ek.n(), ek.nn(), &ntilde, &r, rng)
         });
+        size_of("zk/paillier/alice_range", &proof);
         time_once("zk/paillier/alice_range/verify", || {
             proof
                 .verify::<C>(&cipher, ek.n(), ek.nn(), &ntilde)
@@ -949,6 +999,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
                 rng,
             )
         });
+        size_of("zk/paillier/bob", &proof);
         time_once("zk/paillier/bob/verify", || {
             proof
                 .verify::<C>(&enc_a, &mta_out, ek.n(), ek.nn(), &ntilde)
@@ -1006,6 +1057,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
             pi_enc::non_interactive::prove::<Sha256>(&tag, &aux, data, pdata, &security, rng)
                 .expect("pi_enc prove")
         });
+        size_of("zk/paillier_zk_facade/pi_enc", &proof);
         time_once("zk/paillier_zk_facade/pi_enc/verify", || {
             pi_enc::non_interactive::verify::<Sha256>(&tag, &aux, data, &security, &proof)
                 .expect("pi_enc verify")
@@ -1094,6 +1146,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
             pi_aff::non_interactive::prove::<GE, Sha256>(&tag, &aux, data, pdata, &security, rng)
                 .expect("pi_aff prove")
         });
+        size_of("zk/paillier_zk_facade/pi_aff_g", &proof);
         time_once("zk/paillier_zk_facade/pi_aff_g/verify", || {
             pi_aff::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &security, &proof)
                 .expect("pi_aff verify")
@@ -1190,6 +1243,7 @@ fn joye_libert_zk_once(jl: &JlFixture, jl_ex: &JlExtraFixture) {
         let proof = time_once("zk/joye_libert/zkjl_enc/prove", || {
             ZkJlEncProof::prove(jl_pk, &ct.c, &m, &r, jl_pk.k, rng)
         });
+        size_of("zk/joye_libert/zkjl_enc", &proof);
         time_once("zk/joye_libert/zkjl_enc/verify", || {
             proof.verify(jl_pk, &ct.c)
         });
@@ -1200,6 +1254,7 @@ fn joye_libert_zk_once(jl: &JlFixture, jl_ex: &JlExtraFixture) {
         let proof = time_once("zk/joye_libert/zkjlmod/prove", || {
             ZkJlModProof::prove(jl_pk, jl_sk, jl_x, rng)
         });
+        size_of("zk/joye_libert/zkjlmod", &proof);
         time_once("zk/joye_libert/zkjlmod/verify", || proof.verify());
     }
 
@@ -1262,6 +1317,7 @@ fn joye_libert_zk_once(jl: &JlFixture, jl_ex: &JlExtraFixture) {
                 jl_pk, &ct_b.c, &c_aff, &a, &alpha, &r_aff, jl_pk.k, jl_pk.k, rng,
             )
         });
+        size_of("zk/joye_libert/zkjl_aff", &proof);
         time_once("zk/joye_libert/zkjl_aff/verify", || {
             proof.verify(jl_pk, &ct_b.c, &c_aff)
         });

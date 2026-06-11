@@ -135,6 +135,14 @@ fn point_wire_len(p: &k256::ProjectivePoint) -> usize {
     AsRef::<[u8]>::as_ref(&p.to_bytes()).len()
 }
 
+/// Wire size (bytes) of a CL-HSM class-group ciphertext: the two `QFI`
+/// components in their native `to_bytes` encoding. CL/NIM types are not
+/// `serde::Serialize`, so they are sized through the class group's own
+/// serialization rather than the orchestrator's bincode config.
+fn cl_ct_wire_len(ct: &tecdsa_class_group::cl::Ciphertext) -> usize {
+    ct.c1().to_bytes().len() + ct.c2().to_bytes().len()
+}
+
 type GroupFn = fn();
 
 /// All protocol groups. Each is independent (its own keygen/presign/sign).
@@ -172,7 +180,7 @@ fn main() {
         .filter(|(name, _)| {
             filter
                 .as_ref()
-                .map_or(true, |f| f.split(',').map(str::trim).any(|p| p == *name))
+                .is_none_or(|f| f.split(',').map(str::trim).any(|p| p == *name))
         })
         .collect();
 
@@ -230,6 +238,13 @@ fn mta_once() {
     use rand_core::OsRng;
     use tecdsa_curve::TecdsaCurve;
     use tecdsa_protocol::MtA;
+    use tecdsa_testkit::wire_size;
+
+    // Per-instance MtA communication (bytes) is recorded separately for the
+    // sender and the receiver under "mta/<variant>/{sender,receiver}"; the
+    // table generator sums the two. Serializable messages (Paillier, JL,
+    // RVOLE) are sized via the orchestrator's bincode config (wire_size);
+    // CL/NIM class-group elements via their native to_bytes (cl_ct_wire_len).
 
     let a = Secp256k1::random_scalar(&mut OsRng);
     let b = Secp256k1::random_scalar(&mut OsRng);
@@ -286,13 +301,66 @@ fn mta_once() {
         time_once("mta/paillier/sender_decrypt", || {
             M::sender_decrypt(&setup, &ss, &q_bytes, &rm).expect("sd")
         });
+        per_party::record_online_comm("mta/paillier/sender", wire_size(&sm));
+        per_party::record_online_comm("mta/paillier/receiver", wire_size(&rm));
     }
 
-    // ── 3. CL MtA ──
+    // ── 2. Paillier MtA with CGGMP20 proofs (pi_enc + pi_aff-g) ──
+    {
+        use paillier_zk::{
+            paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
+        };
+        use tecdsa_paillier::mta::{
+            Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup,
+        };
+        type M = PaillierMtA<Cggmp20Proofs>;
+        // Ring-Pedersen Aux (s, t, N^) reuses the N-tilde fixture: s<-h1,
+        // t<-h2, N^<-N_tilde (same 3072-bit modulus -> same proof sizes).
+        let aux = pi_enc::Aux {
+            s: ntilde.h1.clone(),
+            t: ntilde.h2.clone(),
+            rsa_modulo: ntilde.n_tilde.clone(),
+            multiexp: None,
+            crt: None,
+        };
+        let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes);
+        let setup = PaillierMtaSetup::<Cggmp20Proofs> {
+            ek: paillier_ek.clone(),
+            dk: paillier_dk.clone(),
+            proof_setup: Cggmp20ProofSetup {
+                aux,
+                sender_security: pi_enc::SecurityParams {
+                    l: 256,
+                    epsilon: 512,
+                    q: q_int,
+                },
+                receiver_security: pi_aff::SecurityParams {
+                    l_x: 256,
+                    l_y: 1280,
+                    epsilon: 512,
+                },
+                prover_ek: paillier_ek.clone(),
+            },
+        };
+        let (sm, ss) = time_once("mta/cggmp20/sender_encrypt", || {
+            M::sender_encrypt(&setup, b_bytes.as_ref(), &q_bytes, &mut OsRng).expect("se")
+        });
+        let (rm, _) = time_once("mta/cggmp20/receiver_compute", || {
+            M::receiver_compute(&setup, a_bytes.as_ref(), &q_bytes, &sm, &mut OsRng).expect("rc")
+        });
+        time_once("mta/cggmp20/sender_decrypt", || {
+            M::sender_decrypt(&setup, &ss, &q_bytes, &rm).expect("sd")
+        });
+        per_party::record_online_comm("mta/cggmp20/sender", wire_size(&sm));
+        per_party::record_online_comm("mta/cggmp20/receiver", wire_size(&rm));
+    }
+
+    // ── 3. CL MtA (with WMY23-style MtAwc consistency check) ──
     {
         use std::cell::RefCell;
 
         use tecdsa_class_group::mta::{ClMtA, ClMtaSetup};
+        use tecdsa_protocol::MtAWithCheck;
         type M = ClMtA;
         let setup = ClMtaSetup {
             setup: RefCell::new(
@@ -315,12 +383,26 @@ fn mta_once() {
         let (sm, ss) = time_once("mta/cl/sender_encrypt", || {
             M::sender_encrypt(&setup, b_bytes.as_ref(), &q_bytes, &mut OsRng).expect("se")
         });
-        let (rm, _) = time_once("mta/cl/receiver_compute", || {
-            M::receiver_compute(&setup, a_bytes.as_ref(), &q_bytes, &sm, &mut OsRng).expect("rc")
+        let (rm, _alpha, check) = time_once("mta/cl/receiver_compute_with_check", || {
+            M::receiver_compute_with_check(&setup, a_bytes.as_ref(), &q_bytes, &sm, &mut OsRng)
+                .expect("rcwc")
         });
-        time_once("mta/cl/sender_decrypt", || {
+        let beta = time_once("mta/cl/sender_decrypt", || {
             M::sender_decrypt(&setup, &ss, &q_bytes, &rm).expect("sd")
         });
+        // g^a is the public auxiliary input for the MtAwc check verification.
+        let g_a = {
+            use elliptic_curve::group::GroupEncoding;
+            AsRef::<[u8]>::as_ref(&(Secp256k1::generator() * a).to_bytes()).to_vec()
+        };
+        time_once("mta/cl/verify_check", || {
+            M::verify_check(&setup, &ss, &q_bytes, &beta, &check, &g_a).expect("vc")
+        });
+        per_party::record_online_comm("mta/cl/sender", cl_ct_wire_len(&sm.ciphertext));
+        per_party::record_online_comm(
+            "mta/cl/receiver",
+            cl_ct_wire_len(&rm.ciphertext) + check.g_alpha_bytes.len(),
+        );
     }
 
     // ── 4. JL MtA ──
@@ -343,6 +425,8 @@ fn mta_once() {
         time_once("mta/jl/sender_decrypt", || {
             M::sender_decrypt(&setup, &ss, &q_bytes, &rm).expect("sd")
         });
+        per_party::record_online_comm("mta/jl/sender", wire_size(&sm));
+        per_party::record_online_comm("mta/jl/receiver", wire_size(&rm));
     }
 
     // ── 5. RVOLE MtA (interactive, 4 steps) ──
@@ -366,16 +450,27 @@ fn mta_once() {
         time_once("mta/rvole/receiver_finish", || {
             M::receiver_finish(recv_state, &compute_msg, &q_bytes).expect("finish")
         });
+        // Sender sends init + compute; receiver sends the response.
+        per_party::record_online_comm(
+            "mta/rvole/sender",
+            wire_size(&init_msg) + wire_size(&compute_msg),
+        );
+        per_party::record_online_comm("mta/rvole/receiver", wire_size(&resp_msg));
     }
 
-    // ── 6. NIM (non-interactive multiplication) ──
+    // ── 6. NIM (non-interactive multiplication, with R_Ped proof) ──
     {
-        use tecdsa_class_group::nim::Nim;
+        use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
         let mut nim_setup =
             tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed).expect("cl");
         let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
         let x_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&a);
         let y_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&b);
+        // V = x * G is the EC commitment bound by R_Ped to the Encode_A output.
+        let big_v = {
+            use elliptic_curve::group::GroupEncoding;
+            AsRef::<[u8]>::as_ref(&(Secp256k1::generator() * a).to_bytes()).to_vec()
+        };
         let encode_a_out = time_once("mta/nim/encode_a", || {
             let mut nim = Nim::new(&mut nim_setup);
             nim.encode_a(&x_bytes, &nim_pk).expect("encode_a")
@@ -383,6 +478,16 @@ fn mta_once() {
         let encode_b_out = time_once("mta/nim/encode_b", || {
             let mut nim = Nim::new(&mut nim_setup);
             nim.encode_b(&y_bytes, &nim_pk).expect("encode_b")
+        });
+        let r_bytes = encode_a_out.state.r_bytes.clone();
+        let ped_proof = time_once("mta/nim/r_ped_prove", || {
+            RPedEcProof::prove(&mut nim_setup, &nim_pk, &encode_a_out.pe_a, &big_v, &x_bytes, &r_bytes)
+                .expect("r_ped prove")
+        });
+        time_once("mta/nim/r_ped_verify", || {
+            ped_proof
+                .verify(&nim_setup, &nim_pk, &encode_a_out.pe_a, &big_v)
+                .expect("r_ped verify")
         });
         time_once("mta/nim/decode_a", || {
             let nim = Nim::new(&mut nim_setup);
@@ -394,6 +499,18 @@ fn mta_once() {
             nim.decode_b(&encode_a_out.pe_a, &encode_b_out.state)
                 .expect("decode_b")
         });
+        // Party A sends Encode_A (a single Qfi) plus the R_Ped proof;
+        // party B sends Encode_B (a CL ciphertext = two Qfi).
+        let ped_proof_len = ped_proof.c_tilde.to_bytes().len()
+            + ped_proof.v_tilde_bytes.len()
+            + ped_proof.s_r.len()
+            + ped_proof.s_v.len()
+            + ped_proof.e.len();
+        per_party::record_online_comm(
+            "mta/nim/sender",
+            encode_a_out.pe_a.to_bytes().len() + ped_proof_len,
+        );
+        per_party::record_online_comm("mta/nim/receiver", cl_ct_wire_len(&encode_b_out.pe_b));
     }
 }
 
