@@ -39,7 +39,9 @@ use tecdsa_class_group::{
     zk::r_enc_pc::REncPcProof,
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
+use tecdsa_protocol::{
+    state_machine::Outgoing, AbortReason, IaReport, PartyId, Recipient, StateMachine,
+};
 pub use types::Wmy23Presignature;
 
 use crate::key_share::Wmy23KeyShare;
@@ -202,8 +204,6 @@ fn points_from_bytes(
 /// Round 1 broadcast payload: DRG.Gen public data for k and gamma.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct R1BcastPayload {
-    /// Hash commitment to `Gamma_i`.
-    commitment: [u8; 32],
     /// Pedersen VSS polynomial commitments for k_i (33-byte points).
     k_commitments: Vec<Vec<u8>>,
     /// Pedersen VSS polynomial commitments for gamma_i.
@@ -225,39 +225,97 @@ struct R1P2pPayload {
     gamma_share: SerializedVssShare,
 }
 
-/// Round 2 payload (per recipient): decommit + MtAwc Alice ciphertexts.
+/// An R_DL-PC proof (EC-level Schnorr/Okamoto) serialised for the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct R2Payload {
-    /// Commitment nonce (32 bytes).
-    nonce: [u8; 32],
-    /// Gamma point bytes (compressed).
-    gamma_point_bytes: Vec<u8>,
-    /// MtAwc Alice ciphertext of `hat_k_i` addressed to the recipient.
-    ct_k: SerializedClCt,
-    /// MtAwc Alice ciphertext of `hat_x_i` addressed to the recipient.
-    ct_x: SerializedClCt,
+struct SerializedRDlPc {
+    r_q: Vec<u8>,
+    r_pc: Vec<u8>,
+    z1: Vec<u8>,
+    z2: Vec<u8>,
 }
 
-/// Round 3 payload (per recipient): MtAwc Bob responses.
+impl SerializedRDlPc {
+    fn from_proof(p: &crate::keygen::rounds::RDlPcProof) -> Self {
+        use elliptic_curve::PrimeField;
+        Self {
+            r_q: p.r_q_bytes.clone(),
+            r_pc: p.r_pc_bytes.clone(),
+            z1: p.z1.to_repr().to_vec(),
+            z2: p.z2.to_repr().to_vec(),
+        }
+    }
+
+    fn to_proof(&self) -> Result<crate::keygen::rounds::RDlPcProof, String> {
+        Ok(crate::keygen::rounds::RDlPcProof {
+            r_q_bytes: self.r_q.clone(),
+            r_pc_bytes: self.r_pc.clone(),
+            z1: scalar_from_bytes(&self.z1, "RDlPc z1")?,
+            z2: scalar_from_bytes(&self.z2, "RDlPc z2")?,
+        })
+    }
+}
+
+/// Round 2 broadcast payload (WMY23 Fig. 5, Phase 1b + Phase 2 start).
+///
+/// Identical to every recipient: the bound `DRG.Comb` ciphertexts of the
+/// combined `k`/`gamma` shares with their R_Enc-PC proofs (for CombVf), and
+/// the combined gamma `RevealExp` point with its R_DL-PC proof (for ExpVf).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct R3Payload {
-    /// MtAwc response ciphertext c_alpha for the gamma MtA.
+struct R2Payload {
+    /// `DRG.Comb` ciphertext `c_{k_i}` (reused as the MtAwc receiver ct).
+    k_comb_ct: SerializedClCt,
+    /// R_Enc-PC proof binding `c_{k_i}` to `PC_{k_i}`.
+    k_comb_proof: SerializedREncPc,
+    /// `PC_{k_i}` bytes (compressed point).
+    k_comb_pc_bytes: Vec<u8>,
+    /// `DRG.Comb` ciphertext `c_{gamma_i}`.
+    gamma_comb_ct: SerializedClCt,
+    /// R_Enc-PC proof binding `c_{gamma_i}` to `PC_{gamma_i}`.
+    gamma_comb_proof: SerializedREncPc,
+    /// `PC_{gamma_i}` bytes.
+    gamma_comb_pc_bytes: Vec<u8>,
+    /// `Gamma_i = g^{gamma_i}` (combined RevealExp point, compressed).
+    g_gamma_point: Vec<u8>,
+    /// R_DL-PC proof binding `Gamma_i` to `PC_{gamma_i}`.
+    gamma_reveal_proof: SerializedRDlPc,
+}
+
+/// One MtAwc Bob response (sender = Bob) addressed to recipient (Alice) `j`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct R3Entry {
+    /// Recipient (Alice) local index.
+    j: u16,
+    /// MtAwc response ciphertext `c_alpha` for the gamma MtA.
     gamma_c_alpha: SerializedClCt,
-    /// g^beta point for gamma MtA (compressed bytes).
+    /// `g^beta` point for the gamma MtA (compressed bytes).
     gamma_g_beta_bytes: Vec<u8>,
-    /// MtAwc response ciphertext c_alpha for the key MtA.
+    /// MtAwc response ciphertext `c_mu` for the key MtA.
     x_c_alpha: SerializedClCt,
-    /// g^nu point for key MtA (compressed bytes).
+    /// `g^nu` point for the key MtA (compressed bytes).
     x_g_beta_bytes: Vec<u8>,
 }
 
-/// Round 4 broadcast payload: share revelation.
+/// Round 3 *broadcast* payload (WMY23 Fig. 5, Phase 2): all of this party's
+/// MtAwc Bob responses `{c_alpha_ji, B_ji, c_mu_ji, N_ji}_j`. Broadcasting
+/// (rather than sending P2P) makes the share-in-exponent matrix `{B, N}`
+/// available to every party for the Phase-3 cross-verification (Eq. (2)),
+/// matching the paper's O(n^2) communication and identifiability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct R3Payload {
+    /// One entry per recipient (Alice) `j != sender`.
+    entries: Vec<R3Entry>,
+}
+
+/// Round 4 broadcast payload: share revelation + `pi_{D_i}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct R4Payload {
     /// Revealed `delta_i` (32-byte scalar).
     delta_i: Vec<u8>,
     /// `D_i = Gamma^{hat_k_i}` (33-byte point).
     big_d_i: Vec<u8>,
+    /// R_DL-PC proof that `D_i = Gamma^{hat_k_i}` (base `Gamma`), binding `D_i`
+    /// to `PC_{hat_k_i}` for the Phase-3 cross-verification.
+    d_proof: SerializedRDlPc,
 }
 
 fn encode<T: Serialize>(value: &T, label: &str) -> tecdsa_core::Result<Vec<u8>> {
@@ -275,28 +333,22 @@ fn decode<T: serde::de::DeserializeOwned>(data: &[u8], label: &str) -> tecdsa_co
 // Internal per-party received data
 // ---------------------------------------------------------------------------
 
-/// Received Round 2 data from a single party.
+/// Received Round 2 broadcast from a single party (Phase 1b + RevealExp).
 struct ReceivedR2 {
-    nonce: [u8; 32],
-    gamma_point_bytes: Vec<u8>,
-    /// MtAwc Alice ciphertext of the sender's `hat_k_j`, addressed to us.
-    ct_k: ClCiphertext,
-    /// MtAwc Alice ciphertext of the sender's `hat_x_j`, addressed to us.
-    ct_x: ClCiphertext,
+    bcast: DrgPresignR2Bcast,
 }
 
-/// Received Round 3 data from a single party (MtAwc Bob response).
+/// Received Round 3 broadcast from a single party (Bob): its full row of
+/// MtAwc responses, indexed by recipient (Alice) local position.
 struct ReceivedR3 {
-    gamma_c_alpha: ClCiphertext,
-    gamma_g_beta: k256::ProjectivePoint,
-    x_c_alpha: ClCiphertext,
-    x_g_beta: k256::ProjectivePoint,
+    data: DrgPresignR3Data,
 }
 
 /// Received Round 4 data from a single party (share revelation).
 struct ReceivedR4 {
     delta_i: k256::Scalar,
     big_d_i: k256::ProjectivePoint,
+    d_proof: crate::keygen::rounds::RDlPcProof,
 }
 
 // ---------------------------------------------------------------------------
@@ -318,13 +370,14 @@ struct Round1State {
     outgoing: Vec<Outgoing<Wmy23PresignMsg>>,
 }
 
-/// Round 2 state: waiting for decommits + MtAwc Alice ciphertexts.
+/// Round 2 state: waiting for the Phase-1b/RevealExp broadcasts.
 struct Round2State {
     key_share: Wmy23KeyShare,
     my_id: PartyId,
     all_parties: Vec<PartyId>,
-    /// Round 1 hash commitments of all parties (local order).
-    r1_commitments: Vec<[u8; 32]>,
+    /// Round 1 broadcasts of all parties (local order); the VSS commitments
+    /// are needed to recompute combined commitments for CombVf in Round 4.
+    r1_bcasts: Vec<DrgPresignR1Bcast>,
     r1_state: DrgPresignR1State,
     r2_state: DrgPresignR2State,
     /// Own full Round 2 broadcast (per-recipient ciphertext vectors).
@@ -338,7 +391,7 @@ struct Round3State {
     key_share: Wmy23KeyShare,
     my_id: PartyId,
     all_parties: Vec<PartyId>,
-    r1_commitments: Vec<[u8; 32]>,
+    r1_bcasts: Vec<DrgPresignR1Bcast>,
     r1_state: DrgPresignR1State,
     r2_state: DrgPresignR2State,
     /// All parties' Round 2 broadcasts in local order (own entry is
@@ -419,15 +472,21 @@ fn local_pos(all_parties: &[PartyId], party: PartyId) -> Option<usize> {
 /// | Round | Phase (paper) | Content |
 /// |-------|---------------|---------|
 /// | 1 | DRG Gen | VSS commitments, CL ct + R_Enc-PC proofs (bcast), VSS shares (P2P) |
-/// | 2 | DRG GenVf/Comb + MtA | Gamma decommit + MtAwc Alice ciphertexts |
-/// | 3 | MtA | MtAwc Bob responses |
-/// | 4 | Reveal | delta_i + D_i broadcast |
+/// | 2 | DRG GenVf/Comb + RevealExp | combined CL cts + R_Enc-PC, Gamma_i + R_DL-PC (bcast) |
+/// | 3 | MtA | MtAwc Bob responses {c_alpha,B,c_mu,N} (broadcast, WMY23 Fig. 5) |
+/// | 4 | Reveal | delta_i + D_i + pi_{D_i} (bcast); Phase-3 cross-verification (Eq. (2)) |
+///
+/// Round 3 broadcasts the MtAwc material and Round 4 cross-verifies every
+/// party's revealed pseudo-nonce share, matching the paper's O(n^2) cost and
+/// making share revelation identifiable (closing the TX25 Phase-3 gap).
 ///
 /// Since bicycl-rs v0.2.2, `ClSetup` is `Send`, so it is stored directly
 /// in the machine and reused across round transitions.
 pub struct Wmy23PresignMachine {
     round: PresignRound,
     setup: ClSetup,
+    /// Set when Round-4 cross-verification identifies cheating parties.
+    ia_report: Option<IaReport>,
 }
 
 impl Wmy23PresignMachine {
@@ -476,7 +535,6 @@ impl Wmy23PresignMachine {
 
         // Serialise the broadcast part once.
         let bcast_payload = R1BcastPayload {
-            commitment: my_bcast.commitment,
             k_commitments: points_to_bytes(&my_bcast.k_commitments),
             gamma_commitments: points_to_bytes(&my_bcast.gamma_commitments),
             k_ct: SerializedClCt::from_ct(&my_bcast.k_ciphertext),
@@ -522,6 +580,7 @@ impl Wmy23PresignMachine {
         Ok(Self {
             round: PresignRound::Round1(state),
             setup: cl_setup,
+            ia_report: None,
         })
     }
 
@@ -565,38 +624,29 @@ impl Wmy23PresignMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("drg_presign_round2: {e}")))?;
 
-        // Queue Round 2 messages: each counterparty gets its own MtAwc
-        // Alice ciphertexts plus the Gamma decommitment.
-        let mut outgoing = Vec::new();
-        for (pos, party) in state.all_parties.iter().enumerate() {
-            if pos == my_idx {
-                continue;
-            }
-            let ct_k = my_r2_bcast.c_gamma[pos]
-                .as_ref()
-                .ok_or_else(|| TecdsaError::Other("missing R2 k ciphertext".into()))?;
-            let ct_x = my_r2_bcast.c_x[pos]
-                .as_ref()
-                .ok_or_else(|| TecdsaError::Other("missing R2 x ciphertext".into()))?;
-            let payload = R2Payload {
-                nonce: my_r2_bcast.nonce,
-                gamma_point_bytes: my_r2_bcast.gamma_point_bytes.clone(),
-                ct_k: SerializedClCt::from_ct(ct_k),
-                ct_x: SerializedClCt::from_ct(ct_x),
-            };
-            outgoing.push(Outgoing {
-                to: Recipient::Party(*party),
-                msg: Wmy23PresignMsg::Round2(encode(&payload, "R2 payload")?),
-            });
-        }
-
-        let r1_commitments: Vec<[u8; 32]> = r1_bcasts.iter().map(|b| b.commitment).collect();
+        // Queue the Round 2 broadcast (identical to every recipient): the
+        // bound DRG.Comb ciphertexts + R_Enc-PC proofs (Phase 1b) and the
+        // gamma RevealExp point + R_DL-PC proof (Phase 2).
+        let payload = R2Payload {
+            k_comb_ct: SerializedClCt::from_ct(&my_r2_bcast.k_comb_ct),
+            k_comb_proof: SerializedREncPc::from_proof(&my_r2_bcast.k_comb_proof),
+            k_comb_pc_bytes: my_r2_bcast.k_comb_pc_bytes.clone(),
+            gamma_comb_ct: SerializedClCt::from_ct(&my_r2_bcast.gamma_comb_ct),
+            gamma_comb_proof: SerializedREncPc::from_proof(&my_r2_bcast.gamma_comb_proof),
+            gamma_comb_pc_bytes: my_r2_bcast.gamma_comb_pc_bytes.clone(),
+            g_gamma_point: my_r2_bcast.g_gamma_point.to_bytes().to_vec(),
+            gamma_reveal_proof: SerializedRDlPc::from_proof(&my_r2_bcast.gamma_reveal_proof),
+        };
+        let outgoing = vec![Outgoing {
+            to: Recipient::Broadcast,
+            msg: Wmy23PresignMsg::Round2(encode(&payload, "R2 payload")?),
+        }];
 
         Ok(Round2State {
             key_share: state.key_share,
             my_id: state.my_id,
             all_parties: state.all_parties,
-            r1_commitments,
+            r1_bcasts,
             r1_state: state.r1_state,
             r2_state,
             my_r2_bcast,
@@ -616,9 +666,8 @@ impl Wmy23PresignMachine {
         let ids = signer_ids(&state.all_parties);
         let mut rng = rand::thread_rng();
 
-        // Build the local-order view of Round 2 broadcasts: own entry is
-        // the full per-recipient vector; for other parties only the
-        // ciphertexts addressed to us are populated.
+        // Build the local-order view of Round 2 broadcasts. Each entry is the
+        // sender's full Phase-1b/RevealExp broadcast (identical for everyone).
         let mut my_r2_bcast = Some(state.my_r2_bcast);
         let mut r2_bcasts: Vec<DrgPresignR2Bcast> = Vec::with_capacity(n);
         for (pos, party) in state.all_parties.iter().enumerate() {
@@ -634,16 +683,7 @@ impl Wmy23PresignMachine {
                 .received
                 .get(party)
                 .ok_or_else(|| TecdsaError::Other(format!("missing R2 data from {party}")))?;
-            let mut c_gamma: Vec<Option<ClCiphertext>> = vec![None; n];
-            let mut c_x: Vec<Option<ClCiphertext>> = vec![None; n];
-            c_gamma[my_idx] = Some(r2.ct_k.clone());
-            c_x[my_idx] = Some(r2.ct_x.clone());
-            r2_bcasts.push(DrgPresignR2Bcast {
-                nonce: r2.nonce,
-                gamma_point_bytes: r2.gamma_point_bytes.clone(),
-                c_gamma,
-                c_x,
-            });
+            r2_bcasts.push(r2.bcast.clone());
         }
 
         let my_r3 = rounds::drg_presign_round3_bob(
@@ -657,9 +697,11 @@ impl Wmy23PresignMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("drg_presign_round3_bob: {e}")))?;
 
-        // Queue Round 3 messages (each Alice gets her Bob responses).
-        let mut outgoing = Vec::new();
-        for (pos, party) in state.all_parties.iter().enumerate() {
+        // Broadcast all MtAwc Bob responses (WMY23 Fig. 5, Phase 2): one entry
+        // per Alice j != self. Broadcasting (not P2P) gives every party the
+        // {B, N} share-in-exponent matrix for the Phase-3 cross-verification.
+        let mut entries = Vec::with_capacity(n - 1);
+        for (pos, _party) in state.all_parties.iter().enumerate() {
             if pos == my_idx {
                 continue;
             }
@@ -669,23 +711,25 @@ impl Wmy23PresignMachine {
             let x_bob = my_r3.x_bob_outputs[pos]
                 .as_ref()
                 .ok_or_else(|| TecdsaError::Other("missing x bob output".into()))?;
-            let payload = R3Payload {
+            entries.push(R3Entry {
+                j: pos as u16,
                 gamma_c_alpha: SerializedClCt::from_ct(&gamma_bob.c_alpha),
                 gamma_g_beta_bytes: gamma_bob.g_beta.to_bytes().to_vec(),
                 x_c_alpha: SerializedClCt::from_ct(&x_bob.c_alpha),
                 x_g_beta_bytes: x_bob.g_beta.to_bytes().to_vec(),
-            };
-            outgoing.push(Outgoing {
-                to: Recipient::Party(*party),
-                msg: Wmy23PresignMsg::Round3(encode(&payload, "R3 payload")?),
             });
         }
+        let payload = R3Payload { entries };
+        let outgoing = vec![Outgoing {
+            to: Recipient::Broadcast,
+            msg: Wmy23PresignMsg::Round3(encode(&payload, "R3 payload")?),
+        }];
 
         Ok(Round3State {
             key_share: state.key_share,
             my_id: state.my_id,
             all_parties: state.all_parties,
-            r1_commitments: state.r1_commitments,
+            r1_bcasts: state.r1_bcasts,
             r1_state: state.r1_state,
             r2_state: state.r2_state,
             r2_bcasts,
@@ -707,9 +751,10 @@ impl Wmy23PresignMachine {
         let ids = signer_ids(&state.all_parties);
         let mut rng = rand::thread_rng();
 
-        // Build the local-order view of Round 3 data. Received entries
-        // carry only (c_alpha, g_beta); beta is never transmitted, so it
-        // is zero-filled and unused by the round function.
+        // Assemble the full local-order matrix of Round-3 MtAwc responses.
+        // Each party's broadcast row carries its responses to every Alice, so
+        // `r3_datas[bob].gamma_bob_outputs[alice]` is populated for all pairs
+        // (the `beta` field is local-only and never transmitted, so 0-filled).
         let mut my_r3 = Some(state.my_r3);
         let mut r3_datas: Vec<DrgPresignR3Data> = Vec::with_capacity(n);
         for (pos, party) in state.all_parties.iter().enumerate() {
@@ -725,34 +770,38 @@ impl Wmy23PresignMachine {
                 .received
                 .get(party)
                 .ok_or_else(|| TecdsaError::Other(format!("missing R3 data from {party}")))?;
-            let mut gamma_bob_outputs: Vec<Option<crate::mtawc::MtAwcBobOutput>> = vec![];
-            let mut x_bob_outputs: Vec<Option<crate::mtawc::MtAwcBobOutput>> = vec![];
-            for k in 0..n {
-                if k == my_idx {
-                    gamma_bob_outputs.push(Some(crate::mtawc::MtAwcBobOutput {
-                        c_alpha: r3.gamma_c_alpha.clone(),
-                        g_beta: r3.gamma_g_beta,
-                        beta: k256::Scalar::ZERO,
-                    }));
-                    x_bob_outputs.push(Some(crate::mtawc::MtAwcBobOutput {
-                        c_alpha: r3.x_c_alpha.clone(),
-                        g_beta: r3.x_g_beta,
-                        beta: k256::Scalar::ZERO,
-                    }));
-                } else {
-                    gamma_bob_outputs.push(None);
-                    x_bob_outputs.push(None);
-                }
-            }
+            // The received row is already a full DrgPresignR3Data (Alice-indexed).
             r3_datas.push(DrgPresignR3Data {
-                gamma_bob_outputs,
-                x_bob_outputs,
+                gamma_bob_outputs: r3
+                    .data
+                    .gamma_bob_outputs
+                    .iter()
+                    .map(|o| {
+                        o.as_ref().map(|b| crate::mtawc::MtAwcBobOutput {
+                            c_alpha: b.c_alpha.clone(),
+                            g_beta: b.g_beta,
+                            beta: k256::Scalar::ZERO,
+                        })
+                    })
+                    .collect(),
+                x_bob_outputs: r3
+                    .data
+                    .x_bob_outputs
+                    .iter()
+                    .map(|o| {
+                        o.as_ref().map(|b| crate::mtawc::MtAwcBobOutput {
+                            c_alpha: b.c_alpha.clone(),
+                            g_beta: b.g_beta,
+                            beta: k256::Scalar::ZERO,
+                        })
+                    })
+                    .collect(),
             });
         }
 
         let (r4_state, _phase3) = rounds::drg_presign_round4_compute(
             &state.r1_state,
-            &state.r1_commitments,
+            &state.r1_bcasts,
             &state.r2_state,
             &state.r2_bcasts,
             &r3_datas,
@@ -763,10 +812,11 @@ impl Wmy23PresignMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("drg_presign_round4_compute: {e}")))?;
 
-        // Broadcast delta_i + D_i.
+        // Broadcast delta_i + D_i + pi_{D_i}.
         let payload = R4Payload {
             delta_i: r4_state.delta_i.to_repr().to_vec(),
             big_d_i: r4_state.big_d_i.to_bytes().to_vec(),
+            d_proof: SerializedRDlPc::from_proof(&r4_state.d_proof),
         };
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
@@ -780,6 +830,7 @@ impl Wmy23PresignMachine {
             ReceivedR4 {
                 delta_i: r4_state.delta_i,
                 big_d_i: r4_state.big_d_i,
+                d_proof: r4_state.d_proof.clone(),
             },
         );
 
@@ -792,22 +843,53 @@ impl Wmy23PresignMachine {
         })
     }
 
-    /// Finalize: reconstruct delta and R to produce the presignature.
-    fn finalize_r4(state: &Round4State) -> tecdsa_core::Result<Wmy23Presignature> {
-        let mut all_delta = Vec::with_capacity(state.all_parties.len());
-        let mut all_big_d = Vec::with_capacity(state.all_parties.len());
-        for party in &state.all_parties {
+    /// Finalize: Phase-3 cross-verify every party, then reconstruct `delta`
+    /// and `R`. On a verification failure the offending parties are returned
+    /// as [`FinalizeErr::Cheaters`] so the machine can emit an [`IaReport`].
+    fn finalize_r4(state: &Round4State) -> Result<Wmy23Presignature, FinalizeErr> {
+        let n = state.all_parties.len();
+        let mut all_delta = Vec::with_capacity(n);
+        let mut all_big_d = Vec::with_capacity(n);
+
+        // WMY23 Fig. 5 / Eq. (2): every party verifies *every* party's revealed
+        // share (pi_{D_j} + the B_{jl}/B_{lj} consistency check), not just its
+        // own. This is what makes share revelation identifiable and closes the
+        // concurrent-exclusion gap (TX25).
+        let mut blamed: Vec<PartyId> = Vec::new();
+        for (pos, party) in state.all_parties.iter().enumerate() {
             let r4 = state
                 .received
                 .get(party)
-                .ok_or_else(|| TecdsaError::Other(format!("missing R4 data from {party}")))?;
+                .ok_or_else(|| FinalizeErr::Other(format!("missing R4 data from {party}")))?;
+            if !rounds::verify_phase3_party(
+                &state.r4_state,
+                pos,
+                &r4.delta_i,
+                &r4.big_d_i,
+                &r4.d_proof,
+            ) {
+                blamed.push(*party);
+            }
             all_delta.push(r4.delta_i);
             all_big_d.push(r4.big_d_i);
         }
 
+        if !blamed.is_empty() {
+            return Err(FinalizeErr::Cheaters(blamed));
+        }
+
         rounds::drg_presign_finalize(&state.r4_state, &all_delta, &all_big_d)
-            .map_err(|e| TecdsaError::Other(format!("drg_presign_finalize: {e}")))
+            .map_err(|e| FinalizeErr::Other(format!("drg_presign_finalize: {e}")))
     }
+}
+
+/// Outcome of [`Wmy23PresignMachine::finalize_r4`] when it cannot produce a
+/// presignature: either identified cheaters or a non-attributable error.
+enum FinalizeErr {
+    /// Parties whose Phase-3 revelation failed verification (Eq. (2) / pi_D).
+    Cheaters(Vec<PartyId>),
+    /// A non-attributable failure (e.g. missing message, malformed input).
+    Other(String),
 }
 
 impl StateMachine for Wmy23PresignMachine {
@@ -850,7 +932,6 @@ impl StateMachine for Wmy23PresignMachine {
                         }
                         let payload: R1BcastPayload = decode(&data, "R1 bcast payload")?;
                         let bcast = DrgPresignR1Bcast {
-                            commitment: payload.commitment,
                             k_commitments: points_from_bytes(
                                 &payload.k_commitments,
                                 "k commitments",
@@ -925,15 +1006,23 @@ impl StateMachine for Wmy23PresignMachine {
                     }
 
                     let payload: R2Payload = decode(&data, "R2 payload")?;
-                    state.received.insert(
-                        from,
-                        ReceivedR2 {
-                            nonce: payload.nonce,
-                            gamma_point_bytes: payload.gamma_point_bytes,
-                            ct_k: payload.ct_k.to_ct(),
-                            ct_x: payload.ct_x.to_ct(),
-                        },
-                    );
+                    let g_gamma_point =
+                        point_from_bytes(&payload.g_gamma_point, &format!("Gamma from {from}"))
+                            .map_err(TecdsaError::Other)?;
+                    let bcast = DrgPresignR2Bcast {
+                        k_comb_ct: payload.k_comb_ct.to_ct(),
+                        k_comb_proof: payload.k_comb_proof.to_proof(),
+                        k_comb_pc_bytes: payload.k_comb_pc_bytes,
+                        gamma_comb_ct: payload.gamma_comb_ct.to_ct(),
+                        gamma_comb_proof: payload.gamma_comb_proof.to_proof(),
+                        gamma_comb_pc_bytes: payload.gamma_comb_pc_bytes,
+                        g_gamma_point,
+                        gamma_reveal_proof: payload
+                            .gamma_reveal_proof
+                            .to_proof()
+                            .map_err(TecdsaError::Other)?,
+                    };
+                    state.received.insert(from, ReceivedR2 { bcast });
 
                     if state.received.len() == n_others(&state.all_parties) {
                         let r3_state = Self::transition_r2_to_r3(state, &mut self.setup)?;
@@ -963,22 +1052,51 @@ impl StateMachine for Wmy23PresignMachine {
                     }
 
                     let payload: R3Payload = decode(&data, "R3 payload")?;
-                    let gamma_g_beta = point_from_bytes(
-                        &payload.gamma_g_beta_bytes,
-                        &format!("gamma_g_beta from {from}"),
-                    )
-                    .map_err(TecdsaError::Other)?;
-                    let x_g_beta =
-                        point_from_bytes(&payload.x_g_beta_bytes, &format!("x_g_beta from {from}"))
-                            .map_err(TecdsaError::Other)?;
+                    let n = state.all_parties.len();
+                    let from_idx = local_pos(&state.all_parties, from)
+                        .ok_or_else(|| TecdsaError::Other(format!("unknown party: {from}")))?;
+                    // Reconstruct this sender's full (Alice-indexed) response row.
+                    let mut gamma_bob_outputs: Vec<Option<crate::mtawc::MtAwcBobOutput>> =
+                        (0..n).map(|_| None).collect();
+                    let mut x_bob_outputs: Vec<Option<crate::mtawc::MtAwcBobOutput>> =
+                        (0..n).map(|_| None).collect();
+                    for entry in &payload.entries {
+                        let j = entry.j as usize;
+                        if j >= n || j == from_idx {
+                            self.round = PresignRound::Round3(state);
+                            return Err(TecdsaError::Other(format!(
+                                "R3 from {from} has invalid recipient index {j}"
+                            )));
+                        }
+                        let gamma_g_beta = point_from_bytes(
+                            &entry.gamma_g_beta_bytes,
+                            &format!("gamma_g_beta from {from}"),
+                        )
+                        .map_err(TecdsaError::Other)?;
+                        let x_g_beta = point_from_bytes(
+                            &entry.x_g_beta_bytes,
+                            &format!("x_g_beta from {from}"),
+                        )
+                        .map_err(TecdsaError::Other)?;
+                        gamma_bob_outputs[j] = Some(crate::mtawc::MtAwcBobOutput {
+                            c_alpha: entry.gamma_c_alpha.to_ct(),
+                            g_beta: gamma_g_beta,
+                            beta: k256::Scalar::ZERO,
+                        });
+                        x_bob_outputs[j] = Some(crate::mtawc::MtAwcBobOutput {
+                            c_alpha: entry.x_c_alpha.to_ct(),
+                            g_beta: x_g_beta,
+                            beta: k256::Scalar::ZERO,
+                        });
+                    }
 
                     state.received.insert(
                         from,
                         ReceivedR3 {
-                            gamma_c_alpha: payload.gamma_c_alpha.to_ct(),
-                            gamma_g_beta,
-                            x_c_alpha: payload.x_c_alpha.to_ct(),
-                            x_g_beta,
+                            data: DrgPresignR3Data {
+                                gamma_bob_outputs,
+                                x_bob_outputs,
+                            },
                         },
                     );
 
@@ -1015,11 +1133,45 @@ impl StateMachine for Wmy23PresignMachine {
                     let big_d_i =
                         point_from_bytes(&payload.big_d_i, &format!("D_i from {from}"))
                             .map_err(TecdsaError::Other)?;
-                    state.received.insert(from, ReceivedR4 { delta_i, big_d_i });
+                    let d_proof = payload
+                        .d_proof
+                        .to_proof()
+                        .map_err(TecdsaError::Other)?;
+                    state.received.insert(
+                        from,
+                        ReceivedR4 {
+                            delta_i,
+                            big_d_i,
+                            d_proof,
+                        },
+                    );
 
                     if state.received.len() == state.all_parties.len() {
-                        let presignature = Self::finalize_r4(&state)?;
-                        self.round = PresignRound::Done(presignature);
+                        match Self::finalize_r4(&state) {
+                            Ok(presignature) => {
+                                self.round = PresignRound::Done(presignature);
+                            }
+                            Err(FinalizeErr::Cheaters(blamed)) => {
+                                // Identifiable abort: Phase-3 cross-verification
+                                // (Eq. (2) / pi_D) caught the offending parties.
+                                self.ia_report = Some(IaReport {
+                                    blamed,
+                                    reason: AbortReason::ProtocolSpecific(
+                                        "WMY23 pre-sign Phase 3: D_i proof or Equation (2) \
+                                         verification failed"
+                                            .into(),
+                                    ),
+                                });
+                                return Err(TecdsaError::Other(
+                                    "WMY23 pre-sign aborted: cheater(s) identified".into(),
+                                ));
+                            }
+                            Err(FinalizeErr::Other(e)) => {
+                                return Err(TecdsaError::Other(format!(
+                                    "drg_presign_finalize: {e}"
+                                )));
+                            }
+                        }
                     } else {
                         self.round = PresignRound::Round4(state);
                     }
@@ -1080,6 +1232,6 @@ impl StateMachine for Wmy23PresignMachine {
     }
 
     fn ia_report(&self) -> Option<&IaReport> {
-        None
+        self.ia_report.as_ref()
     }
 }

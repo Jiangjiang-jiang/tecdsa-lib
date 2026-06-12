@@ -3,45 +3,32 @@
 //!
 //! ## Protocol (LLZ25, Section 4.2 -- Sign)
 //!
-//! Upon receiving $\{pm_j^{(1)}\}$ from quorum $P$:
+//! All NIM decoding is **message-independent** and is performed offline at the
+//! end of presign (see [`crate::presign::compute_presign_coefficients`]),
+//! yielding per-party [`PresignCoefficients`]:
+//! - $u\text{-coeff} = k_i \gamma_i + \sum_{j \neq i}(\alpha_{i,j} + \beta_{j,i})$
+//!   -- party $i$'s additive share of $k\gamma$.
+//! - $w\text{-coeff} = \lambda_i x_i \gamma_i + \sum_{j \neq i}(\mu_{i,j} + \nu_{j,i})$
+//!   -- party $i$'s additive share of $x\gamma$.
 //!
-//! 1. $K = \prod_{i \in P} K_i$.
-//! 2. For each $j \in P \setminus \{i\}$, decode NIM products:
-//!    - $\alpha_{i,j} = \text{NIM.Decode\_B}(pe_{\gamma,j}, st_{k,i})$ -- share of $k_i \cdot \gamma_j$
-//!    - $\beta_{j,i} = \text{NIM.Decode\_A}(pe_{k,j}, st_{\gamma,i})$ -- share of $\gamma_i \cdot k_j$
-//!    - $\mu_{i,j} = \lambda_i \cdot \text{NIM.Decode\_B}(pe_{\gamma,j}, st_{x,i})$ -- share of $\lambda_i x_i \gamma_j$
-//!    - $\nu_{j,i} = \lambda_j \cdot \text{NIM.Decode\_A}(pe_{x,j}, st_{\gamma,i})$ -- share of $\lambda_j x_j \gamma_i$
-//! 3. Compute:
+//! The online phase therefore touches **no class-group operations**.  Upon
+//! learning the message, each party in quorum $P$:
+//!
+//! 1. $K = \prod_{j \in P} K_j$.
+//! 2. Compute:
 //!    - $m = H_{sig}(msg)$
 //!    - $z = H_1(X, msg, \{pm_j\})$
 //!    - $y = H_2(z)$
 //!    - $R = K^z \cdot g^y$, $r = x(R) \bmod q$
-//! 4. Compute signature shares:
-//!    - $w_i = m \gamma_i + r (\lambda_i x_i \gamma_i + \sum_{j \neq i} (\mu_{i,j} + \nu_{j,i}))$
-//!    - $u_i = y \gamma_i + z (k_i \gamma_i + \sum_{j \neq i} (\alpha_{i,j} + \beta_{j,i}))$
-//! 5. Broadcast $(w_i, u_i)$.
+//! 3. Compute signature shares from the precomputed coefficients:
+//!    - $w_i = m \gamma_i + r \cdot (w\text{-coeff})$
+//!    - $u_i = y \gamma_i + z \cdot (u\text{-coeff})$
+//! 4. Broadcast $(w_i, u_i)$.
 //!
 //! ## Combine
 //!
 //! $w = \sum w_i$, $u = \sum u_i$, $\sigma = w / u \bmod q$.
 //! Verify $(r, \sigma)$ against $(X, msg)$.
-//!
-//! ## Relationship to `MtABroadcast` trait
-//!
-//! The NIM decode calls (`decode_a`, `decode_b`) in this module correspond to
-//! [`tecdsa_protocol::MtABroadcast::decode`] as implemented by
-//! [`tecdsa_class_group::NimMtA`].  Direct `Nim` API calls are used here
-//! because:
-//!
-//! - Each party decodes with **multiple NIM states** across different roles
-//!   (k via Role B, gamma via Role A, x via Role B from keygen), requiring
-//!   fine-grained control over which state is paired with which encoding.
-//!
-//! - The `Nim::decode_a` / `Nim::decode_b` free functions accept `&NimStateA`
-//!   / `&NimStateB` directly, avoiding the enum dispatch overhead of
-//!   `NimState::RoleA` / `NimState::RoleB`.
-//!
-//! See [`tecdsa_class_group::NimMtA`] for the trait-based equivalent.
 
 #![allow(non_snake_case)]
 
@@ -49,17 +36,12 @@ pub mod machine;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic, PrimeField};
 use sha2::{Digest, Sha256};
-use tecdsa_class_group::{
-    cl::{ClCiphertext as ClHsmqkCiphertext, ClSetup},
-    nim::{Nim, NimStateA, NimStateB},
-};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
     error::Llz25Error,
-    key_share::Llz25KeyShare,
-    presign::{PresignMessage, PresignState},
+    presign::{PresignCoefficients, PresignMessage},
 };
 
 /// Partial signature from one party: $(w_i, u_i)$.
@@ -111,57 +93,29 @@ fn hash_h2(z: &k256::Scalar) -> k256::Scalar {
     hash_with_prefix(b"THRESHOLD_ECDSA_H2", z_bytes.as_ref())
 }
 
-/// Compute Lagrange coefficient $\lambda_{i,P}$ for party at position `my_pos`
-/// among the given 1-based `indices`, evaluated at x = 0.
-fn lagrange_coefficient(indices: &[u16], my_pos: usize) -> k256::Scalar {
-    let xi = k256::Scalar::from(u64::from(indices[my_pos]));
-    let mut result = k256::Scalar::ONE;
-    for (j, &idx) in indices.iter().enumerate() {
-        if j == my_pos {
-            continue;
-        }
-        let xj = k256::Scalar::from(u64::from(idx));
-        let diff_inv = (xj - xi)
-            .invert()
-            .expect("distinct indices guarantee non-zero denominator");
-        result *= xj * diff_inv;
-    }
-    result
-}
-
-/// Compute one party's partial signature in the LLZ25 sign phase.
+/// Compute one party's partial signature in the LLZ25 online sign phase.
 ///
-/// This is the core computation of Round 2. All NIM decoding is done
-/// locally -- no new messages are sent except $(w_i, u_i)$.
+/// This is the core computation of Round 2 and is intentionally cheap: it
+/// performs **no class-group / NIM operations**.  All NIM decoding was done
+/// offline during presign and folded into `coeffs` (see
+/// [`crate::presign::compute_presign_coefficients`]).  No new messages are
+/// sent except $(w_i, u_i)$.
 ///
 /// # Arguments
-/// - `setup`: mutable CL setup (needed by NIM decode methods).
-/// - `key_share`: this party's key share from keygen.
-/// - `presign_state`: this party's presign state from Round 1.
-/// - `presign_messages`: presign messages from ALL parties in the quorum.
-/// - `pe_x_list`: `pe_{x,j}` ciphertexts from keygen for each party in quorum.
-/// - `quorum_indices`: 1-based party indices in the quorum.
-/// - `my_pos`: this party's position in the quorum (0-based).
+/// - `public_key`: the joint ECDSA public key $X$.
+/// - `presign_messages`: presign messages from ALL parties in the quorum
+///   (used to form $K$ and the transcript hash $z$).
+/// - `coeffs`: this party's precomputed presign coefficients.
 /// - `msg`: the message to sign.
 ///
 /// # Returns
 /// `(partial_signature, r)` where `r = x(R) mod q`.
-#[allow(clippy::too_many_arguments)]
 pub fn compute_partial_signature(
-    setup: &mut ClSetup,
-    key_share: &Llz25KeyShare,
-    presign_state: &PresignState,
+    public_key: &k256::ProjectivePoint,
     presign_messages: &[PresignMessage],
-    pe_x_list: &[ClHsmqkCiphertext],
-    quorum_indices: &[u16],
-    my_pos: usize,
+    coeffs: &PresignCoefficients,
     msg: &[u8],
-) -> Result<(PartialSignature, k256::Scalar), Llz25Error> {
-    let n_quorum = quorum_indices.len();
-
-    // Compute Lagrange coefficient for this party.
-    let my_lambda = lagrange_coefficient(quorum_indices, my_pos);
-
+) -> (PartialSignature, k256::Scalar) {
     // Compute K = sum(K_j).
     let big_k: k256::ProjectivePoint = presign_messages.iter().fold(
         <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY,
@@ -170,83 +124,20 @@ pub fn compute_partial_signature(
 
     // Compute hash values.
     let m = hash_sig(msg);
-    let z = hash_h1(&key_share.public_key, msg, presign_messages);
+    let z = hash_h1(public_key, msg, presign_messages);
     let y = hash_h2(&z);
 
     // Compute R = K^z * g^y.
     let big_r = big_k * z + <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * y;
     let r = <k256::Secp256k1 as TecdsaCurve>::xcoord_mod_q(&big_r.to_affine());
 
-    // Prepare NIM states.
-    let pst = presign_state;
-
-    // Accumulate sums for w_i and u_i.
-    let mut alpha_beta_sum = k256::Scalar::ZERO;
-    let mut mu_nu_sum = k256::Scalar::ZERO;
-
-    // Create NIM context for decoding.
-    let nim = Nim::new(setup);
-
-    // Reconstruct NIM states.
-    let st_k = NimStateB {
-        s_bytes: pst.st_k_bytes.clone(),
-    };
-    let st_gamma = NimStateA {
-        r_bytes: pst.st_gamma_r_bytes.clone(),
-        x_bytes: pst.st_gamma_x_bytes.clone(),
-    };
-    let st_x = NimStateB {
-        s_bytes: key_share.st_x_bytes.clone(),
-    };
-
-    for j in 0..n_quorum {
-        if j == my_pos {
-            continue;
-        }
-
-        let pm_j = &presign_messages[j];
-
-        // alpha_{i,j} = NIM.Decode_B(pe_{gamma,j}, st_{k,i})
-        let alpha_bytes = nim
-            .decode_b(&pm_j.pe_gamma, &st_k)
-            .map_err(|e| Llz25Error::ClassGroup(format!("decode_b alpha: {e}")))?;
-        let alpha_ij = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_bytes);
-
-        // beta_{j,i} = NIM.Decode_A(pe_{k,j}, st_{gamma,i})
-        let beta_bytes = nim
-            .decode_a(&pm_j.pe_k, &st_gamma)
-            .map_err(|e| Llz25Error::ClassGroup(format!("decode_a beta: {e}")))?;
-        let beta_ji = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&beta_bytes);
-
-        alpha_beta_sum += alpha_ij + beta_ji;
-
-        // mu_{i,j} = lambda_i * NIM.Decode_B(pe_{gamma,j}, st_{x,i})
-        let mu_bytes = nim
-            .decode_b(&pm_j.pe_gamma, &st_x)
-            .map_err(|e| Llz25Error::ClassGroup(format!("decode_b mu: {e}")))?;
-        let mu_ij = my_lambda * tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&mu_bytes);
-
-        // nu_{j,i} = lambda_j * NIM.Decode_A(pe_{x,j}, st_{gamma,i})
-        let lambda_j = lagrange_coefficient(quorum_indices, j);
-        let nu_bytes = nim
-            .decode_a(&pe_x_list[j], &st_gamma)
-            .map_err(|e| Llz25Error::ClassGroup(format!("decode_a nu: {e}")))?;
-        let nu_ji = lambda_j * tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&nu_bytes);
-
-        mu_nu_sum += mu_ij + nu_ji;
-    }
-
-    // Self-product terms.
-    let k_i_gamma_i = pst.k_i * pst.gamma_i;
-    let lambda_i_x_i_gamma_i = my_lambda * key_share.secret_share * pst.gamma_i;
-
     // w_i = m * gamma_i + r * (lambda_i * x_i * gamma_i + sum(mu + nu))
-    let w_i = m * pst.gamma_i + r * (lambda_i_x_i_gamma_i + mu_nu_sum);
+    let w_i = m * coeffs.gamma_i + r * coeffs.w_coeff;
 
     // u_i = y * gamma_i + z * (k_i * gamma_i + sum(alpha + beta))
-    let u_i = y * pst.gamma_i + z * (k_i_gamma_i + alpha_beta_sum);
+    let u_i = y * coeffs.gamma_i + z * coeffs.u_coeff;
 
-    Ok((PartialSignature { w_i, u_i }, r))
+    (PartialSignature { w_i, u_i }, r)
 }
 
 /// Combine partial signatures into a final ECDSA signature.

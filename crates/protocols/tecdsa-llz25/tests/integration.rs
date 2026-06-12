@@ -10,7 +10,7 @@
 use tecdsa_class_group::cl::ClSetup;
 use tecdsa_llz25::{
     keygen::keygen_with_dealer,
-    presign::{presign_round1, verify_presign_message},
+    presign::{compute_presign_coefficients, presign_round1, verify_presign_message},
     sign::{combine_signatures, compute_partial_signature},
 };
 
@@ -87,7 +87,8 @@ fn test_llz25_full_sign_5_of_3() {
     let mut r_values = Vec::new();
 
     for (pos, &qi) in quorum_party_indices.iter().enumerate() {
-        let (partial, r) = compute_partial_signature(
+        // Offline (presign): NIM decode into message-independent coefficients.
+        let coeffs = compute_presign_coefficients(
             &mut setup,
             &key_shares[qi],
             &presign_states[pos],
@@ -95,9 +96,12 @@ fn test_llz25_full_sign_5_of_3() {
             &pe_x_list,
             &quorum_indices,
             pos,
-            MSG,
         )
-        .expect("compute_partial_signature");
+        .expect("compute_presign_coefficients");
+
+        // Online (sign): cheap partial signature, no class-group operations.
+        let (partial, r) =
+            compute_partial_signature(&key_shares[qi].public_key, &presign_messages, &coeffs, MSG);
 
         partials.push(partial);
         r_values.push(r);
@@ -159,7 +163,7 @@ fn test_llz25_minimum_quorum() {
     let mut r_values = Vec::new();
 
     for (pos, &qi) in quorum_party_indices.iter().enumerate() {
-        let (partial, r) = compute_partial_signature(
+        let coeffs = compute_presign_coefficients(
             &mut setup,
             &key_shares[qi],
             &presign_states[pos],
@@ -167,9 +171,10 @@ fn test_llz25_minimum_quorum() {
             &pe_x_list,
             &quorum_indices,
             pos,
-            msg,
         )
-        .expect("compute_partial_signature");
+        .expect("compute_presign_coefficients");
+        let (partial, r) =
+            compute_partial_signature(&key_shares[qi].public_key, &presign_messages, &coeffs, msg);
         partials.push(partial);
         r_values.push(r);
     }
@@ -224,7 +229,7 @@ fn test_llz25_all_parties_sign() {
     let mut r_values = Vec::new();
 
     for (pos, &qi) in quorum_party_indices.iter().enumerate() {
-        let (partial, r) = compute_partial_signature(
+        let coeffs = compute_presign_coefficients(
             &mut setup,
             &key_shares[qi],
             &presign_states[pos],
@@ -232,9 +237,10 @@ fn test_llz25_all_parties_sign() {
             &pe_x_list,
             &quorum_indices,
             pos,
-            msg,
         )
-        .expect("compute_partial_signature");
+        .expect("compute_presign_coefficients");
+        let (partial, r) =
+            compute_partial_signature(&key_shares[qi].public_key, &presign_messages, &coeffs, msg);
         partials.push(partial);
         r_values.push(r);
     }
@@ -288,7 +294,7 @@ fn test_llz25_ecdsa_verify() {
     let mut r_values = Vec::new();
 
     for (pos, &qi) in quorum_party_indices.iter().enumerate() {
-        let (partial, r) = compute_partial_signature(
+        let coeffs = compute_presign_coefficients(
             &mut setup,
             &key_shares[qi],
             &presign_states[pos],
@@ -296,9 +302,10 @@ fn test_llz25_ecdsa_verify() {
             &pe_x_list,
             &quorum_indices,
             pos,
-            msg,
         )
-        .expect("compute_partial_signature");
+        .expect("compute_presign_coefficients");
+        let (partial, r) =
+            compute_partial_signature(&key_shares[qi].public_key, &presign_messages, &coeffs, msg);
         partials.push(partial);
         r_values.push(r);
     }

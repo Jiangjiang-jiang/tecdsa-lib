@@ -30,7 +30,10 @@ use tecdsa_class_group::{
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
-use super::{presign_round1, verify_presign_message, PresignMessage, PresignState};
+use super::{
+    compute_presign_coefficients, presign_round1, verify_presign_message, PresignCoefficients,
+    PresignMessage, PresignState,
+};
 use crate::{error::Llz25Error, key_share::Llz25KeyShare};
 
 // ---------------------------------------------------------------------------
@@ -151,6 +154,10 @@ struct R1Payload {
 pub struct Llz25Presignature {
     /// This party's presign secret state (k_i, gamma_i, NIM states).
     pub my_state: PresignState,
+    /// Message-independent signing coefficients, with all NIM decoding already
+    /// done offline. The online sign phase only needs these (plus the public
+    /// key and presign messages).
+    pub coefficients: PresignCoefficients,
     /// All parties' verified presign messages, ordered by party position.
     pub all_messages: Vec<PresignMessage>,
     /// This party's key share (needed for signing).
@@ -393,6 +400,31 @@ impl Llz25PresignMachine {
             },
         );
 
+        // Reconstruct pe_{x,j} ciphertexts for the quorum, then perform ALL NIM
+        // decoding offline (message-independent) and fold it into the signing
+        // coefficients consumed by the online sign phase.
+        let pe_x_list: Vec<_> = pe_x_components
+            .iter()
+            .map(|(c1_bytes, c2_bytes)| {
+                let c1 = Qfi::from_bytes(c1_bytes);
+                let c2 = Qfi::from_bytes(c2_bytes);
+                self.setup
+                    .ct_from_components(&c1, &c2)
+                    .map_err(|e| TecdsaError::Other(format!("pe_x ct: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let coefficients = compute_presign_coefficients(
+            &mut self.setup,
+            &self.key_share,
+            &my_state,
+            &all_messages,
+            &pe_x_list,
+            &self.quorum_indices,
+            self.my_pos,
+        )
+        .map_err(|e| TecdsaError::Other(format!("compute_presign_coefficients: {e}")))?;
+
         // Clone key_share fields we need.
         let key_share_clone = Llz25KeyShare {
             party_index: self.key_share.party_index,
@@ -410,6 +442,7 @@ impl Llz25PresignMachine {
 
         Ok(Llz25Presignature {
             my_state,
+            coefficients,
             all_messages,
             key_share: key_share_clone,
             cl_setup_seed: self.key_share.cl_setup_seed.clone(),

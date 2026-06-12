@@ -7,9 +7,10 @@
 //! NIM (Non-Interactive Multiplication) over class groups:
 //!
 //! - **1-round presign (offline):** each party NIM-encodes nonce and mask
-//!   shares, broadcasts CL ciphertexts with ZK proofs.
-//! - **1-round sign (online):** NIM decoding (local), compute partial
-//!   signatures $(w_i, u_i)$, broadcast + combine.
+//!   shares, broadcasts CL ciphertexts with ZK proofs, then NIM-decodes the
+//!   MtA products locally into message-independent signing coefficients.
+//! - **1-round sign (online):** compute partial signatures $(w_i, u_i)$ from
+//!   the precomputed coefficients (no class-group operations), broadcast + combine.
 //! - **3-round keygen:** interactive Feldman VSS DKG + NIM encoding + `R_{CL-DL-EC}` proof.
 //!
 //! ## ECDSA Form
@@ -49,8 +50,10 @@ use tecdsa_protocol::{NoOpMachine, Protocol, ProtocolMetadata, Signature};
 ///
 /// ### Pure functions (simulation mode)
 /// 1. `presign::presign_round1` -> `(PresignMessage, PresignState)`
-/// 2. `sign::compute_partial_signature` -> `(PartialSignature, r)`
-/// 3. `sign::combine_signatures` -> `Signature`
+/// 2. `presign::compute_presign_coefficients` -> `PresignCoefficients`
+///    (offline NIM decoding; message-independent)
+/// 3. `sign::compute_partial_signature` -> `(PartialSignature, r)`
+/// 4. `sign::combine_signatures` -> `Signature`
 ///
 /// ### StateMachine (orchestrator-compatible)
 /// - `presign::machine::Llz25PresignMachine` -- collects broadcasts, verifies

@@ -59,6 +59,7 @@ SECTIONS = [
          "CL and EC Pedersen commitments hold the same value",
          ["zk/class_group/r_ped_ec"],
          "LLZ+25/lyu2025threshold"),
+        (r"$\mathcal{R}_\text{CL-Enc}$", "CL ciphertext is a well-formed encryption of a known value", ["zk/class_group/r_enc"], "WMC24/wong2024secure")
     ]),
     ("One-time setup proofs", [
         (r"$\mathcal{R}_\text{ck}$",

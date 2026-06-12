@@ -594,7 +594,6 @@ dependencies = [
  "rand_core 0.6.4",
  "rug",
  "serde",
- "serde_bytes",
  "thiserror 2.0.18",
 ]
 

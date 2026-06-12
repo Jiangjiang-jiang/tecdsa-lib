@@ -150,6 +150,7 @@ fn deserialize_r_enc_pc_proof(data: &[u8]) -> Result<REncPcProof, String> {
 // Verify:   G*z1 == R_Q + Q*e,  G*z1 + H*z2 == R_PC + PC*e
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct RDlPcProof {
     pub r_q_bytes: Vec<u8>,
     pub r_pc_bytes: Vec<u8>,
@@ -212,6 +213,70 @@ impl RDlPcProof {
         }
         Ok(true)
     }
+
+    /// Like [`prove`](Self::prove) but proves `Q = g0^m` to an arbitrary base
+    /// `g0` (instead of the curve generator), while `PC = g^m h^r` still uses
+    /// `(g, h)`. This is WMY23's `R_DL-PC` (Committed Exponent, Fig. 12) with
+    /// the base parameter `g0`, used to bind `D_i = Gamma^{hat_k_i}` to the
+    /// committed nonce share in the pre-signing share-revelation phase.
+    pub fn prove_with_base(
+        g0: &k256::ProjectivePoint,
+        m: &k256::Scalar,
+        r: &k256::Scalar,
+        q_point: &k256::ProjectivePoint,
+        pc: &k256::ProjectivePoint,
+        rng: &mut impl CryptoRngCore,
+    ) -> Self {
+        use tecdsa_curve::TecdsaCurve;
+        let g = k256::ProjectivePoint::GENERATOR;
+        let h = <k256::Secp256k1 as TecdsaCurve>::nums_pedersen_h();
+
+        let a1 = k256::Secp256k1::random_scalar(rng);
+        let a2 = k256::Secp256k1::random_scalar(rng);
+        let r_q = *g0 * a1;
+        let r_pc = g * a1 + h * a2;
+
+        let r_q_bytes = r_q.to_bytes().to_vec();
+        let r_pc_bytes_v = r_pc.to_bytes().to_vec();
+
+        let e = rdlpc_challenge_base(g0, pc, q_point, &r_q_bytes, &r_pc_bytes_v);
+        let z1 = a1 + e * m;
+        let z2 = a2 + e * r;
+
+        Self {
+            r_q_bytes,
+            r_pc_bytes: r_pc_bytes_v,
+            z1,
+            z2,
+        }
+    }
+
+    /// Verify a [`prove_with_base`](Self::prove_with_base) proof: `Q = g0^m`
+    /// (base `g0`) and `PC = g^m h^r` (bases `g, h`) for the same `m`.
+    pub fn verify_with_base(
+        &self,
+        g0: &k256::ProjectivePoint,
+        q_point: &k256::ProjectivePoint,
+        pc: &k256::ProjectivePoint,
+    ) -> Result<bool, String> {
+        let g = k256::ProjectivePoint::GENERATOR;
+        let h = <k256::Secp256k1 as tecdsa_curve::TecdsaCurve>::nums_pedersen_h();
+
+        let r_q = point_from_bytes(&self.r_q_bytes, "R_Q")?;
+        let r_pc = point_from_bytes(&self.r_pc_bytes, "R_PC")?;
+
+        let e = rdlpc_challenge_base(g0, pc, q_point, &self.r_q_bytes, &self.r_pc_bytes);
+
+        // Check 1: g0 * z1 == R_Q + Q * e
+        if *g0 * self.z1 != r_q + *q_point * e {
+            return Ok(false);
+        }
+        // Check 2: G * z1 + H * z2 == R_PC + PC * e
+        if g * self.z1 + h * self.z2 != r_pc + *pc * e {
+            return Ok(false);
+        }
+        Ok(true)
+    }
 }
 
 fn rdlpc_challenge(
@@ -222,6 +287,28 @@ fn rdlpc_challenge(
 ) -> k256::Scalar {
     let hash = Sha256::new()
         .chain_update(b"R_DL-PC")
+        .chain_update(pc.to_bytes())
+        .chain_update(q.to_bytes())
+        .chain_update(r_q_bytes)
+        .chain_update(r_pc_bytes)
+        .finalize();
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&hash);
+    k256::Scalar::reduce(&k256::U256::from_be_slice(&buf))
+}
+
+/// Challenge for [`RDlPcProof::prove_with_base`], binding the explicit base
+/// `g0` (and a distinct domain tag) so proofs are non-malleable across bases.
+fn rdlpc_challenge_base(
+    g0: &k256::ProjectivePoint,
+    pc: &k256::ProjectivePoint,
+    q: &k256::ProjectivePoint,
+    r_q_bytes: &[u8],
+    r_pc_bytes: &[u8],
+) -> k256::Scalar {
+    let hash = Sha256::new()
+        .chain_update(b"R_DL-PC/base")
+        .chain_update(g0.to_bytes())
         .chain_update(pc.to_bytes())
         .chain_update(q.to_bytes())
         .chain_update(r_q_bytes)

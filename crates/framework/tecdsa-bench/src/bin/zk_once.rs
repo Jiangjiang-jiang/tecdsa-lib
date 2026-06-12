@@ -246,6 +246,18 @@ fn class_group_zk_once(
         let proof = time_once("zk/class_group/r_enc/prove", || {
             REncProof::prove(&mut setup, &pk, &ct, &m_bytes, &r_bytes).expect("r_enc prove")
         });
+        // REncProof holds Qfi commitments (not serde-serializable); size it
+        // natively via to_bytes + the response byte-vectors, exactly as the
+        // r_ped_ec proof and the MtA comm column do. Consumed by
+        // build_mta_table.py for the CL row's R_{CL-Enc} contribution.
+        record_size(
+            "zk/class_group/r_enc",
+            proof.t1.to_bytes().len()
+                + proof.t2.to_bytes().len()
+                + proof.u1.len()
+                + proof.u2.len()
+                + proof.e.len(),
+        );
         time_once("zk/class_group/r_enc/verify", || {
             proof.verify(&setup, &pk, &ct).expect("verify")
         });

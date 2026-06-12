@@ -26,18 +26,27 @@
 //! The generic byte-level `MtAWithCheck` trait is implemented for
 //! `tecdsa_class_group::mta::ClMtA` in the `tecdsa-class-group` crate.
 //! This module provides a higher-level, typed API using `k256::Scalar`,
-//! `ClPublicKey`/`ClSecretKey`/`ClCiphertext` wrappers, and WMY23-specific
-//! extensions (notably `mtawc_alice_step2_no_gb_check` with R_Dec-DL proof
-//! for presigning, where `g^{k_j}` is unavailable).
+//! `ClPublicKey`/`ClSecretKey`/`ClCiphertext` wrappers.
 //!
 //! The WMY23 presign module (`presign/`) calls these functions directly
 //! rather than going through the trait, because:
 //! - The presign protocol needs `&mut ClSetup` (not `RefCell`-based interior
 //!   mutability used by the generic `ClMtA`).
-//! - The no-g^b variant (`mtawc_alice_step2_no_gb_check`) has no
-//!   counterpart in the `MtAWithCheck` trait.
 //! - The protocol stores intermediate CL types (`ClCiphertext`) across
 //!   rounds, which requires the `cl_enc` wrapper types.
+//!
+//! ## Faithfulness to WMY23 Figure 5 (Phase 2)
+//!
+//! In the paper, the receiver (Alice) of every MtAwc instance is the holder
+//! of the nonce share `k_j`, and the ciphertext consumed by the sender is
+//! `c_{k_j}` -- the *same* ciphertext that `DRG.Comb` output and bound to
+//! `PC_{k_j}` via the broadcast `R_Enc-PC` proof (Phase 1b). The receiver's
+//! Step-3 check is the algebraic check `g^alpha * g^beta = (g^b)^a`, which is
+//! computable as `Gamma_i^{k_j}` / `X_i^{k_j}` because the k-holder knows the
+//! scalar `k_j` and `Gamma_i = g^{gamma_i}` (resp. `X_i = g^{x_i}`) are
+//! published. The presign module therefore feeds the (Lagrange-scaled)
+//! `DRG.Comb` ciphertext into [`mtawc_bob`] and verifies decryptions with
+//! [`mtawc_alice_decrypt_and_check`].
 
 #![allow(non_snake_case)]
 
@@ -245,58 +254,46 @@ pub fn mtawc_alice_step2(
     Ok(MtAwcAliceOutput { alpha })
 }
 
-/// **Step 3 variant (Alice):** Decrypt Bob's response WITHOUT the full
-/// $g^b$ consistency check, but with an R_Dec-DL ZK proof.
+/// **Step 3 (Alice), explicit-scalar variant:** Decrypt Bob's response and
+/// run the faithful WMY23 Figure 1 / Figure 5 (Phase 2) algebraic check.
 ///
-/// In WMY23 presigning, the MtA multiplies $\gamma_i \cdot k_j$ (gamma MtA)
-/// or $x_i \cdot k_j$ (key MtA). Alice's secret is $\gamma_i$ or $x_i$,
-/// and Bob's secret is $k_j$. The consistency check $g^\alpha \cdot g^\beta
-/// \stackrel{?}{=} (g^b)^a$ requires $g^{k_j}$, which is NOT published
-/// during presigning (nonce shares are secret until $R$ is reconstructed).
+/// This is identical to [`mtawc_alice_step2`] but takes Alice's secret `a`
+/// directly (rather than via [`MtAwcAliceState`]), which is convenient in
+/// presigning where `a = hat_k_i` is already held in the round state and the
+/// same value is reused across both the `k*gamma` and `k*x` conversions.
 ///
-/// Instead of the algebraic check, this variant generates an R_Dec-DL ZK
-/// proof that proves the partial decryption $pd = c_1^{sk}$ is consistent
-/// with the public key $pk = h^{sk}$. This ensures the CL decryption was
-/// performed correctly without revealing the plaintext, providing the same
-/// security guarantee as specified in WMY23 Figure 1, Step 3.
+/// The check `g^alpha * g^beta == (g^b)^a` is exactly the paper's Phase-2
+/// verification: with Alice = nonce-share holder, `a = k_j` (a scalar Alice
+/// knows) and `g^b` is the published `Gamma_i = g^{gamma_i}` (resp.
+/// `X_i = g^{x_i}`), so the right-hand side is `Gamma_i^{k_j}` (resp.
+/// `X_i^{k_j}`). No `g^{k_j}` is ever needed, so the nonce share stays secret.
+/// A failed check identifies the sender (Bob) as a cheater (WMY23 Sec. V-D).
 ///
 /// # Errors
 ///
-/// Returns an error if decryption fails, the decrypted value is not a
-/// valid scalar, or R_Dec-DL proof generation fails.
-pub fn mtawc_alice_step2_no_gb_check(
-    setup: &mut ClSetup,
-    pk_alice: &ClPublicKey,
+/// Returns [`MtAwcError::CheckFailed`] if the algebraic check fails, or a CL
+/// error if decryption fails.
+pub fn mtawc_alice_decrypt_and_check(
+    setup: &ClSetup,
     sk_alice: &ClSecretKey,
     c_alpha: &ClCiphertext,
-    _g_beta: &k256::ProjectivePoint,
-    _state: &MtAwcAliceState,
+    g_beta: &k256::ProjectivePoint,
+    a: &k256::Scalar,
+    g_b: &k256::ProjectivePoint,
 ) -> MtAwcResult<MtAwcAliceOutput> {
     // Decrypt: alpha = Dec(sk, c_alpha)
     let alpha_bytes = setup.decrypt_bytes(sk_alice, c_alpha)?;
     let alpha = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_bytes);
 
-    // WMY23 Figure 1, Step 3: Generate R_Dec-DL proof.
-    //
-    // The R_Dec-DL proof demonstrates correct partial decryption: given
-    // ciphertext (c1, c2) and secret key sk, the partial decryption
-    // pd = c1^sk is consistent with the public key pk = h^sk.
-    //
-    // This replaces the algebraic check (g^alpha * g^beta == (g^b)^a)
-    // which requires g^b = g^{k_j}, unavailable during presigning.
-    let sk_bytes = setup.sk_to_bytes(sk_alice)?;
-    let (c1, _c2) = setup.ct_components(c_alpha)?;
-    let pd = setup.exp_bytes(&c1, &sk_bytes)?;
+    // WMY23 Figure 1 / Figure 5 (Phase 2), Step 3:
+    //   check  g^alpha * g^beta == (g^b)^a
+    let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
+    let lhs = g * alpha + g_beta;
+    let rhs = *g_b * a;
 
-    let _r_dec_dl_proof = tecdsa_class_group::zk::r_dec_dl::RDecDlProof::prove(
-        setup, pk_alice, c_alpha, &pd, &sk_bytes,
-    )?;
-
-    // In the full protocol, `_r_dec_dl_proof` would be sent to the verifier
-    // (Bob) alongside the decrypted alpha value. The verifier would call
-    // `r_dec_dl_proof.verify(setup, pk_alice, ct, &pd)` to confirm correct
-    // decryption. Here in the simulation the proof is generated to validate
-    // the integration; the single-threaded test orchestrator trusts itself.
+    if bool::from(!lhs.to_bytes().ct_eq(&rhs.to_bytes())) {
+        return Err(MtAwcError::CheckFailed);
+    }
 
     Ok(MtAwcAliceOutput { alpha })
 }

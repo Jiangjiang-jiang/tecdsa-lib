@@ -114,50 +114,19 @@ impl Llz25SignMachine {
         presignature: Llz25Presignature,
         msg: &[u8],
     ) -> Result<Self, Llz25Error> {
-        // Recreate the (global) CL public parameters from the key-share seed,
-        // then delegate. Benches holding the shared `ClSetup` call
-        // `new_with_setup` to avoid timing this one-time setup as online cost.
-        let setup = presignature.key_share.create_cl_setup()?;
-        Self::new_with_setup(my_id, all_parties, presignature, msg, setup)
-    }
-
-    /// Like [`new`](Self::new) but reuses a pre-built [`ClSetup`] (the global CL
-    /// public parameters) instead of reconstructing it from the key-share seed.
-    pub fn new_with_setup(
-        my_id: PartyId,
-        all_parties: Vec<PartyId>,
-        presignature: Llz25Presignature,
-        msg: &[u8],
-        mut setup: tecdsa_class_group::cl::ClSetup,
-    ) -> Result<Self, Llz25Error> {
         if !all_parties.contains(&my_id) {
             return Err(Llz25Error::Protocol("my_id not in all_parties".into()));
         }
 
-        // Reconstruct pe_x ciphertexts from stored components.
-        let pe_x_list: Vec<_> = presignature
-            .pe_x_components
-            .iter()
-            .map(|(c1_bytes, c2_bytes)| {
-                let c1 = tecdsa_class_group::cl::Qfi::from_bytes(c1_bytes);
-                let c2 = tecdsa_class_group::cl::Qfi::from_bytes(c2_bytes);
-                setup
-                    .ct_from_components(&c1, &c2)
-                    .map_err(|e| Llz25Error::ClassGroup(format!("pe_x ct: {e}")))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Compute partial signature.
+        // The online phase performs NO class-group / NIM operations: all NIM
+        // decoding was done offline during presign and folded into
+        // `presignature.coefficients`. No `ClSetup` is needed here.
         let (partial, r_value) = compute_partial_signature(
-            &mut setup,
-            &presignature.key_share,
-            &presignature.my_state,
+            &presignature.key_share.public_key,
             &presignature.all_messages,
-            &pe_x_list,
-            &presignature.quorum_indices,
-            presignature.my_pos,
+            &presignature.coefficients,
             msg,
-        )?;
+        );
 
         // Serialize partial signature for broadcast.
         let payload = PartialSigPayload {
@@ -186,6 +155,21 @@ impl Llz25SignMachine {
             public_key: presignature.key_share.public_key,
             message: msg.to_vec(),
         })
+    }
+
+    /// Backwards-compatible constructor that accepts a pre-built [`ClSetup`].
+    ///
+    /// The online sign phase no longer needs the CL setup -- all class-group
+    /// work (NIM decoding) is performed offline during presign -- so `_setup`
+    /// is ignored. Retained so existing callers/benches compile unchanged.
+    pub fn new_with_setup(
+        my_id: PartyId,
+        all_parties: Vec<PartyId>,
+        presignature: Llz25Presignature,
+        msg: &[u8],
+        _setup: tecdsa_class_group::cl::ClSetup,
+    ) -> Result<Self, Llz25Error> {
+        Self::new(my_id, all_parties, presignature, msg)
     }
 
     /// Deserialize a partial signature from wire bytes.
