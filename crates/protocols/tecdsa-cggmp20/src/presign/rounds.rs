@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for CGGMP20 presigning.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{
@@ -32,10 +29,6 @@ use crate::{
     sign::types::{Presignature, PresignaturePublicData},
 };
 
-// ---------------------------------------------------------------------------
-// Generic conversion helpers (C: TecdsaCurve → generic_ec via bytes)
-// ---------------------------------------------------------------------------
-
 fn to_ge_point<C: TecdsaCurve>(p: &C::ProjectivePoint) -> generic_ec::Point<GE>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -53,10 +46,6 @@ where
     let bytes: &[u8] = repr.as_ref();
     generic_ec::Scalar::from_be_bytes_mod_order(bytes)
 }
-
-// ---------------------------------------------------------------------------
-// Fiat-Shamir tags for ZK proofs
-// ---------------------------------------------------------------------------
 
 #[derive(udigest::Digestable)]
 #[udigest(tag = "tecdsa.cggmp20.presign.proof_enc")]
@@ -82,12 +71,6 @@ struct ProofElogTag {
     prime: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Signed Integer → Scalar conversion
-// ---------------------------------------------------------------------------
-
-/// Convert a (possibly negative, possibly large) Paillier `Integer` to an EC
-/// scalar by reducing modulo the group order `q`.
 fn paillier_int_to_scalar<C>(i: &Integer) -> C::Scalar
 where
     C: TecdsaCurve,
@@ -119,10 +102,6 @@ where
     fb
 }
 
-// ---------------------------------------------------------------------------
-// Round enum
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 pub(crate) enum PresignRound<C: TecdsaCurve>
 where
@@ -136,21 +115,15 @@ where
     Gone,
 }
 
-// ---------------------------------------------------------------------------
-// Round 1 state
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round1State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    // Configuration
     pub my_id: PartyId,
     pub my_index: u16,
     pub signers_pids: Vec<PartyId>,
     pub session_id: [u8; 32],
 
-    // Own secrets
     pub k_i: C::Scalar,
     pub gamma_i: C::Scalar,
     #[allow(dead_code)]
@@ -162,36 +135,27 @@ where
     pub rho_i: Integer,
     pub gamma_nonce: Integer,
 
-    // Additive share of the secret key for this signing subset
     pub x_i_additive: C::Scalar,
 
-    // Own Round 1 broadcast data (needed for proof generation/verification)
     pub own_round1: MsgRound1<C>,
 
-    // Public keys
     pub public_key: C::ProjectivePoint,
     pub public_shares: Vec<C::ProjectivePoint>,
 
-    // Paillier keys
     pub dk: DecryptionKey,
     pub ek_own: EncryptionKey,
     pub paillier_eks: Vec<EncryptionKey>,
 
-    // Ring-Pedersen parameters for all parties
     pub pedersen_params: Vec<PedersenModParams>,
 
-    // Security level parameters
     pub ell: usize,
     pub epsilon: usize,
     pub ell_prime: usize,
 
-    // Map from signer PartyId -> 0-based party index
     pub signer_party_indices: BTreeMap<PartyId, u16>,
 
-    // Outgoing messages queued at construction
     pub outgoing: Vec<Outgoing<PresignMsg<C>>>,
 
-    // Received messages
     pub round1_msgs: BTreeMap<PartyId, MsgRound1<C>>,
 }
 
@@ -318,7 +282,6 @@ where
         self.round1_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round2: compute MtA, generate ZK proofs, queue P2P messages.
     pub fn advance(mut self) -> Round2State<C> {
         let mut rng = tecdsa_core::Csprng::new();
         let mut outgoing: Vec<Outgoing<PresignMsg<C>>> = Vec::new();
@@ -341,7 +304,6 @@ where
             epsilon: self.epsilon,
         };
 
-        // Pre-convert own points to generic_ec for proof generation
         let ge_big_y = to_ge_point::<C>(&self.own_round1.big_y);
         let ge_a1 = to_ge_point::<C>(&self.own_round1.a1);
         let ge_a2 = to_ge_point::<C>(&self.own_round1.a2);
@@ -351,7 +313,6 @@ where
         let ge_a_i = to_ge_scalar::<C>(&self.a_i);
         let ge_b_i = to_ge_scalar::<C>(&self.b_i);
 
-        // Generate tilde_psi (π_elog for Gamma_i) — same for all peers (no Aux)
         let tilde_psi = pi_elog::non_interactive::prove::<GE, Sha256>(
             &ProofElogTag {
                 session_id: self.session_id,
@@ -373,7 +334,6 @@ where
         )
         .expect("tilde_psi proof generation must succeed");
 
-        // Pre-compute x_i_additive * G for hat_psi commitment
         let x_i_public = C::generator() * self.x_i_additive;
         let ge_x_i_public = to_ge_point::<C>(&x_i_public);
 
@@ -393,7 +353,6 @@ where
             let peer_ek = &self.paillier_eks[peer_party_idx];
             let peer_aux = pedersen_to_aux(&self.pedersen_params[peer_party_idx]);
 
-            // --- MtA for gamma_i * k_j ---
             let beta_ij = C::random_scalar(&mut rng);
             let beta_ij_int = scalar_to_integer::<C>(&beta_ij);
             let neg_beta_ij_int = -&beta_ij_int;
@@ -408,13 +367,11 @@ where
                 .oadd(&d_step1, &enc_neg_beta)
                 .expect("oadd must succeed");
 
-            // F_ji = Enc(own_key, -beta_ij) — matches proof requirement
             let (big_f, r_ij) = self
                 .ek_own
                 .encrypt_with_random(&mut rng, &neg_beta_ij_int)
                 .expect("encrypt must succeed");
 
-            // --- MtA for x_i * k_j ---
             let hat_beta_ij = C::random_scalar(&mut rng);
             let hat_beta_ij_int = scalar_to_integer::<C>(&hat_beta_ij);
             let neg_hat_beta_ij_int = -&hat_beta_ij_int;
@@ -429,7 +386,6 @@ where
                 .oadd(&hat_d_step1, &enc_neg_hat_beta)
                 .expect("oadd must succeed");
 
-            // hat_F_ji = Enc(own_key, -hat_beta_ij)
             let (hat_big_f, hat_r_ij) = self
                 .ek_own
                 .encrypt_with_random(&mut rng, &neg_hat_beta_ij_int)
@@ -438,9 +394,6 @@ where
             beta_map.insert(peer_pid, beta_ij);
             hat_beta_map.insert(peer_pid, hat_beta_ij);
 
-            // --- Generate ZK proofs ---
-
-            // psi0: π_enc_elg for K_i (proves K_i encrypts k_i in range)
             let psi0 = pi_enc_elg::non_interactive::prove::<GE, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
@@ -465,7 +418,6 @@ where
             )
             .expect("psi0 proof generation must succeed");
 
-            // psi1: π_enc_elg for G_i (proves G_i encrypts gamma_i in range)
             let psi1 = pi_enc_elg::non_interactive::prove::<GE, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
@@ -490,7 +442,6 @@ where
             )
             .expect("psi1 proof generation must succeed");
 
-            // psi: π_aff_g for gamma MtA (D_ji, F_ji)
             let psi = pi_aff::non_interactive::prove::<GE, Sha256>(
                 &ProofPsiTag {
                     session_id: self.session_id,
@@ -517,7 +468,6 @@ where
             )
             .expect("psi proof generation must succeed");
 
-            // hat_psi: π_aff_g for x MtA (hat_D_ji, hat_F_ji)
             let hat_psi = pi_aff::non_interactive::prove::<GE, Sha256>(
                 &ProofPsiTag {
                     session_id: self.session_id,
@@ -561,7 +511,6 @@ where
             });
         }
 
-        // Zeroize secrets not carried to the next round
         self.y_i.zeroize();
         self.b_i.zeroize();
 
@@ -594,10 +543,6 @@ where
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 2 state
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round2State<C: TecdsaCurve>
 where
@@ -664,8 +609,6 @@ where
         self.round2_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round3: verify proofs, decrypt MtA, compute delta/chi/Gamma,
-    /// generate psi_prime, queue broadcast.
     pub fn advance(mut self) -> tecdsa_core::Result<Round3State<C>> {
         let mut rng = tecdsa_core::Csprng::new();
 
@@ -682,11 +625,9 @@ where
             epsilon: self.epsilon,
         };
 
-        // Compute Lagrange-weighted additive public shares for hat_psi verification
         let signers_1based: Vec<u16> = self.signers_pids.iter().map(|p| p.0).collect();
         let lagrange_coeffs = lagrange::coefficients::<C>(&signers_1based);
 
-        // Verify all proofs from each peer, then decrypt MtA results
         let mut alpha_sum = C::Scalar::ZERO;
         let mut hat_alpha_sum = C::Scalar::ZERO;
 
@@ -696,7 +637,6 @@ where
             let peer_round1 = &self.round1_msgs[&peer_pid];
             let peer_index = peer_pid.0;
 
-            // Convert peer's Round 1 points to generic_ec
             let ge_peer_y = to_ge_point::<C>(&peer_round1.big_y);
             let ge_peer_a1 = to_ge_point::<C>(&peer_round1.a1);
             let ge_peer_a2 = to_ge_point::<C>(&peer_round1.a2);
@@ -704,7 +644,6 @@ where
             let ge_peer_b2 = to_ge_point::<C>(&peer_round1.b2);
             let ge_peer_gamma = to_ge_point::<C>(&round2.big_gamma);
 
-            // Verify psi0: peer's K encrypts k in range
             pi_enc_elg::non_interactive::verify::<GE, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
@@ -728,7 +667,6 @@ where
                 ))
             })?;
 
-            // Verify psi1: peer's G encrypts gamma in range
             pi_enc_elg::non_interactive::verify::<GE, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
@@ -752,7 +690,6 @@ where
                 ))
             })?;
 
-            // Verify tilde_psi: peer's Gamma ties to El-Gamal
             pi_elog::non_interactive::verify::<GE, Sha256>(
                 &ProofElogTag {
                     session_id: self.session_id,
@@ -774,8 +711,6 @@ where
                 ))
             })?;
 
-            // Verify psi: π_aff_g for gamma MtA
-            // Verifier's perspective: C = own K_i, D = received D, F = received F
             pi_aff::non_interactive::verify::<GE, Sha256>(
                 &ProofPsiTag {
                     session_id: self.session_id,
@@ -800,8 +735,6 @@ where
                 ))
             })?;
 
-            // Verify hat_psi: π_aff_g for x MtA
-            // Compute peer's additive public share: X_j = lambda_j * public_shares[j]
             let peer_signer_pos = signers_1based
                 .iter()
                 .position(|&s| s == peer_pid.0)
@@ -834,7 +767,6 @@ where
                 ))
             })?;
 
-            // Decrypt D to get alpha_ij
             let alpha_int = self
                 .dk
                 .decrypt(&round2.big_d)
@@ -842,7 +774,6 @@ where
             let alpha_ij = paillier_int_to_scalar::<C>(&alpha_int);
             alpha_sum += alpha_ij;
 
-            // Decrypt hat_D to get hat_alpha_ij
             let hat_alpha_int = self.dk.decrypt(&round2.hat_big_d).map_err(|e| {
                 TecdsaError::Other(format!("decrypt hat_alpha from {peer_index}: {e}"))
             })?;
@@ -872,7 +803,6 @@ where
         let big_delta_i = big_gamma * self.k_i;
         let big_s_i = big_gamma * chi_i;
 
-        // Generate psi_prime: π_elog proof that Delta_i = k_i * Gamma
         let ge_own_a1 = to_ge_point::<C>(&self.own_round1.a1);
         let ge_own_a2 = to_ge_point::<C>(&self.own_round1.a2);
         let ge_own_y = to_ge_point::<C>(&self.own_round1.big_y);
@@ -910,7 +840,6 @@ where
             }),
         }];
 
-        // Zeroize secrets not carried to the next round
         self.gamma_i.zeroize();
         self.a_i.zeroize();
         self.x_i_additive.zeroize();
@@ -938,10 +867,6 @@ where
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 3 state
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round3State<C: TecdsaCurve>
 where
@@ -992,11 +917,9 @@ where
         self.round3_msgs.len() == self.expected_count()
     }
 
-    /// Verify psi_prime proofs, check consistency, produce presignature.
     pub fn finish(mut self) -> tecdsa_core::Result<(Presignature<C>, PresignaturePublicData<C>)> {
         let ge_big_gamma = to_ge_point::<C>(&self.big_gamma);
 
-        // Verify psi_prime from each peer
         for (&peer_pid, round3) in &self.round3_msgs {
             let peer_index = peer_pid.0;
             let peer_round1 = &self.round1_msgs[&peer_pid];
@@ -1028,19 +951,16 @@ where
             })?;
         }
 
-        // Compute delta = sum of all delta_i
         let mut delta = self.delta_i;
         for round3 in self.round3_msgs.values() {
             delta += round3.delta;
         }
 
-        // Compute sum(Delta_i)
         let mut big_delta_sum = self.big_delta_i;
         for round3 in self.round3_msgs.values() {
             big_delta_sum += round3.big_delta;
         }
 
-        // Check 1: delta * G == sum(Delta_i)
         let delta_g = C::generator() * delta;
         if delta_g != big_delta_sum {
             return Err(TecdsaError::Other(
@@ -1048,13 +968,11 @@ where
             ));
         }
 
-        // Compute sum(S_i)
         let mut big_s_sum = self.big_s_i;
         for round3 in self.round3_msgs.values() {
             big_s_sum += round3.big_s;
         }
 
-        // Check 2: pk * delta == sum(S_i)
         let pk_delta = self.public_key * delta;
         if pk_delta != big_s_sum {
             return Err(TecdsaError::Other(
@@ -1062,7 +980,6 @@ where
             ));
         }
 
-        // Compute delta_inv
         let delta_inv = delta
             .invert()
             .into_option()
@@ -1071,8 +988,6 @@ where
         let k_tilde_i = self.k_i * delta_inv;
         let chi_tilde_i = self.chi_i * delta_inv;
 
-        // Compute per-party commitments: tilde_Delta_j = delta_inv * Delta_j, tilde_S_j = delta_inv * S_j
-        // Order: sorted by signer PartyId (ascending) for consistency across all parties.
         let mut all_deltas: BTreeMap<PartyId, (C::ProjectivePoint, C::ProjectivePoint)> =
             BTreeMap::new();
         all_deltas.insert(self.my_id, (self.big_delta_i, self.big_s_i));
@@ -1099,7 +1014,6 @@ where
             commitments,
         };
 
-        // Zeroize secrets not included in the output
         self.k_i.zeroize();
         self.delta_i.zeroize();
         self.chi_i.zeroize();

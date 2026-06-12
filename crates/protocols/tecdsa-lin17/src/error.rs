@@ -1,48 +1,34 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Error types for the Lin17 two-party ECDSA protocol.
-
 use thiserror::Error;
 
-/// Errors that may occur during the Lindell 2017 two-party ECDSA protocol.
 #[derive(Debug, Error)]
 pub enum Lin17Error {
-    /// DLog proof verification failed.
     #[error("DLog proof verification failed: {0}")]
     DlogVerification(String),
 
-    /// Hash commitment verification failed.
     #[error("commitment verification failed: {0}")]
     CommitmentVerification(String),
 
-    /// Paillier encryption/decryption error.
     #[error("Paillier error: {0}")]
     Paillier(String),
 
-    /// ECDSA signature verification failed (P_1 checks before output).
     #[error("ECDSA verification failed: {0}")]
     EcdsaVerification(String),
 
-    /// Invalid protocol state (wrong round, missing data, etc.).
     #[error("protocol state error: {0}")]
     ProtocolState(String),
 
-    /// NICorrectKeyProof verification failed.
     #[error("correct key proof verification failed: {0}")]
     CorrectKeyVerification(String),
 
-    /// PDL (Paillier Discrete Log) verification failed.
     #[error("PDL verification failed: {0}")]
     PdlVerification(String),
 
-    /// Range proof verification failed.
     #[error("range proof verification failed: {0}")]
     RangeProofVerification(String),
 
-    /// Ciphertext validation failed.
     #[error("ciphertext validation failed: {0}")]
     CiphertextValidation(String),
 
-    /// Round mismatch.
     #[error("round mismatch: expected {expected}, got {got}")]
     RoundMismatch { expected: u16, got: u16 },
 }

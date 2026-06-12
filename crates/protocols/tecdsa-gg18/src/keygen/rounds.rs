@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for GG18 threshold keygen.
-//!
-//! The protocol proceeds in 4 rounds:
-//! 1. Commitment: each party broadcasts a hash commitment to its public data.
-//! 2. Decommit + VSS: each party broadcasts the opening and sends Feldman
-//!    VSS shares via P2P.
-//! 3. `DLog` proof: each party broadcasts a Schnorr proof for its public share.
-//! 4. Verify: each party verifies all proofs. No messages are sent.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{
@@ -32,10 +22,6 @@ use super::msg::{
 };
 use crate::key_share::{Gg18KeyShare, VssSetup};
 
-// ---------------------------------------------------------------------------
-// Round enum
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 pub(crate) enum KeygenRound<C: TecdsaCurve>
 where
@@ -45,77 +31,48 @@ where
     Round2(Round2State<C>),
     Round3(Round3State<C>),
     Done(Gg18KeyShare<C>),
-    /// Sentinel so we can `std::mem::take` without leaving an invalid state.
     #[default]
     Gone,
 }
-
-// ---------------------------------------------------------------------------
-// Round 1 state — Commitment
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round1State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    // Configuration
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
 
-    // Own secrets generated at construction
     pub vss_shares: Vec<tecdsa_vss::shamir::Share<C>>,
     pub feldman_commitments: Vec<C::ProjectivePoint>,
     pub y_i: C::ProjectivePoint,
     pub decommit_nonce: [u8; 32],
     pub schnorr_ephemeral: C::Scalar,
 
-    // Paillier key pair
     pub dk: tecdsa_paillier::DecryptionKey,
     pub ek: tecdsa_paillier::EncryptionKey,
 
-    // Ring-Pedersen N_tilde parameters
     pub n_tilde_params: NTildeParams,
 
-    // Outgoing messages queued at construction
     pub outgoing: Vec<Outgoing<Gg18KeygenMsg<C>>>,
 
-    // Received messages
     pub round1_msgs: BTreeMap<PartyId, MsgRound1>,
 }
 
-/// Pre-generated Paillier keys and Ring-Pedersen parameters for a party.
-///
-/// This allows callers to inject pre-generated keys (e.g., with smaller
-/// primes for testing) rather than performing expensive key generation
-/// inside the state machine constructor.
 pub struct PaillierPrecomputed {
-    /// Paillier decryption key (contains p, q).
     pub dk: tecdsa_paillier::DecryptionKey,
-    /// Ring-Pedersen parameters `(N', h_1, h_2)`.
     pub n_tilde_params: NTildeParams,
 }
 
-/// Generate Ring-Pedersen `NTildeParams` from a Paillier decryption key.
-///
-/// Uses a fresh RSA modulus `N' = p' * q'` from `dk_tilde`, with generators
-/// `h1` random in `Z*_{N'}` and `h2 = h1^{-xhi} mod N'`.
-///
-/// # Panics
-///
-/// Panics if modular exponentiation or inversion fails, which should not
-/// happen for valid Paillier primes.
 pub fn generate_n_tilde(
     dk_tilde: &tecdsa_paillier::DecryptionKey,
     rng: &mut impl CryptoRngCore,
 ) -> NTildeParams {
     let n_tilde = dk_tilde.n().clone();
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    // xhi is a random value in [0, 2^256)
     let xhi_bound = Integer::one() << 256u32;
     let xhi = xhi_bound.random_below_ref(rng);
-    // h2 = h1^(-xhi) mod N'
     let h1_xhi = h1
         .pow_mod_ref(&xhi, &n_tilde)
         .expect("pow_mod must succeed");
@@ -131,10 +88,6 @@ pub fn generate_n_tilde(
 }
 
 impl PaillierPrecomputed {
-    /// Generate fresh per-party long-term key material: a Paillier keypair plus
-    /// Ring-Pedersen parameters (derived from a second Paillier modulus). Factored
-    /// out so benchmarks can time this (n,t)-independent setup separately from the
-    /// interactive DKG (which should consume it via `new_with_precomputed`).
     pub fn generate(rng: &mut impl CryptoRngCore) -> Self {
         let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen must succeed");
         let dk_tilde =
@@ -149,18 +102,11 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create the initial Round1 state: generate secrets and queue Round1 broadcast.
-    ///
-    /// This is the production constructor that generates full-size Paillier keys.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
         let precomputed = PaillierPrecomputed::generate(rng);
         Self::new_with_precomputed(config, precomputed, rng)
     }
 
-    /// Create the initial Round1 state with pre-generated Paillier keys.
-    ///
-    /// This constructor is useful for testing with smaller primes, where
-    /// Paillier key generation is done outside the state machine.
     pub fn new_with_precomputed(
         config: &SessionConfig,
         precomputed: PaillierPrecomputed,
@@ -168,14 +114,12 @@ where
     ) -> Self {
         let my_id = config.local_party.id;
         let parties = config.parties.clone();
-        let threshold = config.reconstruct_threshold(); // VSS reconstruction threshold
+        let threshold = config.reconstruct_threshold();
         let total = config.local_party.total;
 
-        // 1. Sample u_i, compute y_i = u_i * G
         let secret_u = C::random_scalar(rng);
         let y_i = C::generator() * secret_u;
 
-        // 2. Feldman VSS split of u_i
         let (vss_shares, feldman_commitments) =
             feldman::split::<C>(&secret_u, threshold, total, rng);
 
@@ -183,14 +127,11 @@ where
         let ek = dk.encryption_key().clone();
         let n_tilde_params = precomputed.n_tilde_params;
 
-        // 3. Schnorr ephemeral for DLog proof (used in Round 3)
         let schnorr_ephemeral = C::random_scalar(rng);
 
-        // 4. Hash commitment: H(y_i || ek_N || N' || h1 || h2 || feldman_commitments)
         let commit_msg = build_commit_data::<C>(&y_i, &ek, &n_tilde_params, &feldman_commitments);
         let (hash_commitment, decommit_nonce) = HashCommitment::commit(&commit_msg, rng);
 
-        // 5. Queue broadcast of MsgRound1
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Gg18KeygenMsg::Round1(MsgRound1 {
@@ -238,11 +179,9 @@ where
         self.round1_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round2: queue decommitment broadcast + VSS shares (p2p).
     pub fn advance(self) -> Round2State<C> {
         let mut outgoing: Vec<Outgoing<Gg18KeygenMsg<C>>> = Vec::new();
 
-        // Broadcast decommitment data
         outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: Gg18KeygenMsg::Round2Broad(MsgRound2Broad {
@@ -256,7 +195,6 @@ where
             }),
         });
 
-        // Send VSS shares to each other party
         for &pid in &self.parties {
             if pid == self.my_id {
                 continue;
@@ -294,21 +232,15 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 2 state — Decommit + VSS
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round2State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    // Config
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
 
-    // Own secrets
     pub own_vss_shares: Vec<tecdsa_vss::shamir::Share<C>>,
     pub feldman_commitments: Vec<C::ProjectivePoint>,
     pub y_i: C::ProjectivePoint,
@@ -317,13 +249,10 @@ where
     pub n_tilde_params: NTildeParams,
     pub schnorr_ephemeral: C::Scalar,
 
-    // Round 1 data
     pub round1_commitments: BTreeMap<PartyId, MsgRound1>,
 
-    // Outgoing
     pub outgoing: Vec<Outgoing<Gg18KeygenMsg<C>>>,
 
-    // Received
     pub round2_broad: BTreeMap<PartyId, MsgRound2Broad<C>>,
     pub round2_uni: BTreeMap<PartyId, MsgRound2Uni<C>>,
 }
@@ -374,7 +303,6 @@ where
             && self.round2_uni.len() == self.expected_count()
     }
 
-    /// Verify hash commitments and Feldman share consistency.
     fn verify_round2_data(&self) -> tecdsa_core::Result<()> {
         for (&pid, broad) in &self.round2_broad {
             let round1 = self
@@ -382,7 +310,6 @@ where
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing round1 from {pid}")))?;
 
-            // Reconstruct the NTildeParams from the deserialized fields
             let ntilde = NTildeParams {
                 N_tilde: broad.n_tilde.0.clone(),
                 h1: broad.h1.0.clone(),
@@ -399,7 +326,6 @@ where
             }
         }
 
-        // Verify Feldman consistency for each received VSS share
         let my_index = self.my_id.0;
         for (&pid, uni) in &self.round2_uni {
             let broad = self
@@ -417,23 +343,18 @@ where
         Ok(())
     }
 
-    /// Compute public verification shares `X_j` for each party j.
-    ///
-    /// `X_j = sum over all parties' Feldman commitments evaluated at j`.
     fn compute_public_shares(&self) -> Vec<C::ProjectivePoint> {
         let mut public_shares = Vec::with_capacity(self.total as usize);
         for j in 1..=self.total {
             let x = C::Scalar::from(u64::from(j));
             let mut point = C::ProjectivePoint::identity();
 
-            // Own polynomial evaluation at j
             let mut x_pow = C::Scalar::ONE;
             for com in &self.feldman_commitments {
                 point += *com * x_pow;
                 x_pow *= x;
             }
 
-            // Add all other parties' polynomial evaluations at j
             for broad in self.round2_broad.values() {
                 let mut x_pow = C::Scalar::ONE;
                 for com in &broad.feldman_commitments {
@@ -447,14 +368,11 @@ where
         public_shares
     }
 
-    /// Transition to Round3: verify commitments + Feldman, compute secret share,
-    /// generate Schnorr `DLog` proof and Pi_mod proof.
     pub fn advance(mut self) -> tecdsa_core::Result<Round3State<C>> {
         self.verify_round2_data()?;
 
         let my_index = self.my_id.0;
 
-        // Compute secret share x_i = own_share(my_index) + sum of received shares
         let own_share_value = self
             .own_vss_shares
             .iter()
@@ -466,7 +384,6 @@ where
             x_i += uni.vss_share;
         }
 
-        // Compute joint public key Y = sum of all y_i (constant terms of Feldman polys)
         let mut public_key = self.y_i;
         for broad in self.round2_broad.values() {
             public_key += broad.y_i;
@@ -474,16 +391,12 @@ where
 
         let public_shares = self.compute_public_shares();
 
-        // Build auxiliary data for Fiat-Shamir challenge: empty (GG18 uses empty aux)
         let aux = [0u8; 0];
 
-        // Generate Schnorr DLog proof for X_i = x_i * G
         let own_public_share = public_shares[(my_index - 1) as usize];
         let schnorr_proof =
             DlogProof::<C>::prove(&x_i, &self.schnorr_ephemeral, &own_public_share, &aux);
 
-        // Generate Pi_mod proof: prove that our Paillier modulus N is a
-        // Paillier-Blum modulus (paper §4.1 Phase 3).
         let paillier_n = self.dk.n().clone();
         let pi_mod_data = paillier_blum_modulus::Data { n: &paillier_n };
         let pi_mod_pdata = paillier_blum_modulus::PrivateData {
@@ -508,11 +421,9 @@ where
             }),
         }];
 
-        // Collect all parties' Paillier EKs and NTilde params
         let mut paillier_eks = Vec::with_capacity(self.total as usize);
         let mut n_tilde_params_all = Vec::with_capacity(self.total as usize);
 
-        // We need to insert items in party order (1..=total)
         for pid_val in 1..=self.total {
             let pid = PartyId(pid_val);
             if pid == self.my_id {
@@ -532,7 +443,6 @@ where
             }
         }
 
-        // Zeroize secrets not carried to the next round
         self.schnorr_ephemeral.zeroize();
         for share in &mut self.own_vss_shares {
             share.value.zeroize();
@@ -555,34 +465,25 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 3 state — DLog proof
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round3State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    // Config
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
 
-    // Computed values
     pub secret_share: C::Scalar,
     pub public_key: C::ProjectivePoint,
     pub public_shares: Vec<C::ProjectivePoint>,
 
-    // Paillier keys
     pub dk: tecdsa_paillier::DecryptionKey,
     pub paillier_eks: Vec<tecdsa_paillier::EncryptionKey>,
     pub n_tilde_params_all: Vec<NTildeParams>,
 
-    // Outgoing
     pub outgoing: Vec<Outgoing<Gg18KeygenMsg<C>>>,
 
-    // Received
     pub round3_msgs: BTreeMap<PartyId, MsgRound3<C>>,
 }
 
@@ -613,13 +514,11 @@ where
         self.round3_msgs.len() == self.expected_count()
     }
 
-    /// Verify all Schnorr proofs and Pi_mod proofs, produce the final `Gg18KeyShare`.
     pub fn finish(self) -> tecdsa_core::Result<Gg18KeyShare<C>> {
         let aux = [0u8; 0];
         let mut pi_mod_rng = tecdsa_core::Csprng::new();
         let shared_state = "gg18-keygen-pi-mod";
 
-        // Verify every other party's Schnorr proof and Pi_mod proof
         for (&pid, msg) in &self.round3_msgs {
             let party_public_share = self.public_shares[(pid.0 - 1) as usize];
             if !msg.schnorr_proof.verify(&party_public_share, &aux) {
@@ -628,7 +527,6 @@ where
                 )));
             }
 
-            // Verify Pi_mod proof: the party's Paillier modulus N is a Blum modulus
             let party_paillier_n = self.paillier_eks[(pid.0 - 1) as usize].n();
             let pi_mod_data = paillier_blum_modulus::Data {
                 n: party_paillier_n,
@@ -646,7 +544,6 @@ where
             })?;
         }
 
-        // Party index is 0-based in Gg18KeyShare
         let party_index = self.my_id.0 - 1;
 
         Ok(Gg18KeyShare {
@@ -665,13 +562,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Build the data to be committed (and later verified) in the hash commitment.
-///
-/// Format: `y_i_bytes || ek_N_bytes || N'_bytes || h1_bytes || h2_bytes || feldman_com_bytes...`
 fn build_commit_data<C: TecdsaCurve>(
     y_i: &C::ProjectivePoint,
     ek: &tecdsa_paillier::EncryptionKey,

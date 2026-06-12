@@ -1,51 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Single-iteration benchmark run for all ZK proofs and protocol operations.
-# Outputs raw timing to docs/benchmarks/*.txt and a summary table.
-#
-# Usage:
-#   bash scripts/run_benchmarks.sh              # run all (Criterion, slow)
-#   bash scripts/run_benchmarks.sh once         # all one-shot (ZK + protocol, fastest)
-#   bash scripts/run_benchmarks.sh zk-once      # ZK one-shot timings only
-#   bash scripts/run_benchmarks.sh protocol-once # protocol one-shot timings only
-#   bash scripts/run_benchmarks.sh zk           # ZK proofs only (Criterion)
-#   bash scripts/run_benchmarks.sh protocol     # protocol benchmarks only (Criterion)
-#
-# Prerequisites:
-#   - Rust toolchain (stable)
-#   - ~10-30 min depending on hardware (Paillier/CL proofs are heavy)
-#
-# Multi-party (n, t) sweeps are configurable at run time via env vars (no rebuild
-# between runs); see crates/framework/tecdsa-bench/src/config.rs:
-#   TECDSA_BENCH_DKG_CONFIGS       DKG (n,t) pairs   (default 3:3,7:7,11:11,15:15,20:20)
-#   TECDSA_BENCH_SIGN_N            presign/sign n    (default 20)
-#   TECDSA_BENCH_SIGN_THRESHOLDS   presign/sign t's  (default 2,3,7,11,15,20)
-# Unset = default; set-but-empty = skip that phase (e.g. TECDSA_BENCH_DKG_CONFIGS=
-# runs only presign/sign; TECDSA_BENCH_SIGN_THRESHOLDS= runs only DKG).
-# Example (quick subset):
-#   TECDSA_BENCH_DKG_CONFIGS=3:3,7:7 TECDSA_BENCH_SIGN_THRESHOLDS=2,20 \
-#       bash scripts/run_benchmarks.sh protocol
-# These compose with the multiparty/protocol-once benches and the one-shot binary;
-# they have no effect on the two-party (n2_t2) suite, ZK, or primitive benches.
-#
-# Profile B parameters (lambda=128, secp256k1):
-#   Paillier N=3072, CL |DeltaK|~1827, JL N=3360/k=712, NTilde=3072
-#
-# ZK proof coverage (110 benchmark functions, 55 proof relations):
-#   curve       5/5   Dlog, Ddh, Egexp, Prod, Re
-#   pedersen    2/2   PiPrm, PiMod
-#   class-grp  19/19  REnc, RKey, RDlCl, REncPc, RPcDl, RDecDl, RClKwlg,
-#                      RBint, RComKwlg, RGdecCl, RClDl, RClDlEc, RDdhCl,
-#                      RElCl, RPedEc, RAffCom, RMAffDl, RMAffDlEc, RSh
-#   paillier   13/13  CorrectKeyNi, HomoElGamal, PiEq, HomoMult, AliceRange,
-#                      RangeNi, PdlSlack, PiB, BobExt, NonceConsist, PiA,
-#                      Bob, PDL transcript
-#   pzk-facade  6/6   Pi_enc, Pi_fac, Pi_mod, Pi_aff_g, Pi_elog, Pi_enc_elg
-#   joye-lib    9/9   ZkJlEnc, ZkJlMod, ZkJlCom, ZkQr2k, ZkQr2kDl,
-#                      ZkJlEqu, ZkJlAff, ZkJlvCom, ZkJlvEqu
-#   evrf        1/1   DLEQ (eval + prove + verify)
-
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -60,7 +15,6 @@ echo "Machine: $(uname -n) $(uname -m)" | tee -a "$SUMMARY"
 echo "Rust: $(rustc --version)" | tee -a "$SUMMARY"
 echo "" | tee -a "$SUMMARY"
 
-# Criterion minimum is sample-size=10. Use 10 with minimal warm-up, no plots.
 CRITERION_ARGS="--sample-size 10 --nresamples 100 --warm-up-time 1 --measurement-time 1 --noplot --output-format bencher"
 
 run_bench() {
@@ -82,7 +36,6 @@ run_bench() {
     echo "    Completed in ${elapsed}s" | tee -a "$SUMMARY"
     echo "" | tee -a "$SUMMARY"
 
-    # Extract bencher-format timing lines into summary.
     grep '^test ' "$outfile" >> "$SUMMARY" 2>/dev/null || true
     echo "" >> "$SUMMARY"
 }
@@ -91,9 +44,6 @@ MODE="${1:-all}"
 
 case "$MODE" in
     zk-once)
-        # ─────────────────────────────────────────────────────────────
-        # ZK one-shot timings (single optimized prove/verify execution)
-        # ─────────────────────────────────────────────────────────────
         outfile="$OUT_DIR/zk-once-${TIMESTAMP}.txt"
         echo ">>> Running: zk-once" | tee -a "$SUMMARY"
         local_start=$SECONDS
@@ -105,9 +55,6 @@ case "$MODE" in
         echo "" >> "$SUMMARY"
         ;;
     protocol-once)
-        # ─────────────────────────────────────────────────────────────
-        # Protocol one-shot timings (MtA + multiparty + twoparty, once each)
-        # ─────────────────────────────────────────────────────────────
         outfile="$OUT_DIR/protocol-once-${TIMESTAMP}.txt"
         echo ">>> Running: protocol-once" | tee -a "$SUMMARY"
         local_start=$SECONDS
@@ -119,9 +66,6 @@ case "$MODE" in
         echo "" >> "$SUMMARY"
         ;;
     once)
-        # ─────────────────────────────────────────────────────────────
-        # All one-shot timings (ZK + protocol, fastest full coverage)
-        # ─────────────────────────────────────────────────────────────
         outfile_zk="$OUT_DIR/zk-once-${TIMESTAMP}.txt"
         echo ">>> Running: zk-once" | tee -a "$SUMMARY"
         local_start=$SECONDS
@@ -143,38 +87,20 @@ case "$MODE" in
         echo "" >> "$SUMMARY"
         ;;
     zk)
-        # ─────────────────────────────────────────────────────────────
-        # ZK proof microbenchmarks only (110 functions across 7 groups)
-        # ─────────────────────────────────────────────────────────────
         run_bench "zk-proofs" "zk_proofs"
         ;;
     protocol)
-        # ─────────────────────────────────────────────────────────────
-        # Protocol-level benchmarks (presign + sign, no DKG)
-        # ─────────────────────────────────────────────────────────────
         run_bench "primitives" "primitives"
         run_bench "multiparty" "multiparty"
         run_bench "twoparty" "twoparty"
         ;;
     all)
-        # ─────────────────────────────────────────────────────────────
-        # 1. ZK proof microbenchmarks (all 7 groups, 110 functions)
-        # ─────────────────────────────────────────────────────────────
         run_bench "zk-proofs" "zk_proofs"
 
-        # ─────────────────────────────────────────────────────────────
-        # 2. Primitive-level benchmarks (Paillier MtA cycle)
-        # ─────────────────────────────────────────────────────────────
         run_bench "primitives" "primitives"
 
-        # ─────────────────────────────────────────────────────────────
-        # 3. Multi-party protocol benchmarks (presign + sign)
-        # ─────────────────────────────────────────────────────────────
         run_bench "multiparty" "multiparty"
 
-        # ─────────────────────────────────────────────────────────────
-        # 4. Two-party protocol benchmarks (presign + sign)
-        # ─────────────────────────────────────────────────────────────
         run_bench "twoparty" "twoparty"
         ;;
     *)
@@ -183,9 +109,6 @@ case "$MODE" in
         ;;
 esac
 
-# ─────────────────────────────────────────────────────────────────────
-# Summary
-# ─────────────────────────────────────────────────────────────────────
 total_elapsed=$SECONDS
 echo "=== Total: ${total_elapsed}s ===" | tee -a "$SUMMARY"
 echo ""

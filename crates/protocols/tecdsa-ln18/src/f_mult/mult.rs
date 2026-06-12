@@ -1,41 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Protocol 4.7 -- $\mathcal{F}_\text{mult}$.mult: multiply two encrypted values
-//! and output additive shares of the product.
-//!
-//! Given stored input for $a$ (sid1, from a previous `input` call) and $b$
-//! (sid2, from another `input` call), compute $c = a \cdot b$ and output
-//! additive shares $c_i$ such that $\sum c_i = a \cdot b$.
-//!
-//! This is the full 6-round version with inlined $\mathcal{F}_\text{checkDH}$.
-//!
-//! **Step 0 (external):** The caller runs $\pi_\text{mult}^\text{priv}$ (Paillier
-//! MtA) with inputs $(a_i, b_i)$. $P_i$ gets output $c_i$. This share is
-//! provided as input to the mult protocol.
-//!
-//! **Round 1:** $P_i$ computes
-//! $E_i = a_i \cdot X_b + s'_i \cdot G$, $F_i = a_i \cdot Y_b + s'_i \cdot \mathcal{P}$
-//! and sends $(E_i, F_i)$ with $R_\text{prod}$ proof to all parties.
-//!
-//! **Round 2:** Verify all $R_\text{prod}$ proofs. Aggregate $(E, F) = \sum_j (E_j, F_j)$.
-//! $P_i$ computes $(A_i, B_i) = \text{EGexpEnc}_\mathcal{P}(c_i; \hat{s}_i)$.
-//! Sends $(A_i, B_i)$ with $R_{EG}$ proof.
-//!
-//! **Round 3:** Verify all $R_{EG}$ proofs. Compute
-//! $\mathcal{A} = E - \sum_j A_j$, $\mathcal{B} = F - \sum_j B_j$.
-//! Begin $\mathcal{F}_\text{checkDH}$ on $(\mathcal{A}, \mathcal{B})$:
-//! Each $P_i$ rerandomizes: $U'_i = r_i G + s''_i \mathcal{A}$,
-//! $V'_i = r_i \mathcal{P} + s''_i \mathcal{B}$. Sends $(U'_i, V'_i)$ with $R_{RE}$ proof.
-//!
-//! **Round 4:** Verify all $R_{RE}$ proofs. Aggregate $(U', V') = \sum (U'_j, V'_j)$.
-//! Each $P_i$ computes $W_i = d_i \cdot U'$ and sends $W_i$ with $R_{DH}$ proof
-//! that $(G, U', \mathcal{P}_i, W_i)$ is a DH tuple (witness $d_i$).
-//!
-//! **Round 5:** Verify all checkDH $R_{DH}$ proofs. Check $\sum W_j = V'$.
-//! If checkDH accepts, $P_i$ sends $c_i$ with $R_{DH}$ proof that
-//! $(G, \mathcal{P}, A_i, B_i - c_i \cdot G)$ is a DH tuple with witness $\hat{s}_i$.
-//!
-//! **Round 6 (output):** Verify all $R_{DH}$ proofs. Output $c = \sum_j c_j$.
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
@@ -54,22 +16,13 @@ use tecdsa_protocol::PartyId;
 
 use super::input::InputOutput;
 
-// ---------------------------------------------------------------------------
-// Messages
-// ---------------------------------------------------------------------------
-
-/// Round-1 broadcast message: $(E_i, F_i)$ and $R_\text{prod}$ proof.
 pub struct MultRound1Msg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Sender party ID.
     pub from: PartyId,
-    /// Product ciphertext part 1: $E_i = a_i \cdot X_b + s'_i \cdot G$.
     pub e_i: C::ProjectivePoint,
-    /// Product ciphertext part 2: $F_i = a_i \cdot Y_b + s'_i \cdot \mathcal{P}$.
     pub f_i: C::ProjectivePoint,
-    /// $R_\text{prod}$ proof.
     pub prod_proof: ProdProof<C>,
 }
 
@@ -87,18 +40,13 @@ where
     }
 }
 
-/// Round-2 broadcast message: $(A_i, B_i)$ EGexp encryption of $c_i$ and $R_{EG}$ proof.
 pub struct MultRound2Msg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Sender party ID.
     pub from: PartyId,
-    /// EGexp ciphertext of $c_i$: $A_i = \hat{s}_i \cdot G$.
     pub a_i: C::ProjectivePoint,
-    /// EGexp ciphertext of $c_i$: $B_i = \hat{s}_i \cdot \mathcal{P} + c_i \cdot G$.
     pub b_i: C::ProjectivePoint,
-    /// $R_{EG}$ proof of knowledge of $(c_i, \hat{s}_i)$.
     pub egexp_proof: EgexpProof<C>,
 }
 
@@ -116,18 +64,13 @@ where
     }
 }
 
-/// Round-3 broadcast message: checkDH rerandomization shares $(U'_i, V'_i)$ and $R_{RE}$ proof.
 pub struct MultRound3Msg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Sender party ID.
     pub from: PartyId,
-    /// Rerandomized U-share: $U'_i = r_i G + s''_i \mathcal{A}$.
     pub u_prime_i: C::ProjectivePoint,
-    /// Rerandomized V-share: $V'_i = r_i \mathcal{P} + s''_i \mathcal{B}$.
     pub v_prime_i: C::ProjectivePoint,
-    /// $R_{RE}$ proof.
     pub re_proof: ReProof<C>,
 }
 
@@ -145,16 +88,12 @@ where
     }
 }
 
-/// Round-4 broadcast message: checkDH partial decryption $W_i$ and $R_{DH}$ proof.
 pub struct MultRound4Msg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Sender party ID.
     pub from: PartyId,
-    /// Partial decryption: $W_i = d_i \cdot U'$.
     pub w_i: C::ProjectivePoint,
-    /// $R_{DH}$ proof that $(G, U', \mathcal{P}_i, W_i)$ is a DH tuple (witness $d_i$).
     pub ddh_proof: DdhProof<C>,
 }
 
@@ -171,17 +110,12 @@ where
     }
 }
 
-/// Round-5 broadcast message: $c_i$ share and $R_{DH}$ proof (sent after checkDH passes).
 pub struct MultRound5Msg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Sender party ID.
     pub from: PartyId,
-    /// Party's share $c_i$ of the product $a \cdot b$.
     pub c_i: C::Scalar,
-    /// $R_{DH}$ proof that $(\mathcal{P}, A_i, B_i - c_i G)$ is consistent
-    /// with the EGexp encryption, with witness $\hat{s}_i$.
     pub ddh_proof: DdhProof<C>,
 }
 
@@ -198,91 +132,60 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
-/// Internal state for the mult sub-protocol (full 6-round version with checkDH).
 pub struct MultState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// This party's ID.
     my_id: PartyId,
-    /// All party IDs (sorted, including self).
     parties: Vec<PartyId>,
-    /// Joint ElGamal public key $\mathcal{P}$.
     elgamal_pk: C::ProjectivePoint,
-    /// Per-party ciphertexts from input_a: $(U_{a,j}, V_{a,j})$.
     input_a_per_party_cts: Vec<(PartyId, EgexpCiphertext<C>)>,
-    /// Aggregate ciphertext $(X_b, Y_b)$ from input_b: EGexp encryption of $b$.
     input_b_ciphertext: EgexpCiphertext<C>,
-    /// MtA result: party's share $c_i$ such that $\sum c_i = a \cdot b$.
     c_i: C::Scalar,
-    /// Fresh randomness $\hat{s}_i$ used for the EGexp encryption of $c_i$.
     s_hat_i: C::Scalar,
-    /// Own EGexp ciphertext of $c_i$: $(A_i, B_i)$.
     own_ci_ct: Option<EgexpCiphertext<C>>,
-    /// Own ElGamal secret share $d_i$ (needed for checkDH).
     d_i: C::Scalar,
-    /// Own ElGamal public-key share $\mathcal{P}_i = d_i \cdot G$.
     p_i: C::ProjectivePoint,
-    /// Per-party ElGamal public-key shares $\{\mathcal{P}_j\}$, ordered by party index.
     elgamal_pk_shares: Vec<C::ProjectivePoint>,
 }
 
-/// Output of the mult sub-protocol.
 pub struct MultOutput<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Party's share of the product $c_i$.
     pub c_i: C::Scalar,
-    /// The reconstructed product $c = \sum c_j = a \cdot b$.
     pub c: C::Scalar,
 }
 
-/// Intermediate state after processing Round-1 messages, needed for Round 2 verification.
 pub struct MultRound1Result<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Aggregated product ciphertext: $E = \sum E_j$.
     pub e_agg: C::ProjectivePoint,
-    /// Aggregated product ciphertext: $F = \sum F_j$.
     pub f_agg: C::ProjectivePoint,
 }
 
-/// Intermediate state after processing Round-2 messages.
 pub struct MultRound2Result<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Per-party EGexp ciphertexts of $c_j$: $(A_j, B_j)$.
     pub per_party_ci_cts: Vec<(PartyId, EgexpCiphertext<C>)>,
-    /// Difference ciphertext $\mathcal{A} = E - \sum A_j$.
     pub cal_a: C::ProjectivePoint,
-    /// Difference ciphertext $\mathcal{B} = F - \sum B_j$.
     pub cal_b: C::ProjectivePoint,
 }
 
-/// Intermediate state after processing Round-3 messages (checkDH Round 1).
 pub struct MultRound3Result<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Aggregated rerandomized $U' = \sum U'_j$.
     pub u_prime: C::ProjectivePoint,
-    /// Aggregated rerandomized $V' = \sum V'_j$.
     pub v_prime: C::ProjectivePoint,
 }
 
-/// Intermediate state after processing Round-4 messages (checkDH Round 2).
 pub struct MultRound4Result<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Per-party EGexp ciphertexts of $c_j$: $(A_j, B_j)$ (passed through).
     pub per_party_ci_cts: Vec<(PartyId, EgexpCiphertext<C>)>,
 }
 
@@ -291,19 +194,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new mult state and produce the Round-1 broadcast message.
-    ///
-    /// # Arguments
-    ///
-    /// - `my_id`: this party's ID
-    /// - `parties`: all party IDs (sorted, including self)
-    /// - `input_a`: stored output from the `input` call for value $a$
-    /// - `input_b`: stored output from the `input` call for value $b$
-    /// - `c_i`: MtA result share (from running Paillier MtA externally)
-    /// - `elgamal_pk`: joint ElGamal public key $\mathcal{P}$
-    /// - `d_i`: own ElGamal secret share
-    /// - `elgamal_pk_shares`: per-party ElGamal public-key shares
-    /// - `rng`: cryptographic RNG
     pub fn new(
         my_id: PartyId,
         parties: Vec<PartyId>,
@@ -326,20 +216,14 @@ where
         let a_i = input_a.a_i;
         let s_a_i = input_a.s_i;
 
-        // (X_b, Y_b) is the aggregate ciphertext for b
         let x_b = input_b.ciphertext.a;
         let y_b = input_b.ciphertext.b;
 
-        // Sample fresh randomness s'_i for the product ciphertext
         let s_prime_i = C::random_scalar(rng);
 
-        // Compute (E_i, F_i):
-        // E_i = a_i * X_b + s'_i * G
-        // F_i = a_i * Y_b + s'_i * P
         let e_i = x_b * a_i + g * s_prime_i;
         let f_i = y_b * a_i + elgamal_pk * s_prime_i;
 
-        // Find own ciphertext from input_a: (U_{a,i}, V_{a,i})
         let own_a_ct = input_a
             .per_party_cts
             .iter()
@@ -348,7 +232,6 @@ where
             .1
             .clone();
 
-        // Build R_prod proof.
         let prod_stmt = ProdStatement::<C> {
             p: elgamal_pk,
             a: x_b,
@@ -365,10 +248,8 @@ where
         };
         let prod_proof = ProdProof::prove(&prod_stmt, &prod_wit, rng);
 
-        // Pre-sample s_hat_i for later use in Round 2
         let s_hat_i = C::random_scalar(rng);
 
-        // Compute own public-key share P_i = d_i * G
         let p_i = g * d_i;
 
         let round1_msg = MultRound1Msg {
@@ -395,13 +276,6 @@ where
         (state, round1_msg)
     }
 
-    /// Process all Round-1 messages, verify $R_\text{prod}$ proofs, and produce
-    /// the Round-2 broadcast message.
-    ///
-    /// Aggregates $(E, F) = \sum_j (E_j, F_j)$ and encrypts $c_i$ under EGexp.
-    ///
-    /// `msgs` should contain all Round-1 messages from *other* parties.
-    /// `own_round1` is this party's own Round-1 message (needed for aggregation).
     pub fn handle_round1(
         &mut self,
         msgs: &[MultRound1Msg<C>],
@@ -413,11 +287,9 @@ where
         let x_b = self.input_b_ciphertext.a;
         let y_b = self.input_b_ciphertext.b;
 
-        // Collect all (E_j, F_j) including own
         let mut e_shares: Vec<Option<C::ProjectivePoint>> = vec![None; n];
         let mut f_shares: Vec<Option<C::ProjectivePoint>> = vec![None; n];
 
-        // Store own share
         let my_index = self.parties.iter().position(|p| *p == self.my_id).unwrap();
         e_shares[my_index] = Some(own_round1.e_i);
         f_shares[my_index] = Some(own_round1.f_i);
@@ -435,7 +307,6 @@ where
                 return Err(format!("duplicate Round-1 message from {}", msg.from));
             }
 
-            // Find party j's ciphertext from input_a: (U_{a,j}, V_{a,j})
             let ct_a_j = self
                 .input_a_per_party_cts
                 .iter()
@@ -444,7 +315,6 @@ where
                 .1
                 .clone();
 
-            // Verify R_prod proof
             let prod_stmt = ProdStatement::<C> {
                 p: self.elgamal_pk,
                 a: x_b,
@@ -465,7 +335,6 @@ where
             f_shares[idx] = Some(msg.f_i);
         }
 
-        // Ensure all parties sent Round-1 messages
         for (i, slot) in e_shares.iter().enumerate() {
             if slot.is_none() {
                 return Err(format!(
@@ -475,7 +344,6 @@ where
             }
         }
 
-        // Aggregate: (E, F) = sum of (E_j, F_j)
         let e_agg: C::ProjectivePoint = e_shares
             .iter()
             .map(|s| s.unwrap())
@@ -487,11 +355,9 @@ where
             .reduce(|acc, p| acc + p)
             .expect("at least one party");
 
-        // Encrypt c_i under EGexp: (A_i, B_i) = EGexpEnc_P(c_i; s_hat_i)
         let ci_ct = elgamal_exp::encrypt::<C>(&self.elgamal_pk, &self.c_i, &self.s_hat_i);
         self.own_ci_ct = Some(ci_ct.clone());
 
-        // Build R_EG proof
         let egexp_stmt = EgexpStatement::<C> {
             p: self.elgamal_pk,
             a: ci_ct.a,
@@ -515,11 +381,6 @@ where
         Ok((round2_msg, r1_result))
     }
 
-    /// Process all Round-2 messages, verify $R_{EG}$ proofs, compute
-    /// $(\mathcal{A}, \mathcal{B})$, and produce the Round-3 broadcast message
-    /// (checkDH Round 1: rerandomization).
-    ///
-    /// `msgs` should contain all Round-2 messages from *other* parties.
     pub fn handle_round2(
         &self,
         msgs: &[MultRound2Msg<C>],
@@ -533,7 +394,6 @@ where
             .as_ref()
             .expect("own_ci_ct must be set after handle_round1");
 
-        // Collect all (A_j, B_j) including own
         let mut ci_cts: Vec<Option<(PartyId, EgexpCiphertext<C>)>> = vec![None; n];
 
         let my_index = self.parties.iter().position(|p| *p == self.my_id).unwrap();
@@ -552,7 +412,6 @@ where
                 return Err(format!("duplicate Round-2 message from {}", msg.from));
             }
 
-            // Verify R_EG proof
             let egexp_stmt = EgexpStatement::<C> {
                 p: self.elgamal_pk,
                 a: msg.a_i,
@@ -574,7 +433,6 @@ where
             ));
         }
 
-        // Ensure all parties sent Round-2 messages
         for (i, slot) in ci_cts.iter().enumerate() {
             if slot.is_none() {
                 return Err(format!(
@@ -587,7 +445,6 @@ where
         let per_party_ci_cts: Vec<(PartyId, EgexpCiphertext<C>)> =
             ci_cts.into_iter().map(|s| s.unwrap()).collect();
 
-        // Compute A_sum = sum(A_j), B_sum = sum(B_j)
         let a_sum: C::ProjectivePoint = per_party_ci_cts
             .iter()
             .map(|(_, ct)| ct.a)
@@ -599,21 +456,16 @@ where
             .reduce(|acc, p| acc + p)
             .expect("at least one party");
 
-        // Compute (cal_A, cal_B) = (E - sum(A_j), F - sum(B_j))
-        // This should be an encryption of 0 under the joint key if sum(c_i) = a*b
         let cal_a = r1_result.e_agg - a_sum;
         let cal_b = r1_result.f_agg - b_sum;
 
-        // --- Begin checkDH Round 1: rerandomize (cal_A, cal_B) ---
         let g = C::generator();
         let r_i = C::random_scalar(rng);
         let s_i = C::random_scalar(rng);
 
-        // Compute rerandomization shares
         let u_prime_i = g * r_i + cal_a * s_i;
         let v_prime_i = self.elgamal_pk * r_i + cal_b * s_i;
 
-        // Build R_RE proof
         let re_stmt = ReStatement::<C> {
             g,
             p: self.elgamal_pk,
@@ -643,11 +495,6 @@ where
         Ok((round3_msg, r2_result))
     }
 
-    /// Process all Round-3 messages (checkDH Round 1), verify $R_{RE}$ proofs,
-    /// aggregate rerandomization shares, and produce Round-4 message
-    /// (checkDH Round 2: partial decryption).
-    ///
-    /// `msgs` should contain all Round-3 messages from *other* parties.
     pub fn handle_round3(
         &self,
         msgs: &[MultRound3Msg<C>],
@@ -658,7 +505,6 @@ where
         let n = self.parties.len();
         let g = C::generator();
 
-        // Collect all rerandomization shares (including own)
         let mut u_primes: Vec<Option<C::ProjectivePoint>> = vec![None; n];
         let mut v_primes: Vec<Option<C::ProjectivePoint>> = vec![None; n];
 
@@ -679,7 +525,6 @@ where
                 return Err(format!("duplicate Round-3 message from {}", msg.from));
             }
 
-            // Verify R_RE proof
             let re_stmt = ReStatement::<C> {
                 g,
                 p: self.elgamal_pk,
@@ -699,7 +544,6 @@ where
             v_primes[idx] = Some(msg.v_prime_i);
         }
 
-        // Ensure all parties sent Round-3 messages
         for (i, slot) in u_primes.iter().enumerate() {
             if slot.is_none() {
                 return Err(format!(
@@ -709,7 +553,6 @@ where
             }
         }
 
-        // Aggregate: (U', V') = sum of (U'_j, V'_j)
         let u_prime: C::ProjectivePoint = u_primes
             .iter()
             .map(|s| s.unwrap())
@@ -721,10 +564,8 @@ where
             .reduce(|acc, p| acc + p)
             .expect("at least one party");
 
-        // Compute W_i = d_i * U'
         let w_i = u_prime * self.d_i;
 
-        // Build R_DH proof: prove (G, U', P_i, W_i) is a DH tuple with witness d_i
         let ddh_stmt = DdhStatement::<C> {
             g,
             a: u_prime,
@@ -745,12 +586,6 @@ where
         Ok((round4_msg, r3_result))
     }
 
-    /// Process all Round-4 messages (checkDH Round 2), verify $R_{DH}$ proofs,
-    /// check $\sum W_j = V'$, and produce the Round-5 message (reveal $c_i$).
-    ///
-    /// If checkDH fails (the tuple is not DH), returns an error.
-    ///
-    /// `msgs` should contain all Round-4 messages from *other* parties.
     pub fn handle_round4(
         &self,
         msgs: &[MultRound4Msg<C>],
@@ -763,7 +598,6 @@ where
 
         let mut w_shares: Vec<Option<C::ProjectivePoint>> = vec![None; n];
 
-        // Compute own W_i = d_i * U'
         let my_index = self.parties.iter().position(|p| *p == self.my_id).unwrap();
         let own_w_i = r3_result.u_prime * self.d_i;
         w_shares[my_index] = Some(own_w_i);
@@ -781,7 +615,6 @@ where
                 return Err(format!("duplicate Round-4 message from {}", msg.from));
             }
 
-            // Verify R_DH proof: (G, U', P_j, W_j) is DH tuple
             let ddh_stmt = DdhStatement::<C> {
                 g,
                 a: r3_result.u_prime,
@@ -798,7 +631,6 @@ where
             w_shares[idx] = Some(msg.w_i);
         }
 
-        // Ensure all parties sent Round-4 messages
         for (i, slot) in w_shares.iter().enumerate() {
             if slot.is_none() {
                 return Err(format!(
@@ -808,7 +640,6 @@ where
             }
         }
 
-        // checkDH final check: sum(W_j) == V'
         let sum_w: C::ProjectivePoint = w_shares
             .iter()
             .map(|s| s.unwrap())
@@ -819,20 +650,17 @@ where
             return Err("checkDH failed: (G, P, cal_A, cal_B) is NOT a DH tuple — MtA shares are inconsistent".into());
         }
 
-        // checkDH passed! Now safe to reveal c_i.
         let ci_ct = self
             .own_ci_ct
             .as_ref()
             .expect("own_ci_ct must be set after handle_round1");
 
-        // Build R_DH proof: prove that (G, P, A_i, B_i - c_i*G) is a DH tuple
-        // with witness s_hat_i.
         let c_i_point = g * self.c_i;
         let ddh_stmt = DdhStatement::<C> {
             g,
             a: self.elgamal_pk,
-            b: ci_ct.a,             // A_i = s_hat_i * G
-            c: ci_ct.b - c_i_point, // B_i - c_i*G = s_hat_i * P
+            b: ci_ct.a,
+            c: ci_ct.b - c_i_point,
         };
         let ddh_wit = DdhWitness::<C> { w: self.s_hat_i };
         let ddh_proof = DdhProof::prove(&ddh_stmt, &ddh_wit, rng);
@@ -850,9 +678,6 @@ where
         Ok((round5_msg, r4_result))
     }
 
-    /// Process all Round-5 messages, verify $R_{DH}$ proofs, and output the product.
-    ///
-    /// `msgs` should contain all Round-5 messages from *other* parties.
     pub fn finish_round5(
         &self,
         msgs: &[MultRound5Msg<C>],
@@ -863,7 +688,6 @@ where
 
         let mut c_shares: Vec<Option<C::Scalar>> = vec![None; n];
 
-        // Store own share
         let my_index = self.parties.iter().position(|p| *p == self.my_id).unwrap();
         c_shares[my_index] = Some(self.c_i);
 
@@ -880,7 +704,6 @@ where
                 return Err(format!("duplicate Round-5 message from {}", msg.from));
             }
 
-            // Find party j's EGexp ciphertext (A_j, B_j) from Round 2
             let ct_j = r4_result
                 .per_party_ci_cts
                 .iter()
@@ -889,13 +712,12 @@ where
                 .1
                 .clone();
 
-            // Verify R_DH proof: (G, P, A_j, B_j - c_j*G) is a DH tuple
             let c_j_point = g * msg.c_i;
             let ddh_stmt = DdhStatement::<C> {
                 g,
                 a: self.elgamal_pk,
-                b: ct_j.a,             // A_j
-                c: ct_j.b - c_j_point, // B_j - c_j*G
+                b: ct_j.a,
+                c: ct_j.b - c_j_point,
             };
             if !msg.ddh_proof.verify(&ddh_stmt) {
                 return Err(format!(
@@ -907,7 +729,6 @@ where
             c_shares[idx] = Some(msg.c_i);
         }
 
-        // Ensure all parties sent Round-5 messages
         for (i, slot) in c_shares.iter().enumerate() {
             if slot.is_none() {
                 return Err(format!(
@@ -917,7 +738,6 @@ where
             }
         }
 
-        // Compute c = sum(c_j)
         let c: C::Scalar = c_shares
             .iter()
             .map(|s| s.unwrap())
@@ -927,10 +747,6 @@ where
         Ok(MultOutput { c_i: self.c_i, c })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -949,7 +765,6 @@ mod tests {
     #[cfg(feature = "secp256k1")]
     type C = k256::Secp256k1;
 
-    /// Generate a test Paillier decryption key with 512-bit primes.
     #[cfg(feature = "secp256k1")]
     fn test_paillier_dk(rng: &mut impl CryptoRngCore) -> DecryptionKey {
         let p = Integer::generate_safe_prime(rng, 512);
@@ -957,7 +772,6 @@ mod tests {
         DecryptionKey::from_primes(p, q).expect("valid primes")
     }
 
-    /// Generate Ring-Pedersen auxiliary parameters for testing.
     #[cfg(feature = "secp256k1")]
     fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
         let p = Integer::generate_safe_prime(rng, 256);
@@ -974,7 +788,6 @@ mod tests {
         }
     }
 
-    /// Run the init sub-protocol for `n` parties and return party IDs and outputs.
     #[cfg(feature = "secp256k1")]
     fn run_init(
         n: usize,
@@ -1021,7 +834,6 @@ mod tests {
         (parties, init_outputs)
     }
 
-    /// Run the input sub-protocol for `n` parties with given shares.
     #[cfg(feature = "secp256k1")]
     fn run_input(
         parties: &[PartyId],
@@ -1071,7 +883,6 @@ mod tests {
         input_outputs
     }
 
-    /// Run the Paillier MtA protocol for `n` parties and return c_i shares.
     #[cfg(feature = "secp256k1")]
     fn run_paillier_mta(
         parties: &[PartyId],
@@ -1081,7 +892,6 @@ mod tests {
     ) -> Vec<<C as elliptic_curve::CurveArithmetic>::Scalar> {
         let n = parties.len();
 
-        // Generate Paillier keys + N_tilde params
         let mut dks: Vec<DecryptionKey> = Vec::with_capacity(n);
         let mut eks: BTreeMap<PartyId, EncryptionKey> = BTreeMap::new();
         let mut ntilde_map: BTreeMap<PartyId, NTildeParams> = BTreeMap::new();
@@ -1092,7 +902,6 @@ mod tests {
             ntilde_map.insert(pid, test_ntilde(rng));
         }
 
-        // Round 1
         let mut states: Vec<PaillierMtaState<C>> = Vec::with_capacity(n);
         let mut all_r1_msgs: Vec<Vec<(PartyId, MtaRound1Msg)>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1110,7 +919,6 @@ mod tests {
             all_r1_msgs.push(r1_msgs);
         }
 
-        // Round 2
         let mut all_r2_msgs: Vec<Vec<(PartyId, MtaRound2Msg<C>)>> = Vec::with_capacity(n);
         for i in 0..n {
             let mut msgs_for_i: Vec<MtaRound1Msg> = Vec::new();
@@ -1130,7 +938,6 @@ mod tests {
             all_r2_msgs.push(r2_msgs);
         }
 
-        // Finish
         let mut c_shares = Vec::with_capacity(n);
         for i in 0..n {
             let mut msgs_for_i: Vec<MtaRound2Msg<C>> = Vec::new();
@@ -1153,8 +960,6 @@ mod tests {
         c_shares
     }
 
-    /// Run the full mult sub-protocol (6 rounds, with checkDH):
-    /// init -> input(a) -> input(b) -> Paillier MtA -> mult, verify sum(c_i) == a*b.
     #[cfg(feature = "secp256k1")]
     fn run_mult(n: usize) {
         let mut rng = rand::thread_rng();
@@ -1163,22 +968,17 @@ mod tests {
         let elgamal_pk = init_outputs[0].elgamal_pk;
         let pk_shares = &init_outputs[0].elgamal_pk_shares;
 
-        // Generate random additive shares for a and b
         let a_shares: Vec<<C as elliptic_curve::CurveArithmetic>::Scalar> =
             (0..n).map(|_| C::random_scalar(&mut rng)).collect();
         let b_shares: Vec<<C as elliptic_curve::CurveArithmetic>::Scalar> =
             (0..n).map(|_| C::random_scalar(&mut rng)).collect();
 
-        // Run input for a
         let input_a_outputs = run_input(&parties, elgamal_pk, &a_shares, &mut rng);
 
-        // Run input for b
         let input_b_outputs = run_input(&parties, elgamal_pk, &b_shares, &mut rng);
 
-        // Run Paillier MtA
         let mta_c_shares = run_paillier_mta(&parties, &a_shares, &b_shares, &mut rng);
 
-        // --- Mult Round 1: each party creates state + sends (E_i, F_i) ---
         let mut mult_states: Vec<MultState<C>> = Vec::with_capacity(n);
         let mut r1_msgs: Vec<MultRound1Msg<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1197,7 +997,6 @@ mod tests {
             r1_msgs.push(msg);
         }
 
-        // --- Mult Round 2: verify R_prod, send (A_i, B_i) + R_EG ---
         let mut r2_msgs: Vec<MultRound2Msg<C>> = Vec::with_capacity(n);
         let mut r1_results: Vec<MultRound1Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1214,7 +1013,6 @@ mod tests {
             r1_results.push(r1_res);
         }
 
-        // Verify all parties agree on (E, F) aggregate
         for i in 1..n {
             assert_eq!(
                 r1_results[0].e_agg, r1_results[i].e_agg,
@@ -1226,7 +1024,6 @@ mod tests {
             );
         }
 
-        // --- Mult Round 3: verify R_EG, compute (cal_A, cal_B), checkDH Round 1 ---
         let mut r3_msgs: Vec<MultRound3Msg<C>> = Vec::with_capacity(n);
         let mut r2_results: Vec<MultRound2Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1243,7 +1040,6 @@ mod tests {
             r2_results.push(r2_res);
         }
 
-        // --- Mult Round 4: checkDH Round 2 (partial decryption W_i) ---
         let mut r4_msgs: Vec<MultRound4Msg<C>> = Vec::with_capacity(n);
         let mut r3_results: Vec<MultRound3Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1260,7 +1056,6 @@ mod tests {
             r3_results.push(r3_res);
         }
 
-        // --- Mult Round 5: checkDH verify, send c_i + R_DH ---
         let mut r5_msgs: Vec<MultRound5Msg<C>> = Vec::with_capacity(n);
         let mut r4_results: Vec<MultRound4Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1277,7 +1072,6 @@ mod tests {
             r4_results.push(r4_res);
         }
 
-        // --- Mult Round 6: verify R_DH, output c ---
         let mut mult_outputs: Vec<MultOutput<C>> = Vec::with_capacity(n);
         for i in 0..n {
             let others: Vec<_> = r5_msgs
@@ -1292,15 +1086,11 @@ mod tests {
             mult_outputs.push(output);
         }
 
-        // --- Verify correctness ---
-
-        // 1. All parties should agree on the product c
         let c0 = mult_outputs[0].c;
         for output in &mult_outputs[1..] {
             assert_eq!(output.c, c0, "all parties must agree on the product c");
         }
 
-        // 2. c should equal sum(a_i) * sum(b_i)
         let sum_a: <C as elliptic_curve::CurveArithmetic>::Scalar =
             a_shares.iter().copied().reduce(|acc, x| acc + x).unwrap();
         let sum_b: <C as elliptic_curve::CurveArithmetic>::Scalar =
@@ -1309,7 +1099,6 @@ mod tests {
 
         assert_eq!(c0, expected, "product c must equal sum(a_i) * sum(b_i)");
 
-        // 3. Each party's c_i share should be preserved
         for (i, output) in mult_outputs.iter().enumerate() {
             assert_eq!(
                 output.c_i, mta_c_shares[i],
@@ -1318,7 +1107,6 @@ mod tests {
             );
         }
 
-        // 4. Verify that sum(c_i) == c (consistency with the MtA output)
         let sum_ci: <C as elliptic_curve::CurveArithmetic>::Scalar = mult_outputs
             .iter()
             .map(|o| o.c_i)

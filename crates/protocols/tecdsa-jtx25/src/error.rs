@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #[derive(Debug, thiserror::Error)]
 pub enum Jtx25Error {
     #[error("CL operation failed: {0}")]

@@ -1,10 +1,8 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_cggmp20::{aux_info::AuxInfoMachine, security_level::Cggmp20SecurityParams};
 use tecdsa_core::Csprng;
 use tecdsa_paillier::backend::Integer;
 use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine};
 
-/// Test-only security level with small primes for fast tests.
 #[derive(Debug, Clone, Copy)]
 struct TestLevel;
 
@@ -34,7 +32,6 @@ fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
         .collect()
 }
 
-/// Run the aux-info state machines to completion using manual orchestration.
 fn run_auxinfo(n: u16, t: u16) -> Vec<tecdsa_cggmp20::key_share::AuxInfo> {
     let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
@@ -56,7 +53,6 @@ fn run_auxinfo(n: u16, t: u16) -> Vec<tecdsa_cggmp20::key_share::AuxInfo> {
             break;
         }
 
-        // Collect outgoing messages from every machine.
         let mut pending = Vec::new();
         for (pid, machine) in &mut machines {
             for msg in machine.drain_outgoing() {
@@ -64,7 +60,6 @@ fn run_auxinfo(n: u16, t: u16) -> Vec<tecdsa_cggmp20::key_share::AuxInfo> {
             }
         }
 
-        // Route each message to its recipients.
         for (from, outgoing) in pending {
             match outgoing.to {
                 Recipient::Party(to) => {
@@ -96,13 +91,11 @@ fn auxinfo_3_parties() {
 
     assert_eq!(results.len(), 3);
 
-    // All parties have 3 encryption keys and 3 pedersen params.
     for r in &results {
         assert_eq!(r.paillier_eks.len(), 3);
         assert_eq!(r.pedersen_params.len(), 3);
     }
 
-    // All parties agree on the set of EncryptionKeys (by comparing N values).
     for i in 0..3 {
         for j in 0..3 {
             assert_eq!(
@@ -113,7 +106,6 @@ fn auxinfo_3_parties() {
         }
     }
 
-    // All parties agree on the set of PedersenModParams.
     for i in 0..3 {
         for j in 0..3 {
             assert_eq!(
@@ -131,7 +123,6 @@ fn auxinfo_3_parties() {
         }
     }
 
-    // Each party's own dk can decrypt ciphertexts from its own ek.
     for r in &results {
         let ek = &r.paillier_eks[r.party_index as usize];
         let plaintext = Integer::from(42);
@@ -142,7 +133,6 @@ fn auxinfo_3_parties() {
         assert_eq!(decrypted, plaintext, "decryption must recover plaintext");
     }
 
-    // Each party's dk.encryption_key().n() == their own ek N.
     for r in &results {
         let own_ek = &r.paillier_eks[r.party_index as usize];
         assert_eq!(
@@ -152,7 +142,6 @@ fn auxinfo_3_parties() {
         );
     }
 
-    // Party indices are correct (0-based).
     for (i, r) in results.iter().enumerate() {
         assert_eq!(r.party_index, i as u16, "party_index must be 0-based");
     }
@@ -169,7 +158,6 @@ fn auxinfo_2_parties() {
         assert_eq!(r.pedersen_params.len(), 2);
     }
 
-    // Both parties agree on the encryption keys.
     for i in 0..2 {
         assert_eq!(
             results[0].paillier_eks[i].n().to_bytes_msf(),

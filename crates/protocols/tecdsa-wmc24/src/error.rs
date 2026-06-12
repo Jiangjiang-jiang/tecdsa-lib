@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #[derive(Debug, thiserror::Error)]
 pub enum Wmc24Error {
     #[error("CL operation failed: {0}")]

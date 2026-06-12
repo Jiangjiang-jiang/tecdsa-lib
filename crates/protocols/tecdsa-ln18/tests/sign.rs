@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! End-to-end tests for the LN18 signing protocol.
-//!
-//! Tests both the split (presign + online sign) and the legacy combined flow.
-//! Keygen now produces Shamir shares via Feldman VSS DKG. For signing, a
-//! per-session setup (Init + Input(w_i) + Paillier) is performed with
-//! Lagrange-weighted shares for the signing subset.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{FieldBytes, PrimeField};
@@ -34,7 +26,6 @@ use tecdsa_protocol::{
 
 type C = k256::Secp256k1;
 
-/// Generate a test Paillier decryption key with 512-bit primes.
 fn test_paillier_dk(rng: &mut impl CryptoRngCore) -> DecryptionKey {
     let p = Integer::generate_safe_prime(rng, 512);
     let q = Integer::generate_safe_prime(rng, 512);
@@ -58,7 +49,6 @@ fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
         .collect()
 }
 
-/// Run the LN18 keygen state machines to completion.
 fn run_keygen(n: u16, t: u16) -> Vec<Ln18KeyShare<C>> {
     let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
@@ -117,7 +107,6 @@ fn run_keygen(n: u16, t: u16) -> Vec<Ln18KeyShare<C>> {
         .collect()
 }
 
-/// Run the init sub-protocol directly to get InitOutput for sign params.
 fn run_init_direct(parties: &[PartyId], rng: &mut impl CryptoRngCore) -> Vec<InitOutput<C>> {
     let n = parties.len();
 
@@ -160,7 +149,6 @@ fn run_init_direct(parties: &[PartyId], rng: &mut impl CryptoRngCore) -> Vec<Ini
     init_outputs
 }
 
-/// Generate Ring-Pedersen auxiliary parameters $(N', h_1, h_2)$ for testing.
 fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
     let p = Integer::generate_safe_prime(rng, 256);
     let q = Integer::generate_safe_prime(rng, 256);
@@ -178,8 +166,6 @@ fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
     }
 }
 
-/// Run the input sub-protocol for weighted x_i shares to produce stored InputOutput
-/// that will be reused in signing.
 fn run_input_for_x(
     parties: &[PartyId],
     elgamal_pk: <C as elliptic_curve::CurveArithmetic>::ProjectivePoint,
@@ -188,7 +174,6 @@ fn run_input_for_x(
 ) -> Vec<InputOutput<C>> {
     let n = parties.len();
 
-    // Round 1: commitments
     let mut input_states: Vec<InputState<C>> = Vec::with_capacity(n);
     let mut input_r1_msgs: Vec<InputRound1Msg> = Vec::with_capacity(n);
     for i in 0..n {
@@ -198,7 +183,6 @@ fn run_input_for_x(
         input_r1_msgs.push(msg);
     }
 
-    // Round 2: decommitments
     let mut input_r2_msgs: Vec<InputRound2Msg<C>> = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = input_r1_msgs
@@ -213,7 +197,6 @@ fn run_input_for_x(
         input_r2_msgs.push(r2);
     }
 
-    // Finish: verify decommitments and proofs
     let mut outputs = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = input_r2_msgs
@@ -230,7 +213,6 @@ fn run_input_for_x(
     outputs
 }
 
-/// Hash a message to a scalar for ECDSA signing.
 fn hash_to_scalar(msg: &[u8]) -> <C as elliptic_curve::CurveArithmetic>::Scalar {
     let hash = Sha256::digest(msg);
     let mut bytes = FieldBytes::<C>::default();
@@ -240,7 +222,6 @@ fn hash_to_scalar(msg: &[u8]) -> <C as elliptic_curve::CurveArithmetic>::Scalar 
         .expect("SHA-256 output should be a valid scalar for secp256k1")
 }
 
-/// Generate Paillier keys and NTilde params for testing.
 fn gen_paillier_and_ntilde(
     parties: &[PartyId],
     rng: &mut impl CryptoRngCore,
@@ -261,9 +242,6 @@ fn gen_paillier_and_ntilde(
     (dks, eks, ntilde_map)
 }
 
-/// Build the per-session signing setup from keygen shares for a signer subset.
-///
-/// This encapsulates: Lagrange weighting + Init + Input(w_i) + Paillier.
 fn build_signing_setup(
     key_shares: &[Ln18KeyShare<C>],
     signers: &[PartyId],
@@ -272,10 +250,6 @@ fn build_signing_setup(
     tecdsa_ln18::sign::build_signing_setup::<C>(key_shares, signers, rng)
         .expect("LN18 signing setup")
 }
-
-// ===========================================================================
-// Presign-only tests
-// ===========================================================================
 
 #[test]
 fn presign_2of2() {
@@ -289,13 +263,11 @@ fn presign_2of2() {
     let presigs = ln18_presign_parallel(&presign_params, &parties, &mut rng);
     assert_eq!(presigs.len(), n as usize);
 
-    // All parties agree on R and r
     for i in 1..presigs.len() {
         assert_eq!(presigs[0].R, presigs[i].R, "all parties must agree on R");
         assert_eq!(presigs[0].r, presigs[i].r, "all parties must agree on r");
     }
 
-    // r must not be zero
     assert!(!bool::from(presigs[0].r.is_zero()), "r must not be zero");
 }
 
@@ -318,10 +290,6 @@ fn presign_3of3() {
     }
 }
 
-// ===========================================================================
-// Online sign tests (presign + online sign split)
-// ===========================================================================
-
 #[test]
 fn online_sign_2of2() {
     let n = 2u16;
@@ -331,10 +299,8 @@ fn online_sign_2of2() {
     let key_shares = run_keygen(n, n);
     let presign_params = build_signing_setup(&key_shares, &parties, &mut rng);
 
-    // Presign (offline)
     let presigs = ln18_presign_parallel(&presign_params, &parties, &mut rng);
 
-    // Build online sign params
     let online_params: Vec<Ln18LegacyOnlineSignParams<C>> = presign_params
         .iter()
         .zip(presigs)
@@ -346,7 +312,6 @@ fn online_sign_2of2() {
         })
         .collect();
 
-    // Online sign
     let message = b"hello";
     let m = hash_to_scalar(message);
     let data_to_sign = DataToSign::<C>::from_digest(m);
@@ -354,7 +319,6 @@ fn online_sign_2of2() {
     let signatures = ln18_online_sign_parallel(&online_params, &parties, &m, &mut rng);
     assert_eq!(signatures.len(), n as usize);
 
-    // All parties agree
     for i in 1..signatures.len() {
         assert_eq!(
             signatures[0].r, signatures[i].r,
@@ -366,7 +330,6 @@ fn online_sign_2of2() {
         );
     }
 
-    // Verify ECDSA
     let sig = &signatures[0];
     let pk = key_shares[0].public_key;
     verify_ecdsa::<C>(sig, &pk, &data_to_sign).expect("ECDSA signature verification must succeed");
@@ -411,10 +374,6 @@ fn online_sign_3of3() {
     let pk = key_shares[0].public_key;
     verify_ecdsa::<C>(sig, &pk, &data_to_sign).expect("ECDSA signature verification must succeed");
 }
-
-// ===========================================================================
-// Legacy combined sign tests (backward compatibility)
-// ===========================================================================
 
 #[test]
 fn sign_2of2_verifies() {
@@ -475,10 +434,6 @@ fn sign_3of3_verifies() {
     verify_ecdsa::<C>(sig, &pk, &data_to_sign).expect("ECDSA signature verification must succeed");
 }
 
-// ===========================================================================
-// FullSign 8-round tests (interleaved mult1/mult2, message known from start)
-// ===========================================================================
-
 #[test]
 fn full_sign_8rounds_2of2() {
     use tecdsa_ln18::sign::ln18_full_sign_parallel;
@@ -497,7 +452,6 @@ fn full_sign_8rounds_2of2() {
     let signatures = ln18_full_sign_parallel(&sign_params, &parties, &m, &mut rng);
     assert_eq!(signatures.len(), n as usize);
 
-    // All parties agree
     for i in 1..signatures.len() {
         assert_eq!(
             signatures[0].r, signatures[i].r,
@@ -509,7 +463,6 @@ fn full_sign_8rounds_2of2() {
         );
     }
 
-    // Verify ECDSA
     let sig = &signatures[0];
     let pk = key_shares[0].public_key;
     verify_ecdsa::<C>(sig, &pk, &data_to_sign)
@@ -545,10 +498,6 @@ fn full_sign_8rounds_3of3() {
     verify_ecdsa::<C>(sig, &pk, &data_to_sign)
         .expect("ECDSA signature verification must succeed (full sign 8-round 3of3)");
 }
-
-// ===========================================================================
-// OT-based sign tests (behind mta-ot feature)
-// ===========================================================================
 
 #[cfg(feature = "mta-ot")]
 mod ot_sign_tests {
@@ -591,7 +540,6 @@ mod ot_sign_tests {
             .collect()
     }
 
-    /// Build OT signing setup from keygen shares for a signer subset.
     fn build_ot_signing_setup(
         key_shares: &[Ln18KeyShare<C>],
         signers: &[PartyId],
@@ -611,7 +559,6 @@ mod ot_sign_tests {
         build_ot_presign_params(key_shares, &init_outputs, &stored_x_inputs, signers)
     }
 
-    // Presign-only OT test
     #[test]
     fn presign_ot_2of2() {
         let n = 2u16;
@@ -630,7 +577,6 @@ mod ot_sign_tests {
         }
     }
 
-    // Online sign OT test (split)
     #[test]
     fn online_sign_ot_2of2() {
         let n = 2u16;
@@ -667,7 +613,6 @@ mod ot_sign_tests {
             .expect("ECDSA signature verification must succeed with OT MtA backend");
     }
 
-    // Legacy combined OT sign tests
     #[test]
     fn sign_ot_2of2_verifies() {
         let n = 2u16;
@@ -729,7 +674,6 @@ mod ot_sign_tests {
             .expect("ECDSA signature verification must succeed with OT MtA backend");
     }
 
-    // OT full-sign 8-round tests
     #[test]
     fn full_sign_ot_8rounds_2of2() {
         use tecdsa_ln18::sign::ln18_full_sign_parallel_ot;
@@ -796,11 +740,6 @@ mod ot_sign_tests {
     }
 }
 
-// ===========================================================================
-// Orchestrator-based StateMachine tests
-// ===========================================================================
-
-/// Run a set of StateMachines through the Orchestrator to completion.
 fn run_orchestrated<M>(machines: Vec<(PartyId, M)>, max_rounds: u16) -> Vec<M::Output>
 where
     M: tecdsa_protocol::StateMachine,
@@ -832,13 +771,11 @@ fn state_machine_sign_2plus6_2of2_paillier_verifies() {
     let key_shares = run_keygen(n, n);
     let presign_params = build_signing_setup(&key_shares, &parties, &mut rng);
 
-    // Shared MtA provider (Paillier backend)
     let mta = Arc::new(Ln18MtaHybrid::<C>::new(
         parties.clone(),
         Ln18MtaBackend::Paillier,
     ));
 
-    // Build offline machines
     let offline_machines: Vec<(PartyId, Ln18OfflineSignMachine<C>)> = presign_params
         .into_iter()
         .enumerate()
@@ -855,10 +792,8 @@ fn state_machine_sign_2plus6_2of2_paillier_verifies() {
         })
         .collect();
 
-    // Run offline phase through Orchestrator (2 rounds)
     let offline_states = run_orchestrated(offline_machines, 2);
 
-    // Build online machines from offline states
     let message = b"orchestrated sign test paillier";
     let m = hash_to_scalar(message);
     let data_to_sign = tecdsa_protocol::ecdsa::DataToSign::<C>::from_digest(m);
@@ -875,16 +810,9 @@ fn state_machine_sign_2plus6_2of2_paillier_verifies() {
         })
         .collect();
 
-    // Run online phase through Orchestrator. The distributed MtA model
-    // requires extra iterations for tau/beta MtA resolution phases:
-    // - 2 extra for tau MtA (phase 2 + phase 3 across parties)
-    // - 2 extra for beta MtA (same pattern)
-    // - 6 base rounds for the protocol
-    // Use 15 to provide comfortable headroom.
     let signatures = run_orchestrated(online_machines, 15);
     assert_eq!(signatures.len(), n as usize);
 
-    // All parties agree on r and s
     for i in 1..signatures.len() {
         assert_eq!(
             signatures[0].r, signatures[i].r,
@@ -896,7 +824,6 @@ fn state_machine_sign_2plus6_2of2_paillier_verifies() {
         );
     }
 
-    // Verify ECDSA
     let sig = &signatures[0];
     let pk = key_shares[0].public_key;
     tecdsa_protocol::ecdsa::verify_ecdsa::<C>(sig, &pk, &data_to_sign)
@@ -920,10 +847,8 @@ fn state_machine_sign_2plus6_2of2_ot_verifies() {
     let key_shares = run_keygen(n, n);
     let presign_params = build_signing_setup(&key_shares, &parties, &mut rng);
 
-    // Shared MtA provider (OT backend)
     let mta = Arc::new(Ln18MtaHybrid::<C>::new(parties.clone(), Ln18MtaBackend::Ot));
 
-    // Build offline machines
     let offline_machines: Vec<(PartyId, Ln18OfflineSignMachine<C>)> = presign_params
         .into_iter()
         .enumerate()
@@ -940,10 +865,8 @@ fn state_machine_sign_2plus6_2of2_ot_verifies() {
         })
         .collect();
 
-    // Run offline phase through Orchestrator (2 rounds)
     let offline_states = run_orchestrated(offline_machines, 2);
 
-    // Build online machines from offline states
     let message = b"orchestrated sign test OT";
     let m = hash_to_scalar(message);
     let data_to_sign = tecdsa_protocol::ecdsa::DataToSign::<C>::from_digest(m);
@@ -960,11 +883,9 @@ fn state_machine_sign_2plus6_2of2_ot_verifies() {
         })
         .collect();
 
-    // Run online phase through Orchestrator (6 rounds + 1 for beta MtA resolution)
     let signatures = run_orchestrated(online_machines, 7);
     assert_eq!(signatures.len(), n as usize);
 
-    // All parties agree on r and s
     for i in 1..signatures.len() {
         assert_eq!(
             signatures[0].r, signatures[i].r,
@@ -976,7 +897,6 @@ fn state_machine_sign_2plus6_2of2_ot_verifies() {
         );
     }
 
-    // Verify ECDSA
     let sig = &signatures[0];
     let pk = key_shares[0].public_key;
     tecdsa_protocol::ecdsa::verify_ecdsa::<C>(sig, &pk, &data_to_sign)
@@ -1016,7 +936,6 @@ fn offline_sign_rejects_duplicate_round1_message() {
         })
         .collect();
 
-    // Drain party 1's Round-1 message
     let party1_msgs = machines[0].drain_outgoing();
     assert!(
         !party1_msgs.is_empty(),
@@ -1025,12 +944,10 @@ fn offline_sign_rejects_duplicate_round1_message() {
 
     let r1_msg = party1_msgs[0].msg.clone();
 
-    // Deliver party 1's Round-1 message to party 2 -- first time should succeed
     machines[1]
         .handle(PartyId(1), r1_msg.clone())
         .expect("first delivery should succeed");
 
-    // Deliver it again -- should be rejected as duplicate
     let result = machines[1].handle(PartyId(1), r1_msg);
     assert!(
         result.is_err(),
@@ -1090,7 +1007,6 @@ fn offline_sign_rejects_out_of_round_message() {
         Ln18MtaBackend::Paillier,
     ));
 
-    // Build offline machines; drain Round 1 messages but do NOT deliver them.
     let params0 = Ln18OfflineSignParams {
         base: presign_params.into_iter().next().unwrap(),
         signer_parties: parties.clone(),
@@ -1098,9 +1014,8 @@ fn offline_sign_rejects_out_of_round_message() {
     };
     let mut machine0 =
         Ln18OfflineSignMachine::<C>::new(PartyId(1), parties.clone(), params0, &mut rng);
-    let _ = machine0.drain_outgoing(); // consume the initial Round-1 broadcast
+    let _ = machine0.drain_outgoing();
 
-    // Construct a synthetic Round2Input message to send to a machine in Round 1.
     use tecdsa_ln18::sign::msg::SerInputRound2;
     let dummy_r2 = SerInputRound2::<C> {
         from: 2,
@@ -1113,7 +1028,6 @@ fn offline_sign_rejects_out_of_round_message() {
         nonce: [0u8; 32],
     };
 
-    // Machine is in Round 1. Sending a Round 2 message should fail.
     let wrong_round_msg = Ln18OfflineSignMsg::Round2Input {
         k: dummy_r2.clone(),
         rho: dummy_r2,
@@ -1126,8 +1040,6 @@ fn offline_sign_rejects_out_of_round_message() {
     );
 }
 
-/// t-of-n test: DKG produces Shamir shares for n=3, t=2, then 2
-/// signers convert to additive via Lagrange and sign.
 #[test]
 fn state_machine_sign_2plus6_2of3_paillier_verifies() {
     use std::sync::Arc;
@@ -1142,11 +1054,9 @@ fn state_machine_sign_2plus6_2of3_paillier_verifies() {
     let mut rng = Csprng::new();
     let signers: Vec<PartyId> = vec![PartyId(1), PartyId(2)];
 
-    // --- DKG: standard Feldman VSS produces Shamir shares ---
     let key_shares = run_keygen(n, t);
     let public_key = key_shares[0].public_key;
 
-    // --- Per-session setup for signer subset {P1, P2} ---
     let presign_params = build_signing_setup(&key_shares, &signers, &mut rng);
 
     let mta = Arc::new(Ln18MtaHybrid::<C>::new(
@@ -1157,7 +1067,6 @@ fn state_machine_sign_2plus6_2of3_paillier_verifies() {
     let m = hash_to_scalar(message);
     let data_to_sign = DataToSign::<C>::from_digest(m);
 
-    // Offline (2 rounds)
     let offline_machines: Vec<_> = presign_params
         .into_iter()
         .zip(signers.iter())
@@ -1175,7 +1084,6 @@ fn state_machine_sign_2plus6_2of3_paillier_verifies() {
         .collect();
     let offline_states = run_orchestrated(offline_machines, 4);
 
-    // Online (6 rounds)
     let online_machines: Vec<_> = offline_states
         .into_iter()
         .map(|state| {
@@ -1195,7 +1103,6 @@ fn state_machine_sign_2plus6_2of3_paillier_verifies() {
     let signatures = run_orchestrated(online_machines, 15);
     assert_eq!(signatures.len(), t as usize);
 
-    // Verify ECDSA with the JOINT public key from DKG
     tecdsa_protocol::ecdsa::verify_ecdsa::<C>(&signatures[0], &public_key, &data_to_sign)
         .expect("LN18 2-of-3 threshold signature must verify");
 }

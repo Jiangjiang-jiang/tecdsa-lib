@@ -1,17 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMY23 threshold key generation protocol (DRG-based, paper-compliant).
-//!
-//! Implements TKeygen from WMY23 (Wang, Mei, Yu. "Real Threshold ECDSA."
-//! NDSS 2023, Figure 3) using the DRG primitive.
-//!
-//! ## Protocol Rounds
-//!
-//! 1. **Commitment:** CL keygen + R_Key + DRG.Gen → broadcast commitment.
-//! 2. **Decommit + shares:** decommit (Pedersen commitments, CL pk, R_Key
-//!    proof, CL ciphertext, R_Enc-PC proof) + P2P Pedersen VSS shares.
-//! 3. **Combine:** DRG.Comb + RevealExp → broadcast combine output.
-//! 4. **Finalize:** CombVf + ExpVf → compute key share.
-
 pub mod msg;
 pub mod rounds;
 
@@ -26,21 +12,16 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
 use crate::key_share::Wmy23KeyShare;
 
-/// WMY23 key generation state machine (DRG-based).
 pub struct Wmy23KeygenMachine {
     my_id: PartyId,
     all_parties: Vec<PartyId>,
     _threshold: u16,
     setup: tecdsa_class_group::cl::ClSetup,
     r1_state: Option<KeygenR1State>,
-    // Round 1: collected commitments
     r1_bcasts: Vec<Option<KeygenR1Bcast>>,
-    // Round 2: collected decommitments and P2P shares
     r2_bcasts: Vec<Option<KeygenR2Bcast>>,
     r2_shares: Vec<Option<(k256::Scalar, k256::Scalar)>>,
-    // Round 2 verification results (stored for Round 3)
     r2_verified: Vec<Option<VerifiedR2>>,
-    // Round 3: collected combine broadcasts
     r3_bcasts: Vec<Option<KeygenR3Bcast>>,
     r3_state: Option<KeygenR3State>,
     outgoing: Vec<Outgoing<Wmy23KeygenMsg>>,
@@ -50,17 +31,6 @@ pub struct Wmy23KeygenMachine {
 }
 
 impl Wmy23KeygenMachine {
-    /// Create a new WMY23 keygen state machine from a pre-built `ClSetup`.
-    ///
-    /// This avoids recreating the expensive CL setup per party,
-    /// which is useful in benchmarks where all parties share the same
-    /// discriminant parameters.
-    ///
-    /// The `cl_setup_seed` and `use_128bit_security` parameters are still
-    /// required because they are stored in the key share for later
-    /// reconstruction.
-    ///
-    /// See [`Self::new`] for the full documentation.
     pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -69,9 +39,6 @@ impl Wmy23KeygenMachine {
         use_128bit_security: bool,
         mut setup: tecdsa_class_group::cl::ClSetup,
     ) -> tecdsa_core::Result<Self> {
-        // Generate the per-party long-term CL keypair, then delegate. Benches time
-        // this (n,t)-independent keygen separately (see `setup_benchmarks`) and call
-        // `new_with_keypair` so DKG measures only the interactive sharing.
         let (cl_sk, cl_pk) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
@@ -87,8 +54,6 @@ impl Wmy23KeygenMachine {
         )
     }
 
-    /// Like [`new_with_setup`](Self::new_with_setup) but reuses a pre-generated
-    /// per-party CL keypair instead of generating it inside the constructor.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_keypair(
         my_id: PartyId,
@@ -149,10 +114,6 @@ impl Wmy23KeygenMachine {
         })
     }
 
-    /// Create a new WMY23 keygen state machine.
-    ///
-    /// Runs keygen Round 1 (CL keygen + R_Key + DRG.Gen + commitment) and
-    /// queues the commitment broadcast.
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -200,7 +161,6 @@ impl Wmy23KeygenMachine {
         self.r3_bcasts.iter().all(|b| b.is_some())
     }
 
-    /// Transition from Round 1 to Round 2: emit decommit broadcast + P2P shares.
     fn transition_to_r2(&mut self) -> tecdsa_core::Result<()> {
         let r1_state = self
             .r1_state
@@ -210,26 +170,22 @@ impl Wmy23KeygenMachine {
         let r2_bcast = rounds::keygen_round2_bcast(r1_state, &self.setup);
         let my_idx = self.my_idx();
 
-        // Store own R2 broadcast and own share
         self.r2_bcasts[my_idx] = Some(r2_bcast.clone());
         let own_share = rounds::keygen_round2_share(r1_state, my_idx);
         self.r2_shares[my_idx] = Some(own_share);
 
-        // Store own verified R2 data
         let own_coms = r1_state.drg_gen.commitments.clone();
         self.r2_verified[my_idx] = Some(VerifiedR2 {
             commitments: own_coms,
             cl_pk_bytes: r1_state.cl_pk_bytes.clone(),
         });
 
-        // Emit R2 decommit as broadcast
         let payload = rounds::serialize_r2(&r2_bcast);
         self.outgoing.push(Outgoing {
             to: tecdsa_protocol::Recipient::Broadcast,
             msg: Wmy23KeygenMsg::Round2(payload),
         });
 
-        // Emit P2P Pedersen VSS shares
         for party in self.all_parties.clone() {
             if party == self.my_id {
                 continue;
@@ -254,7 +210,6 @@ impl Wmy23KeygenMachine {
         Ok(())
     }
 
-    /// Verify R2 broadcast from another party and store result.
     fn verify_and_store_r2(&mut self, from_idx: usize) -> tecdsa_core::Result<()> {
         let r1_bcast = self.r1_bcasts[from_idx]
             .as_ref()
@@ -281,12 +236,10 @@ impl Wmy23KeygenMachine {
         Ok(())
     }
 
-    /// Transition from Round 2 to Round 3: verify all R2 data, run Comb + RevealExp.
     fn transition_to_r3(&mut self) -> tecdsa_core::Result<()> {
         let n = self.all_parties.len();
         let my_idx = self.my_idx();
 
-        // Verify all other parties' R2 broadcasts
         for j in 0..n {
             if j == my_idx {
                 continue;
@@ -299,7 +252,6 @@ impl Wmy23KeygenMachine {
             .as_ref()
             .ok_or_else(|| TecdsaError::Other("r1_state missing".into()))?;
 
-        // Collect shares and commitments for DRG.Comb
         let received_shares: Vec<(u16, PedersenVssShare)> = (0..n)
             .map(|j| {
                 let sender_index = (j + 1) as u16;
@@ -324,7 +276,6 @@ impl Wmy23KeygenMachine {
             })
             .collect();
 
-        // Run DRG.Comb + RevealExp
         let (r3_state, r3_bcast) = rounds::keygen_round3_with_shares(
             &mut self.setup,
             &r1_state.cl_pk_bytes,
@@ -334,11 +285,9 @@ impl Wmy23KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("keygen_round3 failed: {e}")))?;
 
-        // Store own R3
         self.r3_bcasts[my_idx] = Some(r3_bcast.clone());
         self.r3_state = Some(r3_state);
 
-        // Emit R3 combine as broadcast
         let payload = rounds::serialize_r3(&r3_bcast);
         self.outgoing.push(Outgoing {
             to: tecdsa_protocol::Recipient::Broadcast,
@@ -349,11 +298,9 @@ impl Wmy23KeygenMachine {
         Ok(())
     }
 
-    /// Finalize: verify all R3 broadcasts, compute key share.
     fn finalize_keygen(&mut self) -> tecdsa_core::Result<()> {
         let n = self.all_parties.len();
 
-        // Collect all_commitments for CombVf
         let all_commitments: Vec<(u16, Vec<k256::ProjectivePoint>)> = (0..n)
             .map(|j| {
                 let sender_index = (j + 1) as u16;
@@ -362,7 +309,6 @@ impl Wmy23KeygenMachine {
             })
             .collect();
 
-        // Verify all other parties' R3 broadcasts + collect X points
         let mut x_points = Vec::with_capacity(n);
         for j in 0..n {
             let r3_bcast = self.r3_bcasts[j]
@@ -391,7 +337,6 @@ impl Wmy23KeygenMachine {
             }
         }
 
-        // Compute final key share
         let r1_state = self
             .r1_state
             .take()

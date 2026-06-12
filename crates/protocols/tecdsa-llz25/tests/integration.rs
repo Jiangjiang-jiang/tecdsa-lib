@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! LLZ25 integration tests.
-//!
-//! Paper: Lyu, Li, Zhou, Deng. "Threshold ECDSA in Two Rounds." CCS 2025.
-//!
-//! Tests the full protocol flow: keygen -> presign -> sign -> verify.
-
 #![allow(non_snake_case)]
 
 use tecdsa_class_group::cl::ClSetup;
@@ -17,39 +10,31 @@ use tecdsa_llz25::{
 const SEED: &str = "12345";
 const MSG: &[u8] = b"Hello, LLZ25 threshold ECDSA!";
 
-/// Run the full LLZ25 protocol: keygen + presign + sign + verify.
-///
-/// Parameters: n=5, t=3 (reconstruction threshold; 3 parties needed to sign), insecure CL params (p=7).
 #[test]
 fn test_llz25_full_sign_5_of_3() {
     let n = 5u16;
-    let t = 3u16; // reconstruction threshold: 3 parties needed to sign
+    let t = 3u16;
 
-    // -- Setup --
     let mut setup = ClSetup::new_secp256k1(SEED).expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
 
-    // -- KeyGen (trusted dealer) --
     let (key_shares, aux_infos) =
         keygen_with_dealer(n, t, &mut setup, &pk_crs, SEED, false).expect("keygen");
 
     assert_eq!(key_shares.len(), n as usize);
     assert_eq!(aux_infos.len(), n as usize);
 
-    // All parties should have the same public key.
     let public_key = key_shares[0].public_key;
     for ks in &key_shares {
         assert_eq!(ks.public_key, public_key, "public key mismatch");
     }
 
-    // -- Select quorum: parties 1, 3, 5 (3 parties for t=3) --
-    let quorum_party_indices: Vec<usize> = vec![0, 2, 4]; // 0-based indices into key_shares
+    let quorum_party_indices: Vec<usize> = vec![0, 2, 4];
     let quorum_indices: Vec<u16> = quorum_party_indices
         .iter()
         .map(|&i| key_shares[i].party_index)
         .collect();
 
-    // -- Presign Round 1 --
     let mut presign_messages = Vec::new();
     let mut presign_states = Vec::new();
 
@@ -59,20 +44,14 @@ fn test_llz25_full_sign_5_of_3() {
         presign_states.push(ps);
     }
 
-    // -- Verify presign messages --
     for pm in &presign_messages {
         let valid = verify_presign_message(&setup, &pk_crs, pm).expect("verify presign");
         assert!(valid, "presign message ZK proof verification failed");
     }
 
-    // -- Collect pe_x ciphertexts for the quorum parties --
-    // pe_x_list[j] is the pe_x for quorum party at position j.
     let pe_x_list: Vec<_> = quorum_party_indices
         .iter()
         .map(|&i| {
-            // Clone the ciphertext by getting its components and reconstructing.
-            // Since ClHsmqkCiphertext doesn't impl Clone, we need to work with
-            // the raw components.
             let (c1, c2) = setup
                 .ct_components(&aux_infos[i].pe_x)
                 .expect("ct_components");
@@ -82,12 +61,10 @@ fn test_llz25_full_sign_5_of_3() {
         })
         .collect();
 
-    // -- Sign (Round 2) --
     let mut partials = Vec::new();
     let mut r_values = Vec::new();
 
     for (pos, &qi) in quorum_party_indices.iter().enumerate() {
-        // Offline (presign): NIM decode into message-independent coefficients.
         let coeffs = compute_presign_coefficients(
             &mut setup,
             &key_shares[qi],
@@ -99,7 +76,6 @@ fn test_llz25_full_sign_5_of_3() {
         )
         .expect("compute_presign_coefficients");
 
-        // Online (sign): cheap partial signature, no class-group operations.
         let (partial, r) =
             compute_partial_signature(&key_shares[qi].public_key, &presign_messages, &coeffs, MSG);
 
@@ -107,23 +83,20 @@ fn test_llz25_full_sign_5_of_3() {
         r_values.push(r);
     }
 
-    // All parties should compute the same r value.
     for rv in &r_values {
         assert_eq!(*rv, r_values[0], "r value mismatch between parties");
     }
 
-    // -- Combine --
     let sig =
         combine_signatures(&partials, &r_values[0], &public_key, MSG).expect("combine_signatures");
 
     println!("LLZ25 5-of-3 sign OK: r={:?}", sig.r);
 }
 
-/// Test with the minimum quorum size (t=3, 3-of-5).
 #[test]
 fn test_llz25_minimum_quorum() {
     let n = 5u16;
-    let t = 3u16; // reconstruction threshold: 3 parties needed to sign
+    let t = 3u16;
 
     let mut setup = ClSetup::new_secp256k1("67890").expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
@@ -131,7 +104,6 @@ fn test_llz25_minimum_quorum() {
     let (key_shares, aux_infos) =
         keygen_with_dealer(n, t, &mut setup, &pk_crs, "67890", false).expect("keygen");
 
-    // Use parties 2, 3, 4 (indices 1, 2, 3).
     let quorum_party_indices: Vec<usize> = vec![1, 2, 3];
     let quorum_indices: Vec<u16> = quorum_party_indices
         .iter()
@@ -185,11 +157,10 @@ fn test_llz25_minimum_quorum() {
     println!("LLZ25 minimum quorum (3-of-5) OK: r={:?}", sig.r);
 }
 
-/// Test with all n parties signing.
 #[test]
 fn test_llz25_all_parties_sign() {
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2 parties needed to sign
+    let t = 2u16;
 
     let mut setup = ClSetup::new_secp256k1("11111").expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
@@ -197,7 +168,6 @@ fn test_llz25_all_parties_sign() {
     let (key_shares, aux_infos) =
         keygen_with_dealer(n, t, &mut setup, &pk_crs, "11111", false).expect("keygen");
 
-    // All parties sign.
     let quorum_party_indices: Vec<usize> = (0..n as usize).collect();
     let quorum_indices: Vec<u16> = quorum_party_indices
         .iter()
@@ -251,11 +221,10 @@ fn test_llz25_all_parties_sign() {
     println!("LLZ25 3-of-3 sign OK: r={:?}", sig.r);
 }
 
-/// Verify that standard ECDSA verification works with the LLZ25 signature.
 #[test]
 fn test_llz25_ecdsa_verify() {
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2 parties needed to sign
+    let t = 2u16;
 
     let mut setup = ClSetup::new_secp256k1("22222").expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
@@ -313,7 +282,6 @@ fn test_llz25_ecdsa_verify() {
     let sig = combine_signatures(&partials, &r_values[0], &key_shares[0].public_key, msg)
         .expect("combine_signatures");
 
-    // Double-check with standalone verify.
     let m = tecdsa_llz25::sign::hash_sig(msg);
     let data = tecdsa_protocol::ecdsa::DataToSign::from_digest(m);
     tecdsa_protocol::ecdsa::verify_ecdsa::<k256::Secp256k1>(&sig, &key_shares[0].public_key, &data)

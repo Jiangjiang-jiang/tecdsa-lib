@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Chaum-Pedersen DLEQ proof for eVRF.
-//!
-//! Proves `log_G(PK) = log_H(Y) = sk` without revealing `sk`, where
-//! `H = hash_to_curve(input)` and `Y = sk * H`.
-
 use elliptic_curve::{
     group::Curve as _, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -14,7 +8,6 @@ use tecdsa_curve::{conv, TecdsaCurve};
 
 use crate::{hash_to_curve, EvrfCurve, EvrfOutput, EvrfPublicKey, EvrfSecretKey};
 
-/// Chaum-Pedersen DLEQ proof that `log_G(PK) = log_H(Y) = sk`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvrfProof<C: TecdsaCurve>
 where
@@ -29,7 +22,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Produce a DLEQ proof for a VRF evaluation.
     pub fn prove(
         sk: &EvrfSecretKey<C>,
         input: &[u8],
@@ -40,7 +32,6 @@ where
         Self::prove_with_h(sk, &h_affine, output, rng)
     }
 
-    /// Produce a DLEQ proof with a pre-computed hash point.
     pub(crate) fn prove_with_h(
         sk: &EvrfSecretKey<C>,
         h_affine: &C::AffinePoint,
@@ -64,7 +55,6 @@ where
         }
     }
 
-    /// Verify the DLEQ proof.
     #[must_use]
     pub fn verify(&self, pk: &EvrfPublicKey<C>, input: &[u8], output: &EvrfOutput<C>) -> bool {
         use elliptic_curve::subtle::ConstantTimeEq;
@@ -93,9 +83,6 @@ where
     }
 }
 
-/// Fiat-Shamir challenge for the Chaum-Pedersen DLEQ proof.
-///
-/// `e = H("tecdsa-evrf-dleq-challenge:" || G || PK || H || Y || A || B)`
 fn dleq_challenge<C>(
     pk: &C::AffinePoint,
     h_pt: &C::AffinePoint,

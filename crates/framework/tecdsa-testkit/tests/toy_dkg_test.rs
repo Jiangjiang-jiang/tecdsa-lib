@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_protocol::PartyId;
 use tecdsa_testkit::{toy_dkg::ToyDkgMachine, Orchestrator};
 
@@ -18,6 +17,5 @@ fn toy_dkg_3_of_3_produces_agreed_public_key() {
         .map(|r| r.as_ref().unwrap().clone())
         .collect();
 
-    // All parties must agree on the same combined public key.
     assert!(public_keys.windows(2).all(|w| w[0] == w[1]));
 }

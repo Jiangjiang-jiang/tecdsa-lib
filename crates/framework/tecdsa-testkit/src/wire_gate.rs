@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_protocol::{PhaseMode, ProtocolMetadata};
 
 #[derive(Debug, Clone, Copy)]
@@ -9,7 +8,6 @@ pub enum Phase {
 }
 
 impl Phase {
-    /// Get the declared PhaseMode for this phase from protocol metadata.
     pub fn mode(&self, meta: &ProtocolMetadata) -> PhaseMode {
         match self {
             Phase::Keygen => meta.phase_modes.keygen,
@@ -18,20 +16,15 @@ impl Phase {
         }
     }
 
-    /// Whether this phase should appear in wire (message-driven) benchmarks.
-    /// Only Interactive phases have real StateMachine message exchange.
     pub fn is_wire_eligible(&self, meta: &ProtocolMetadata) -> bool {
         self.mode(meta).is_wire_eligible()
     }
 
-    /// Whether this phase should appear in the computation-only main table.
     pub fn is_main_table_eligible(&self, meta: &ProtocolMetadata) -> bool {
         self.mode(meta).is_main_table_eligible()
     }
 }
 
-/// Check if a phase should be included in wire benchmarks.
-/// Returns an error message if the phase is not eligible.
 pub fn check_wire_eligible(meta: &ProtocolMetadata, phase: Phase) -> Result<(), String> {
     if phase.is_wire_eligible(meta) {
         Ok(())

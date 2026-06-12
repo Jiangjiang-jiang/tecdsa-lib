@@ -1,21 +1,7 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Key generation for the ABC+24 two-party ECDSA protocol.
-//!
-//! This module provides both trusted-dealer key generation and interactive
-//! (3-step) distributed key generation.
-//!
-//! - [`trusted_dealer_keygen`]: simplified keygen via a trusted dealer.
-//! - [`interactive`]: pure step functions for the interactive DKG protocol.
-//! - `machine`: [`StateMachine`](tecdsa_protocol::StateMachine) wrapper
-//!   for the interactive DKG, with wire serialization.
-
 pub mod interactive;
 pub(crate) mod machine;
 pub(crate) mod wire;
 
-// ---------------------------------------------------------------------------
-// Trusted dealer key generation (formerly keygen.rs content)
-// ---------------------------------------------------------------------------
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     client_finalize_keygen, client_keygen_step2, client_verify_step3, interactive_keygen,
@@ -32,12 +18,6 @@ use crate::{
     setup::SetupData,
 };
 
-/// Generate key shares for the ABC+24 two-party ECDSA protocol via a trusted dealer.
-///
-/// Produces additive key shares: `x = x_1 + x_2` where `X = g^x`.
-///
-/// Server receives `(x_2, X, X_1, dk, setup)`.
-/// Client receives `(x_1, X, X_2, E=enc(x_2), ek, setup)`.
 pub fn trusted_dealer_keygen<C: TecdsaCurve>(
     rng: &mut impl CryptoRngCore,
 ) -> (Abc24ServerKeyShare<C>, Abc24ClientKeyShare<C>)

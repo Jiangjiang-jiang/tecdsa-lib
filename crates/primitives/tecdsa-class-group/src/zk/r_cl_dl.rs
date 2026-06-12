@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -6,12 +5,6 @@
     clippy::missing_panics_doc,
     clippy::doc_markdown
 )]
-
-//! `R_cl_dl` — CL-DL relation proof.
-//!
-//! Proves that a ciphertext encrypts the discrete log of a public QFI
-//! point: given `(pk, ct, Y)`, prover knows `(x, r)` such that
-//!   `ct = Enc(pk, x; r)`  and  `Y = f^x`.
 
 use super::{
     challenge_from_qfi, challenge_from_qfi_with_prefix, response_mod_q, response_unbounded,
@@ -21,24 +14,16 @@ use crate::cl::{
     Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
-/// CL-DL relation proof.
 pub struct RClDlProof {
     t1: Qfi,
     t2: Qfi,
-    /// Commitment in F-subgroup: s = f^{a2}.
     s: Qfi,
-    /// Response for randomness: u1 = a1 + e * r (big-endian bytes).
     u1: Vec<u8>,
-    /// Response for plaintext: u2 = (a2 + e * x) mod q (big-endian bytes).
     u2: Vec<u8>,
     e: Vec<u8>,
 }
 
 impl RClDlProof {
-    /// Generates a CL-DL proof.
-    ///
-    /// - `Y = f^x` (the public F-element).
-    /// - `ct = Enc(pk, x; r)`.
     pub fn prove(
         setup: &mut ClSetup,
         pk: &ClHsmqkPublicKey,
@@ -50,14 +35,11 @@ impl RClDlProof {
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
-        // t1 = h^a1 (commitment to randomness)
         let t1 = setup.power_of_h_bytes(&a1)?;
-        // t2 = pk^a1 * f^a2 (commitment to message)
         let pk_elt = pk.elt();
         let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
-        // s = f^a2 (commitment in F-subgroup)
         let s = setup.power_of_f_bytes(&a2)?;
 
         let (c1, c2) = setup.ct_components(ct)?;
@@ -77,7 +59,6 @@ impl RClDlProof {
         })
     }
 
-    /// Verifies the CL-DL proof.
     pub fn verify(
         &self,
         setup: &ClSetup,
@@ -98,7 +79,6 @@ impl RClDlProof {
             return Ok(false);
         }
 
-        // Check 1: h^u1 == t1 * c1^e
         let lhs1 = setup.power_of_h_bytes(&self.u1)?;
         let c1_e = setup.exp_bytes(&c1, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
@@ -106,7 +86,6 @@ impl RClDlProof {
             return Ok(false);
         }
 
-        // Check 2: pk^u1 * f^u2 == t2 * c2^e
         let pk_u1 = setup.pk_pow_bytes(pk, &self.u1)?;
         let f_u2 = setup.power_of_f_bytes(&self.u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
@@ -116,7 +95,6 @@ impl RClDlProof {
             return Ok(false);
         }
 
-        // Check 3: f^u2 == s * Y^e  (scalar check via dlog_in_F)
         if !super::verify_f_check(setup, &self.u2, &self.s, &self.e, y)? {
             return Ok(false);
         }
@@ -124,8 +102,6 @@ impl RClDlProof {
         Ok(true)
     }
 
-    /// Like [`prove`](Self::prove), but binds the Fiat-Shamir challenge to an
-    /// opaque context prefix (e.g. session/party/round bytes).
     pub fn prove_with_prefix(
         prefix: &[u8],
         setup: &mut ClSetup,
@@ -168,8 +144,6 @@ impl RClDlProof {
         })
     }
 
-    /// Like [`verify`](Self::verify), but uses the same context prefix that was
-    /// used during proving.
     pub fn verify_with_prefix(
         &self,
         prefix: &[u8],
@@ -257,7 +231,6 @@ mod tests {
         let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
         let y = setup.power_of_f(x).expect("f^x");
 
-        // Prove with wrong x.
         let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &wrong_x_bytes, &r).expect("prove");
         assert!(!proof.verify(&setup, &pk, &ct, &y).expect("verify"));

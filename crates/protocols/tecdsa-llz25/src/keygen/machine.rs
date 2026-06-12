@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,8 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! StateMachine implementation for LLZ25 interactive DKG.
 
 use std::collections::BTreeMap;
 
@@ -35,19 +32,6 @@ use super::{
 };
 use crate::key_share::Llz25KeyShare;
 
-// ---------------------------------------------------------------------------
-// Llz25KeygenMachine
-// ---------------------------------------------------------------------------
-
-/// StateMachine for the LLZ25 3-round interactive DKG.
-///
-/// On construction, Round 1 logic executes immediately and a 32-byte hash
-/// commitment is queued for broadcast. Subsequent rounds are driven by
-/// `handle` as messages arrive from other parties.
-///
-/// Unlike the trusted dealer keygen, this DKG uses Feldman VSS so no single
-/// party knows the full signing key. NIM encoding is performed on the combined
-/// share in Round 3.
 pub struct Llz25KeygenMachine {
     my_id: PartyId,
     all_parties: Vec<PartyId>,
@@ -77,13 +61,6 @@ pub struct Llz25KeygenMachine {
 }
 
 impl Llz25KeygenMachine {
-    /// Create a new LLZ25 DKG state machine from a pre-built `ClSetup`.
-    ///
-    /// This avoids recreating the expensive CL setup per party,
-    /// which is useful in benchmarks where all parties share the same
-    /// discriminant parameters.
-    ///
-    /// See [`Self::new`] for the full documentation.
     pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -101,12 +78,10 @@ impl Llz25KeygenMachine {
 
         let mut rng = rand::rngs::OsRng;
 
-        // 1. Feldman VSS
         let x_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rng);
         let (vss_shares, vss_commitments) =
             tecdsa_vss::feldman::split::<k256::Secp256k1>(&x_i, threshold, n, &mut rng);
 
-        // 2. DlogProof for A_{i,0} = x_i * G
         let a_i_0 = vss_commitments[0];
         let ephemeral = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rng);
         let dlog_proof = tecdsa_curve::zk::dlog::DlogProof::<k256::Secp256k1>::prove(
@@ -116,17 +91,14 @@ impl Llz25KeygenMachine {
             b"llz25-dkg-dlog",
         );
 
-        // 3. Compute commitment
         let mut nonce = [0u8; 32];
         rng.fill_bytes(&mut nonce);
 
         let commitment = compute_commitment(&nonce, &vss_commitments, &dlog_proof);
 
-        // Store our own R1 commitment
         let mut r1_commitments = BTreeMap::new();
         r1_commitments.insert(my_id, commitment);
 
-        // Queue R1 broadcast
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Llz25KeygenMsg::Round1(commitment.to_vec()),
@@ -164,21 +136,6 @@ impl Llz25KeygenMachine {
         })
     }
 
-    /// Create a new LLZ25 DKG state machine.
-    ///
-    /// Immediately executes Round 1 logic:
-    /// - Run Feldman VSS on a random secret
-    /// - Prove DLog for the constant coefficient
-    /// - Hash-commit to all public data
-    /// - Queue the commitment for broadcast
-    ///
-    /// # Arguments
-    /// - `my_id`: this party's unique identifier.
-    /// - `all_parties`: all party IDs in a consistent order.
-    /// - `threshold`: reconstruction threshold t (t parties needed to sign).
-    /// - `cl_setup_seed`: seed for CL setup.
-    /// - `use_128bit`: whether to use 128-bit security CL params.
-    /// - `pk_crs`: the NIM CRS public key (agreed upon out-of-band).
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -224,11 +181,6 @@ impl Llz25KeygenMachine {
             .map(|i| i as u16 + 1)
     }
 
-    // -----------------------------------------------------------------------
-    // Round transitions
-    // -----------------------------------------------------------------------
-
-    /// Transition from R1 -> R2: broadcast decommitment and send P2P shares.
     fn transition_to_r2(&mut self) -> tecdsa_core::Result<()> {
         let r1 = self
             .r1_state
@@ -250,7 +202,6 @@ impl Llz25KeygenMachine {
         let r2_bytes = bincode::serde::encode_to_vec(&r2_payload, bincode::config::standard())
             .map_err(|e| TecdsaError::Other(format!("serialize R2 bcast: {e}")))?;
 
-        // Store our own R2 bcast
         self.r2_bcasts.insert(
             self.my_id,
             R2ReceivedBcast {
@@ -260,7 +211,6 @@ impl Llz25KeygenMachine {
             },
         );
 
-        // Store our own VSS share to self
         let my_1based = self.my_1based_index()?;
         let my_share_value = r1
             .vss_shares
@@ -270,13 +220,11 @@ impl Llz25KeygenMachine {
             .value;
         self.r2_shares.insert(self.my_id, my_share_value);
 
-        // Broadcast R2
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: Llz25KeygenMsg::Round2Bcast(r2_bytes),
         });
 
-        // P2P: send VSS share s_{my, j} to each party j
         for &party in &self.all_parties {
             if party == self.my_id {
                 continue;
@@ -302,7 +250,6 @@ impl Llz25KeygenMachine {
         Ok(())
     }
 
-    /// Transition from R2 -> R3: delegates to rounds::transition_to_r3.
     fn transition_to_r3(&mut self) -> tecdsa_core::Result<()> {
         let my_1based = self.my_1based_index()?;
 
@@ -319,13 +266,11 @@ impl Llz25KeygenMachine {
                 &mut self.r3_data,
             )?;
 
-        // Broadcast R3
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: Llz25KeygenMsg::Round3(r3_bytes),
         });
 
-        // Stash intermediate values for finalize
         self.stash_combined_share = Some(combined_share);
         self.stash_st_x_bytes = Some(st_x_bytes);
         self.stash_public_key = Some(public_key);
@@ -335,9 +280,7 @@ impl Llz25KeygenMachine {
         Ok(())
     }
 
-    /// Finalize: verify all R3 proofs and construct `Llz25KeyShare`.
     fn finalize(&mut self) -> tecdsa_core::Result<()> {
-        // Take r1_state to satisfy the original protocol flow
         let _r1_state = self
             .r1_state
             .take()
@@ -383,7 +326,6 @@ impl Llz25KeygenMachine {
         Ok(())
     }
 
-    /// Check whether all R2 broadcasts and P2P shares have been received.
     fn check_r2_complete(&mut self) -> tecdsa_core::Result<()> {
         if self.r2_bcasts.len() == self.n() && self.r2_shares.len() == self.n() {
             self.transition_to_r3()?;
@@ -394,7 +336,6 @@ impl Llz25KeygenMachine {
 
 impl Drop for Llz25KeygenMachine {
     fn drop(&mut self) {
-        // Zero secret share values received from other parties
         for share in self.r2_shares.values_mut() {
             share.zeroize();
         }
@@ -585,10 +526,7 @@ mod tests {
 
     use super::*;
 
-    /// Helper: route all outgoing messages from all machines to their recipients.
-    /// Returns true if all machines are done.
     fn route_messages(machines: &mut [Llz25KeygenMachine]) -> bool {
-        // Collect all outgoing messages from all parties.
         let mut pending: Vec<(PartyId, Outgoing<Llz25KeygenMsg>)> = Vec::new();
         for (idx, machine) in machines.iter_mut().enumerate() {
             let party_id = PartyId(idx as u16 + 1);
@@ -597,14 +535,13 @@ mod tests {
             }
         }
 
-        // Deliver each message to its recipient(s).
         for (from, outgoing) in pending {
             match outgoing.to {
                 Recipient::Broadcast => {
                     for (idx, machine) in machines.iter_mut().enumerate() {
                         let recipient_id = PartyId(idx as u16 + 1);
                         if recipient_id == from {
-                            continue; // skip self-delivery
+                            continue;
                         }
                         machine
                             .handle(from, outgoing.msg.clone())
@@ -630,31 +567,19 @@ mod tests {
         machines.iter().all(|m| m.is_done())
     }
 
-    /// Interactive 3-round DKG for 3 parties (n=3, t=2).
-    ///
-    /// Verifies:
-    /// - All parties produce valid `Llz25KeyShare`.
-    /// - All parties agree on the same public key.
-    /// - Public verification shares satisfy X_i = x_i * G.
-    /// - NIM state (st_x_bytes) is non-empty.
-    /// - pe_x components are populated (not empty strings).
     #[test]
-    #[ignore] // CL operations are slow (~30-60s in debug mode)
+    #[ignore]
     fn keygen_interactive_3_parties() {
         let seed = "44444";
         let n = 3u16;
-        let t = 2u16; // reconstruction threshold: 2 parties needed to sign
+        let t = 2u16;
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-        // Create CL setup and CRS public key (shared by all parties out-of-band).
         let mut setup = ClSetup::new_secp256k1(seed).expect("CL setup");
         let (_sk_crs, pk_crs) = setup.keygen().expect("CRS keygen");
 
-        // ClHsmqkPublicKey does not implement Clone, so we duplicate it for
-        // each machine via pk_element -> pk_from_qfi round-trip.
         let pk_qfi = &pk_crs.elt();
 
-        // Create machines (Round 1 executes immediately in the constructor).
         let mut machines: Vec<Llz25KeygenMachine> = (0..n)
             .map(|i| {
                 let pk_i = setup.pk_from_qfi(pk_qfi).expect("pk_from_qfi");
@@ -663,14 +588,13 @@ mod tests {
                     all_parties.clone(),
                     t,
                     seed,
-                    false, // use_128bit = false for fast testing
+                    false,
                     pk_i,
                 )
                 .expect("Llz25KeygenMachine::new")
             })
             .collect();
 
-        // Drive the protocol through rounds until all machines are done.
         let max_rounds = 20;
         for round in 0..max_rounds {
             if route_messages(&mut machines) {
@@ -683,19 +607,16 @@ mod tests {
             );
         }
 
-        // All machines should be done.
         assert!(
             machines.iter().all(|m| m.is_done()),
             "not all machines completed"
         );
 
-        // Extract key shares.
         let key_shares: Vec<Llz25KeyShare> = machines
             .into_iter()
             .map(|m| m.finish().expect("finish"))
             .collect();
 
-        // 1. Verify all parties agree on the same public key.
         let public_key = key_shares[0].public_key;
         for (i, ks) in key_shares.iter().enumerate() {
             assert_eq!(
@@ -706,7 +627,6 @@ mod tests {
             );
         }
 
-        // 2. Verify public verification shares are consistent: X_i = x_i * G.
         for ks in &key_shares {
             let expected_x_i =
                 <k256::Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR
@@ -719,7 +639,6 @@ mod tests {
             );
         }
 
-        // 3. Verify all parties have the same public_shares vector.
         for (i, ks) in key_shares.iter().enumerate() {
             assert_eq!(
                 ks.public_shares,
@@ -729,7 +648,6 @@ mod tests {
             );
         }
 
-        // 4. Verify pe_x components are populated (non-empty binary blobs).
         for ks in &key_shares {
             let (c1, c2) = &ks.pe_x_components;
             assert!(
@@ -744,7 +662,6 @@ mod tests {
             );
         }
 
-        // 5. Verify NIM state (st_x_bytes) is non-empty.
         for ks in &key_shares {
             assert!(
                 !ks.st_x_bytes.is_empty(),
@@ -753,7 +670,6 @@ mod tests {
             );
         }
 
-        // 6. Verify threshold and total.
         for ks in &key_shares {
             assert_eq!(ks.threshold, t);
             assert_eq!(ks.total, n);

@@ -1,33 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Distributed Randomness Generation (DRG) primitive.
-//!
-//! Originally from WMY23 (Wang, Mei, Yu. "Real Threshold ECDSA." NDSS 2023).
-//!
-//! Implements Figure 2 of the WMY23 paper (Wang, Mei, Yu. "Real Threshold
-//! ECDSA." NDSS 2023). DRG generates `(t, n)` Shamir shares of a secret `x`
-//! with:
-//!
-//! - Pedersen VSS commitments (verifiable)
-//! - CL-encrypted shares (for homomorphic computation in MtA)
-//! - ZK proofs linking CL ciphertexts to Pedersen commitments
-//!
-//! ## Operations
-//!
-//! - **Gen**: Each party samples a secret, creates Pedersen VSS shares,
-//!   encrypts the secret under its own CL key, and proves R_Enc-PC.
-//! - **GenVf**: Verify Pedersen VSS shares and R_Enc-PC proof.
-//! - **Comb**: Combine shares from the qualified set into a combined share
-//!   with a fresh CL ciphertext and R_Enc-PC proof.
-//! - **RevealExp**: Reveal the EC point `g^{x_i}` with an R_PC-DL proof.
-//!
-//! ## Design note
-//!
-//! CL ZK proofs (`REncPcProof`, `RPcDlProof`) are integrated via the
-//! `tecdsa-class-group` crate's ZK module. The proofs link CL ciphertexts
-//! to F-subgroup commitments `f^m`, which serve as the "Pedersen
-//! commitment in the CL world." The EC-level Pedersen VSS uses the
-//! standard `g^{a_d} * h^{a'_d}` form over the elliptic curve.
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
@@ -39,50 +9,21 @@ use crate::{
     zk::{r_enc_pc::REncPcProof, r_pc_dl::RPcDlProof},
 };
 
-// ---------------------------------------------------------------------------
-// Pedersen VSS (dual-polynomial)
-// ---------------------------------------------------------------------------
-
-/// A Pedersen VSS share: the evaluation of both polynomials at index `i`.
-///
-/// For secret `chi`, the dealer samples polynomials `f(x)` and `f'(x)` with
-/// `f(0) = chi`, `f'(0) = chi'` (random). The share for party `j` is
-/// `(f(j), f'(j))`.
 #[derive(Clone, Debug)]
 pub struct PedersenVssShare {
-    /// 1-based party index.
     pub index: u16,
-    /// Value share: `f(index)`.
     pub value: k256::Scalar,
-    /// Randomness share: `f'(index)`.
     pub randomness: k256::Scalar,
 }
 
-/// Output of Pedersen VSS: shares for all parties plus polynomial commitments.
-///
-/// Commitments are `F_d = g^{a_d} * h^{a'_d}` for `d = 0, ..., t-1`,
-/// where `a_d` are coefficients of `f(x)` and `a'_d` are coefficients of
-/// `f'(x)`. `g` is the curve generator and `h` is the NUMS Pedersen point.
 #[derive(Clone, Debug)]
 pub struct PedersenVssOutput {
-    /// Shares `(f(j), f'(j))` for each party `j = 1, ..., n`.
     pub shares: Vec<PedersenVssShare>,
-    /// Polynomial commitments `F_d = g^{a_d} * h^{a'_d}`, length = threshold.
     pub commitments: Vec<k256::ProjectivePoint>,
-    /// The secret `chi = f(0)` (kept by the dealer).
     pub secret: k256::Scalar,
-    /// The randomness `chi' = f'(0)` (kept by the dealer).
     pub secret_randomness: k256::Scalar,
 }
 
-/// Create a Pedersen VSS sharing of `secret` with the given threshold and n.
-///
-/// Uses two random polynomials `f(x)` (with `f(0) = secret`) and `f'(x)`
-/// (with `f'(0)` random). Commitments are `F_d = g^{a_d} * h^{a'_d}`.
-///
-/// # Panics
-///
-/// Panics if `threshold == 0` or `threshold > n`.
 pub fn pedersen_vss_share(
     secret: &k256::Scalar,
     threshold: u16,
@@ -94,14 +35,12 @@ pub fn pedersen_vss_share(
 
     let t = threshold as usize;
 
-    // Build polynomial f(x): a_0 = secret, a_1..a_{t-1} random
     let mut f_coeffs: Vec<k256::Scalar> = Vec::with_capacity(t);
     f_coeffs.push(*secret);
     for _ in 1..t {
         f_coeffs.push(k256::Secp256k1::random_scalar(rng));
     }
 
-    // Build polynomial f'(x): a'_0 = random, a'_1..a'_{t-1} random
     let mut fp_coeffs: Vec<k256::Scalar> = Vec::with_capacity(t);
     for _ in 0..t {
         fp_coeffs.push(k256::Secp256k1::random_scalar(rng));
@@ -110,14 +49,12 @@ pub fn pedersen_vss_share(
     let g = <k256::Secp256k1 as TecdsaCurve>::generator();
     let h = <k256::Secp256k1 as TecdsaCurve>::nums_pedersen_h();
 
-    // Commitments: F_d = g^{a_d} * h^{a'_d}
     let commitments: Vec<k256::ProjectivePoint> = f_coeffs
         .iter()
         .zip(fp_coeffs.iter())
         .map(|(a_d, ap_d)| g * a_d + h * ap_d)
         .collect();
 
-    // Evaluate shares: for j = 1..n, share_j = (f(j), f'(j))
     let shares: Vec<PedersenVssShare> = (1..=n)
         .map(|j| {
             let x = k256::Scalar::from(u64::from(j));
@@ -145,11 +82,6 @@ pub fn pedersen_vss_share(
     }
 }
 
-/// Verify a Pedersen VSS share against the polynomial commitments.
-///
-/// Checks: `g^{value} * h^{randomness} == prod_{d=0}^{t-1} F_d^{index^d}`
-///
-/// Returns `true` if the share is consistent with the commitments.
 #[must_use]
 pub fn pedersen_vss_verify(
     share: &PedersenVssShare,
@@ -158,10 +90,8 @@ pub fn pedersen_vss_verify(
     let g = <k256::Secp256k1 as TecdsaCurve>::generator();
     let h = <k256::Secp256k1 as TecdsaCurve>::nums_pedersen_h();
 
-    // LHS: g^{value} * h^{randomness}
     let lhs = g * share.value + h * share.randomness;
 
-    // RHS: prod_{d=0}^{t-1} F_d^{index^d}
     let x = k256::Scalar::from(u64::from(share.index));
     let mut rhs = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
     let mut x_pow = k256::Scalar::ONE;
@@ -173,91 +103,33 @@ pub fn pedersen_vss_verify(
     lhs == rhs
 }
 
-// ---------------------------------------------------------------------------
-// DRG types
-// ---------------------------------------------------------------------------
-
-/// Output of DRG.Gen for one party.
-///
-/// Contains the secret, its Pedersen VSS shares, CL ciphertext of the secret,
-/// and the R_Enc-PC proof linking the ciphertext to the EC Pedersen commitment.
 pub struct DrgGenOutput {
-    /// The secret `chi_i` sampled by this party.
     pub secret: k256::Scalar,
-    /// The randomness `chi'_i` from the Pedersen VSS constant term.
     pub secret_randomness: k256::Scalar,
-    /// Pedersen VSS shares `(chi_{ij}, chi'_{ij})` for all parties `j = 1..n`.
     pub vss_shares: Vec<PedersenVssShare>,
-    /// Pedersen VSS polynomial commitments `F_{chi_i} = {F_d}` for `d = 0..t-1`.
     pub commitments: Vec<k256::ProjectivePoint>,
-    /// CL ciphertext `c_{chi_i} = Enc(ek_i, chi_i; rho_i)`.
     pub ciphertext: ClCiphertext,
-    /// Encryption randomness `rho_i` (decimal string, needed for proof).
     pub enc_randomness: Vec<u8>,
-    /// Compressed EC Pedersen commitment `PC = g^{chi_i} * h^{chi'_i}` (33 bytes).
-    /// This is `commitments[0]` serialised. Broadcast for R_Enc-PC verification.
     pub pc_bytes: Vec<u8>,
-    /// R_Enc-PC proof: proves `c_{chi_i}` encrypts the same `chi_i` committed in PC.
     pub proof: REncPcProof,
 }
 
-/// Output of DRG.Comb for one party.
-///
-/// Contains the combined Shamir share, combined Pedersen commitment,
-/// and a fresh CL ciphertext of the combined share with R_Enc-PC proof.
 pub struct DrgCombOutput {
-    /// Combined Shamir share: `x_i = sum_{j in Q} chi_{ji}`.
     pub combined_share: k256::Scalar,
-    /// Combined randomness share: `x'_i = sum_{j in Q} chi'_{ji}`.
     pub combined_randomness: k256::Scalar,
-    /// Combined Pedersen commitment `PC_{x_i}` (evaluated at this party's index).
     pub pedersen_commitment: k256::ProjectivePoint,
-    /// CL ciphertext `c_{x_i} = Enc(ek_i, x_i; rho_{x_i})`.
     pub ciphertext: ClCiphertext,
-    /// Encryption randomness for the combined ciphertext.
     pub enc_randomness: Vec<u8>,
-    /// Compressed EC Pedersen commitment bytes (33 bytes). Broadcast for R_Enc-PC verification.
     pub pc_bytes: Vec<u8>,
-    /// R_Enc-PC proof linking `c_{x_i}` to the EC Pedersen commitment.
     pub proof: REncPcProof,
 }
 
-/// Output of DRG.RevealExp for one party.
-///
-/// Contains the EC point `X_i = g^{x_i}` and an R_PC-DL proof.
 pub struct DrgRevealExpOutput {
-    /// The EC point `X_i = g^{x_i}`.
     pub point: k256::ProjectivePoint,
-    /// F-subgroup element `Y = f^{x_i}`, broadcast alongside the proof.
     pub y_element: Qfi,
-    /// R_PC-DL proof: proves `X_i = g^{x_i}` where `x_i` maps to `f^{x_i}`.
     pub proof: RPcDlProof,
 }
 
-// ---------------------------------------------------------------------------
-// DRG operations
-// ---------------------------------------------------------------------------
-
-/// **DRG.Gen** -- Generation phase (WMY23 Figure 2, Gen).
-///
-/// Each party `i`:
-/// 1. Samples secret `chi_i` from `Z_q`.
-/// 2. Creates Pedersen VSS: `(chi_i, chi'_i) -> shares + commitments`.
-/// 3. Encrypts `chi_i` under own CL key with explicit randomness.
-/// 4. Proves R_Enc-PC: proof that `c_{chi_i}` encrypts `chi_i` committed in
-///    `F_{chi_i,0}` via the F-subgroup element `f^{chi_i}`.
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context (mutable for encryption + proof generation).
-/// * `pk` - This party's CL public key.
-/// * `threshold` - Reconstruction threshold `t`.
-/// * `n` - Total number of parties.
-/// * `rng` - Cryptographic RNG.
-///
-/// # Errors
-///
-/// Returns an error if CL encryption or proof generation fails.
 pub fn drg_gen(
     setup: &mut ClSetup,
     pk: &ClPublicKey,
@@ -265,18 +137,11 @@ pub fn drg_gen(
     n: u16,
     rng: &mut impl CryptoRngCore,
 ) -> Result<DrgGenOutput, Box<dyn std::error::Error>> {
-    // Step 1: Sample secret chi_i
     let chi_i = k256::Secp256k1::random_scalar(rng);
 
     drg_gen_with_secret(setup, pk, &chi_i, threshold, n, rng)
 }
 
-/// **DRG.Gen** with a specific secret (for testing or when the secret is
-/// pre-determined, e.g., the existing key share in keygen refresh).
-///
-/// # Errors
-///
-/// Returns an error if CL encryption or proof generation fails.
 pub fn drg_gen_with_secret(
     setup: &mut ClSetup,
     pk: &ClPublicKey,
@@ -285,22 +150,15 @@ pub fn drg_gen_with_secret(
     n: u16,
     rng: &mut impl CryptoRngCore,
 ) -> Result<DrgGenOutput, Box<dyn std::error::Error>> {
-    // Step 2: Create Pedersen VSS
     let vss_output = pedersen_vss_share(secret, threshold, n, rng);
 
-    // Step 3: Encrypt chi_i under own CL key with explicit randomness
     let chi_bytes = scalar_to_bytes::<k256::Secp256k1>(secret);
 
-    // Generate encryption randomness by sampling a CL secret key
-    // (which lives in the correct range for CL randomness)
     let (r_sk, _r_pk) = setup.keygen()?;
     let r_bytes = setup.sk_to_bytes(&r_sk)?;
 
     let ciphertext = setup.encrypt_with_r_bytes(pk, &chi_bytes, &r_bytes)?;
 
-    // Step 4: Prove R_Enc-PC (cross-domain): ct encrypts chi_i AND
-    // PC = g^{chi_i} * h^{chi'_i} uses the same chi_i.
-    // PC = commitments[0] = g^{a_0} * h^{a'_0} = g^{chi_i} * h^{chi'_i}.
     let pc = vss_output.commitments[0];
     let pc_bytes = pc.to_bytes().to_vec();
     let chi_prime_bytes = scalar_to_bytes::<k256::Secp256k1>(&vss_output.secret_randomness);
@@ -326,22 +184,6 @@ pub fn drg_gen_with_secret(
     })
 }
 
-/// **DRG.GenVf** -- Verification phase (WMY23 Figure 2, GenVf).
-///
-/// Each party `j` receiving from party `i`:
-/// 1. Verifies the Pedersen VSS share against commitments.
-/// 2. Verifies the R_Enc-PC proof linking the CL ciphertext to `F_{chi_i,0}`.
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context.
-/// * `pk_i` - Party `i`'s CL public key (the sender).
-/// * `gen_output` - Party `i`'s DRG.Gen output (public parts).
-/// * `my_share` - The Pedersen VSS share designated for this party `j`.
-///
-/// # Returns
-///
-/// `true` if both checks pass, `false` otherwise.
 pub fn drg_gen_verify(
     setup: &ClSetup,
     pk_i: &ClPublicKey,
@@ -351,36 +193,14 @@ pub fn drg_gen_verify(
     pc_bytes: &[u8],
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    // Step 1: Verify Pedersen VSS share
     if !pedersen_vss_verify(my_share, commitments) {
         return Ok(false);
     }
 
-    // Step 2: Verify R_Enc-PC proof (cross-domain).
-    // The proof binds the CL ciphertext plaintext to the EC Pedersen
-    // commitment `PC = commitments[0]`, ensuring the same chi_i.
     let proof_ok = proof.verify(setup, pk_i, ciphertext, pc_bytes)?;
     Ok(proof_ok)
 }
 
-/// **DRG.GenVf (full)** -- Verification with explicit F-subgroup element.
-///
-/// This variant takes the F-subgroup element `Y = f^{chi_i}` that was
-/// broadcast alongside the proof, enabling full R_Enc-PC verification.
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context.
-/// * `pk_i` - Party `i`'s CL public key.
-/// * `commitments` - Party `i`'s Pedersen VSS commitments.
-/// * `ciphertext` - Party `i`'s CL ciphertext.
-/// * `proof` - Party `i`'s R_Enc-PC proof.
-/// * `y` - The F-subgroup element `f^{chi_i}` broadcast by party `i`.
-/// * `my_share` - The share designated for this verifying party.
-///
-/// # Returns
-///
-/// `true` if VSS verification and R_Enc-PC proof verification both pass.
 pub fn drg_gen_verify_full(
     setup: &ClSetup,
     pk_i: &ClPublicKey,
@@ -390,38 +210,14 @@ pub fn drg_gen_verify_full(
     pc_bytes: &[u8],
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    // Step 1: Verify Pedersen VSS share
     if !pedersen_vss_verify(my_share, commitments) {
         return Ok(false);
     }
 
-    // Step 2: Verify R_Enc-PC proof (cross-domain)
     let proof_ok = proof.verify(setup, pk_i, ciphertext, pc_bytes)?;
     Ok(proof_ok)
 }
 
-/// **DRG.Comb** -- Combination phase (WMY23 Figure 2, Comb).
-///
-/// Each party `i` combines shares from the qualified set `Q`:
-/// 1. `x_i = sum_{j in Q} chi_{ji}` (combined Shamir share)
-/// 2. `x'_i = sum_{j in Q} chi'_{ji}` (combined randomness)
-/// 3. `PC_{x_i} = sum_{j in Q} F_{chi_j}` evaluated at `i`
-/// 4. `c_{x_i} = Enc(ek_i, x_i; rho_{x_i})` (encrypt combined share)
-/// 5. Prove R_Enc-PC for `c_{x_i}` against `f^{x_i}`
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context.
-/// * `pk` - This party's CL public key.
-/// * `my_index` - This party's 1-based index.
-/// * `received_shares` - Shares received from all parties in Q.
-///   Each entry is `(party_index, share_for_me)`.
-/// * `all_commitments` - Commitments from all parties in Q.
-///   Each entry is `(party_index, commitments_vec)`.
-///
-/// # Errors
-///
-/// Returns an error if CL operations fail.
 pub fn drg_comb(
     setup: &mut ClSetup,
     pk: &ClPublicKey,
@@ -429,7 +225,6 @@ pub fn drg_comb(
     received_shares: &[(u16, PedersenVssShare)],
     all_commitments: &[(u16, Vec<k256::ProjectivePoint>)],
 ) -> Result<DrgCombOutput, Box<dyn std::error::Error>> {
-    // Step 1 & 2: Sum shares
     let mut combined_share = k256::Scalar::ZERO;
     let mut combined_randomness = k256::Scalar::ZERO;
     for (_sender, share) in received_shares {
@@ -442,10 +237,6 @@ pub fn drg_comb(
         combined_randomness += share.randomness;
     }
 
-    // Step 3: Combined Pedersen commitment at my_index
-    // PC_{x_i} = sum_{j in Q} (sum_{d=0}^{t-1} F_{j,d} * i^d)
-    // This is the product (sum in additive notation) of evaluating each
-    // party's commitment polynomial at my_index.
     let x = k256::Scalar::from(u64::from(my_index));
     let mut pedersen_commitment = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
     for (_sender, coms) in all_commitments {
@@ -456,14 +247,11 @@ pub fn drg_comb(
         }
     }
 
-    // Step 4: Encrypt combined share under own CL key
     let x_i_bytes = scalar_to_bytes::<k256::Secp256k1>(&combined_share);
     let (r_sk, _r_pk) = setup.keygen()?;
     let r_bytes = setup.sk_to_bytes(&r_sk)?;
     let ciphertext = setup.encrypt_with_r_bytes(pk, &x_i_bytes, &r_bytes)?;
 
-    // Step 5: Prove R_Enc-PC (cross-domain)
-    // PC = pedersen_commitment = g^{x_i} * h^{x'_i}
     let pc_bytes = pedersen_commitment.to_bytes().to_vec();
     let x_prime_i_bytes = scalar_to_bytes::<k256::Secp256k1>(&combined_randomness);
     let proof = REncPcProof::prove(
@@ -487,20 +275,6 @@ pub fn drg_comb(
     })
 }
 
-/// **DRG.RevealExp** -- Reveal share in exponent (WMY23 Figure 2, RevealExp).
-///
-/// Each party `i`:
-/// 1. Computes `X_i = g^{x_i}` (EC point).
-/// 2. Proves R_PC-DL: `X_i = g^{x_i}` where `x_i` maps to `f^{x_i}`.
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context.
-/// * `combined_share` - The combined Shamir share `x_i`.
-///
-/// # Errors
-///
-/// Returns an error if proof generation fails.
 pub fn drg_reveal_exp(
     setup: &mut ClSetup,
     combined_share: &k256::Scalar,
@@ -510,8 +284,6 @@ pub fn drg_reveal_exp(
 
     let x_bytes = scalar_to_bytes::<k256::Secp256k1>(combined_share);
 
-    // R_PC-DL proof: proves knowledge of x such that f^x = Y
-    // The verifier checks that dlog_in_F(Y) matches the committed value.
     let y = setup.power_of_f_bytes(&x_bytes)?;
     let proof = RPcDlProof::prove(setup, &y, &x_bytes)?;
 
@@ -522,19 +294,6 @@ pub fn drg_reveal_exp(
     })
 }
 
-/// Verify a DRG.RevealExp output.
-///
-/// Checks that the R_PC-DL proof is valid for the given EC point, confirming
-/// the party knows `x_i` such that `X_i = g^{x_i}` and `f^{x_i} = Y`.
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context.
-/// * `output` - The RevealExp output to verify.
-///
-/// # Returns
-///
-/// `true` if the proof verifies.
 pub fn drg_reveal_exp_verify(
     setup: &ClSetup,
     output: &DrgRevealExpOutput,
@@ -542,17 +301,6 @@ pub fn drg_reveal_exp_verify(
     Ok(output.proof.verify(setup, &output.y_element)?)
 }
 
-/// Verify a DRG.RevealExp output with explicit F-subgroup element.
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context.
-/// * `proof` - The R_PC-DL proof.
-/// * `y` - The F-subgroup element `f^{x_i}` broadcast by the prover.
-///
-/// # Returns
-///
-/// `true` if the proof verifies.
 pub fn drg_reveal_exp_verify_full(
     setup: &ClSetup,
     proof: &RPcDlProof,
@@ -561,41 +309,11 @@ pub fn drg_reveal_exp_verify_full(
     Ok(proof.verify(setup, y)?)
 }
 
-// ---------------------------------------------------------------------------
-// DRG-based presign helpers
-// ---------------------------------------------------------------------------
-
-/// Per-party DRG state for one variable (k or gamma) in the presign.
-///
-/// Holds the DRG.Gen output and the subsequent DRG.Comb output.
 pub struct DrgPresignState {
-    /// DRG.Gen output (secret, VSS shares, CL ciphertext, proof).
     pub gen_output: DrgGenOutput,
-    /// DRG.Comb output (combined share, ciphertext, proof).
-    /// Populated after the combination phase.
     pub comb_output: Option<DrgCombOutput>,
 }
 
-/// Run DRG.Gen + DRG.GenVf + DRG.Comb for a single variable across all parties.
-///
-/// This is a test helper that runs the complete DRG flow for n-of-n sharing
-/// in a single-threaded simulation.
-///
-/// # Arguments
-///
-/// * `setup` - CL-HSM setup context.
-/// * `pks` - CL public keys for all parties.
-/// * `threshold` - VSS threshold.
-/// * `n` - Total number of parties.
-/// * `rng` - Cryptographic RNG.
-///
-/// # Returns
-///
-/// A vector of `(combined_share, ciphertext)` for each party.
-///
-/// # Errors
-///
-/// Returns an error if any DRG operation fails.
 pub fn drg_full_run(
     setup: &mut ClSetup,
     pks: &[ClPublicKey],
@@ -605,20 +323,16 @@ pub fn drg_full_run(
 ) -> Result<Vec<DrgCombOutput>, Box<dyn std::error::Error>> {
     let n_usize = n as usize;
 
-    // Phase 1: DRG.Gen for each party
     let gen_outputs = pks
         .iter()
         .map(|pk| drg_gen(setup, pk, threshold, n, rng))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Phase 2: DRG.GenVf -- each party verifies all other parties' outputs
     for j in 0..n_usize {
         for i in 0..n_usize {
             if i == j {
                 continue;
             }
-            // Party j verifies party i's share for j
-            // Share index is j+1 (1-based), stored at position j in the shares vec
             let share_for_j = &gen_outputs[i].vss_shares[j];
             let ok = drg_gen_verify(
                 setup,
@@ -637,15 +351,12 @@ pub fn drg_full_run(
         }
     }
 
-    // Phase 3: DRG.Comb for each party
-    // In n-of-n, the qualified set Q = all parties
     let comb_outputs = pks
         .iter()
         .enumerate()
         .map(|(j, pk)| {
-            let my_index = (j + 1) as u16; // 1-based
+            let my_index = (j + 1) as u16;
 
-            // Collect shares from all parties for party j
             let received_shares: Vec<(u16, PedersenVssShare)> = (0..n_usize)
                 .map(|i| {
                     let sender_index = (i + 1) as u16;
@@ -653,7 +364,6 @@ pub fn drg_full_run(
                 })
                 .collect();
 
-            // Collect commitments from all parties
             let all_commitments: Vec<(u16, Vec<k256::ProjectivePoint>)> = (0..n_usize)
                 .map(|i| {
                     let sender_index = (i + 1) as u16;
@@ -673,7 +383,6 @@ mod tests {
     use super::*;
     use crate::cl::{ClPublicKey, ClSetup, Mpz, Qfi};
 
-    /// Helper: create CL public keys for all parties.
     #[allow(clippy::type_complexity)]
     fn make_cl_keys(setup: &mut ClSetup, n: usize) -> Vec<(Vec<u8>, ClPublicKey, (Mpz, Mpz, Mpz))> {
         (0..n)
@@ -687,7 +396,6 @@ mod tests {
             .collect()
     }
 
-    /// Helper: reconstruct CL public key from ABC.
     fn reconstruct_pk(setup: &ClSetup, abc: &(Mpz, Mpz, Mpz)) -> ClPublicKey {
         let qfi = Qfi::from_abc(abc.0.clone(), abc.1.clone(), abc.2.clone());
         let pk_raw = ClPublicKey::from_qfi(setup.cl(), qfi).expect("pk from qfi");
@@ -703,12 +411,10 @@ mod tests {
 
         let output = pedersen_vss_share(&secret, threshold, n, &mut rng);
 
-        // Check we got the right number of shares and commitments
         assert_eq!(output.shares.len(), n as usize);
         assert_eq!(output.commitments.len(), threshold as usize);
         assert_eq!(output.secret, secret);
 
-        // Verify each share
         for share in &output.shares {
             assert!(
                 pedersen_vss_verify(share, &output.commitments),
@@ -726,7 +432,6 @@ mod tests {
 
         let output = pedersen_vss_share(&secret, 2, 3, &mut rng);
 
-        // Tamper with a share value
         let mut bad_share = output.shares[0].clone();
         bad_share.value += k256::Scalar::ONE;
         assert!(
@@ -738,7 +443,6 @@ mod tests {
     #[test]
     #[ignore = "redundant DRG variant"]
     fn test_pedersen_vss_reconstruction() {
-        // Verify that the combined shares reconstruct the sum of secrets
         let mut rng = rand::thread_rng();
         let n = 3u16;
         let threshold = 2u16;
@@ -752,12 +456,10 @@ mod tests {
         let out2 = pedersen_vss_share(&secret2, threshold, n, &mut rng);
         let out3 = pedersen_vss_share(&secret3, threshold, n, &mut rng);
 
-        // For each party j, combined share = sum of shares from all dealers
         let combined: Vec<k256::Scalar> = (0..n as usize)
             .map(|j| out1.shares[j].value + out2.shares[j].value + out3.shares[j].value)
             .collect();
 
-        // Reconstruct using Lagrange interpolation at x=0
         let indices: Vec<u16> = (1..=n).collect();
         let coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
         let reconstructed: k256::Scalar = combined
@@ -781,11 +483,9 @@ mod tests {
         let gen = drg_gen(&mut setup, &keys[0].1, 1, 2, &mut rng).expect("drg_gen");
 
         assert_eq!(gen.vss_shares.len(), 2);
-        assert_eq!(gen.commitments.len(), 1); // threshold = 1
-                                              // Proof is always generated (no longer optional).
+        assert_eq!(gen.commitments.len(), 1);
         let _ = &gen.proof;
 
-        // Verify all shares
         for share in &gen.vss_shares {
             assert!(pedersen_vss_verify(share, &gen.commitments));
         }
@@ -799,7 +499,6 @@ mod tests {
 
         let gen = drg_gen(&mut setup, &keys[0].1, 1, 2, &mut rng).expect("drg_gen");
 
-        // Party 1 (index 1) verifies share from party 0
         let ok = drg_gen_verify(
             &setup,
             &keys[0].1,
@@ -807,7 +506,7 @@ mod tests {
             &gen.ciphertext,
             &gen.proof,
             &gen.pc_bytes,
-            &gen.vss_shares[0], // share for party 1 (index 0 in vec)
+            &gen.vss_shares[0],
         )
         .expect("drg_gen_verify");
         assert!(ok, "honest share should verify");
@@ -822,7 +521,6 @@ mod tests {
 
         let gen = drg_gen(&mut setup, &keys[0].1, 1, 2, &mut rng).expect("drg_gen");
 
-        // Tamper with the share
         let mut bad_share = gen.vss_shares[0].clone();
         bad_share.value += k256::Scalar::ONE;
 
@@ -853,7 +551,6 @@ mod tests {
 
         assert_eq!(comb_outputs.len(), 2);
 
-        // Verify combined shares reconstruct to a consistent secret
         let indices: Vec<u16> = vec![1, 2];
         let coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
         let combined_shares: Vec<k256::Scalar> =
@@ -864,9 +561,6 @@ mod tests {
             .map(|(s, c)| *s * c)
             .sum();
 
-        // The reconstructed value should be well-defined (not checking a
-        // specific value since secrets are random).
-        // Proof is always generated (no longer optional after WARN 4 fix).
         let _ = &comb_outputs[0].proof;
     }
 
@@ -885,7 +579,6 @@ mod tests {
 
         assert_eq!(comb_outputs.len(), 3);
 
-        // Verify combined Pedersen commitments are consistent with shares
         let g = <k256::Secp256k1 as TecdsaCurve>::generator();
         let h = <k256::Secp256k1 as TecdsaCurve>::nums_pedersen_h();
         for comb in &comb_outputs {
@@ -907,14 +600,11 @@ mod tests {
 
         let expected = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x;
         assert_eq!(reveal.point, expected, "X_i should be g^x_i");
-        // Proof is always generated (no longer optional).
         let _ = &reveal.proof;
     }
 
     #[test]
     fn test_drg_comb_shares_reconstruct_sum() {
-        // End-to-end: run DRG for n parties, verify that the combined shares
-        // reconstruct to the sum of individual secrets via Lagrange.
         let mut setup = ClSetup::new_secp256k1("30007").expect("CL setup");
         let n = 3u16;
         let threshold = 2u16;
@@ -925,7 +615,6 @@ mod tests {
             .collect();
         let mut rng = rand::thread_rng();
 
-        // Run DRG.Gen for each party, collecting their secrets
         let gen_outputs = pks
             .iter()
             .map(|pk| drg_gen(&mut setup, pk, threshold, n, &mut rng).expect("drg_gen"))
@@ -933,7 +622,6 @@ mod tests {
 
         let expected_sum: k256::Scalar = gen_outputs.iter().map(|g| g.secret).sum();
 
-        // Run DRG.Comb for each party
         let comb_outputs = pks
             .iter()
             .enumerate()
@@ -950,7 +638,6 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        // Lagrange reconstruct combined shares
         let indices: Vec<u16> = (1..=n).collect();
         let coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
         let reconstructed: k256::Scalar = comb_outputs
@@ -967,14 +654,12 @@ mod tests {
 
     #[test]
     fn test_drg_r_enc_pc_proof_verifies() {
-        // Test that the R_Enc-PC proof generated in DRG.Gen actually verifies.
         let mut setup = ClSetup::new_secp256k1("30008").expect("CL setup");
         let keys = make_cl_keys(&mut setup, 1);
         let mut rng = rand::thread_rng();
 
         let gen = drg_gen(&mut setup, &keys[0].1, 1, 2, &mut rng).expect("drg_gen");
 
-        // Proof is always generated; verify using the stored PC bytes.
         let ok = gen
             .proof
             .verify(&setup, &keys[0].1, &gen.ciphertext, &gen.pc_bytes)
@@ -985,7 +670,6 @@ mod tests {
     #[test]
     #[ignore = "redundant DRG variant"]
     fn test_drg_gen_verify_full() {
-        // Test drg_gen_verify_full with explicit Y value.
         let mut setup = ClSetup::new_secp256k1("30009").expect("CL setup");
         let keys = make_cl_keys(&mut setup, 2);
         let mut rng = rand::thread_rng();
@@ -1008,7 +692,6 @@ mod tests {
     #[test]
     #[ignore = "redundant DRG variant"]
     fn test_drg_reveal_exp_proof_verifies() {
-        // Test that R_PC-DL proof verifies with explicit Y.
         let mut setup = ClSetup::new_secp256k1("30010").expect("CL setup");
         let mut rng = rand::thread_rng();
         let x = k256::Secp256k1::random_scalar(&mut rng);

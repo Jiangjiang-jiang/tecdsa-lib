@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! CGGMP20 auxiliary-info generation protocol.
-//!
-//! A 3-round protocol where `n` parties generate auxiliary cryptographic
-//! material: each party creates a Paillier key pair and ring-Pedersen
-//! parameters, proves correctness via PiPrm, pi_mod (Paillier-Blum modulus),
-//! and pi_fac (no-small-factor) proofs, and the output is an [`AuxInfo`]
-//! containing all parties' public material.
-
 pub mod msg;
 mod rounds;
 
@@ -18,19 +9,11 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig,
 
 use crate::{key_share::AuxInfo, security_level::Cggmp20SecurityParams};
 
-/// Auxiliary-info generation state machine implementing the CGGMP20 protocol.
-///
-/// The `L: Cggmp20SecurityParams` parameter controls RSA prime sizes used for Paillier
-/// key generation and ring-Pedersen parameter generation.
 pub struct AuxInfoMachine<L: Cggmp20SecurityParams> {
     round: AuxInfoRound<L>,
 }
 
 impl<L: Cggmp20SecurityParams> AuxInfoMachine<L> {
-    /// Create a new aux-info state machine.
-    ///
-    /// Generates initial secrets (Paillier keys, Pedersen params) and queues
-    /// Round 1 broadcast messages.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
         let state = Round1State::<L>::new(config, rng);
         Self {
@@ -135,7 +118,6 @@ impl<L: Cggmp20SecurityParams> StateMachine for AuxInfoMachine<L> {
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round(msg: &AuxInfoMsg) -> u16 {
     match msg {
         AuxInfoMsg::Round1(_) => 1,

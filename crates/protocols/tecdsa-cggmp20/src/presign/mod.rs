@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! CGGMP20 presigning protocol.
-//!
-//! A 3-round protocol where a subset of parties (signers) produce a
-//! presignature that can later be combined with a message hash for ECDSA
-//! signing. This involves Paillier homomorphic encryption, multiplicative-
-//! to-additive (MtA) conversions, El-Gamal commitments, and ZK proofs
-//! (π_enc_elg, π_aff_g, π_elog).
-
 pub mod msg;
 mod rounds;
 
@@ -24,7 +15,6 @@ use crate::{
     sign::types::{Presignature, PresignaturePublicData},
 };
 
-/// Presigning state machine implementing the CGGMP20 protocol.
 pub struct Cggmp20PresignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -38,7 +28,6 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
     C: crate::bridge::BridgeCurve,
 {
-    /// Create a new presign state machine with the default 128-bit security level.
     pub fn new(
         config: &SessionConfig,
         core_share: &Cggmp20CoreKeyShare<C>,
@@ -49,7 +38,6 @@ where
         Self::with_security::<SecurityLevel128>(config, core_share, aux, signers, rng)
     }
 
-    /// Create a new presign state machine with a custom security level.
     pub fn with_security<L: Cggmp20SecurityParams>(
         config: &SessionConfig,
         core_share: &Cggmp20CoreKeyShare<C>,
@@ -175,7 +163,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round<C: TecdsaCurve>(msg: &PresignMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,

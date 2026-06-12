@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,25 +6,16 @@
     clippy::doc_markdown
 )]
 
-//! `R_cl_kwlg` — CL knowledge proof (prove knowledge of secret key).
-//!
-//! Sigma protocol: prover knows `sk` such that `pk = h^{sk}`.
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
-/// CL knowledge proof (secret key knowledge).
 pub struct RClKwlgProof {
-    /// Commitment: t = h^a.
     pub(crate) t: Qfi,
-    /// Response: z = a + e * sk (big-endian bytes).
     pub(crate) z: Vec<u8>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     pub(crate) e: Vec<u8>,
 }
 
 impl RClKwlgProof {
-    /// Proves knowledge of `sk` such that `pk = h^{sk}`.
     pub fn prove(setup: &mut ClSetup, pk: &ClHsmqkPublicKey, sk_bytes: &[u8]) -> ClResult<Self> {
         let a = sample_random(setup)?;
         let t = setup.power_of_h_bytes(&a)?;
@@ -38,7 +28,6 @@ impl RClKwlgProof {
         Ok(Self { t, z, e })
     }
 
-    /// Verifies the CL knowledge proof.
     pub fn verify(&self, setup: &ClSetup, pk: &ClHsmqkPublicKey) -> ClResult<bool> {
         let pk_elt = pk.elt();
 
@@ -47,7 +36,6 @@ impl RClKwlgProof {
             return Ok(false);
         }
 
-        // Check: h^z == t * pk^e
         let lhs = setup.power_of_h_bytes(&self.z)?;
         let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs = setup.compose(&self.t, &pk_e)?;

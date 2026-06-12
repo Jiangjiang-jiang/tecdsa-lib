@@ -1,16 +1,9 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Shared utility functions for GGN16 protocol crates.
-//!
-//! Contains serialization helpers used by both the
-//! presign and online-sign state machines.
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::{group::GroupEncoding, sec1::ModulusSize, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::backend::Integer;
 
-/// Serialize data for commitment: concatenate u_i and v_i byte representations.
 pub fn serialize_for_commit_r1(u_i: &Integer, v_i: &Integer) -> Vec<u8> {
     let u_bytes = u_i.to_bytes_msf();
     let v_bytes = v_i.to_bytes_msf();
@@ -22,7 +15,6 @@ pub fn serialize_for_commit_r1(u_i: &Integer, v_i: &Integer) -> Vec<u8> {
     data
 }
 
-/// Serialize data for commitment: concatenate r_i and w_i byte representations.
 pub fn serialize_for_commit_r3(r_i_bytes: &[u8], w_i: &Integer) -> Vec<u8> {
     let w_bytes = w_i.to_bytes_msf();
     let mut data = Vec::with_capacity(8 + r_i_bytes.len() + w_bytes.len());
@@ -33,8 +25,6 @@ pub fn serialize_for_commit_r3(r_i_bytes: &[u8], w_i: &Integer) -> Vec<u8> {
     data
 }
 
-/// Deserialize a projective point from its compressed SEC1 byte encoding.
-// Internal byte-decoding helper; the unit error ("malformed input") is intentional.
 #[allow(clippy::result_unit_err)]
 pub fn deserialize_point<C>(bytes: &[u8]) -> Result<C::ProjectivePoint, ()>
 where

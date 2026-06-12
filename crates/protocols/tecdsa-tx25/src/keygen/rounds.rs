@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! TX25 keygen round state structs and transition logic.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
@@ -17,11 +14,6 @@ use crate::{
     pvss::{pvss_decrypt_share, pvss_distribute, PvssOutput},
 };
 
-// ---------------------------------------------------------------------------
-// Internal round states
-// ---------------------------------------------------------------------------
-
-/// Round 1 state: after generating CL keypair and queuing broadcast.
 pub(crate) struct Round1State {
     pub(crate) my_id: PartyId,
     pub(crate) all_parties: Vec<PartyId>,
@@ -36,12 +28,10 @@ pub(crate) struct Round1State {
     pub(crate) use_128bit_security: bool,
 }
 
-/// Deserialized Round 1 message from a peer.
 pub(crate) struct Round1Msg {
     pub(crate) cl_pk_qfi: Qfi,
 }
 
-/// Round 2 state: after distributing PVSS shares.
 pub(crate) struct Round2State {
     pub(crate) my_id: PartyId,
     pub(crate) all_parties: Vec<PartyId>,
@@ -49,7 +39,6 @@ pub(crate) struct Round2State {
     pub(crate) cl_sk_raw: ClSecretKey,
     pub(crate) cl_pk_raw: ClPublicKey,
     pub(crate) cl_sk_decimal: Vec<u8>,
-    /// All parties' PK elements in party order (including self).
     pub(crate) cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     pub(crate) my_pvss: PvssOutput,
     pub(crate) received: BTreeMap<PartyId, Round2Msg>,
@@ -58,13 +47,11 @@ pub(crate) struct Round2State {
     pub(crate) use_128bit_security: bool,
 }
 
-/// Deserialized Round 2 message from a peer.
 pub(crate) struct Round2Msg {
     pub(crate) c1: Qfi,
     pub(crate) c2s: Vec<Qfi>,
 }
 
-/// Round 3 state: after decrypting and combining shares.
 pub(crate) struct Round3State {
     pub(crate) my_id: PartyId,
     pub(crate) all_parties: Vec<PartyId>,
@@ -77,18 +64,14 @@ pub(crate) struct Round3State {
     pub(crate) use_128bit_security: bool,
     pub(crate) cl_sk: ClSecretKey,
     pub(crate) cl_pks: Vec<ClPublicKey>,
-    /// Per-party PVSS c1 values from Round 2 (needed for R_Dec_DL verification).
     pub(crate) pvss_c1_qfis: BTreeMap<PartyId, Qfi>,
-    /// Per-party CL public key elements (needed for R_Dec_DL verification).
     pub(crate) cl_pk_qfis: BTreeMap<PartyId, Qfi>,
 }
 
-/// Deserialized Round 3 message from a peer.
 pub(crate) struct Round3Msg {
     pub(crate) public_share: k256::ProjectivePoint,
 }
 
-/// Internal round enum for the keygen state machine.
 pub(crate) enum KeygenRound {
     Round1(Round1State),
     Round2(Round2State),
@@ -97,14 +80,6 @@ pub(crate) enum KeygenRound {
     Poisoned,
 }
 
-// ---------------------------------------------------------------------------
-// Round transitions
-// ---------------------------------------------------------------------------
-
-/// Transition from Round 1 to Round 2.
-///
-/// Collects all verified CL public keys, runs PVSS ShareDist, serializes
-/// the output, and queues Round 2 broadcasts.
 pub(crate) fn transition_r1_to_r2(
     setup: &mut ClSetup,
     state: Round1State,
@@ -117,13 +92,11 @@ pub(crate) fn transition_r1_to_r2(
         .position(|p| *p == my_id)
         .expect("my_id must be in all_parties");
 
-    // Collect all CL public keys and elements in party order.
     let mut cl_pk_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
     let mut ordered_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
 
     for pid in &state.all_parties {
         if *pid == my_id {
-            // Clone our own PK from QFI.
             let pk_elt = state.cl_pk_raw.elt();
             let pk_clone = setup
                 .pk_from_qfi(pk_elt)
@@ -142,7 +115,6 @@ pub(crate) fn transition_r1_to_r2(
         }
     }
 
-    // Run PVSS ShareDist.
     let party_ids: Vec<u16> = (1..=n as u16).collect();
     let mut rng = rand::thread_rng();
 
@@ -156,11 +128,9 @@ pub(crate) fn transition_r1_to_r2(
     )
     .map_err(|e| TecdsaError::Other(format!("pvss_distribute failed: {e}")))?;
 
-    // Serialize Round 2 message.
     let r2_payload = serialize_round2(&pvss_output)
         .map_err(|e| TecdsaError::Other(format!("R2 serialize failed: {e}")))?;
 
-    // Queue broadcast to all other parties.
     let mut outgoing = Vec::new();
     for party in &state.all_parties {
         if *party != my_id {
@@ -171,7 +141,6 @@ pub(crate) fn transition_r1_to_r2(
         }
     }
 
-    // Clone the PK raw for Round 2 state.
     let my_pk_elt = state.cl_pk_raw.elt();
     let my_pk_clone = setup
         .pk_from_qfi(my_pk_elt)
@@ -193,12 +162,6 @@ pub(crate) fn transition_r1_to_r2(
     })
 }
 
-/// Transition from Round 2 to Round 3.
-///
-/// For each received PVSS distribution, decrypts this party's encrypted
-/// share.  Combines all shares into a single secret share x_i, computes
-/// X_i = x_i * G, generates an R_Dec_DL proof, and queues Round 3
-/// broadcasts.
 pub(crate) fn transition_r2_to_r3(
     setup: &mut ClSetup,
     state: Round2State,
@@ -211,10 +174,8 @@ pub(crate) fn transition_r2_to_r3(
         .position(|p| *p == my_id)
         .expect("my_id must be in all_parties");
 
-    // Start with our own PVSS share (the share from our own polynomial).
     let mut x_i = state.my_pvss.secret_share;
 
-    // For each other party's PVSS distribution, decrypt our share and add.
     for pid in &state.all_parties {
         if *pid == my_id {
             continue;
@@ -224,27 +185,21 @@ pub(crate) fn transition_r2_to_r3(
             .get(pid)
             .ok_or_else(|| TecdsaError::Other(format!("missing R2 message from party {pid}")))?;
 
-        // Decrypt: x_{i,j} = Dec(dk_i, (c1, c2[my_idx])).
         let share_j = pvss_decrypt_share(setup, &state.cl_sk_raw, &r2_msg.c1, &r2_msg.c2s[my_idx])
             .map_err(|e| TecdsaError::Other(format!("pvss_decrypt_share from {pid}: {e}")))?;
 
-        // Combine: x_i += x_{i,j} mod q.
         x_i += share_j;
     }
 
-    // Compute X_i = x_i * G.
     let big_x_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_i;
     let big_x_i_bytes = big_x_i.to_bytes().to_vec();
 
-    // Generate R_Dec_DL proof.
-    // Build a ciphertext from (c1, c2_my) of our own PVSS output.
     let c1_ref = &state.my_pvss.c1;
     let c2_my_ref = &state.my_pvss.c2s[my_idx];
     let ct_ref = setup
         .ct_from_components(c1_ref, c2_my_ref)
         .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
 
-    // Partial decryption: pd = c1^{sk}.
     let pd = setup
         .exp_bytes(c1_ref, &state.cl_sk_decimal)
         .map_err(|e| TecdsaError::Other(format!("exp for pd: {e}")))?;
@@ -253,11 +208,9 @@ pub(crate) fn transition_r2_to_r3(
         RDecDlProof::prove(setup, &state.cl_pk_raw, &ct_ref, &pd, &state.cl_sk_decimal)
             .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove failed: {e}")))?;
 
-    // Serialize Round 3 message (includes pd for R_Dec_DL verification).
     let r3_payload = serialize_round3(&big_x_i_bytes, &pd, &r_dec_dl_proof)
         .map_err(|e| TecdsaError::Other(format!("R3 serialize failed: {e}")))?;
 
-    // Queue broadcast.
     let mut outgoing = Vec::new();
     for party in &state.all_parties {
         if *party != my_id {
@@ -268,12 +221,10 @@ pub(crate) fn transition_r2_to_r3(
         }
     }
 
-    // Build CL key types for the key share output.
     let cl_sk = setup
         .sk_from_bytes(&state.cl_sk_decimal)
         .map_err(|e| TecdsaError::Other(format!("sk_from_decimal: {e}")))?;
 
-    // Reconstruct all CL public keys from stored elements.
     let mut cl_pks: Vec<ClPublicKey> = Vec::with_capacity(n);
     for pid in &state.all_parties {
         let qfi = state
@@ -286,12 +237,8 @@ pub(crate) fn transition_r2_to_r3(
         cl_pks.push(pk_raw);
     }
 
-    // Carry forward per-party PVSS c1 values for R_Dec_DL verification in
-    // Round 3.
     let mut pvss_c1_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
-    // Our own PVSS c1.
     pvss_c1_qfis.insert(my_id, state.my_pvss.c1.clone());
-    // Other parties' PVSS c1 values.
     for (pid, r2_msg) in &state.received {
         pvss_c1_qfis.insert(*pid, r2_msg.c1.clone());
     }
@@ -313,8 +260,6 @@ pub(crate) fn transition_r2_to_r3(
     })
 }
 
-/// Finalize keygen: collect all public shares and compute the joint
-/// public key using Lagrange interpolation.
 pub(crate) fn finalize_keygen(state: Round3State) -> tecdsa_core::Result<Tx25KeyShare> {
     let n = state.all_parties.len();
     let my_id = state.my_id;
@@ -324,7 +269,6 @@ pub(crate) fn finalize_keygen(state: Round3State) -> tecdsa_core::Result<Tx25Key
         .position(|p| *p == my_id)
         .expect("my_id must be in all_parties");
 
-    // Collect all public shares in party order.
     let mut public_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
     for pid in &state.all_parties {
         if *pid == my_id {
@@ -337,8 +281,6 @@ pub(crate) fn finalize_keygen(state: Round3State) -> tecdsa_core::Result<Tx25Key
         }
     }
 
-    // Compute joint public key X = sum_{j in S} lambda_{j,S} * X_j.
-    // The party indices for Lagrange interpolation are 1-based.
     let indices: Vec<u16> = (1..=n as u16).collect();
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
 
@@ -347,7 +289,7 @@ pub(crate) fn finalize_keygen(state: Round3State) -> tecdsa_core::Result<Tx25Key
         |acc, (x_j, lambda_j)| acc + *x_j * lambda_j,
     );
 
-    let party_index = (my_idx + 1) as u16; // 1-based
+    let party_index = (my_idx + 1) as u16;
 
     Ok(Tx25KeyShare {
         party_index,

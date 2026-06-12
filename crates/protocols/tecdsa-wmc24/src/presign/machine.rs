@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMC24 presign state machine.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::CurveArithmetic;
@@ -16,10 +13,6 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, Sta
 
 use super::{msg::*, rounds::*, QfiAbc, Wmc24Presignature};
 use crate::{curve_wire::point_from_bytes, error::Wmc24Error, key_share::Wmc24KeyShare};
-
-// ---------------------------------------------------------------------------
-// Presign state machine
-// ---------------------------------------------------------------------------
 
 pub struct Wmc24PresignMachine {
     round: PresignRound,
@@ -69,7 +62,6 @@ impl Wmc24PresignMachine {
             elek_shares: key_share.elek_shares.clone(),
         };
 
-        // --- Round 1: Sample k_i, encrypt under threshold CL ---
         let k_i = {
             let (sk, _) = setup.keygen()?;
             let sk_dec = sk.to_string();
@@ -132,17 +124,12 @@ impl Wmc24PresignMachine {
     }
 }
 
-// ---------------------------------------------------------------------------
-// StateMachine implementation
-// ---------------------------------------------------------------------------
-
 impl StateMachine for Wmc24PresignMachine {
     type Output = Wmc24Presignature;
     type Inbound = Wmc24PresignMsg;
     type Outbound = Wmc24PresignMsg;
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
-        // Reject messages from self.
         let my_id = match &self.round {
             PresignRound::Round1(s) => s.my_id,
             PresignRound::Round2(s) => s.my_id,
@@ -238,7 +225,6 @@ impl StateMachine for Wmc24PresignMachine {
                         .to_bicycl_ct(&self.setup)
                         .map_err(|e| TecdsaError::Other(format!("gk_bar from {from}: {e}")))?;
 
-                    // Decode ElGamal ciphertext.
                     let d_gamma_c0 = point_from_bytes(&payload.d_gamma_c0_bytes, "d_gamma_c0")
                         .map_err(TecdsaError::Other)?;
                     let d_gamma_c1 = point_from_bytes(&payload.d_gamma_c1_bytes, "d_gamma_c1")
@@ -248,7 +234,6 @@ impl StateMachine for Wmc24PresignMachine {
                         c1: d_gamma_c1,
                     };
 
-                    // Verify R_dl-cl proof.
                     let pi_dl_cl_x = payload
                         .pi_dl_cl_x
                         .to_proof()
@@ -275,7 +260,6 @@ impl StateMachine for Wmc24PresignMachine {
                             TecdsaError::Other(format!("R_dl-cl verify from {from}: {e}"))
                         })?;
 
-                    // Verify R_El-CL proof.
                     let pi_el_cl = payload
                         .pi_el_cl
                         .to_proof()
@@ -360,8 +344,6 @@ impl StateMachine for Wmc24PresignMachine {
                         .to_qfi()
                         .map_err(|e| TecdsaError::Other(format!("pd_cl from {from}: {e}")))?;
 
-                    // Verify DDH proof for ElGamal partial decryption.
-                    // Statement: (G, D_gamma.c0, elek_j, pd_elg_j).
                     let pi_ddh = payload
                         .pi_part_dec_elg
                         .to_proof()
@@ -383,7 +365,6 @@ impl StateMachine for Wmc24PresignMachine {
                     };
                     let pi_elg_ok = pi_ddh.verify(&ddh_stmt);
 
-                    // Verify R_part_dec proof for CL.
                     let pi_part_dec_cl = payload
                         .pi_part_dec_cl
                         .to_proof()

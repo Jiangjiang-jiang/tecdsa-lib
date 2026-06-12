@@ -1,12 +1,5 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! CL-HSM encryption: key generation, encryption, decryption, and
-//! homomorphic operations.
-//!
-//! The main entry point is [`ClSetup`], which initialises a CL-HSMqk scheme
-//! and provides access to the class group context, random-number generator, and
-//! scheme parameters.
 
 use std::{borrow::Borrow, str::FromStr, sync::Arc};
 
@@ -18,28 +11,17 @@ pub use crate::class_group::{
     rand::RandGen,
 };
 
-/// Error type for class-group operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ClError {
-    /// An error originating from class group operations
     #[error("class group: {0}")]
     ClassGroup(#[from] ClassGroupError),
 
-    /// Invalid parameter supplied to a class-group operation.
     #[error("invalid parameter: {0}")]
     InvalidParam(String),
 }
 
-/// Result alias for class-group operations.
 pub type ClResult<T> = Result<T, ClError>;
 
-/// Initialised CL-HSMqk class-group scheme.
-///
-/// The heavy, immutable scheme data ([`CL_HSMqk`], which embeds the fixed-base
-/// comb table for `h` — ~256 class-group elements) is held behind an [`Arc`],
-/// so cloning a `ClSetup` only bumps the refcount and copies the small mutable
-/// PRNG state, rather than deep-copying the comb table. This matters because
-/// benchmarks and per-party protocol setup clone the setup many times.
 #[derive(Clone)]
 pub struct ClSetup {
     rng: RandGen,
@@ -52,59 +34,21 @@ impl std::fmt::Debug for ClSetup {
     }
 }
 
-/// The secp256k1 curve order `q` as a decimal string.
 pub const SECP256K1_ORDER: &str =
     "115792089237316195423570985008687907852837564279074904382605163141518161494337";
 
-/// A 1572-bit prime `p` for 128-bit security CL-HSMqk with secp256k1.
-///
-/// Satisfies: p ≡ 3 (mod 4), p prime, Legendre(q, p) = -1.
-/// Gives |Delta_K| = |p * q| = 1828 bits (lambda = 914).
-/// Matches the security level in Trout (eprint 2020/196) and WMY23 (|Delta_q| = 1860).
 pub const SECP256K1_CL_PRIME_128BIT: &str =
     "165427457039117011823074561613444035351792492968921911807749264167080539287954032009049341053817071909297408790078970165320482418378310001089994560969562298297850775105757501192300518402392755866330857379154546192687115362055161787245008991873302392117599634534192225466830770950397155986355417462441267574549737435039212228475528923355314428234034516940321913098953375361830573701543197780605487019385455259679887245284016137256968388198675036060069434723034369192376576943";
 
 impl ClSetup {
-    /// Creates a new CL-HSMqk setup for secp256k1 using the
-    /// known-good class-group prime from test vectors.
-    ///
-    /// This uses `q = secp256k1 order`, `k = 1`, and a prime `p`
-    /// satisfying the required congruence and Kronecker-symbol
-    /// constraints for a fundamental discriminant `Delta_K = -p*q`.
-    ///
-    /// `seed_decimal` seeds the internal PRNG for deterministic testing.
-    /// In production, pass a cryptographically random seed.
     pub fn new_secp256k1(seed_decimal: &str) -> ClResult<Self> {
-        // For secp256k1, q ≡ 1 (mod 4), so we need p ≡ 3 (mod 4) and p prime,
-        // with Legendre(q, p) = -1, to make Delta_K = -p*q fundamental.
-        //
-        // p = 7 satisfies: 7 ≡ 3 (mod 4), 7*q ≡ 3 (mod 4) => -7*q ≡ 1 (mod 4),
-        // and q mod 7 = 3 which is a QNR mod 7, so Legendre(q, 7) = -1.
-        //
-        // NOTE: This gives a tiny discriminant (insecure!) suitable only for
-        // fast testing. Use `new_secp256k1_128bit` for 128-bit security.
         Self::new_custom(SECP256K1_ORDER, 1, "7", seed_decimal)
     }
 
-    /// Creates a CL-HSMqk setup for secp256k1 with 128-bit security.
-    ///
-    /// Uses a 1572-bit prime p giving |Delta_K| = 1828 bits, matching
-    /// the standard 128-bit security level (lambda = 914) from
-    /// <https://eprint.iacr.org/2020/196>.
-    ///
-    /// This matches the security parameters used by:
-    /// - WMY23 (|Delta_q| = 1860)
-    /// - Trout (SecurityLevel::OneHundredTwentyEightBit, lambda = 914)
     pub fn new_secp256k1_128bit(seed_decimal: &str) -> ClResult<Self> {
         Self::new_custom(SECP256K1_ORDER, 1, SECP256K1_CL_PRIME_128BIT, seed_decimal)
     }
 
-    /// Creates a CL-HSMqk setup with custom parameters.
-    ///
-    /// - `q_decimal`: the prime order of the plaintext group.
-    /// - `k`: the power parameter (plaintext space is `Z/q^k`).
-    /// - `p_decimal`: the class-group prime.
-    /// - `seed_decimal`: PRNG seed (decimal string).
     pub fn new_custom(
         q_decimal: &str,
         k: u32,
@@ -127,31 +71,21 @@ impl ClSetup {
         })
     }
 
-    // ── Accessors ──────────────────────────────────────────────────────
-
-    /// Returns a mutable reference to the PRNG.
     pub fn rng(&mut self) -> &mut RandGen {
         &mut self.rng
     }
 
-    /// Returns a reference to the CL-HSMqk scheme instance.
     #[must_use]
     pub fn cl(&self) -> &CL_HSMqk {
         &self.cl
     }
 
-    // ── Key generation ─────────────────────────────────────────────────
-
-    /// Generates a fresh CL-HSMqk key pair.
     pub fn keygen(&mut self) -> ClResult<(SecretKey, PublicKey)> {
         let sk = self.cl.keygen_secret(&mut self.rng);
         let pk = self.cl.keygen_public(&sk);
         Ok((sk, pk))
     }
 
-    // ── Encryption / Decryption ────────────────────────────────────────
-
-    /// Encrypts a plaintext given as a decimal string.
     pub fn encrypt(&mut self, pk: &PublicKey, message_decimal: &str) -> ClResult<Ciphertext> {
         Ok(self.cl.encrypt(
             pk,
@@ -160,7 +94,6 @@ impl ClSetup {
         ))
     }
 
-    /// Encrypts with explicit randomness (deterministic encryption).
     pub fn encrypt_with_r(
         &self,
         pk: &PublicKey,
@@ -174,14 +107,10 @@ impl ClSetup {
         ))
     }
 
-    /// Decrypts a ciphertext, returning the plaintext as a decimal string.
     pub fn decrypt(&self, sk: &SecretKey, ct: &Ciphertext) -> ClResult<String> {
         Ok(self.cl.decrypt(sk, ct).to_string())
     }
 
-    // ── Homomorphic operations ─────────────────────────────────────────
-
-    /// Homomorphic addition: `Enc(a) + Enc(b) = Enc(a + b mod q^k)`.
     pub fn add_ciphertexts(
         &mut self,
         pk: &PublicKey,
@@ -191,7 +120,6 @@ impl ClSetup {
         Ok(self.cl.add_ciphertexts(pk, ca, cb, &mut self.rng))
     }
 
-    /// Homomorphic scalar multiplication: `s * Enc(m) = Enc(s * m mod q^k)`.
     pub fn scal_ciphertext(
         &mut self,
         pk: &PublicKey,
@@ -203,23 +131,14 @@ impl ClSetup {
             .scal_ciphertexts(pk, ct, &Mpz::from_str(scalar_decimal)?, &mut self.rng))
     }
 
-    // ── Subgroup operations ────────────────────────────────────────────
-
-    /// Computes `h^e` (power of the hidden-order generator).
     pub fn power_of_h(&self, e_decimal: &str) -> ClResult<Qfi> {
         Ok(self.cl.power_of_h(&Mpz::from_str(e_decimal)?))
     }
 
-    /// Computes `f^m` in the cyclic subgroup `F` (the message subgroup).
     pub fn power_of_f(&self, m_decimal: &str) -> ClResult<Qfi> {
         Ok(self.cl.power_of_f(&Mpz::from_str(m_decimal)?))
     }
 
-    // ── Bytes-based API ───────────────────────────────────────────────
-
-    /// Encrypts a plaintext given as big-endian bytes.
-    ///
-    /// The bytes are interpreted as an unsigned big-endian integer.
     pub fn encrypt_bytes(
         &mut self,
         pk: &PublicKey,
@@ -232,12 +151,10 @@ impl ClSetup {
         ))
     }
 
-    /// Decrypts a ciphertext, returning the plaintext as big-endian bytes.
     pub fn decrypt_bytes(&self, sk: &SecretKey, ct: &Ciphertext) -> ClResult<Vec<u8>> {
         Ok(self.cl.decrypt(sk, ct).to_bytes_be())
     }
 
-    /// Homomorphic scalar multiplication with a bytes scalar.
     pub fn scal_ciphertext_bytes(
         &mut self,
         pk: &PublicKey,
@@ -249,31 +166,24 @@ impl ClSetup {
             .scal_ciphertexts(pk, ct, &Mpz::from_bytes_be(scalar_bytes), &mut self.rng))
     }
 
-    /// Computes `f^m` in the cyclic subgroup `F`, with `m` as big-endian bytes.
     pub fn power_of_f_bytes(&self, m_bytes: &[u8]) -> ClResult<Qfi> {
         Ok(self.cl.power_of_f(&Mpz::from_bytes_be(m_bytes)))
     }
 
-    /// Computes `h^e` with `e` as big-endian bytes.
     pub fn power_of_h_bytes(&self, e_bytes: &[u8]) -> ClResult<Qfi> {
         Ok(self.cl.power_of_h(&Mpz::from_bytes_be(e_bytes)))
     }
 
-    /// Discrete log in subgroup F, result as big-endian bytes.
     #[allow(non_snake_case)]
     pub fn dlog_in_F_bytes(&self, fm: &Qfi) -> ClResult<Vec<u8>> {
         Ok(self.cl.dlog_in_F(fm).to_bytes_be())
     }
 
-    /// QFI exponentiation in `Cl(Delta)`: `f^n` with `n` as big-endian bytes.
     pub fn exp_bytes(&self, f: &Qfi, n: &[u8]) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
         Ok(cl_delta.exp(f, &Mpz::from_bytes_be(n)))
     }
 
-    /// Deterministic encryption with explicit randomness, bytes-based.
-    ///
-    /// Both `msg` and `r` are big-endian unsigned bytes.
     pub fn encrypt_with_r_bytes(
         &self,
         pk: &PublicKey,
@@ -287,44 +197,32 @@ impl ClSetup {
         ))
     }
 
-    /// Export secret key as big-endian bytes.
     pub fn sk_to_bytes(&self, sk: &SecretKey) -> ClResult<Vec<u8>> {
         Ok(sk.to_bytes_be())
     }
 
-    /// Import secret key from big-endian bytes.
     pub fn sk_from_bytes(&self, bytes: &[u8]) -> ClResult<SecretKey> {
         Ok(SecretKey::from_mpz(&self.cl, Mpz::from_bytes_be(bytes))?)
     }
 
-    /// Curve order `q` as big-endian bytes.
     pub fn q_bytes(&self) -> ClResult<Vec<u8>> {
         Ok(self.cl.q().to_bytes_be())
     }
 
-    /// Secret key bound as big-endian bytes.
     pub fn secretkey_bound_bytes(&self) -> ClResult<Vec<u8>> {
         Ok(self.cl.secretkey_bound().to_bytes_be())
     }
 
-    // ── Class-group QFI utilities ──────────────────────────────────────
-
-    /// Composes two QFI elements in `Cl(Delta)`: `f1 * f2`.
     pub fn compose(&self, f1: &Qfi, f2: &Qfi) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
         Ok(cl_delta.compose(f1, f2))
     }
 
-    /// Exponentiates a QFI element: `f^n`.
     pub fn exp(&self, f: &Qfi, n_decimal: &str) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
         Ok(cl_delta.exp(f, &Mpz::from_str(n_decimal)?))
     }
 
-    /// Simultaneous multi-exponentiation `∏ bases[i]^exps[i]` in `Cl(Δ)`, with
-    /// each exponent given as big-endian bytes. Shares one squaring chain across
-    /// all bases (see [`ClassGroup::multiexp`]); far cheaper than folding `n`
-    /// independent [`exp_bytes`](Self::exp_bytes) results with [`compose`](Self::compose).
     pub fn multiexp_bytes(
         &self,
         bases: &[impl Borrow<Qfi>],
@@ -337,12 +235,6 @@ impl ClSetup {
         Ok(self.cl.cl_delta().multiexp(bases, &exps_mpz))
     }
 
-    /// `pk^e` (`e` big-endian bytes) using the public key's fixed-base comb when
-    /// possible. The comb is built lazily on `pk` and reused, so the O(n)
-    /// per-peer Schnorr verifies that raise the *same* `pk` to a response `z`
-    /// amortise one table build instead of doing `n` bare variable-base exps.
-    /// Falls back to a bare exp for the compact variant (where `pk ∈ Cl(Δ_K)`)
-    /// or for exponents beyond the comb's range.
     pub fn pk_pow_bytes(&self, pk: &PublicKey, e: &[u8]) -> ClResult<Qfi> {
         let n = Mpz::from_bytes_be(e);
         if !self.cl.compact_variant {
@@ -354,9 +246,6 @@ impl ClSetup {
         Ok(self.cl.cl_delta.exp(pk.elt(), &n))
     }
 
-    /// Like [`multiexp_bytes`](Self::multiexp_bytes) but each exponent carries an
-    /// explicit sign (`true` = negative); the magnitude is big-endian bytes.
-    /// Useful for Lagrange-weighted products `∏ gᵢ^{λᵢ}` where `λᵢ` may be negative.
     pub fn multiexp_signed_bytes(
         &self,
         bases: &[impl Borrow<Qfi>],
@@ -376,45 +265,33 @@ impl ClSetup {
         Ok(self.cl.cl_delta().multiexp(bases, &exps_mpz))
     }
 
-    /// Returns the identity element of `Cl(Delta)`.
     pub fn identity(&self) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
         Ok(cl_delta.identity())
     }
 
-    /// Returns the ciphertext components `(c1, c2)`.
     pub fn ct_components(&self, ct: &Ciphertext) -> ClResult<(Qfi, Qfi)> {
         let c1 = ct.c1().clone();
         let c2 = ct.c2().clone();
         Ok((c1, c2))
     }
 
-    /// Builds a ciphertext from QFI components `(c1, c2)`.
     pub fn ct_from_components(&self, c1: &Qfi, c2: &Qfi) -> ClResult<Ciphertext> {
         Ok(Ciphertext::new(c1.clone(), c2.clone()))
     }
 
-    /// Constructs a public key from a QFI element.
     pub fn pk_from_qfi(&self, qfi: &Qfi) -> ClResult<PublicKey> {
         Ok(PublicKey::from_qfi(&self.cl, qfi.clone())?)
     }
 }
 
-/// Number of comb blocks for fixed-base precomputation (table size `2^COMB_BLOCKS`).
 const COMB_BLOCKS: usize = 8;
 
-/// Genus of a form: the pair of genus characters, each `-1` or `1`.
 pub type Genus = (i32, i32);
 
-/// Tunable parameters for an instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Params {
-    /// Statistical-distance parameter controlling the secret/randomness bound:
-    /// the bound is `classnumber_upper_bound(Δ_K) · 2^(distance-2)`, giving a
-    /// sampling distribution within `2^(-distance)` statistical distance of
-    /// uniform over the (unknown) group order.
     pub distance: usize,
-    /// Use the compact variant (store/transmit `pk`/`c1` in `Cl(Δ_K)`).
     pub compact_variant: bool,
 }
 
@@ -427,13 +304,12 @@ impl Default for Params {
     }
 }
 
-/// A CL-HSM_qk instance (public parameters and derived data).
 #[derive(Clone, Debug)]
 pub struct CL_HSMqk {
     pub(crate) q: Mpz,
     pub(crate) k: usize,
     pub(crate) p: Mpz,
-    pub(crate) m: Mpz, // M = q^k
+    pub(crate) m: Mpz,
     pub(crate) delta_k: Mpz,
     pub(crate) delta: Mpz,
     pub(crate) cl_delta_k: ClassGroup,
@@ -441,7 +317,6 @@ pub struct CL_HSMqk {
     pub(crate) cl_g: ClassGroup,
     pub(crate) h: QFI,
     pub(crate) h_comb: FixedBaseComb,
-    /// Compact-variant generator `γ = π(h)^M ∈ Cl(Δ_K)`.
     pub(crate) gamma: QFI,
     pub(crate) compact_variant: bool,
     pub(crate) large_message_variant: bool,
@@ -454,12 +329,7 @@ pub struct CL_HSMqk {
 const MR_REPS: u32 = 30;
 
 impl CL_HSMqk {
-    // --- constructors ------------------------------------------------------
 
-    /// Build an instance from explicit `q`, `k`, `p`.
-    ///
-    /// Requires: `q` an odd prime; `p` equal to `1` or an odd prime;
-    /// `p·q ≡ 3 (mod 4)`; and (when `p ≠ 1`) Kronecker `(p | q) = -1`.
     pub fn new(q: &Mpz, k: usize, p: &Mpz, params: Params) -> Result<CL_HSMqk, ClassGroupError> {
         if k == 0 {
             return Err(ClassGroupError::InvalidParameter("k must be >= 1".into()));
@@ -487,9 +357,8 @@ impl CL_HSMqk {
             ));
         }
 
-        // Δ_K = -p·q ;  Δ = q^{2k}·Δ_K = -p·q^{2k+1}
         let delta_k = pq.neg();
-        let m = q.pow_u(k as u32); // M = q^k
+        let m = q.pow_u(k as u32);
         let q2k = q.pow_u(2 * k as u32);
         let delta = &q2k * &delta_k;
 
@@ -497,30 +366,20 @@ impl CL_HSMqk {
         let cl_delta = ClassGroup::new(delta.clone());
         let cl_g = cl_delta.clone();
 
-        // Hard-subgroup generator: smallest split prime form, squared (→ the
-        // principal genus / squares subgroup), raised to M = q^k (→ H).
         let h = build_h(&cl_delta, &m, q, p);
 
-        // Large-message regime ⇔ f^m forms are not reduced ⇔ q^{2k} > (1-Δ_K)/4.
         let c_f = (&Mpz::from(1u64) - &delta_k).fdiv_2exp(2);
         let large_message_variant = q2k > c_f;
 
-        // Bounds.
         let cleartext_bound = m.clone();
         let cn_bound = classnumber_upper_bound(&delta_k);
         let dist = params.distance.max(2);
         let secretkey_bound = cn_bound.mul_2exp((dist - 2) as u32);
         let encrypt_randomness_bound = secretkey_bound.clone();
 
-        // Fixed-base comb for h. Sized to also cover unbounded ZK responses
-        // z = a + e·sk (a ~ secretkey_bound, e ~ q, sk ~ secretkey_bound), so the
-        // Schnorr verify checks `power_of_h(z)` stay on the comb instead of
-        // falling back to a bare exp. The comb's table size is fixed (2^blocks);
-        // only the per-block length grows, so the extra cost is marginal.
         let exp_bits = secretkey_bound.nbits() + q.nbits() + 2;
         let h_comb = cl_delta.precompute_comb(&h, exp_bits, COMB_BLOCKS);
 
-        // Compact-variant generator γ = π(h)^M ∈ Cl(Δ_K).
         let pi_h = {
             let mut g = h.to_maximal_order(&m, &delta_k);
             cl_delta_k.reduce(&mut g);
@@ -564,7 +423,6 @@ impl CL_HSMqk {
         }
         let qbits = q.nbits();
         let p = if delta_k_nbits <= qbits + 1 {
-            // q is already large enough: use p = 1 if possible.
             if q.modulo(&Mpz::from(4u64)) == 3u64 {
                 Mpz::from(1u64)
             } else {
@@ -592,8 +450,6 @@ impl CL_HSMqk {
         c.compact_variant = compact_variant;
         c
     }
-
-    // --- accessors ---------------------------------------------------------
 
     pub fn q(&self) -> &Mpz {
         &self.q
@@ -644,15 +500,6 @@ impl CL_HSMqk {
         self.lambda_distance
     }
 
-    // --- subgroup ops ------------------------------------------------------
-
-    /// `h^n` in `Cl(Δ)`.                                           
-    ///                                                             
-    /// Uses the fixed-base comb table for `h` when `n` fits its precomputed
-    /// range (secret-key / randomness sized). For a larger exponent — e.g. an
-    /// unbounded Schnorr response `z = a + e·sk` — it falls back to the general
-    /// variable-base [`exp`](ClassGroup::exp), because the comb would otherwise
-    /// silently drop `n`'s high bits.
     pub fn power_of_h(&self, n: &Mpz) -> QFI {
         if n.sgn() < 0 {
             return self.cl_delta.inverse(&self.power_of_h(&n.neg()));
@@ -664,7 +511,6 @@ impl CL_HSMqk {
         }
     }
 
-    /// `f^m`, computed via the Theorem-5 isomorphism (no group exponentiation).
     pub fn power_of_f(&self, m: &Mpz) -> QFI {
         let mm = m.modulo(&self.m);
         if mm.is_zero() {
@@ -674,13 +520,6 @@ impl CL_HSMqk {
         self.form_from_ring_param(&t)
     }
 
-    /// Discrete log of `fm = f^m` in `F`, returning `m ∈ [0, q^k)`.
-    ///
-    /// Handles both regimes. In the small-message regime (`q^{2k} ≤ (1-Δ_K)/4`)
-    /// the reduced form already exposes the `(q^{2j}, u·q^j, ·)` shape. In the
-    /// large-message regime the reduced `f^m` no longer does, so for `k = 1` we
-    /// recover `m` from the principal-ideal generator of `f^m`'s go-up image
-    /// (see [`Self::dlog_in_F_large_k1`]).
     pub fn dlog_in_F(&self, fm: &QFI) -> Mpz {
         if fm.a().is_one() {
             return Mpz::new();
@@ -694,7 +533,6 @@ impl CL_HSMqk {
             return self.dlog_in_F_large_k1(fm);
         }
         if self.k == 1 {
-            // reduced form is (q², q·u, ·) with u ≡ m^{-1} (mod q); m = u^{-1}.
             let u = fm.b().divexact(&self.q);
             return u
                 .invert(&self.q)
@@ -704,30 +542,24 @@ impl CL_HSMqk {
         self.dlog_in_F_general(fm)
     }
 
-    /// Lift a form of discriminant `Δ_K` to the corresponding class of `Δ`
-    /// (the ideal "go-down" map of HJPT98/CL09): keep `a`, scale `b` by the
-    /// conductor `M = q^k` and `c` by `M²`, then reduce in `Cl(Δ)`.
     pub fn from_cl_delta_k_to_cl_delta(&self, f: &mut QFI) {
         let mut lifted = f.lift(&self.m);
         self.cl_delta.reduce(&mut lifted);
         *f = lifted;
     }
 
-    /// Go-up surjection `π: Cl(Δ) → Cl(Δ_K)` (HJPT98 Alg. 3 / CL09 Alg. 2).
     pub fn to_cl_delta_k(&self, f: &QFI) -> QFI {
         let mut g = f.to_maximal_order(&self.m, &self.delta_k);
         self.cl_delta_k.reduce(&mut g);
         g
     }
 
-    /// Compact-variant lift `ψ: Cl(Δ_K) → Cl(Δ)`, `ψ(ω) = (go-down ω)^M`.
     fn psi(&self, omega: &QFI) -> QFI {
         let mut lifted = omega.clone();
         self.from_cl_delta_k_to_cl_delta(&mut lifted);
         self.cl_delta.exp(&lifted, &self.m)
     }
 
-    /// The class group in which `c1` and `pk` live (`Cl(Δ_K)` compact, else `Cl(Δ)`).
     fn c1_group(&self) -> &ClassGroup {
         if self.compact_variant {
             &self.cl_delta_k
@@ -736,7 +568,6 @@ impl CL_HSMqk {
         }
     }
 
-    /// `c1 = generator^r`.
     fn enc_c1(&self, r: &Mpz) -> QFI {
         if self.compact_variant {
             self.cl_delta_k.exp(&self.gamma, r)
@@ -745,8 +576,6 @@ impl CL_HSMqk {
         }
     }
 
-    /// The `Cl(Δ)` factor multiplied into `c2` next to `f^m`: `pk^r`, lifted by
-    /// `ψ` in the compact variant.
     fn enc_mask(&self, pk: &PublicKey, r: &Mpz) -> QFI {
         if self.compact_variant {
             self.psi(&self.cl_delta_k.exp(pk.elt(), r))
@@ -755,15 +584,13 @@ impl CL_HSMqk {
         }
     }
 
-    /// Genus characters `((v|p), (v|q))` for a value `v` represented by `f`
-    /// and coprime to `p·q`. `(1, 1)` means the principal genus (a square).
     pub fn genus(&self, f: &QFI) -> Genus {
         let pq = &self.p * &self.q;
         let one = Mpz::from(1u64);
         let candidates = [
             f.a().clone(),
             f.c().clone(),
-            &(f.a() + f.b()) + f.c(), // f(1,1) = a+b+c
+            &(f.a() + f.b()) + f.c(),
         ];
         let v = candidates
             .into_iter()
@@ -771,8 +598,6 @@ impl CL_HSMqk {
             .expect("no represented value coprime to p·q");
         (v.kronecker(&self.p), v.kronecker(&self.q))
     }
-
-    // --- crypto ------------------------------------------------------------
 
     pub fn keygen_secret(&self, rng: &mut RandGen) -> SecretKey {
         SecretKey::random(self, rng)
@@ -795,7 +620,6 @@ impl CL_HSMqk {
     }
 
     pub fn decrypt(&self, sk: &SecretKey, c: &Ciphertext) -> Cleartext {
-        // a = c2 · (c1^sk)^{-1}, lifting c1^sk by ψ in the compact variant.
         let c1sk = self.c1_group().exp(c.c1(), sk.as_mpz());
         let factor = if self.compact_variant {
             self.psi(&c1sk)
@@ -866,7 +690,6 @@ impl CL_HSMqk {
         Cleartext((m.as_mpz() * s).modulo(&self.m))
     }
 
-    /// `addscal(ca, cb, s)` decrypts to `m_a + s·m_b (mod M)`.
     pub fn addscal_ciphertexts(
         &self,
         pk: &PublicKey,
@@ -897,19 +720,14 @@ impl CL_HSMqk {
         Ciphertext::new(c1, c2)
     }
 
-    // --- internal helpers --------------------------------------------------
-
-    /// Map exponent `m` to the ring parameter `t` with `(1+√Δ_K)^m ≅ 1+t√Δ_K`
-    /// in `G_{q^k}`, via Lucas sequences (`P=1`, `Q=(1-Δ_K)/4`).
     fn ring_param_from_exponent(&self, m: &Mpz) -> Mpz {
-        let n = &self.m; // modulus q^k
+        let n = &self.m;
         let p_param = Mpz::from(1u64);
-        let q_param = (&Mpz::from(1u64) - &self.delta_k).fdiv_2exp(2); // (1-Δ_K)/4
+        let q_param = (&Mpz::from(1u64) - &self.delta_k).fdiv_2exp(2);
         let (u_l, v_l) = lucas_uv(&p_param, &q_param, m, n, &self.delta_k);
         (&u_l * &v_l.invert(n).expect("V_m invertible mod q^k")).modulo(n)
     }
 
-    /// Theorem-5 map `1 + t√Δ_K  ↦  (q^{2j}, u·q^j, (u² - q^{2(k-j)}Δ_K)/4)`.
     fn form_from_ring_param(&self, t: &Mpz) -> QFI {
         if t.is_zero() {
             return self.cl_delta.identity();
@@ -919,13 +737,11 @@ impl CL_HSMqk {
         let qj = self.q.pow_u(j as u32);
         let qv = self.q.pow_u(v as u32);
         let two_qj = qj.mul_2exp(1);
-        let w = t.divexact(&qv); // t / q^v, coprime to q
-                                 // u ≡ w^{-1} (mod q^j), lifted to its odd representative in (-q^j, q^j].
-                                 // (u must be odd so that b = u·q^j has the same parity as Δ.)
+        let w = t.divexact(&qv);
         let inv = w.modulo(&qj).invert(&qj).expect("w invertible mod q^j");
         let u_pos = if inv.is_odd() { inv } else { &inv + &qj };
         let u = center(u_pos, &two_qj, &qj);
-        let a = &qj * &qj; // q^{2j}
+        let a = &qj * &qj;
         let b = &u * &qj;
         let q2v = &qv * &qv;
         let c = (&(&u * &u) - &(&q2v * &self.delta_k)).divexact(&Mpz::from(4u64));
@@ -934,17 +750,11 @@ impl CL_HSMqk {
         form
     }
 
-    /// `dlog_in_F` for `k > 1` (BICYCL Algorithm 13): recover the ring parameter
-    /// `t` with `1 + t√Δ_K ≅ (1+√Δ_K)^m`, then peel the base-`q` digits of `m`
-    /// in the ring `Z[√Δ_K]/q^k` (each step costs only a power-`q`, not a
-    /// power-`q^{k-i}`).
     fn dlog_in_F_general(&self, fm: &QFI) -> Mpz {
-        let n = &self.m; // N = q^k
-        let dk = self.delta_k.modulo(n); // Δ_K mod N
+        let n = &self.m;
+        let dk = self.delta_k.modulo(n);
 
-        // 1. Recover the ring parameter t of f^m from the reduced form
-        //    fm = (q^{2j}, u·q^j, ·).
-        let val = val_q(fm.a(), &self.q); // a = q^{2j}
+        let val = val_q(fm.a(), &self.q);
         let j = val / 2;
         let qj = self.q.pow_u(j as u32);
         let v = self.k - j;
@@ -952,20 +762,16 @@ impl CL_HSMqk {
         let u = fm.b().divexact(&qj);
         let t0 = (&qv * &u.invert(&qj).expect("u invertible mod q^j")).modulo(n);
 
-        // 2. Digit recovery: cur = 1 + t0√Δ_K, alpha = 1 + √Δ_K.
         let mut cur = (Mpz::from(1u64), t0);
         let mut alpha = (Mpz::from(1u64), Mpz::from(1u64));
         let mut m_acc = Mpz::new();
-        let mut qi = Mpz::from(1u64); // q^i
+        let mut qi = Mpz::from(1u64);
         for _ in 0..self.k {
-            // normalize cur to 1 + tc√Δ_K: tc = f · e^{-1} (mod N)
             let tc = (&cur.1 * &cur.0.invert(n).expect("e invertible mod q^k")).modulo(n);
-            let mi = tc.divexact(&qi).modulo(&self.q); // m_i = (tc / q^i) mod q
-                                                       // cur ← cur · alpha^{-m_i}
+            let mi = tc.divexact(&qi).modulo(&self.q);
             let a_mi = ring_pow(&alpha, &mi, &dk, n);
             let a_mi_inv = ring_inv(&a_mi, &dk, n);
             cur = ring_mul(&cur, &a_mi_inv, &dk, n);
-            // alpha ← alpha^q
             alpha = ring_pow(&alpha, &self.q, &dk, n);
             m_acc = &m_acc + &(&mi * &qi);
             qi = &qi * &self.q;
@@ -973,35 +779,13 @@ impl CL_HSMqk {
         m_acc
     }
 
-    /// Large-message discrete log in `F` for `k = 1` (the `Δ = q²·Δ_K` regime,
-    /// where a reduced `f^m` no longer has the revealing `(q², q·m⁻¹, ·)` shape).
-    ///
-    /// `f^m ∈ F = ker(π: Cl(Δ) → Cl(Δ_K))`, so its go-up image
-    /// [`to_maximal_order`](QFI::to_maximal_order) is the *principal* class of
-    /// `Cl(Δ_K)`. Reducing that (unreduced) principal form to the identity
-    /// recovers the generator `γ` of its ideal. Because `Δ_K = -p·q ≡ 0 (mod q)`,
-    /// the reduction `O_K/q ≅ (Z/q)[ε]/(ε²)` is the dual numbers (`ε = √Δ_K`),
-    /// where `(½(1+ε))^m ≡ 2⁻ᵐ(1 + m·ε)`; the `F`-isomorphism therefore sends
-    /// `f^m ↦ 1 + m·ε`, so `m` is the `ε`-coordinate of the normalized `γ`.
     fn dlog_in_F_large_k1(&self, fm: &QFI) -> Mpz {
         let q = &self.q;
-        // Go up to Cl(Δ_K): an unreduced principal form (A, B′, C′).
         let g = fm.to_maximal_order(q, &self.delta_k);
-        // Reduce to the identity, tracking the generator's *numerator*
-        // N = γ·∏(2cᵢ) = e + f·√Δ_K (the ∏2cᵢ denominator cancels below). The
-        // F-isomorphism sends f^m ↦ 1 + m·ε (ε = √Δ_K), so with γ normalized to
-        // 1 + m·ε we have m = (√Δ_K-coord)/(rational-coord) of γ, and the
-        // calibration sign gives m = −f·e⁻¹ (mod q).
         let (e, f) = reduce_track_generator(&g, q);
         if e.sgn() != 0 {
-            // Fast path (e ≢ 0 mod q, i.e. no bᵢ ≡ 0 mod q — always so for
-            // cryptographic q).
             return (&f.neg() * &e.invert(q).expect("γ rational part invertible")).modulo(q);
         }
-        // Edge (only reachable for tiny q): some bᵢ ≡ 0 mod q collapsed e to 0
-        // mod q. Recompute the numerator over Z exactly, then strip the common
-        // q-power before inverting (γ's rational part is a unit, so its q-adic
-        // valuation equals that of the cancelled denominator).
         let (e, f) = reduce_track_generator_exact(&g, &self.delta_k);
         let v = val_q(&e, q);
         let qv = q.pow_u(v as u32);
@@ -1011,20 +795,11 @@ impl CL_HSMqk {
     }
 }
 
-/// Reduce a principal form `(a,b,c)` of negative discriminant to the identity,
-/// returning (mod `q`) the *numerator* `e + f·√Δ_K = γ·∏(2cᵢ)` of the generator
-/// `γ` of its ideal `[a, (b+√Δ_K)/2]`. Writing `𝔞_orig = γ·𝔞_current` (so `γ = 1`
-/// initially and `γ` is the generator once `𝔞_current = O_K`), each ρ-step
-/// `(a,b,c) → (c, …)` multiplies `γ` by `(b+√Δ_K)/(2c)`; normalization only
-/// rewrites the basis and leaves `γ` fixed. We track `γ·∏(2cᵢ)` (multiply by the
-/// numerator `(b+√Δ_K)` only, no division), since the `∏(2cᵢ)` factor cancels in
-/// the caller's `f/e` ratio. `Δ_K ≡ 0 (mod q)` ⇒ the `√Δ_K`-square term vanishes.
 fn reduce_track_generator(g: &QFI, q: &Mpz) -> (Mpz, Mpz) {
     let (mut a, mut b, mut c) = (g.a().clone(), g.b().clone(), g.c().clone());
-    let (mut e, mut f) = (Mpz::from(1u64), Mpz::new()); // numerator = 1 = (1, 0)
-    normalize(&mut a, &mut b, &mut c); // ideal (hence γ) unchanged
+    let (mut e, mut f) = (Mpz::from(1u64), Mpz::new());
+    normalize(&mut a, &mut b, &mut c);
     while a > c {
-        // (e + f·√Δ_K)·(b + √Δ_K) = (e·b + f·Δ_K) + (e + f·b)·√Δ_K;  Δ_K ≡ 0.
         let nf = (&e + &(&f * &b)).modulo(q);
         e = (&e * &b).modulo(q);
         f = nf;
@@ -1033,15 +808,13 @@ fn reduce_track_generator(g: &QFI, q: &Mpz) -> (Mpz, Mpz) {
     (e, f)
 }
 
-/// Exact-integer variant of [`reduce_track_generator`] (no reduction mod `q`),
-/// used only for the tiny-`q` edge where the mod-`q` numerator collapses to 0.
 fn reduce_track_generator_exact(g: &QFI, delta_k: &Mpz) -> (Mpz, Mpz) {
     let (mut a, mut b, mut c) = (g.a().clone(), g.b().clone(), g.c().clone());
     let (mut e, mut f) = (Mpz::from(1u64), Mpz::new());
     normalize(&mut a, &mut b, &mut c);
     while a > c {
-        let ne = &(&e * &b) + &(&f * delta_k); // e·b + f·Δ_K
-        let nf = &e + &(&f * &b); // e + f·b
+        let ne = &(&e * &b) + &(&f * delta_k);
+        let nf = &e + &(&f * &b);
         e = ne;
         f = nf;
         rho(&mut a, &mut b, &mut c);
@@ -1049,16 +822,13 @@ fn reduce_track_generator_exact(g: &QFI, delta_k: &Mpz) -> (Mpz, Mpz) {
     (e, f)
 }
 
-/// Normalize a form: `b ← b (mod 2a)` centered into `(−a, a]` (Long §5.2.1).
 fn normalize(a: &mut Mpz, b: &mut Mpz, c: &mut Mpz) {
     let two_a = a.mul_2exp(1);
-    let r = (&*a - &*b).fdiv_q(&two_a); // r = ⌊(a − b)/2a⌋
-    *c = &*c + &(&r * &(&*b + &(&*a * &r))); // c += r·(b + a·r)
-    *b = &*b + &(&two_a * &r); // b += 2a·r
+    let r = (&*a - &*b).fdiv_q(&two_a);
+    *c = &*c + &(&r * &(&*b + &(&*a * &r)));
+    *b = &*b + &(&two_a * &r);
 }
 
-/// One ρ-reduction step: `(a,b,c) → (c, 2sc − b, a + s(sc − b))`,
-/// `s = ⌊(c + b)/2c⌋`.
 fn rho(a: &mut Mpz, b: &mut Mpz, c: &mut Mpz) {
     let s = (&*c + &*b).fdiv_q(&c.mul_2exp(1));
     let sc = &s * &*c;
@@ -1069,8 +839,6 @@ fn rho(a: &mut Mpz, b: &mut Mpz, c: &mut Mpz) {
     *c = new_c;
 }
 
-// ---- ring arithmetic in Z[√Δ_K] / N  (elements (e, f) = e + f·√Δ_K) ----------
-
 fn ring_mul(x: &(Mpz, Mpz), y: &(Mpz, Mpz), dk: &Mpz, n: &Mpz) -> (Mpz, Mpz) {
     let e = (&(&x.0 * &y.0) + &(&(&x.1 * &y.1) * dk)).modulo(n);
     let f = (&(&x.0 * &y.1) + &(&x.1 * &y.0)).modulo(n);
@@ -1078,7 +846,6 @@ fn ring_mul(x: &(Mpz, Mpz), y: &(Mpz, Mpz), dk: &Mpz, n: &Mpz) -> (Mpz, Mpz) {
 }
 
 fn ring_inv(x: &(Mpz, Mpz), dk: &Mpz, n: &Mpz) -> (Mpz, Mpz) {
-    // (e + f√Δ)^{-1} = (e - f√Δ) / (e² - f²Δ)
     let norm = (&(&x.0 * &x.0) - &(&(&x.1 * &x.1) * dk)).modulo(n);
     let inv = norm.invert(n).expect("ring element not invertible mod q^k");
     let e = (&x.0 * &inv).modulo(n);
@@ -1087,7 +854,7 @@ fn ring_inv(x: &(Mpz, Mpz), dk: &Mpz, n: &Mpz) -> (Mpz, Mpz) {
 }
 
 fn ring_pow(x: &(Mpz, Mpz), exp: &Mpz, dk: &Mpz, n: &Mpz) -> (Mpz, Mpz) {
-    let mut result = (Mpz::from(1u64), Mpz::new()); // 1
+    let mut result = (Mpz::from(1u64), Mpz::new());
     if exp.is_zero() {
         return result;
     }
@@ -1101,9 +868,6 @@ fn ring_pow(x: &(Mpz, Mpz), exp: &Mpz, dk: &Mpz, n: &Mpz) -> (Mpz, Mpz) {
     result
 }
 
-// ---- module-private number theory ------------------------------------------
-
-/// `q`-adic valuation of `x` (number of times `q` divides `x`).
 fn val_q(x: &Mpz, q: &Mpz) -> usize {
     if x.is_zero() {
         return 0;
@@ -1117,8 +881,6 @@ fn val_q(x: &Mpz, q: &Mpz) -> usize {
     v
 }
 
-/// Centered representative of `x ∈ [0, modulus)` into `(-half, half]`,
-/// where `modulus = 2·half`.
 fn center(x: Mpz, modulus: &Mpz, half: &Mpz) -> Mpz {
     if &x > half {
         &x - modulus
@@ -1127,8 +889,6 @@ fn center(x: Mpz, modulus: &Mpz, half: &Mpz) -> Mpz {
     }
 }
 
-/// Lucas sequences `(U_n, V_n)` modulo `modn`, parameters `(P, Q)`, with
-/// `D = P² - 4Q` supplied as `d_param`.
 fn lucas_uv(p_param: &Mpz, q_param: &Mpz, n: &Mpz, modn: &Mpz, d_param: &Mpz) -> (Mpz, Mpz) {
     if n.is_zero() {
         return (Mpz::new(), Mpz::from(2u64).modulo(modn));
@@ -1138,17 +898,15 @@ fn lucas_uv(p_param: &Mpz, q_param: &Mpz, n: &Mpz, modn: &Mpz, d_param: &Mpz) ->
     let qr = q_param.modulo(modn);
     let dr = d_param.modulo(modn);
 
-    let mut u = Mpz::from(1u64).modulo(modn); // U_1
-    let mut v = pr.clone(); // V_1
-    let mut qpow = qr.clone(); // Q^1
+    let mut u = Mpz::from(1u64).modulo(modn);
+    let mut v = pr.clone();
+    let mut qpow = qr.clone();
     let nb = n.nbits();
     for i in (0..nb - 1).rev() {
-        // double: index m -> 2m
         let u2 = (&u * &v).modulo(modn);
         let v2 = (&(&v * &v) - &qpow.mul_2exp(1)).modulo(modn);
         let q2 = (&qpow * &qpow).modulo(modn);
         if n.get_bit(i as u32) {
-            // 2m -> 2m+1
             let u_new = (&(&(&pr * &u2) + &v2) * &inv2).modulo(modn);
             let v_new = (&(&(&dr * &u2) + &(&pr * &v2)) * &inv2).modulo(modn);
             let q_new = (&q2 * &qr).modulo(modn);
@@ -1164,15 +922,11 @@ fn lucas_uv(p_param: &Mpz, q_param: &Mpz, n: &Mpz, modn: &Mpz, d_param: &Mpz) ->
     (u, v)
 }
 
-/// Analytic upper bound on `h(Δ_K)`: `⌈(1/π)·ln|Δ_K|·√|Δ_K|⌉`.
-/// Uses `ln|Δ_K| ≤ nbits·ln 2` and upper-bound rationals for `ln 2`, `1/π`,
-/// so the result is a genuine upper bound. ([Cohen, p.295]; CL15 App. B.3.)
 fn classnumber_upper_bound(delta_k: &Mpz) -> Mpz {
     let abs = delta_k.abs();
     let nbits = abs.nbits() as u64;
     let s = abs.sqrt();
     let sqrt_ceil = if (&s * &s) == abs { s } else { s.add_ui(1) };
-    // ln 2 < 0.6931472, 1/π < 0.3183099  (scaled by 10^7 each → denom 10^14)
     let numer =
         &(&(&Mpz::from(nbits) * &Mpz::from(6_931_472u64)) * &Mpz::from(3_183_099u64)) * &sqrt_ceil;
     let denom = Mpz::from(100_000_000_000_000u64);
@@ -1184,7 +938,6 @@ fn classnumber_upper_bound(delta_k: &Mpz) -> Mpz {
     }
 }
 
-/// Smallest prime `p` with `p·q ≡ 3 (mod 4)` and `(p|q) = -1`.
 fn smallest_aux_prime(q: &Mpz) -> Mpz {
     let four = Mpz::from(4u64);
     let mut p = Mpz::from(3u64);
@@ -1196,7 +949,6 @@ fn smallest_aux_prime(q: &Mpz) -> Mpz {
     }
 }
 
-/// A random `pbits`-bit prime `p` with `p·q ≡ 3 (mod 4)` and `(p|q) = -1`.
 fn gen_aux_prime(q: &Mpz, pbits: usize, rng: &mut RandGen) -> Mpz {
     let four = Mpz::from(4u64);
     loop {
@@ -1207,8 +959,6 @@ fn gen_aux_prime(q: &Mpz, pbits: usize, rng: &mut RandGen) -> Mpz {
     }
 }
 
-/// Hard-subgroup generator `h = (r²)^M` where `r` is the smallest split prime
-/// form and `M = q^k`.
 fn build_h(cl: &ClassGroup, m: &Mpz, q: &Mpz, p: &Mpz) -> QFI {
     let mut l = Mpz::from(2u64);
     loop {
@@ -1221,9 +971,6 @@ fn build_h(cl: &ClassGroup, m: &Mpz, q: &Mpz, p: &Mpz) -> QFI {
     }
 }
 
-// ---- key / text / ciphertext types ----------------------------------------
-
-/// A secret key (an integer in `[0, secretkey_bound)`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey(Mpz);
 
@@ -1250,7 +997,6 @@ impl core::ops::Deref for SecretKey {
     }
 }
 
-/// A cleartext (an integer in `[0, M)` with `M = q^k`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cleartext(Mpz);
 
@@ -1277,11 +1023,6 @@ impl core::ops::Deref for Cleartext {
     }
 }
 
-/// A public key (an element `h^sk` of the class group).
-///
-/// A fixed-base comb table for fast `pk^r` is built lazily on first use and
-/// cached, so key generation stays cheap while repeated encryptions amortise
-/// the one-time table build.
 #[derive(Clone, Debug)]
 pub struct PublicKey {
     elt: QFI,
@@ -1313,10 +1054,6 @@ impl PublicKey {
 
     pub fn comb(&self, c: &CL_HSMqk) -> &FixedBaseComb {
         self.comb.get_or_init(|| {
-            // Cover both encryption randomness `r` (~secretkey_bound) and the
-            // unbounded ZK responses `z = a + e·sk` (~secretkey_bound + q), so
-            // `pk^z` in Schnorr verifies uses this fixed-base comb instead of a
-            // bare exp. Same table size (2^blocks); only block length grows.
             let exp_bits = c.secretkey_bound.nbits() + c.q.nbits() + 2;
             c.cl_delta.precompute_comb(&self.elt, exp_bits, COMB_BLOCKS)
         })
@@ -1330,7 +1067,6 @@ impl PartialEq for PublicKey {
 }
 impl Eq for PublicKey {}
 
-/// A ciphertext `(c1, c2)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ciphertext {
     c1: QFI,
@@ -1353,8 +1089,6 @@ impl Ciphertext {
 mod tests {
     use super::*;
 
-    /// A small fixed CL instance (q=50 bits, k=1, |DeltaK|~150 bits) seeded for
-    /// reproducibility, mirroring the smallest case in the C++ test suite.
     fn small_instance() -> (CL_HSMqk, RandGen) {
         let mut rng = RandGen::with_seed(&Mpz::from(20240602u64));
         let c = CL_HSMqk::with_random_q(50, 1, 150, &mut rng, Params::default()).unwrap();
@@ -1383,17 +1117,14 @@ mod tests {
             let ca = c.encrypt(&pk, &ma, rng);
             let cb = c.encrypt(&pk, &mb, rng);
 
-            // additive homomorphism
             let csum = c.add_ciphertexts(&pk, &ca, &cb, rng);
             let expect_sum = c.add_cleartexts(&ma, &mb);
             assert_eq!(c.decrypt(&sk, &csum).as_mpz(), expect_sum.as_mpz());
 
-            // scalar homomorphism
             let cscal = c.scal_ciphertexts(&pk, &ca, &s, rng);
             let expect_scal = c.scal_cleartexts(&ma, &s);
             assert_eq!(c.decrypt(&sk, &cscal).as_mpz(), expect_scal.as_mpz());
 
-            // ca + s*cb
             let caddscal = c.addscal_ciphertexts(&pk, &ca, &cb, &s, rng);
             let expect = c.add_cleartexts(&ma, &c.scal_cleartexts(&mb, &s));
             assert_eq!(c.decrypt(&sk, &caddscal).as_mpz(), expect.as_mpz());
@@ -1406,7 +1137,6 @@ mod tests {
         check_encryption_roundtrip(&c, &mut rng, 20);
         check_homomorphic(&c, &mut rng, 10);
 
-        // compact variant
         let cc = c.with_compact_variant(true);
         check_encryption_roundtrip(&cc, &mut rng, 20);
         check_homomorphic(&cc, &mut rng, 10);
@@ -1414,7 +1144,6 @@ mod tests {
 
     #[test]
     fn large_k_roundtrip() {
-        // k > 1 exercises the Lucas-chain power_of_f and the dlog_in_F loop.
         let mut rng = RandGen::with_seed(&Mpz::from(777u64));
         let c = CL_HSMqk::with_random_q(5, 15, 150, &mut rng, Params::default()).unwrap();
         check_encryption_roundtrip(&c, &mut rng, 20);
@@ -1425,7 +1154,6 @@ mod tests {
 
     #[test]
     fn large_message_variant_roundtrip() {
-        // q large relative to DeltaK triggers the large-message variant.
         let mut rng = RandGen::with_seed(&Mpz::from(13131u64));
         let c = CL_HSMqk::with_random_q(100, 1, 150, &mut rng, Params::default()).unwrap();
         assert!(c.large_message_variant());
@@ -1449,8 +1177,6 @@ mod tests {
         use std::time::Instant;
         let mut setup = ClSetup::new_secp256k1_128bit("42").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
-        // Response-sized exponent z = a + e·sk: ~secretkey_bound + ~28 bytes of
-        // challenge, staying within the (enlarged) comb range.
         let z = {
             let (s2, _) = setup.keygen().expect("k2");
             let body = setup.sk_to_bytes(&s2).expect("bytes");
@@ -1459,7 +1185,7 @@ mod tests {
             ext
         };
         let elt = pk.elt().clone();
-        const N: u32 = 20; // simulate reuse across an n-peer verify loop
+        const N: u32 = 20;
         let t0 = Instant::now();
         for _ in 0..N {
             let _ = setup.pk_pow_bytes(&pk, &z).expect("comb");

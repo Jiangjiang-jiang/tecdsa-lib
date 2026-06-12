@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMC24 presign round state types and transition logic.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
@@ -22,10 +19,6 @@ use zeroize::Zeroize;
 use super::{msg::*, QfiAbc, Wmc24Presignature};
 use crate::error::Wmc24Error;
 
-// ---------------------------------------------------------------------------
-// Received data
-// ---------------------------------------------------------------------------
-
 pub(crate) struct ReceivedR1 {
     pub(crate) k_bar_i: ClCiphertext,
 }
@@ -43,10 +36,6 @@ pub(crate) struct ReceivedR3 {
     #[allow(dead_code)]
     pub(crate) party_dkg_index: usize,
 }
-
-// ---------------------------------------------------------------------------
-// State machine states
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round1State {
     pub(crate) my_id: PartyId,
@@ -99,7 +88,6 @@ pub(crate) struct KeyMaterial {
     pub(crate) n_parties_dkg: usize,
     pub(crate) eldk_i: k256::Scalar,
     pub(crate) elek: k256::ProjectivePoint,
-    /// Per-party ElGamal encryption key shares (elek_j = eldk_j * G).
     pub(crate) elek_shares: Vec<k256::ProjectivePoint>,
 }
 
@@ -116,10 +104,6 @@ impl Drop for KeyMaterial {
         self.zeroize();
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 pub(crate) fn scalar_mul_ct(
     setup: &ClSetup,
@@ -150,10 +134,6 @@ pub(crate) fn copy_ct(setup: &ClSetup, ct: &ClCiphertext) -> Result<ClCiphertext
     Ok(setup.ct_from_components(&c1, &c2)?)
 }
 
-// ---------------------------------------------------------------------------
-// Transitions
-// ---------------------------------------------------------------------------
-
 pub(crate) fn transition_r1_to_r2(
     state: Round1State,
     setup: &mut ClSetup,
@@ -161,7 +141,6 @@ pub(crate) fn transition_r1_to_r2(
 ) -> tecdsa_core::Result<Round2State> {
     let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0).collect();
 
-    // Compute k_bar = sum of all k_bar_j (homomorphic sum).
     let mut k_bar: Option<ClCiphertext> = None;
     for r1 in state.received.values() {
         match k_bar.take() {
@@ -180,7 +159,6 @@ pub(crate) fn transition_r1_to_r2(
     }
     let k_bar = k_bar.ok_or_else(|| TecdsaError::Other("no k_bar data".into()))?;
 
-    // Compute xk_bar_i = x_i * k_bar (with Lagrange coefficient).
     let my_idx = state
         .all_parties
         .iter()
@@ -207,7 +185,6 @@ pub(crate) fn transition_r1_to_r2(
     )
     .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
 
-    // Sample gamma_i.
     let gamma_i = {
         let (sk, _) = setup
             .keygen()
@@ -223,11 +200,9 @@ pub(crate) fn transition_r1_to_r2(
     };
     let gamma_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&gamma_i);
 
-    // ElGamal encrypt g^{gamma_i}: D_gamma_i = t-ElG.Enc(elek, g^{gamma_i}; r_{gamma_i}).
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
     let g_gamma_i = g * gamma_i;
 
-    // Sample ElGamal randomness.
     let r_elg_i = {
         let (sk, _) = setup
             .keygen()
@@ -243,11 +218,9 @@ pub(crate) fn transition_r1_to_r2(
     };
     let d_gamma_i = tecdsa_elgamal::encrypt(&key_mat.elek, &g_gamma_i, &r_elg_i);
 
-    // Compute gk_bar_i = gamma_i * k_bar.
     let gk_bar_i = scalar_mul_ct(setup, &k_bar, &gamma_i_bytes)
         .map_err(|e| TecdsaError::Other(format!("scalar_mul gk_bar_i: {e}")))?;
 
-    // R_El-CL proof.
     let (ck_0, ck_1) = setup
         .ct_components(&k_bar)
         .map_err(|e| TecdsaError::Other(format!("k_bar comp: {e}")))?;
@@ -270,7 +243,6 @@ pub(crate) fn transition_r1_to_r2(
     )
     .map_err(|e| TecdsaError::Other(format!("R_El-CL prove: {e}")))?;
 
-    // Build Round 2 payload.
     let xk_bar_i_ser = SerializedClCt::from_bicycl_ct(setup, &xk_bar_i)
         .map_err(|e| TecdsaError::Other(format!("ser xk_bar_i: {e}")))?;
     let pi_dl_cl_x_ser = SerRDlClProof::from_proof(&pi_dl_cl_x)
@@ -323,7 +295,6 @@ pub(crate) fn transition_r2_to_r3(
     setup: &mut ClSetup,
     key_mat: &KeyMaterial,
 ) -> tecdsa_core::Result<Round3State> {
-    // Compute xk_bar = sum(xk_bar_j) -- Lagrange already baked in during Round 2.
     let mut xk_bar: Option<ClCiphertext> = None;
     for r2 in state.received.values() {
         match xk_bar.take() {
@@ -342,7 +313,6 @@ pub(crate) fn transition_r2_to_r3(
     }
     let xk_bar = xk_bar.ok_or_else(|| TecdsaError::Other("no xk_bar data".into()))?;
 
-    // Compute D_gamma = product(D_gamma_j) (ElGamal component-wise add).
     let mut d_gamma: Option<ElGamalCiphertext> = None;
     for r2 in state.received.values() {
         match d_gamma.take() {
@@ -356,7 +326,6 @@ pub(crate) fn transition_r2_to_r3(
     }
     let d_gamma = d_gamma.ok_or_else(|| TecdsaError::Other("no d_gamma data".into()))?;
 
-    // Compute gk_bar = sum(gk_bar_j).
     let mut gk_bar: Option<ClCiphertext> = None;
     for r2 in state.received.values() {
         match gk_bar.take() {
@@ -375,12 +344,8 @@ pub(crate) fn transition_r2_to_r3(
     }
     let gk_bar = gk_bar.ok_or_else(|| TecdsaError::Other("no gk_bar data".into()))?;
 
-    // Partial decrypt D_gamma: pd_elg_i = eldk_i * D_gamma.c0.
     let pd_elg_i = tecdsa_elgamal::partial_decrypt(&d_gamma, &key_mat.eldk_i);
 
-    // DDH proof for ElGamal partial decryption correctness.
-    // Statement: (G, D_gamma.c0, elek_i, pd_elg_i) is a DDH tuple.
-    // Witness: eldk_i such that elek_i = eldk_i * G AND pd_elg_i = eldk_i * D_gamma.c0.
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
     let my_dkg_idx = super::party_id_to_dkg_idx(state.my_id)?;
     let elek_i = key_mat.elek_shares[my_dkg_idx];
@@ -393,8 +358,6 @@ pub(crate) fn transition_r2_to_r3(
     let ddh_wit = DdhWitness::<k256::Secp256k1> { w: key_mat.eldk_i };
     let pi_part_dec_elg = DdhProof::prove(&ddh_stmt, &ddh_wit, &mut rand::thread_rng());
 
-    // Partial decrypt gk_bar: pd_cl_i = t-CL.PartDec.
-    // PartyId.0 is 1-based, matching t-CL evaluation points.
     let my_party_index = state.my_id.0 as usize;
     let (gk_c1, _) = setup
         .ct_components(&gk_bar)
@@ -403,7 +366,6 @@ pub(crate) fn transition_r2_to_r3(
         .exp_bytes(&gk_c1, &key_mat.cl_sk_share)
         .map_err(|e| TecdsaError::Other(format!("pd_cl: {e}")))?;
 
-    // R_part_dec proof for CL.
     let my_pk_abc = key_mat
         .cl_pk_share_abcs
         .get(&state.my_id.0)
@@ -417,7 +379,6 @@ pub(crate) fn transition_r2_to_r3(
         RPartDecProof::prove(setup, &my_pk_raw, &gk_bar, &pd_cl_i, &key_mat.cl_sk_share)
             .map_err(|e| TecdsaError::Other(format!("R_part_dec_cl prove: {e}")))?;
 
-    // Serialize and broadcast.
     let pd_cl_ser = SerializedQfi::from_qfi(&pd_cl_i)
         .map_err(|e| TecdsaError::Other(format!("ser pd_cl: {e}")))?;
     let pi_ser = SerRPartDecProof::from_proof(&pi_part_dec_cl)
@@ -471,8 +432,6 @@ pub(crate) fn finalize(
 ) -> tecdsa_core::Result<Wmc24Presignature> {
     let n = state.all_parties.len();
 
-    // 1. g^gamma = ElGamal final decrypt of D_gamma.
-    // ElGamal key shares use Shamir sharing: need Lagrange coefficients.
     let party_ids_1based: Vec<u16> = state.all_parties.iter().map(|p| p.0).collect();
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
 
@@ -487,7 +446,6 @@ pub(crate) fn finalize(
     }
     let g_gamma = tecdsa_elgamal::combine_partials(&state.d_gamma, &pd_elg_pairs);
 
-    // 2. gamma*k = t-CL final decrypt of gk_bar.
     let mut pd_cls: Vec<ClPartialDecryption> = Vec::new();
     for r3 in state.received.values() {
         let bytes = r3.pd_cl.to_bytes();
@@ -504,7 +462,6 @@ pub(crate) fn finalize(
 
     let gamma_k = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&gamma_k_bytes);
 
-    // 3. R = (g^gamma)^{1/(gamma*k)} = g^{1/k}.
     let gamma_k_inv: k256::Scalar = {
         let inv = gamma_k.invert();
         if bool::from(inv.is_none()) {
@@ -516,7 +473,6 @@ pub(crate) fn finalize(
     let r_point: k256::ProjectivePoint = g_gamma * gamma_k_inv;
     let r_x = <k256::Secp256k1 as TecdsaCurve>::xcoord_mod_q(&r_point.to_affine());
 
-    // Serialize k_bar and xk_bar as QfiAbc (compact binary).
     let (kb_c1, kb_c2) = setup
         .ct_components(&state.k_bar)
         .map_err(|e| TecdsaError::Other(format!("k_bar comp: {e}")))?;

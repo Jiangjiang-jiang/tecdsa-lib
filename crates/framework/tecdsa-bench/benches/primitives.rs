@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! MtA primitive benchmarks for all 6 MtA variants.
-//!
-//! Measures raw MtA cycles (sender_encrypt, receiver_compute, sender_decrypt)
-//! used as building blocks by threshold ECDSA protocols.
-//!
-//! Setup (keygen) is pre-computed via LazyLock and excluded from timing.
-
 use std::sync::LazyLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -27,10 +19,6 @@ fn q_bytes() -> Vec<u8> {
     let q_int = Integer::from_bytes_msf(neg_one_bytes.as_ref()) + 1u8;
     q_int.to_bytes_msf()
 }
-
-// ---------------------------------------------------------------------------
-// 1. Paillier MtA (Alice/Bob range proofs with Ring-Pedersen)
-// ---------------------------------------------------------------------------
 
 fn paillier_mta(c: &mut Criterion) {
     use tecdsa_paillier::mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtA, PaillierMtaSetup};
@@ -77,10 +65,6 @@ fn paillier_mta(c: &mut Criterion) {
     g.finish();
 }
 
-// ---------------------------------------------------------------------------
-// 2. Paillier MtA with CGGMP20 proofs (pi_enc + pi_aff-g)
-// ---------------------------------------------------------------------------
-
 fn cggmp20_mta(c: &mut Criterion) {
     use paillier_zk::{
         paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
@@ -96,8 +80,6 @@ fn cggmp20_mta(c: &mut Criterion) {
     let q = q_bytes();
     let q_int = Integer::from_bytes_msf(&q);
 
-    // CGGMP20 MtA setup: Ring-Pedersen Aux (verifier's), CGGMP20 security
-    // parameters (l=256, l_y=1280, epsilon=512), and the prover's Paillier key.
     let setup = PaillierMtaSetup::<Cggmp20Proofs> {
         ek: pf.ek.clone(),
         dk: pf.dk.clone(),
@@ -120,8 +102,6 @@ fn cggmp20_mta(c: &mut Criterion) {
     let b = Secp256k1::random_scalar(&mut OsRng).to_repr();
 
     let mut g = c.benchmark_group("mta/cggmp20");
-    // pi_enc / pi_aff-g proving is heavy (~10^2 ms); 10 samples matches the
-    // zk/paillier_zk_facade benches and keeps total runtime bounded.
     g.sample_size(10);
 
     g.bench_function("sender_encrypt", |bench| {
@@ -140,10 +120,6 @@ fn cggmp20_mta(c: &mut Criterion) {
 
     g.finish();
 }
-
-// ---------------------------------------------------------------------------
-// 3. CL MtA (with WMY23-style consistency check / MtAwc)
-// ---------------------------------------------------------------------------
 
 fn cl_mta(c: &mut Criterion) {
     use std::cell::RefCell;
@@ -174,7 +150,6 @@ fn cl_mta(c: &mut Criterion) {
     let b_scalar = Secp256k1::random_scalar(&mut OsRng);
     let a = a_scalar.to_repr();
     let b = b_scalar.to_repr();
-    // g^a is the public auxiliary input to the MtAwc consistency check.
     let g_a = (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * a_scalar)
         .to_bytes()
         .to_vec();
@@ -186,9 +161,6 @@ fn cl_mta(c: &mut Criterion) {
     });
 
     let (sm, ss) = M::sender_encrypt(&setup, b.as_ref(), &q, &mut OsRng).expect("se");
-    // CL achieves malicious security via the WMY23-style MtAwc consistency
-    // check (g^alpha), not a separate ZK proof; measure the check-carrying
-    // receiver step (g^alpha generation) and its verification.
     g.bench_function("receiver_compute_with_check", |bench| {
         bench.iter(|| {
             M::receiver_compute_with_check(&setup, a.as_ref(), &q, &sm, &mut OsRng).expect("rcwc")
@@ -208,10 +180,6 @@ fn cl_mta(c: &mut Criterion) {
 
     g.finish();
 }
-
-// ---------------------------------------------------------------------------
-// 4. JL MtA
-// ---------------------------------------------------------------------------
 
 fn jl_mta(c: &mut Criterion) {
     use tecdsa_joye_libert::mta::{JlMtA, JlMtaSetup};
@@ -248,10 +216,6 @@ fn jl_mta(c: &mut Criterion) {
 
     g.finish();
 }
-
-// ---------------------------------------------------------------------------
-// 5. RVOLE MtA (interactive, 4 steps)
-// ---------------------------------------------------------------------------
 
 fn rvole_mta(c: &mut Criterion) {
     use tecdsa_ot::mta::{RvoleMtA, RvoleSetup};
@@ -300,10 +264,6 @@ fn rvole_mta(c: &mut Criterion) {
     g.finish();
 }
 
-// ---------------------------------------------------------------------------
-// 6. NIM (non-interactive multiplication)
-// ---------------------------------------------------------------------------
-
 fn nim_mta(c: &mut Criterion) {
     use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
     use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
@@ -314,7 +274,6 @@ fn nim_mta(c: &mut Criterion) {
     let x_scalar = Secp256k1::random_scalar(&mut OsRng);
     let x = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&x_scalar);
     let y = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&Secp256k1::random_scalar(&mut OsRng));
-    // V = x * G is the EC commitment that R_Ped binds the Encode_A output to.
     let big_v = (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar)
         .to_bytes()
         .to_vec();
@@ -345,9 +304,6 @@ fn nim_mta(c: &mut Criterion) {
     };
     let r_bytes = ea.state.r_bytes.clone();
 
-    // R_Ped (R_Ped_EC, LLZ25 §4.3): proves the Encode_A output
-    // pe_A = h^r * pk^x is consistent with V = x*G. Party A proves; the
-    // counterparty verifies. This is what makes NIM maliciously secure.
     g.bench_function("r_ped/prove", |bench| {
         bench.iter(|| {
             RPedEcProof::prove(&mut nim_setup, &nim_pk, &ea.pe_a, &big_v, &x, &r_bytes)
@@ -381,10 +337,6 @@ fn nim_mta(c: &mut Criterion) {
 
     g.finish();
 }
-
-// ---------------------------------------------------------------------------
-// Criterion groups and main
-// ---------------------------------------------------------------------------
 
 criterion_group!(
     benches,

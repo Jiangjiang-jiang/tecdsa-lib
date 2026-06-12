@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![doc = "Test orchestrator and deviation harness for tecdsa protocols."]
 
 pub mod deviation;

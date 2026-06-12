@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,20 +6,11 @@
     clippy::doc_markdown
 )]
 
-//! `R_pc_dl` — public-checked DL proof.
-//!
-//! Proves knowledge of `x` such that `Y = f^x` in the F-subgroup.
-//!
-//! Since F-subgroup elements cannot be composed/exponentiated via
-//! `Cl(Delta)` operations, verification uses `dlog_in_F` to work
-//! in scalar arithmetic modulo `q`.
-
 use rug::{integer::Order, Integer};
 
 use super::{challenge_from_qfi, sample_random_mod_q};
 use crate::cl::{ClResult, ClSetup, Qfi};
 
-/// Public-checked DL proof.
 pub struct RPcDlProof {
     pub t: Qfi,
     pub z: Vec<u8>,
@@ -28,7 +18,6 @@ pub struct RPcDlProof {
 }
 
 impl RPcDlProof {
-    /// Proves knowledge of `x` such that `Y = f^x`.
     pub fn prove(setup: &mut ClSetup, y: &Qfi, x_bytes: &[u8]) -> ClResult<Self> {
         let a = sample_random_mod_q(setup)?;
         let t = setup.power_of_f_bytes(&a)?;
@@ -49,7 +38,6 @@ impl RPcDlProof {
         })
     }
 
-    /// Verifies the public-checked DL proof.
     #[allow(non_snake_case)]
     pub fn verify(&self, setup: &ClSetup, y: &Qfi) -> ClResult<bool> {
         let e_check = challenge_from_qfi(setup, b"R_pc_dl", &[y, &self.t], &[])?;
@@ -57,8 +45,6 @@ impl RPcDlProof {
             return Ok(false);
         }
 
-        // Verify using scalar arithmetic over F-subgroup:
-        // z == dlog(t) + e * dlog(Y) mod q
         let dlog_t = setup.dlog_in_F_bytes(&self.t)?;
         let dlog_y = setup.dlog_in_F_bytes(y)?;
 

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -17,10 +16,6 @@ pub struct SessionConfig {
 }
 
 impl SessionConfig {
-    /// Create a SessionConfig from canonical parameter types.
-    ///
-    /// `PartyInfo.threshold` is set to the reconstruction threshold `t`
-    /// (number of parties required to sign).
     pub fn from_party_set(session_id: SessionId, party_set: &PartySet) -> Self {
         let local_id = party_set.local_party();
         let parties = party_set.parties().to_vec();
@@ -29,7 +24,7 @@ impl SessionConfig {
             session_id,
             local_party: PartyInfo {
                 id: local_id,
-                index: index + 1, // 1-based
+                index: index + 1,
                 total: party_set.threshold().n(),
                 threshold: party_set.threshold().t(),
             },
@@ -37,26 +32,16 @@ impl SessionConfig {
         }
     }
 
-    /// Extract a `Threshold` from the legacy fields.
-    ///
-    /// Interprets `local_party.threshold` as the reconstruction threshold `t`.
     pub fn try_threshold(&self) -> Result<Threshold, ParamError> {
         Threshold::new(self.local_party.total, self.local_party.threshold)
     }
 
-    /// Maximum tolerated corruptions = t - 1.
-    ///
-    /// Panics if legacy fields are invalid. Prefer [`try_threshold`](Self::try_threshold)
-    /// in fallible contexts.
     pub fn max_corruptions(&self) -> u16 {
         self.try_threshold()
             .expect("SessionConfig has invalid threshold fields")
             .max_corruptions()
     }
 
-    /// Reconstruction/signing threshold `t` (number of parties required).
-    ///
-    /// This is the value stored in `local_party.threshold`.
     pub fn reconstruct_threshold(&self) -> u16 {
         self.local_party.threshold
     }
@@ -126,7 +111,7 @@ mod tests {
                 id: PartyId(1),
                 index: 1,
                 total: 3,
-                threshold: 0, // invalid
+                threshold: 0,
             },
             parties: vec![PartyId(1), PartyId(2), PartyId(3)],
         };

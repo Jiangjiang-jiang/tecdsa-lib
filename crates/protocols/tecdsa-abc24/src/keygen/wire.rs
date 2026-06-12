@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire-safe serializable message types and conversion helpers for the ABC+24
-//! two-party interactive DKG.
-//!
-//! Points are encoded as compressed SEC1 bytes via `GroupEncoding`. Types
-//! containing `C::ProjectivePoint` lack native serde impls, so we encode them
-//! through manual serialization.
-
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -17,11 +9,6 @@ use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
 
 use crate::keygen::interactive::{ClientStep2Msg, ServerStep1Msg, ServerStep3Msg};
 
-// ---------------------------------------------------------------------------
-// Wire-safe serializable message types
-// ---------------------------------------------------------------------------
-
-/// Wire-safe Step 1 message (Server -> Client).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireStep1Msg {
     pub(crate) commitment: HashCommitment,
@@ -29,26 +16,18 @@ pub(crate) struct WireStep1Msg {
     pub(crate) correct_key_proof: NICorrectKeyProof,
 }
 
-/// Wire-safe Step 2 message (Client -> Server).
-///
-/// Points are encoded as compressed SEC1 bytes via `GroupEncoding`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireStep2Msg {
     pub(crate) x1_point_bytes: Vec<u8>,
     pub(crate) dlog_proof_json: Vec<u8>,
 }
 
-/// Wire-safe Step 3 message (Server -> Client).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireStep3Msg {
     pub(crate) x2_point_bytes: Vec<u8>,
     pub(crate) nonce: [u8; 32],
     pub(crate) enc_x2: tecdsa_paillier::Ciphertext,
 }
-
-// ---------------------------------------------------------------------------
-// Conversion helpers
-// ---------------------------------------------------------------------------
 
 pub(crate) fn encode_point<C: TecdsaCurve>(p: &C::ProjectivePoint) -> Vec<u8>
 where

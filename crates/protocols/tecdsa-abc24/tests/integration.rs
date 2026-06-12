@@ -1,12 +1,8 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Integration tests for the ABC+24 two-party ECDSA protocol.
-
 use k256::Secp256k1;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{verify_ecdsa, DataToSign};
 
-/// Helper: hash a message to a scalar for ECDSA signing.
 fn hash_message<C: TecdsaCurve>(msg: &[u8]) -> DataToSign<C>
 where
     elliptic_curve::FieldBytesSize<C>: elliptic_curve::sec1::ModulusSize,
@@ -21,12 +17,6 @@ where
     DataToSign::from_digest(scalar)
 }
 
-// ---------------------------------------------------------------------------
-// KeygenMachine StateMachine integration test
-// ---------------------------------------------------------------------------
-
-/// Drive a two-party state machine to completion by passing messages
-/// back and forth between the two parties.
 fn drive_two_party_abc24(
     p1: &mut tecdsa_abc24::keygen::Abc24KeygenMachine<Secp256k1>,
     p2: &mut tecdsa_abc24::keygen::Abc24KeygenMachine<Secp256k1>,
@@ -50,10 +40,6 @@ fn drive_two_party_abc24(
     }
 }
 
-/// Test the ABC+24 keygen state machine: 3-step interactive DKG.
-///
-/// Paillier key generation is very slow in debug mode (~10-30s), so this test
-/// is marked #[ignore]. Run with: cargo test -p tecdsa-abc24 keygen_machine -- --ignored
 #[test]
 #[ignore = "Paillier keygen is slow in debug mode (~10-30s)"]
 fn keygen_machine_end_to_end() {
@@ -64,13 +50,11 @@ fn keygen_machine_end_to_end() {
     let p1_id = tecdsa_protocol::PartyId(1);
     let p2_id = tecdsa_protocol::PartyId(2);
 
-    // Server (Party1) starts (sends Step1 message)
     let mut p1 = Abc24KeygenMachine::new(TwoPartyRole::Party1, p1_id, p2_id, &mut rng)
         .expect("Server construction should succeed");
     let mut p2 = Abc24KeygenMachine::new(TwoPartyRole::Party2, p2_id, p1_id, &mut rng)
         .expect("Client construction should succeed");
 
-    // Drive the protocol to completion (3 steps)
     drive_two_party_abc24(&mut p1, &mut p2, p1_id, p2_id, 5);
 
     assert!(p1.is_done(), "Server should be done");
@@ -79,15 +63,12 @@ fn keygen_machine_end_to_end() {
     let share1 = p1.finish().expect("Server should produce output");
     let share2 = p2.finish().expect("Client should produce output");
 
-    // Verify both parties agree on the public key
     let (pk1, pk2) = match (&share1, &share2) {
         (Abc24KeyShare::Party1(s1), Abc24KeyShare::Party2(s2)) => (s1.public_key, s2.public_key),
         _ => panic!("expected Party1 (Server) and Party2 (Client) share variants"),
     };
     assert_eq!(pk1, pk2, "both parties must agree on the public key");
 
-    // Verify Q = (x_1 + x_2) * G (additive sharing)
-    // Note: in ABC+24, Server holds x_2 and Client holds x_1
     match (&share1, &share2) {
         (Abc24KeyShare::Party1(s1), Abc24KeyShare::Party2(s2)) => {
             let x = s1.secret_share + s2.secret_share;
@@ -97,7 +78,6 @@ fn keygen_machine_end_to_end() {
         _ => unreachable!(),
     }
 
-    // Verify signing works with the generated key shares
     match (share1, share2) {
         (Abc24KeyShare::Party1(server_key), Abc24KeyShare::Party2(client_key)) => {
             let message = hash_message::<Secp256k1>(b"keygen_machine test");

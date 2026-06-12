@@ -1,14 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Class-group encryption and proofs for the `tecdsa` threshold ECDSA library.
-//!
-//! This crate wraps [`bicycl_glue`] to provide:
-//!
-//! - **CL-HSM encryption** ([`cl_enc`]): key generation, encryption, decryption,
-//!   and homomorphic operations over class-group ciphertexts.
-//! - **NIM** ([`nim`]): Non-Interactive Multiplication protocol allowing two
-//!   parties to compute additive shares of a product `x * y mod q`.
-//! - **`DDLog`** ([`ddlog`]): Discrete-log labeling in the class group.
-
 pub mod batch;
 pub mod cl;
 pub mod class_group;

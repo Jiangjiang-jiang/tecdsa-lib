@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_core::{Csprng, Dst, Secret, TecdsaError, Versioned};
 
 #[test]

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,13 +6,6 @@
     clippy::doc_markdown
 )]
 
-//! `R_aff_com` — affine commitment relation proof.
-//!
-//! Proves that a ciphertext `ct_out` is an affine transformation of
-//! `ct_in`: given `(pk, ct_in, ct_out, C)`, prover knows `(x, y, r1, r2)` such that
-//!   `ct_out = x * ct_in + Enc(pk, y; r1)`  (homomorphic)
-//!   `C = h^{r2} * f^x`  (commitment to x).
-
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
 };
@@ -21,27 +13,18 @@ use crate::cl::{
     Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
-/// Affine-commitment relation proof.
 pub struct RAffComProof {
-    /// Commitment for Enc randomness.
     pub t1: Qfi,
-    /// Commitment for affine message component.
     pub t2: Qfi,
-    /// Commitment for commitment randomness.
     pub t3: Qfi,
-    /// Response for Enc randomness (big-endian bytes).
     pub z1: Vec<u8>,
-    /// Response for y (additive plaintext, big-endian bytes).
     pub z2: Vec<u8>,
-    /// Response for x (multiplicative scalar, big-endian bytes).
     pub z3: Vec<u8>,
-    /// Response for commitment randomness r2 (big-endian bytes).
     pub z4: Vec<u8>,
     pub e: Vec<u8>,
 }
 
 impl RAffComProof {
-    /// Generates the affine-commitment proof.
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         setup: &mut ClSetup,
@@ -62,17 +45,14 @@ impl RAffComProof {
         let pk_elt = pk.elt();
         let (ci1, ci2) = setup.ct_components(ct_in)?;
 
-        // t1 = ci1^a3 * h^a1
         let ci1_a3 = setup.exp_bytes(&ci1, &a3)?;
         let h_a1 = setup.power_of_h_bytes(&a1)?;
         let t1 = setup.compose(&ci1_a3, &h_a1)?;
-        // t2 = pk^a1 * f^a2 * ci2^a3
         let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let tmp = setup.compose(&pk_a1, &f_a2)?;
         let ci2_a3 = setup.exp_bytes(&ci2, &a3)?;
         let t2 = setup.compose(&tmp, &ci2_a3)?;
-        // t3 = h^a4 * f^a3 (commitment to x)
         let h_a4 = setup.power_of_h_bytes(&a4)?;
         let f_a3 = setup.power_of_f_bytes(&a3)?;
         let t3 = setup.compose(&h_a4, &f_a3)?;
@@ -88,8 +68,6 @@ impl RAffComProof {
         let q_bytes = setup.q_bytes()?;
         let z1 = response_unbounded(&a1, &e, r1_bytes)?;
         let z2 = response_mod_q(&a2, &e, y_bytes, &q_bytes)?;
-        // z3 must be unbounded: it is used as exponent on H-subgroup
-        // elements (ci1, commitment) whose order is unknown.
         let z3 = response_unbounded(&a3, &e, x_bytes)?;
         let z4 = response_unbounded(&a4, &e, r2_bytes)?;
 
@@ -105,7 +83,6 @@ impl RAffComProof {
         })
     }
 
-    /// Verifies the affine-commitment proof.
     pub fn verify(
         &self,
         setup: &ClSetup,
@@ -130,7 +107,6 @@ impl RAffComProof {
             return Ok(false);
         }
 
-        // Check 1: ci1^z3 * h^z1 == t1 * co1^e
         if &setup.compose(
             &setup.multiexp_signed_bytes(
                 &[&ci1, &co1],
@@ -142,7 +118,6 @@ impl RAffComProof {
             return Ok(false);
         }
 
-        // Check 2: pk^z1 * f^z2 * ci2^z3 == t2 * co2^e
         if &setup.compose(
             &setup.pk_pow_bytes(pk, &self.z1)?,
             &setup.compose(
@@ -157,7 +132,6 @@ impl RAffComProof {
             return Ok(false);
         }
 
-        // Check 3: h^z4 * f^z3 == t3 * C^e
         let h_z4 = setup.power_of_h_bytes(&self.z4)?;
         let f_z3 = setup.power_of_f_bytes(&self.z3)?;
         let lhs3 = setup.compose(&h_z4, &f_z3)?;
@@ -216,7 +190,6 @@ mod tests {
             .encrypt_with_r(&pk, &m_out_dec, &r_out_dec)
             .expect("enc_out2");
 
-        // Commitment C = h^r2 * f^x.
         let r2 = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -287,7 +260,6 @@ mod tests {
         let f_x = setup.power_of_f("5").expect("f_x");
         let commitment = setup.compose(&h_r2, &f_x).expect("com");
 
-        // Prove with wrong x.
         let wrong_x_bytes = Integer::from(7u32).to_digits::<u8>(Order::Msf);
         let proof = RAffComProof::prove(
             &mut setup,

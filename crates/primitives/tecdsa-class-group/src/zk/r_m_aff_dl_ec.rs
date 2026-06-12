@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -6,18 +5,6 @@
     clippy::missing_panics_doc,
     clippy::doc_markdown
 )]
-
-//! `R_m_aff_dl_ec` -- aggregated MtA affine DL relation with EC point checks.
-//!
-//! From TX25 Section 3.3, Figure 6.  Proves knowledge of `(k_star, beta)` such that:
-//!   - `d1 = c1^{k_star}`
-//!   - `d2 = c2^{k_star} * f^{-beta}`
-//!   - `R = (k_star mod q) * G`  (EC point on secp256k1)
-//!   - `B = beta * G`            (EC point on secp256k1)
-//!
-//! Unlike [`super::r_m_aff_dl`], this variant binds the witness to elliptic-curve
-//! generators instead of the CL F-subgroup generator `f`.  There is NO
-//! rerandomisation parameter `rho`.
 
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
@@ -29,21 +16,13 @@ use super::{
 };
 use crate::cl::{ClResult, ClSetup, Qfi};
 
-/// Aggregated MtA affine DL proof with EC point checks (R\_m-AffDL-Ec).
 pub struct RMAffDlEcProof {
-    /// Commitment d'1 = c1^{k0*}.
     pub d_prime_1: Qfi,
-    /// Commitment d'2 = c2^{k0*} * f^{-beta0}.
     pub d_prime_2: Qfi,
-    /// Commitment B0 = beta0 * G (compressed, 33 bytes).
     pub b0_bytes: Vec<u8>,
-    /// Commitment R0 = (k0* mod q) * G (compressed, 33 bytes).
     pub r0_bytes: Vec<u8>,
-    /// Response k_hat = k0* + ch * k_star (unbounded integer, big-endian bytes).
     pub k_hat: Vec<u8>,
-    /// Response beta_hat = (beta0 + ch * beta) mod q (big-endian bytes).
     pub beta_hat: Vec<u8>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
 }
 
@@ -78,7 +57,6 @@ fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
     p.to_bytes().to_vec()
 }
 
-/// Negates a byte value modulo `q`, returning `(q - val) mod q` as big-endian bytes.
 fn negate_mod_q_bytes(val: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
     let val_big = Integer::from_digits(val, Order::Msf);
     let q_big = Integer::from_digits(q, Order::Msf);
@@ -91,7 +69,6 @@ fn negate_mod_q_bytes(val: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
 }
 
 impl RMAffDlEcProof {
-    /// Generates an R\_m-AffDL-Ec proof.
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         setup: &mut ClSetup,
@@ -106,11 +83,9 @@ impl RMAffDlEcProof {
     ) -> ClResult<Self> {
         let q_bytes = setup.q_bytes()?;
 
-        // 1. Sample random commitment values.
         let beta0 = sample_random_mod_q(setup)?;
         let k0_star = sample_random(setup)?;
 
-        // 2. Compute CL commitments.
         let d_prime_1 = setup.exp_bytes(c1, &k0_star)?;
 
         let c2_k0 = setup.exp_bytes(c2, &k0_star)?;
@@ -118,7 +93,6 @@ impl RMAffDlEcProof {
         let f_neg_beta0 = setup.power_of_f_bytes(&neg_beta0)?;
         let d_prime_2 = setup.compose(&c2_k0, &f_neg_beta0)?;
 
-        // 3. Compute EC commitments.
         let beta0_scalar = bytes_to_scalar(&beta0)?;
         let b0 = ProjectivePoint::GENERATOR * beta0_scalar;
         let b0_bytes = point_to_bytes(&b0);
@@ -127,7 +101,6 @@ impl RMAffDlEcProof {
         let r0 = ProjectivePoint::GENERATOR * k0_scalar;
         let r0_bytes = point_to_bytes(&r0);
 
-        // 4. Fiat-Shamir challenge.
         let r_pt_bytes = point_to_bytes(r_point);
         let b_pt_bytes = point_to_bytes(b_point);
 
@@ -138,7 +111,6 @@ impl RMAffDlEcProof {
             &[&r_pt_bytes, &b_pt_bytes, &b0_bytes, &r0_bytes],
         )?;
 
-        // 5. Compute responses.
         let k_hat = response_unbounded(&k0_star, &e, k_star_bytes)?;
         let beta_hat = response_mod_q(&beta0, &e, beta_bytes, &q_bytes)?;
 
@@ -153,7 +125,6 @@ impl RMAffDlEcProof {
         })
     }
 
-    /// Verifies the R\_m-AffDL-Ec proof.
     #[allow(clippy::too_many_arguments)]
     pub fn verify(
         &self,
@@ -165,11 +136,9 @@ impl RMAffDlEcProof {
         r_point: &ProjectivePoint,
         b_point: &ProjectivePoint,
     ) -> ClResult<bool> {
-        // Reconstruct EC commitment points from stored bytes.
         let b0 = decode_point(&self.b0_bytes)?;
         let r0 = decode_point(&self.r0_bytes)?;
 
-        // Recompute Fiat-Shamir challenge.
         let r_pt_bytes = point_to_bytes(r_point);
         let b_pt_bytes = point_to_bytes(b_point);
 
@@ -183,7 +152,6 @@ impl RMAffDlEcProof {
             return Ok(false);
         }
 
-        // Check 1: c1^{k_hat} == d'1 * d1^{ch} ⟺ c1^{k_hat} * d1^{-ch} == d'1.
         let lhs1 = setup.multiexp_signed_bytes(
             &[c1, d1],
             &[(false, self.k_hat.clone()), (true, self.e.clone())],
@@ -192,8 +160,6 @@ impl RMAffDlEcProof {
             return Ok(false);
         }
 
-        // Check 2: c2^{k_hat} * f^{-beta_hat} == d'2 * d2^{ch}
-        //        ⟺ c2^{k_hat} * d2^{-ch} == d'2 * f^{beta_hat}  (f^{} is free).
         let lhs2 = setup.multiexp_signed_bytes(
             &[c2, d2],
             &[(false, self.k_hat.clone()), (true, self.e.clone())],
@@ -204,7 +170,6 @@ impl RMAffDlEcProof {
             return Ok(false);
         }
 
-        // Check 3: (k_hat mod q) * G == R0 + ch * R
         let khat_scalar = bytes_to_scalar(&self.k_hat)?;
         let lhs3 = ProjectivePoint::GENERATOR * khat_scalar;
         let e_scalar = bytes_to_scalar(&self.e)?;
@@ -213,7 +178,6 @@ impl RMAffDlEcProof {
             return Ok(false);
         }
 
-        // Check 4: beta_hat * G == B0 + ch * B
         let bhat_scalar = bytes_to_scalar(&self.beta_hat)?;
         let lhs4 = ProjectivePoint::GENERATOR * bhat_scalar;
         let rhs4 = b0 + *b_point * e_scalar;
@@ -235,7 +199,6 @@ mod tests {
         let mut setup = ClSetup::new_secp256k1("9001").expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        // Encrypt a random value gamma.
         let gamma_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let r_gamma = {
             let (sk2, _) = setup.keygen().expect("kg");
@@ -246,7 +209,6 @@ mod tests {
             .expect("enc");
         let (c1, c2) = setup.ct_components(&ct_gamma).expect("ct");
 
-        // Witness values.
         let k_star = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -254,14 +216,12 @@ mod tests {
         let beta_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let q_bytes = setup.q_bytes().expect("q");
 
-        // Compute the affine output.
         let d1 = setup.exp_bytes(&c1, &k_star).expect("exp c1");
         let c2_k = setup.exp_bytes(&c2, &k_star).expect("exp c2");
         let neg_beta = negate_mod_q_bytes(&beta_bytes, &q_bytes).expect("neg");
         let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("compose");
 
-        // EC points: R = k_star * G, B = beta * G.
         let k_scalar = bytes_to_scalar(&k_star).expect("k scalar");
         let r_point = ProjectivePoint::GENERATOR * k_scalar;
         let beta_scalar = test_scalar(17);
@@ -319,7 +279,6 @@ mod tests {
         let beta_scalar = test_scalar(17);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
-        // Prove with WRONG k_star.
         let wrong_k_star = {
             let (sk2, _) = setup.keygen().expect("kg");
             setup.sk_to_bytes(&sk2).expect("bytes")
@@ -377,7 +336,6 @@ mod tests {
         let beta_scalar = test_scalar(17);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
-        // Prove with WRONG beta.
         let wrong_beta_bytes = Integer::from(999u32).to_digits::<u8>(Order::Msf);
         let proof = RMAffDlEcProof::prove(
             &mut setup,

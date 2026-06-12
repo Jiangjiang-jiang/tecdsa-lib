@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_cggmp20::{
     aux_info::AuxInfoMachine,
     key_share::{AuxInfo, Cggmp20CoreKeyShare},
@@ -12,7 +11,6 @@ use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, S
 
 type C = k256::Secp256k1;
 
-/// Test-only security level with small primes for fast tests.
 #[derive(Debug, Clone, Copy)]
 struct TestLevel;
 
@@ -42,9 +40,8 @@ fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
         .collect()
 }
 
-/// Make session configs for only the signing subset.
 fn make_signer_configs(signers: &[u16], n: u16, t: u16) -> Vec<SessionConfig> {
-    let session_id = SessionId([1u8; 32]); // different session id for presign
+    let session_id = SessionId([1u8; 32]);
     let parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
     signers
         .iter()
@@ -61,7 +58,6 @@ fn make_signer_configs(signers: &[u16], n: u16, t: u16) -> Vec<SessionConfig> {
         .collect()
 }
 
-/// Run keygen and return CoreKeyShares.
 fn run_keygen(n: u16, t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
     let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
@@ -112,9 +108,8 @@ fn run_keygen(n: u16, t: u16) -> Vec<Cggmp20CoreKeyShare<C>> {
         .collect()
 }
 
-/// Run aux-info and return AuxInfos.
 fn run_aux_info(n: u16) -> Vec<AuxInfo> {
-    let configs = make_session_configs(n, 2); // threshold doesn't matter for aux_info
+    let configs = make_session_configs(n, 2);
     let mut rng = Csprng::new();
 
     let mut machines: Vec<(PartyId, AuxInfoMachine<TestLevel>)> = configs
@@ -163,7 +158,6 @@ fn run_aux_info(n: u16) -> Vec<AuxInfo> {
         .collect()
 }
 
-/// Run presign given core shares and aux info for the signing subset.
 fn run_presign(
     core_shares: &[Cggmp20CoreKeyShare<C>],
     aux_infos: &[AuxInfo],
@@ -174,7 +168,6 @@ fn run_presign(
     let signer_configs = make_signer_configs(signers, n, t);
     let mut rng = Csprng::new();
 
-    // Build machines only for the signing parties
     let mut machines: Vec<(PartyId, Cggmp20PresignMachine<C>)> = signers
         .iter()
         .enumerate()
@@ -246,13 +239,11 @@ fn presign_2of3() {
 
     assert_eq!(presigs.len(), 2);
 
-    // All signing parties agree on R.
     let r0 = presigs[0].1.big_r;
     for (_, pub_data) in &presigs {
         assert_eq!(pub_data.big_r, r0, "all parties must agree on R");
     }
 
-    // The presignature R must not be the identity point.
     assert_ne!(
         r0,
         <C as elliptic_curve::CurveArithmetic>::ProjectivePoint::default(),
@@ -270,7 +261,6 @@ fn presign_3of3() {
 
     assert_eq!(presigs.len(), 3);
 
-    // All parties agree on R.
     let r0 = presigs[0].1.big_r;
     for (_, pub_data) in &presigs {
         assert_eq!(pub_data.big_r, r0, "all parties must agree on R");
@@ -286,8 +276,6 @@ fn presign_different_signer_subsets_produce_different_r() {
     let presigs_12 = run_presign(&core_shares, &aux_infos, &[1, 2]);
     let presigs_13 = run_presign(&core_shares, &aux_infos, &[1, 3]);
 
-    // Different signing subsets should (with overwhelming probability)
-    // produce different R values since k_i are freshly sampled.
     assert_ne!(
         presigs_12[0].1.big_r, presigs_13[0].1.big_r,
         "different presign sessions should produce different R"

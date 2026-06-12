@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Shamir secret sharing: polynomial-based `t`-of-`n` secret splitting.
-
 use elliptic_curve::{
     sec1::ModulusSize, CurveArithmetic, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -9,21 +6,12 @@ use serde::{Deserialize, Serialize};
 use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
 
-/// A single Shamir share: the index `i` and value `f(i)`.
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize)]
 pub struct Share<C: CurveArithmetic> {
-    /// 1-based participant index.
     pub index: u16,
-    /// Polynomial evaluation `f(index)`.
     pub value: C::Scalar,
 }
 
-/// Split `secret` into `n` shares with reconstruction threshold `threshold`.
-///
-/// Any `threshold` shares suffice to reconstruct; fewer reveal nothing.
-///
-/// # Panics
-/// Panics if `threshold == 0` or `threshold > n`.
 pub fn split<C>(
     secret: &C::Scalar,
     threshold: u16,
@@ -38,14 +26,12 @@ where
     assert!(threshold > 0, "threshold must be >= 1");
     assert!(threshold <= n, "threshold must be <= n");
 
-    // Polynomial coefficients: a_0 = secret, a_1..a_{t-1} = random.
     let mut coeffs: Vec<C::Scalar> = Vec::with_capacity(threshold as usize);
     coeffs.push(*secret);
     for _ in 1..threshold {
         coeffs.push(C::random_scalar(rng));
     }
 
-    // Evaluate f(i) = sum_{j=0}^{t-1} a_j * i^j for each participant.
     (1..=n)
         .map(|i| {
             let x = C::Scalar::from(u64::from(i));
@@ -60,9 +46,6 @@ where
         .collect()
 }
 
-/// Reconstruct the secret from exactly `threshold` shares using Lagrange interpolation.
-///
-/// The caller is responsible for passing exactly `threshold` valid shares.
 pub fn reconstruct<C>(shares: &[Share<C>]) -> C::Scalar
 where
     C: TecdsaCurve,

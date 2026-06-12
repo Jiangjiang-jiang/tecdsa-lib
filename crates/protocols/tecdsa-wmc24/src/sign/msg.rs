@@ -1,21 +1,10 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMC24 online sign message types and serialization helpers.
-
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{cl::Qfi, zk::r_part_dec::RPartDecProof};
-
-// ---------------------------------------------------------------------------
-// Message types
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Wmc24OnlineSignMsg {
     Round4(Vec<u8>),
 }
-
-// ---------------------------------------------------------------------------
-// Serialized types
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerializedQfi {

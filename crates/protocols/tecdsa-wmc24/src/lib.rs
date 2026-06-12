@@ -1,16 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
-//! WMC24 Four-Round Threshold ECDSA from Threshold CL + Threshold ElGamal.
-//!
-//! Implements the Wong-Ma-Chow (NDSS 2024) protocol:
-//! - **3-round presign (offline):** threshold CL homomorphic operations + threshold ElGamal
-//! - **1-round sign (online):** threshold CL partial decryption + assembly
-//! - **3-round keygen:** PVSS for ECDSA key + threshold CL DKG + ElGamal DKG
-//!
-//! # ECDSA Form
-//!
-//! Uses R = g^{1/k} computed as (g^gamma)^{1/(gamma*k)}.
-//! s = k(m + rx) = km + rkx (decrypted via threshold CL).
 
 pub(crate) mod curve_wire;
 pub mod error;

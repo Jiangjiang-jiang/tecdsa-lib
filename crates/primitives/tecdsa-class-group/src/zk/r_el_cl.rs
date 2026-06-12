@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -6,19 +5,6 @@
     clippy::missing_panics_doc,
     clippy::doc_markdown
 )]
-
-//! `R_El-CL` -- ElGamal + CL Scalar Multiply proof.
-//!
-//! From WMC24 (NDSS 2024). Proves knowledge of (gamma, r) such that:
-//!   - `elg_0 = r * G`                 (ElGamal randomness on EC)
-//!   - `elg_1 = gamma * D + r * elek`  (ElGamal encryption of gamma * D)
-//!   - `cgk_0 = ck_0^gamma`            (CL scalar multiply component 1)
-//!   - `cgk_1 = ck_1^gamma`            (CL scalar multiply component 2)
-//!
-//! where D is the EC generator G (encrypting g^gamma under ElGamal).
-//!
-//! The proof uses z1 unbounded (for CL checks) and z1 mod q (for EC checks),
-//! z2 mod q (for EC checks only).
 
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
@@ -28,21 +14,13 @@ use tecdsa_curve::conv;
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
 use crate::cl::{ClResult, ClSetup, Qfi};
 
-/// ElGamal + CL scalar multiply proof (R_El-CL).
 pub struct RElClProof {
-    /// EC commitment: R_elg = a2 * G.
     pub r_elg_bytes: Vec<u8>,
-    /// EC commitment: S_elg = a1 * D + a2 * elek.
     pub s_elg_bytes: Vec<u8>,
-    /// CL commitment: R_ck = ck_0^{a1}.
     pub r_ck: Qfi,
-    /// CL commitment: S_ck = ck_1^{a1}.
     pub s_ck: Qfi,
-    /// Unbounded response z1 = a1_big + e * gamma_big (big-endian bytes).
     pub z1: Vec<u8>,
-    /// EC response z2 = a2 + e * r mod q (big-endian bytes).
     pub z2: Vec<u8>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
 }
 
@@ -78,7 +56,6 @@ fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
 }
 
 impl RElClProof {
-    /// Generates an R_El-CL proof.
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         setup: &mut ClSetup,
@@ -93,27 +70,20 @@ impl RElClProof {
         gamma_bytes: &[u8],
         r_bytes: &[u8],
     ) -> ClResult<Self> {
-        // 1. Sample random commitment values.
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
-        // 2. Compute commitments.
-        // EC: R_elg = a2 * G
         let a2_scalar = bytes_to_scalar(&a2)?;
         let r_elg = ProjectivePoint::GENERATOR * a2_scalar;
         let r_elg_bytes = point_to_bytes(&r_elg);
 
-        // EC: S_elg = a1 * D + a2 * elek
         let a1_scalar = bytes_to_scalar(&a1)?;
         let s_elg = *d * a1_scalar + *elek * a2_scalar;
         let s_elg_bytes = point_to_bytes(&s_elg);
 
-        // CL: R_ck = ck_0^{a1}
         let r_ck = setup.exp_bytes(ck_0, &a1)?;
-        // CL: S_ck = ck_1^{a1}
         let s_ck = setup.exp_bytes(ck_1, &a1)?;
 
-        // 3. Fiat-Shamir challenge.
         let d_bytes = point_to_bytes(d);
         let elek_bytes = point_to_bytes(elek);
         let elg_0_bytes = point_to_bytes(elg_0);
@@ -133,11 +103,8 @@ impl RElClProof {
             ],
         )?;
 
-        // 4. Responses.
-        // z1 = a1 + e * gamma (unbounded for CL checks).
         let z1 = response_unbounded(&a1, &e, gamma_bytes)?;
 
-        // z2 = a2 + e * r mod q (for EC checks).
         let q_bytes = setup.q_bytes()?;
         let q = Integer::from_digits(&q_bytes, Order::Msf);
         let a2_big = Integer::from_digits(&a2, Order::Msf);
@@ -157,7 +124,6 @@ impl RElClProof {
         })
     }
 
-    /// Verifies the R_El-CL proof.
     #[allow(clippy::too_many_arguments)]
     pub fn verify(
         &self,
@@ -171,11 +137,9 @@ impl RElClProof {
         cgk_0: &Qfi,
         cgk_1: &Qfi,
     ) -> ClResult<bool> {
-        // Decode EC commitments from stored bytes.
         let r_elg = decode_point(&self.r_elg_bytes)?;
         let s_elg = decode_point(&self.s_elg_bytes)?;
 
-        // Recompute Fiat-Shamir challenge.
         let d_bytes = point_to_bytes(d);
         let elek_bytes = point_to_bytes(elek);
         let elg_0_bytes = point_to_bytes(elg_0);
@@ -202,21 +166,18 @@ impl RElClProof {
         let z2_scalar = bytes_to_scalar(&self.z2)?;
         let e_scalar = bytes_to_scalar(&self.e)?;
 
-        // Check 1: z2 * G == R_elg + e * elg_0
         let lhs1 = ProjectivePoint::GENERATOR * z2_scalar;
         let rhs1 = r_elg + *elg_0 * e_scalar;
         if lhs1 != rhs1 {
             return Ok(false);
         }
 
-        // Check 2: z1 * D + z2 * elek == S_elg + e * elg_1
         let lhs2 = *d * z1_scalar + *elek * z2_scalar;
         let rhs2 = s_elg + *elg_1 * e_scalar;
         if lhs2 != rhs2 {
             return Ok(false);
         }
 
-        // Check 3: ck_0^{z1} == R_ck * cgk_0^e ⟺ ck_0^{z1} * cgk_0^{-e} == R_ck.
         let lhs3 = setup.multiexp_signed_bytes(
             &[ck_0, cgk_0],
             &[(false, self.z1.clone()), (true, self.e.clone())],
@@ -225,7 +186,6 @@ impl RElClProof {
             return Ok(false);
         }
 
-        // Check 4: ck_1^{z1} == S_ck * cgk_1^e ⟺ ck_1^{z1} * cgk_1^{-e} == S_ck.
         let lhs4 = setup.multiexp_signed_bytes(
             &[ck_1, cgk_1],
             &[(false, self.z1.clone()), (true, self.e.clone())],
@@ -250,27 +210,22 @@ mod tests {
 
         let g = ProjectivePoint::GENERATOR;
 
-        // ElGamal key
         let eldk = test_scalar(42);
         let elek = g * eldk;
 
-        // Witness: gamma and r
         let gamma_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let r_bytes = Integer::from(23u32).to_digits::<u8>(Order::Msf);
         let gamma_scalar = test_scalar(17);
         let r_scalar = test_scalar(23);
 
-        // ElGamal encryption of g^gamma: (r*G, gamma*G + r*elek)
         let elg_0 = g * r_scalar;
         let elg_1 = g * gamma_scalar + elek * r_scalar;
 
-        // CL ciphertext to scalar multiply
         let ct = setup
             .encrypt_bytes(&pk, &Integer::from(55u32).to_digits::<u8>(Order::Msf))
             .expect("encrypt");
         let (ck_0, ck_1) = setup.ct_components(&ct).expect("comp");
 
-        // CL scalar multiply by gamma
         let cgk_0 = setup
             .exp_bytes(&ck_0, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
             .expect("exp");
@@ -326,7 +281,6 @@ mod tests {
             .exp_bytes(&ck_1, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
             .expect("exp");
 
-        // Prove with WRONG gamma
         let wrong_gamma_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RElClProof::prove(
             &mut setup,

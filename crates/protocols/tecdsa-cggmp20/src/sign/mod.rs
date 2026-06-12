@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Signing types and protocol for CGGMP20 threshold ECDSA.
-
 pub mod types;
 
 use elliptic_curve::{

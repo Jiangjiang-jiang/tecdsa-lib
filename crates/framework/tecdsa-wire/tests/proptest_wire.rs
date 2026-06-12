@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use proptest::prelude::*;
 use tecdsa_wire::{decode, encode, Header};
 
@@ -26,7 +25,6 @@ proptest! {
     fn wire_roundtrip(header in arb_header(), payload: Vec<u8>) {
         let encoded = encode(&header, &payload).unwrap();
 
-        // Preamble check
         prop_assert_eq!(&encoded[..4], b"MPCE");
 
         let (dec_hdr, dec_payload) = decode::<Vec<u8>>(&encoded).unwrap();
@@ -36,7 +34,6 @@ proptest! {
 
     #[test]
     fn decode_never_panics(data: Vec<u8>) {
-        // Decoding arbitrary bytes must not panic; errors are fine.
         let _ = decode::<Vec<u8>>(&data);
     }
 }

@@ -1,24 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! LN18 threshold key generation (Feldman VSS DKG).
-//!
-//! A 3-round distributed key generation protocol where `n` parties produce a
-//! shared ECDSA key via Feldman VSS, hash commitments, and Schnorr proofs.
-//!
-//! ## Rounds
-//!
-//! 1. **Round 1**: Each party samples a degree-(t-1) polynomial, computes Feldman
-//!    commitments + Schnorr nonce, hash-commits, and broadcasts the commitment.
-//! 2. **Round 2**: Decommit (broadcast Feldman commitments + Schnorr nonce + rid)
-//!    and send P2P VSS shares.
-//! 3. **Round 3**: Verify commitments + Feldman shares + Schnorr proofs.
-//!    Compute combined share, public key, public shares.
-//!    Generate and broadcast Schnorr proof of combined share.
-//!
-//! ## Output
-//!
-//! Each party receives an [`Ln18KeyShare`] containing its Shamir secret share,
-//! the joint ECDSA public key, and per-party public verification shares.
-
 pub mod msg;
 mod rounds;
 
@@ -32,7 +11,6 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig,
 
 use crate::key_share::Ln18KeyShare;
 
-/// LN18 threshold key generation state machine (Feldman VSS DKG).
 pub struct Ln18KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -45,9 +23,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new LN18 keygen state machine.
-    ///
-    /// Generates initial secrets and queues Round 1 broadcast messages.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
         let state = Round1State::<C>::new(config, rng);
         Self {

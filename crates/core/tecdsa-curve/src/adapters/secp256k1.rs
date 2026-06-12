@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::{
     ctutils::CtOption,
     ops::Reduce,
@@ -11,9 +10,6 @@ use tecdsa_core::TecdsaError;
 
 use crate::TecdsaCurve;
 
-/// Adapter type re-exported for users who want to name it via `Secp256k1Adapter`.
-///
-/// This is a type alias — the actual `TecdsaCurve` impl is on `k256::Secp256k1` directly.
 pub type Secp256k1Adapter = K256Curve;
 
 impl TecdsaCurve for K256Curve {
@@ -26,7 +22,6 @@ impl TecdsaCurve for K256Curve {
     }
 
     fn xcoord_mod_q(p: &AffinePoint) -> Scalar {
-        // AffineCoordinates::x() returns FieldBytes (32 big-endian bytes).
         let x_bytes = p.x();
         let x_uint = U256::from_be_slice(x_bytes.as_ref());
         Scalar::reduce(&x_uint)
@@ -46,11 +41,9 @@ impl TecdsaCurve for K256Curve {
     }
 
     fn nums_pedersen_h() -> ProjectivePoint {
-        // Hash-to-try: increment the x-coordinate until we find a valid point.
-        // Uses a fixed domain-separation tag so the DL w.r.t. G is unknown.
         let hash = Sha256::digest(b"tecdsa/secp256k1/pedersen-h/nums");
         let mut x_bytes = [0u8; 33];
-        x_bytes[0] = 0x02; // compressed-even prefix
+        x_bytes[0] = 0x02;
         x_bytes[1..].copy_from_slice(&hash);
         loop {
             if let Ok(ep) = Sec1Point::<K256Curve>::from_bytes(&x_bytes) {
@@ -59,7 +52,6 @@ impl TecdsaCurve for K256Curve {
                     return ProjectivePoint::from(pt);
                 }
             }
-            // Increment the x-candidate (big-endian carry-add starting from LSB).
             for byte in x_bytes[1..].iter_mut().rev() {
                 *byte = byte.wrapping_add(1);
                 if *byte != 0 {

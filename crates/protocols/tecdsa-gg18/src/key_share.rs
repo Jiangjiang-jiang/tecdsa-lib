@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Key share types for the GG18 threshold ECDSA protocol.
-
 use elliptic_curve::{group::Group, sec1::ModulusSize, FieldBytesSize};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
@@ -8,42 +5,24 @@ use tecdsa_paillier::{zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey}
 use tecdsa_protocol::KeyShareValidation;
 use zeroize::Zeroize;
 
-/// Feldman VSS setup parameters: reconstruction threshold `t` and total number of parties `n`.
-///
-/// A valid `(t, n)` sharing requires `t` parties to reconstruct the secret.
 #[derive(Debug, Clone)]
 pub struct VssSetup {
-    /// Reconstruction threshold `t`: at least `t` parties are needed to sign.
     pub threshold: u16,
-    /// Total number of parties `n`.
     pub total: u16,
 }
 
-/// A single party's key share produced by the GG18 distributed key generation.
-///
-/// Contains the party's secret share `x_i`, the joint public key `Y`,
-/// public verification shares `Y_j = x_j * G` for all parties, Paillier keys,
-/// and Ring-Pedersen commitment parameters.
 #[derive(Clone)]
 pub struct Gg18KeyShare<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// This party's index (0-based).
     pub party_index: u16,
-    /// Secret share $x_i$ of the ECDSA signing key.
     pub secret_share: C::Scalar,
-    /// Joint ECDSA public key $Y = \sum_j x_j \cdot G$.
     pub public_key: C::ProjectivePoint,
-    /// Public verification shares $Y_j = x_j \cdot G$ for each party.
     pub public_shares: Vec<C::ProjectivePoint>,
-    /// VSS parameters (threshold, total).
     pub vss_setup: VssSetup,
-    /// This party's Paillier decryption key.
     pub dk: DecryptionKey,
-    /// Paillier encryption keys for all parties.
     pub paillier_eks: Vec<EncryptionKey>,
-    /// Ring-Pedersen $(N', h_1, h_2)$ parameters for all parties.
     pub n_tilde_params: Vec<NTildeParams>,
 }
 

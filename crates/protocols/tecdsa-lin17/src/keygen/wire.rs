@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire-safe serializable message types and conversion helpers for the Lin17
-//! two-party interactive DKG.
-//!
-//! Points are encoded as compressed SEC1 bytes via `GroupEncoding`. Types
-//! containing `C::ProjectivePoint` lack native serde impls, so we encode them
-//! through manual serialization.
-
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -24,24 +16,17 @@ use tecdsa_paillier::{
 
 use crate::keygen::interactive::{KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP2Round2Msg};
 
-// ---------------------------------------------------------------------------
-// Wire-safe serializable message types
-// ---------------------------------------------------------------------------
-
-/// Wire-safe Round 1 message (P1 -> P2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR1Msg {
     pub(crate) commitment: HashCommitment,
 }
 
-/// Wire-safe Round 2 message (P2 -> P1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR2Msg {
     pub(crate) q2_bytes: Vec<u8>,
     pub(crate) dlog_proof_json: Vec<u8>,
 }
 
-/// Wire-safe Round 3 message (P1 -> P2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR3Msg {
     pub(crate) q1_bytes: Vec<u8>,
@@ -54,20 +39,17 @@ pub(crate) struct WireR3Msg {
     pub(crate) range_proof: RangeProofNi,
 }
 
-/// Wire-safe Round 4 message (P2 -> P1): PDL verifier msg1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR4Msg {
     pub(crate) c_tag: tecdsa_paillier::Ciphertext,
     pub(crate) c_tag_tag: HashCommitment,
 }
 
-/// Wire-safe Round 5 message (P1 -> P2): PDL prover msg1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR5Msg {
     pub(crate) q_hat_commitment: HashCommitment,
 }
 
-/// Wire-safe Round 6 message (P2 -> P1): PDL verifier msg2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR6Msg {
     pub(crate) a_bytes: Vec<u8>,
@@ -75,16 +57,11 @@ pub(crate) struct WireR6Msg {
     pub(crate) nonce: [u8; 32],
 }
 
-/// Wire-safe Round 7 message (P1 -> P2): PDL prover msg2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR7Msg {
     pub(crate) q_hat_bytes: Vec<u8>,
     pub(crate) nonce: [u8; 32],
 }
-
-// ---------------------------------------------------------------------------
-// Point encoding helpers
-// ---------------------------------------------------------------------------
 
 pub(crate) fn encode_point<C: TecdsaCurve>(p: &C::ProjectivePoint) -> Vec<u8>
 where
@@ -131,10 +108,6 @@ where
         .map(|(v, _)| v)
         .map_err(|e| TecdsaError::Other(format!("failed to deserialize DlogProof: {e}")))
 }
-
-// ---------------------------------------------------------------------------
-// Round encode/decode helpers
-// ---------------------------------------------------------------------------
 
 pub(crate) fn encode_r1(msg: &KeyGenP1Round1Msg) -> Result<Vec<u8>, TecdsaError> {
     let wire = WireR1Msg {

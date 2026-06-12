@@ -1,20 +1,9 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMC24 online sign round state types.
-
 use tecdsa_class_group::cl::Qfi;
-
-// ---------------------------------------------------------------------------
-// Received data
-// ---------------------------------------------------------------------------
 
 pub(crate) struct ReceivedR4 {
     pub(crate) pc: Qfi,
     pub(crate) party_index: usize,
 }
-
-// ---------------------------------------------------------------------------
-// Message hashing
-// ---------------------------------------------------------------------------
 
 pub(crate) fn hash_message_to_scalar(message: &[u8]) -> k256::Scalar {
     use elliptic_curve::PrimeField;

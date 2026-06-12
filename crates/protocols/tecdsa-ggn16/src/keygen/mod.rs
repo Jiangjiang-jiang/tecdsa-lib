@@ -1,25 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! GGN16 threshold key generation protocol.
-//!
-//! A 2-round protocol where `n` parties produce a shared ECDSA key using a
-//! pre-existing threshold Paillier setup (trusted dealer).  Each party
-//! contributes an additive secret share `x_i` and proves via a PdlSlack proof
-//! that its Paillier encryption `alpha_i = E(x_i)` encrypts the discrete log
-//! of its public contribution `y_i = x_i * G`.
-//!
-//! ## Protocol Rounds
-//!
-//! 1. **Commitment:** each party broadcasts a hash commitment to `y_i`.
-//! 2. **Decommit + Encrypt + Prove:** each party broadcasts the decommitment,
-//!    `alpha_i`, and a PdlSlack proof.
-//!
-//! After Round 2, each party computes `alpha = sum(alpha_i)` (homomorphic) and
-//! `y = sum(y_i)` as the joint public key.
-//!
-//! Reference: Gennaro, Goldfeder, Narayanan. "Threshold-Optimal DSA/ECDSA
-//! Signatures and an Application to Bitcoin Wallet Security." ACNS 2016,
-//! Section 4.2.
-
 pub mod msg;
 mod rounds;
 
@@ -37,17 +15,11 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
 use crate::key_share::Ggn16KeyShare;
 
-/// GGN16 threshold key generation state machine.
-///
-/// Drives a single party through the 2-round keygen protocol. Create one
-/// instance per party via [`Ggn16KeygenMachine::new`], then feed messages
-/// through the [`StateMachine`] trait.
 pub struct Ggn16KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     round: KeygenRound<C>,
-    /// RNG stored for the Round 1 -> Round 2 transition (proof generation).
     rng_seed: [u8; 32],
 }
 
@@ -56,17 +28,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new GGN16 keygen state machine.
-    ///
-    /// # Arguments
-    ///
-    /// * `my_id` - This party's identifier.
-    /// * `all_parties` - All party identifiers (including self), in consistent order.
-    /// * `threshold` - Reconstruction threshold `t`: `t` parties needed to sign.
-    /// * `threshold_setup` - Shared Paillier public parameters from the trusted dealer.
-    /// * `decryption_share` - This party's threshold Paillier decryption share.
-    /// * `h1`, `h2`, `N_tilde` - Ring-Pedersen auxiliary parameters for ZK proofs.
-    /// * `rng` - Cryptographic RNG for secret generation.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         my_id: PartyId,
@@ -92,7 +53,6 @@ where
             N_tilde: n_tilde,
         };
 
-        // Save RNG seed for later proof generation
         let mut rng_seed = [0u8; 32];
         rng.fill_bytes(&mut rng_seed);
 
@@ -188,7 +148,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round<C: TecdsaCurve>(msg: &Ggn16KeygenMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,
@@ -211,11 +170,6 @@ mod tests {
 
     type TestCurve = k256::Secp256k1;
 
-    /// Trusted dealer setup using small safe primes (256-bit) for fast tests.
-    ///
-    /// Mirrors `trusted_dealer_setup` from tecdsa_paillier::threshold but
-    /// uses `DecryptionKey::from_primes` with small primes instead of the
-    /// expensive `DecryptionKey::generate`.
     fn fast_trusted_dealer_setup(
         corruption_threshold: u16,
         total: u16,
@@ -242,13 +196,11 @@ mod tests {
         let d = &lambda * &beta;
         let theta = d.modulo_ref(&n);
 
-        // delta = n!
         let mut delta = Integer::one();
         for i in 2..=total as u32 {
             delta *= Integer::from(i);
         }
 
-        // Shamir share d over Z with coefficient modulus M = N * delta
         let m = &n * &delta;
         let mut coeffs = vec![d.clone()];
         for _ in 0..corruption_threshold {
@@ -277,7 +229,6 @@ mod tests {
         (setup, shares)
     }
 
-    /// Generate Ring-Pedersen parameters (N_tilde, h1, h2) for tests.
     fn generate_ring_pedersen(rng: &mut impl CryptoRngCore) -> (Integer, Integer, Integer) {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
@@ -299,21 +250,16 @@ mod tests {
     #[test]
     fn keygen_3_party() {
         let mut rng = rand::thread_rng();
-        let t = 2u16; // reconstruction threshold: need 2 to sign
-        let n = 3u16; // total parties
+        let t = 2u16;
+        let n = 3u16;
 
-        // Step 1: Trusted dealer setup for threshold Paillier (fast, small primes)
-        // trusted_dealer_setup takes corruption threshold (polynomial degree)
         let corruption_t = t - 1;
         let (setup, dec_shares) = fast_trusted_dealer_setup(corruption_t, n, &mut rng);
 
-        // Step 2: Generate shared Ring-Pedersen parameters
         let (n_tilde, h1, h2) = generate_ring_pedersen(&mut rng);
 
-        // Step 3: Create party IDs
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-        // Step 4: Create keygen machines
         let mut machines: Vec<(PartyId, Ggn16KeygenMachine<TestCurve>)> = Vec::new();
         for (i, dec_share) in dec_shares.into_iter().enumerate() {
             let pid = all_parties[i];
@@ -331,18 +277,15 @@ mod tests {
             machines.push((pid, machine));
         }
 
-        // Step 5: Run the protocol via the orchestrator
         let results = Orchestrator::new(machines, 10)
             .run()
             .expect("orchestrator must succeed");
 
-        // Step 6: Verify all parties completed successfully
         let shares: Vec<Ggn16KeyShare<TestCurve>> = results
             .into_iter()
             .map(|r| r.expect("keygen should succeed"))
             .collect();
 
-        // Step 7: Verify all parties agree on the public key
         let pk0_bytes = shares[0].public_key.to_bytes();
         for (i, share) in shares.iter().enumerate().skip(1) {
             assert_eq!(
@@ -353,7 +296,6 @@ mod tests {
             );
         }
 
-        // Step 8: Verify all parties agree on alpha (global ciphertext)
         for (i, share) in shares.iter().enumerate().skip(1) {
             assert_eq!(
                 share.alpha, shares[0].alpha,
@@ -362,34 +304,25 @@ mod tests {
             );
         }
 
-        // Step 9: Verify alpha decrypts to sum(x_i) using threshold decryption.
-        //
-        // Important: Paillier encryption operates over integers, not mod q.
-        // The decrypted value is sum(x_i) as integers, while scalar addition
-        // wraps mod q.  We must compare against the integer sum.
         let mut sum_x_integer = Integer::zero();
         for share in &shares {
             let x_repr = share.secret_share.to_repr();
             sum_x_integer += Integer::from_bytes_msf(x_repr.as_ref());
         }
 
-        // Partial decrypt alpha with all parties
         let partials: Vec<_> = shares
             .iter()
             .map(|s| partial_decrypt(&s.alpha, &s.decryption_share, &s.threshold_setup))
             .collect();
 
-        // Combine t+1 partial decryptions
         let decrypted =
             combine_partials(&partials[0..(t as usize)], &setup).expect("combine should succeed");
 
-        // The decrypted value should equal the integer sum of x_i values.
         assert_eq!(
             decrypted, sum_x_integer,
             "threshold decryption of alpha should equal integer sum of secret shares"
         );
 
-        // Step 10: Verify that sum(x_i) * G equals the public key (scalar sum mod q)
         let mut sum_x_scalar = <TestCurve as elliptic_curve::CurveArithmetic>::Scalar::ZERO;
         for share in &shares {
             sum_x_scalar += share.secret_share;
@@ -403,14 +336,12 @@ mod tests {
             "sum(x_i) * G should equal the agreed public key"
         );
 
-        // Step 11: Verify public_shares are consistent
         assert_eq!(
             shares[0].public_shares.len(),
             n as usize,
             "should have n public shares"
         );
         for (i, share) in shares.iter().enumerate() {
-            // Each party's public share y_i should be x_i * G
             let expected_y_i =
                 <k256::Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR
                     * share.secret_share;
@@ -422,8 +353,6 @@ mod tests {
         }
     }
 
-    /// Verify that our fast_trusted_dealer_setup produces a working
-    /// threshold scheme by encrypting known values, adding, and decrypting.
     #[test]
     fn fast_setup_sanity_check() {
         let mut rng = rand::thread_rng();
@@ -432,7 +361,6 @@ mod tests {
 
         let (setup, shares) = fast_trusted_dealer_setup(t, n, &mut rng);
 
-        // Test 1: simple value
         let msg = Integer::from(42i32);
         let (ct, _nonce) = setup
             .ek
@@ -445,7 +373,6 @@ mod tests {
         let result = combine_partials(&partials[0..2], &setup).expect("combine should succeed");
         assert_eq!(result, msg, "threshold decryption should recover plaintext");
 
-        // Test 2: encrypt 3 values, add them, decrypt the sum
         let a = Integer::from(100i32);
         let b = Integer::from(200i32);
         let c = Integer::from(300i32);
@@ -467,7 +394,6 @@ mod tests {
             "threshold decryption of sum should be 600"
         );
 
-        // Test 3: encrypt large values (like EC scalars)
         let x1 = Integer::from_bytes_msf(&[0xFFu8; 32]);
         let x2 = Integer::from_bytes_msf(&[0xAAu8; 32]);
         let (ct_x1, _) = setup.ek.encrypt_with_random(&mut rng, &x1).expect("enc x1");
@@ -486,10 +412,9 @@ mod tests {
     #[test]
     fn keygen_2_of_2() {
         let mut rng = rand::thread_rng();
-        let t = 2u16; // reconstruction threshold: both parties needed
+        let t = 2u16;
         let n = 2u16;
 
-        // trusted_dealer_setup takes corruption threshold (polynomial degree)
         let corruption_t = t - 1;
         let (setup, dec_shares) = fast_trusted_dealer_setup(corruption_t, n, &mut rng);
         let (n_tilde, h1, h2) = generate_ring_pedersen(&mut rng);
@@ -520,14 +445,12 @@ mod tests {
             .map(|r| r.expect("keygen should succeed"))
             .collect();
 
-        // Verify agreement on public key
         assert_eq!(
             shares[0].public_key.to_bytes(),
             shares[1].public_key.to_bytes(),
             "both parties should agree on public key"
         );
 
-        // Verify alpha decrypts correctly (compare against integer sum, not scalar sum)
         let partials: Vec<_> = shares
             .iter()
             .map(|s| partial_decrypt(&s.alpha, &s.decryption_share, &s.threshold_setup))

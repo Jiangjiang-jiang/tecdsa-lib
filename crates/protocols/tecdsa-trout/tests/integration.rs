@@ -1,14 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Trout integration tests.
-//!
-//! Paper: Dahari-Garbian, Nof, Parker. "Trout: Two-Round Threshold ECDSA
-//! from Class Groups."
-//!
-//! Tests:
-//! - Full keygen -> presign -> sign flow with insecure CL params (p=7).
-//! - Scaled decryption correctness.
-//! - Proof verification (R_{CL-EC}, R_{ComKwlg}).
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::PrimeField;
@@ -41,23 +30,20 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
         })
 }
 
-/// Run full Trout protocol: keygen -> presign -> sign.
 #[test]
 fn test_trout_full_sign_3_of_5() {
     let seed = "77777";
     let n = 5u16;
-    let t = 3u16; // reconstruction threshold: 3 parties needed to sign
+    let t = 3u16;
 
     let mut rng = rand::rngs::OsRng;
     let mut setup = ClSetup::new_secp256k1(seed).expect("CL setup");
 
-    // ---- KeyGen (trusted dealer) ----
     let shares = trusted_dealer_keygen(&mut setup, seed, n, t, false, &mut rng).expect("keygen");
     assert_eq!(shares.len(), n as usize);
 
     let public_key = shares[0].public_key;
 
-    // ---- Select signing parties: parties 1, 2, 3 (3 out of 5) ----
     let signing_parties: Vec<u16> = vec![1, 2, 3];
     let signing_shares: Vec<&TroutKeyShare> = signing_parties
         .iter()
@@ -66,15 +52,12 @@ fn test_trout_full_sign_3_of_5() {
 
     let session_nonce = b"trout-test-session-42";
 
-    // Reconstruct the joint CL public key from the key share.
-    // All shares have the same cl_pk_abc.
     let mut setup2 = ClSetup::new_secp256k1(seed).expect("CL setup");
     let (pk_a, pk_b, pk_c) = &shares[0].cl_pk_abc;
     let cl_pk_qfi =
         tecdsa_trout::error::qfi_from_abc(pk_a, pk_b, pk_c).expect("reconstruct CL pk QFI");
     let cl_pk = setup2.pk_from_qfi(&cl_pk_qfi).expect("pk_from_qfi");
 
-    // ---- Round 1 (Presign) ----
     let mut states = Vec::new();
     let mut broadcasts = Vec::new();
     for share in &signing_shares {
@@ -91,8 +74,6 @@ fn test_trout_full_sign_3_of_5() {
         broadcasts.push(bcast);
     }
 
-    // ---- Round 2 (Sign) ----
-    // Compute R = sum(R_i)
     let mut big_r = k256::ProjectivePoint::IDENTITY;
     for bcast in &broadcasts {
         let r_i_affine = <k256::Secp256k1 as TecdsaCurve>::point_from_bytes(&bcast.r_i_bytes)
@@ -103,7 +84,6 @@ fn test_trout_full_sign_3_of_5() {
     let r_affine = elliptic_curve::group::Curve::to_affine(&big_r);
     let r_scalar = <k256::Secp256k1 as TecdsaCurve>::xcoord_mod_q(&r_affine);
 
-    // Verify eVRF proofs
     for bcast in &broadcasts {
         let party_pos = (bcast.party_index - 1) as usize;
         let evrf_pk = &shares[party_pos].all_evrf_pks[party_pos];
@@ -113,9 +93,6 @@ fn test_trout_full_sign_3_of_5() {
         assert!(ok, "eVRF proof for party {} must verify", bcast.party_index);
     }
 
-    // Build TroutPresignOutput for each party.
-    // All parties receive the same set of broadcasts (moved into the first party,
-    // shared via the all_broadcasts reference).
     let presign_outputs: Vec<tecdsa_trout::presign::types::TroutPresignOutput> = states
         .into_iter()
         .map(|state| tecdsa_trout::presign::types::TroutPresignOutput {
@@ -128,18 +105,13 @@ fn test_trout_full_sign_3_of_5() {
             beta_i: state.beta_i.clone(),
             l_i: state.l_i,
             l_i_delta_i: state.l_i_delta_i.clone(),
-            all_broadcasts: Vec::new(), // filled below
+            all_broadcasts: Vec::new(),
         })
         .collect();
 
-    // We cannot clone broadcasts because ZK proof types do not implement Clone.
-    // Instead, all presign outputs share the same broadcast reference via the
-    // first output. The sign function only reads broadcasts from all_presigns[0].
-    // Move all broadcasts into the first presign output.
     let mut presign_outputs = presign_outputs;
     presign_outputs[0].all_broadcasts = broadcasts;
 
-    // Sign
     let msg_scalar = hash_message(b"Trout correctness test");
     let message = DataToSign::from_digest(msg_scalar);
 
@@ -152,14 +124,12 @@ fn test_trout_full_sign_3_of_5() {
     )
     .expect("sign_round2");
 
-    // Verify signature independently
     verify_ecdsa::<k256::Secp256k1>(&sig, &public_key, &message)
         .expect("independent ECDSA verification must pass");
 
     println!("Trout 3-of-5 sign OK: r={:?}", sig.r);
 }
 
-/// Test scaled decryption standalone.
 #[test]
 fn test_scaled_decrypt_standalone() {
     use tecdsa_class_group::scaled_decrypt::*;

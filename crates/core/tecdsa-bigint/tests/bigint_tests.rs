@@ -1,14 +1,11 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use rug::{integer::Order, Integer};
 use tecdsa_bigint::{gcd, generate_safe_prime, is_safe_prime, jacobi, tonelli_shanks};
 
 #[test]
 fn jacobi_known_values() {
-    // 2 is a QR mod 7 (squares mod 7 = {1,2,4}) → Jacobi(2/7) = 1
     assert_eq!(jacobi(&Integer::from(2u64), &Integer::from(7u64)), 1);
     assert_eq!(jacobi(&Integer::from(1u64), &Integer::from(7u64)), 1);
     assert_eq!(jacobi(&Integer::from(0u64), &Integer::from(7u64)), 0);
-    // 2 is a NQR mod 5 (squares mod 5 = {1,4}) → Jacobi(2/5) = -1
     assert_eq!(jacobi(&Integer::from(2u64), &Integer::from(5u64)), -1);
     assert_eq!(jacobi(&Integer::from(3u64), &Integer::from(5u64)), -1);
     assert_eq!(jacobi(&Integer::from(4u64), &Integer::from(5u64)), 1);

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! LN18 real StateMachine implementations for offline sign (2 rounds) and online sign (6 rounds).
-
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -19,14 +16,6 @@ use super::{
 };
 use crate::key_share::{Ln18OfflineSignState, Ln18Presignature};
 
-// ===========================================================================
-// Ln18OfflineSignMachine -- real 2-round StateMachine
-// ===========================================================================
-
-/// Real `StateMachine` for the LN18 offline signing phase (2 rounds).
-///
-/// Runs parallel `input(k)` and `input(rho)` sub-protocols. Output is
-/// `Ln18OfflineSignState<C>` carrying all state needed for the online phase.
 pub struct Ln18OfflineSignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -41,7 +30,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new offline sign machine.
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -128,7 +116,6 @@ where
         }
     }
 
-    /// Returns 1 for Round 1, 2 for Round 2, 3 when done.
     fn current_round(&self) -> u16 {
         match &self.round {
             OfflineRound::InputRound1(_) => 1,
@@ -143,14 +130,6 @@ where
     }
 }
 
-// ===========================================================================
-// Ln18OnlineSignMachine -- real 6-round StateMachine
-// ===========================================================================
-
-/// Real `StateMachine` for the LN18 online signing phase (6 rounds).
-///
-/// Receives the message digest at construction. Runs element-out + interleaved
-/// mult1(k,rho) and mult2(rho,alpha). Output is an ECDSA `Signature<C>`.
 pub struct Ln18OnlineSignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -165,10 +144,6 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
     C::ProjectivePoint: GroupEncoding,
 {
-    /// Create a new online sign machine.
-    ///
-    /// The message digest is provided here (not via a separate `set_message` API).
-    /// It is not used until paper round 3 after R and r are known.
     pub fn new(params: Ln18OnlineSignParams<C>, rng: &mut impl rand_core::CryptoRngCore) -> Self {
         let round3 = super::state_rounds::OnlineRound3::new(params, rng);
         Self {
@@ -217,9 +192,6 @@ where
                         PendingOnlineStart::WaitingForTau {
                             ref mut buffered, ..
                         } => {
-                            // MtA tau not yet resolved. Buffer the incoming
-                            // Round 3 message; it will be replayed once tau
-                            // completes during try_resolve_pending().
                             buffered.push((from, element_out.to_msg(), mult1_r1.to_msg()));
                         }
                         PendingOnlineStart::Taken => {
@@ -236,8 +208,6 @@ where
                 }),
             },
             OnlineRound::PendingBeta(pending) => {
-                // Beta MtA not yet resolved. Buffer Round 4 messages so
-                // they can be replayed once beta completes.
                 match msg {
                     Ln18OnlineSignMsg::Round4 { mult1_r2, mult2_r1 } => {
                         pending
@@ -337,7 +307,6 @@ where
     }
 
     fn drain_outgoing(&mut self) -> Vec<Outgoing<Self::Outbound>> {
-        // Try to resolve PendingBeta -> Round4 before draining.
         if matches!(self.round, OnlineRound::PendingBeta(_)) {
             let old = std::mem::take(&mut self.round);
             if let OnlineRound::PendingBeta(pending) = old {
@@ -355,10 +324,6 @@ where
             }
         }
 
-        // If Round4 is ready (from buffered Round4 messages replayed
-        // during PendingBeta resolution) and its outgoing has already
-        // been drained, advance to Round5. This handles the case where
-        // all Round4 messages arrived while in PendingBeta.
         if let OnlineRound::Round4(ref state) = self.round {
             if state.is_ready() && state.outgoing.is_empty() {
                 let old = std::mem::take(&mut self.round);
@@ -371,18 +336,10 @@ where
             }
         }
 
-        // For Round3: try to resolve WaitingForTau -> Active so that
-        // Round3 outgoing messages are emitted. If all buffered messages
-        // made Active ready, advance to Round4/PendingBeta but only
-        // return the Round3 outgoing this iteration; the Round4 outgoing
-        // will be returned on the next drain_outgoing call.
         if matches!(self.round, OnlineRound::Round3(_)) {
             if let OnlineRound::Round3(r3) = &mut self.round {
                 r3.try_resolve_pending(&mut self.rng);
             }
-            // After resolve, check if Active is ready due to replayed
-            // buffered messages. If so, advance but defer emitting the
-            // new round's outgoing.
             let should_advance = matches!(
                 self.round,
                 OnlineRound::Round3(ref r3)
@@ -405,8 +362,6 @@ where
                             }
                         }
                     }
-                    // Return only the Round3 outgoing; the new round's
-                    // outgoing will be returned on the next drain call.
                     return round3_outgoing;
                 }
             }
@@ -435,7 +390,6 @@ where
         }
     }
 
-    /// Returns local phase index: 1-6 for rounds, 7 when done.
     fn current_round(&self) -> u16 {
         match &self.round {
             OnlineRound::Round3(_) => 1,
@@ -455,14 +409,6 @@ where
     }
 }
 
-// ===========================================================================
-// Legacy result-wrapper machines (kept for backward compatibility)
-// ===========================================================================
-
-/// Legacy `StateMachine` wrapper for the LN18 presign protocol.
-///
-/// This wraps a pre-computed presignature. Use `Ln18OfflineSignMachine` for the
-/// real message-driven StateMachine path.
 pub struct Ln18PresignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -524,7 +470,6 @@ where
     }
 }
 
-/// Legacy `StateMachine` wrapper for the combined LN18 sign protocol.
 pub struct Ln18SignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -584,7 +529,6 @@ where
     }
 }
 
-/// Legacy `StateMachine` wrapper for the LN18 8-round full-sign protocol.
 pub struct Ln18FullSignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,

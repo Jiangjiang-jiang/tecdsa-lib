@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_fs::{FiatShamirProof, MerlinTranscript, SigmaRelation, TranscriptProtocol};
 
 struct IdentityRelation;

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,33 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! JTX25 TECDSA-Normal online signing protocol (1 round).
-//!
-//! Consumes a [`Jtx25Presignature`] and a message to produce a threshold
-//! ECDSA signature via threshold CL partial decryption.
-//!
-//! ## Key difference from TECDSA-Robust
-//!
-//! Since k = sum(k_i) is additively shared (n-out-of-n), the ciphertext
-//! c^0 = sum(phi_bar_k_j) needs NO Lagrange weighting. The Robust variant
-//! uses c^0 = sum(phi_bar_k_j * lambda_j) because k is threshold-shared.
-//!
-//! ## Protocol (JTX25 Section 3, Figure 4, Online Round)
-//!
-//! Each party P_i:
-//! 1. c^0 = sum(phi_bar_k_j) = Enc(pk, phi * k)
-//! 2. c^1 = phi_bar * H(m) + sum(phi_bar_x_j) * r_x = Enc(pk, phi*(H(m) + x*r_x))
-//! 3. Partial decrypt: (pc_i^0, pi_0) <- t-CL.PartDec(pk, sk_i, c^0)
-//! 4. Partial decrypt: (pc_i^1, pi_1) <- t-CL.PartDec(pk, sk_i, c^1)
-//! 5. Broadcast (pc_i^0, pi_0, pc_i^1, pi_1)
-//!
-//! ## Output
-//! 1. Verify all R_part-dec proofs
-//! 2. p^0 <- t-CL.FinDec({pc_i^0}, c^0) -- recovers phi*k
-//! 3. p^1 <- t-CL.FinDec({pc_i^1}, c^1) -- recovers phi*(H(m)+x*r_x)
-//! 4. s = p^1 / p^0 mod q = k^{-1}(H(m) + x*r_x)
-//! 5. Output (r_x, s) if ECDSA verify passes
 
 #[cfg(feature = "robust")]
 pub mod robust;
@@ -67,16 +39,10 @@ use crate::{
     presign::Jtx25Presignature,
 };
 
-// ---------------------------------------------------------------------------
-// Message types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Jtx25OnlineSignMsg {
     Round3(Vec<u8>),
 }
-
-// Serialized types imported from crate::cl_wire
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct R3Payload {
@@ -84,13 +50,8 @@ struct R3Payload {
     pi_0: SerRPartDecProof,
     pc_1: SerializedQfi,
     pi_1: SerRPartDecProof,
-    /// Party index (1-based) for t-CL.FinDec.
     party_index: usize,
 }
-
-// ---------------------------------------------------------------------------
-// Received data
-// ---------------------------------------------------------------------------
 
 struct ReceivedR3 {
     pc_0: Qfi,
@@ -98,18 +59,10 @@ struct ReceivedR3 {
     party_index: usize,
 }
 
-// ---------------------------------------------------------------------------
-// Message hashing
-// ---------------------------------------------------------------------------
-
 fn hash_message_to_scalar(message: &[u8]) -> k256::Scalar {
     let hash: [u8; 32] = Sha256::digest(message).into();
     tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&hash)
 }
-
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
 
 pub struct Jtx25OnlineSignMachine {
     my_id: PartyId,
@@ -131,10 +84,6 @@ pub struct Jtx25OnlineSignMachine {
 }
 
 impl Jtx25OnlineSignMachine {
-    /// Create a new JTX25 Normal online signing state machine.
-    ///
-    /// Computes c^0 and c^1 from the presignature, then performs partial
-    /// decryption and queues the broadcast.
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -142,9 +91,6 @@ impl Jtx25OnlineSignMachine {
         message: &[u8],
         public_key: k256::ProjectivePoint,
     ) -> tecdsa_core::Result<Self> {
-        // Rebuild the (global) CL public parameters from the stored seed, then
-        // delegate. Benches holding the shared `ClSetup` call `new_with_setup`
-        // to avoid timing this one-time global setup as online-sign cost.
         let setup = if presignature.use_128bit_security {
             ClSetup::new_secp256k1_128bit(&presignature.cl_setup_seed)
         } else {
@@ -154,8 +100,6 @@ impl Jtx25OnlineSignMachine {
         Self::new_with_setup(my_id, all_parties, presignature, message, public_key, setup)
     }
 
-    /// Like [`new`](Self::new) but reuses a pre-built [`ClSetup`] (the global CL
-    /// public parameters) instead of reconstructing it from the presignature seed.
     pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -174,20 +118,17 @@ impl Jtx25OnlineSignMachine {
         let r_x = presignature.r_x;
         let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_x);
 
-        // Reconstruct phi_bar ciphertext.
         let pb_c1 = Qfi::from_bytes(&presignature.phi_bar_c1_bytes);
         let pb_c2 = Qfi::from_bytes(&presignature.phi_bar_c2_bytes);
         let phi_bar = setup
             .ct_from_components(&pb_c1, &pb_c2)
             .map_err(|e| TecdsaError::Other(format!("phi_bar ct: {e}")))?;
 
-        // Reconstruct aggregate CL PK.
         let cl_pk_qfi = Qfi::from_bytes(&presignature.cl_pk_bytes);
         let cl_pk = setup
             .pk_from_qfi(&cl_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("cl_pk from_qfi: {e}")))?;
 
-        // Reconstruct per-party CL PK shares (1-based keys matching PartyId.0).
         let mut cl_pk_shares: BTreeMap<u16, ClPublicKey> = BTreeMap::new();
         for (&pid, bytes) in &presignature.cl_pk_share_bytes {
             let qfi = Qfi::from_bytes(bytes);
@@ -197,8 +138,6 @@ impl Jtx25OnlineSignMachine {
             cl_pk_shares.insert(pid, pk);
         }
 
-        // --- Compute c^0 = sum(phi_bar_k_j) ---
-        // NO Lagrange weighting: k = sum(k_i) is n-out-of-n additive.
         let party_ids: Vec<u16> = all_parties.iter().map(|p| p.0).collect();
         let mut c0_opt: Option<ClCiphertext> = None;
 
@@ -241,17 +180,9 @@ impl Jtx25OnlineSignMachine {
         }
         let c0 = c0_opt.ok_or_else(|| TecdsaError::Other("no c0 data".into()))?;
 
-        // --- Compute c^1 = phi_bar * H(m) + sum(phi_bar_x_j) * r_x ---
-        // phi_bar_x_j already contains lambda_j * x_j from presign.
         let (phb_c1, phb_c2) = setup
             .ct_components(&phi_bar)
             .map_err(|e| TecdsaError::Other(format!("phi_bar comp: {e}")))?;
-        // c^1 = phi_bar^m · ∏_j phi_bar_x_j^{r_x}. Every phi_bar_x_j shares the
-        // same exponent r_x (lambda is baked in at presign), so
-        // ∏_j x_j^{r_x} = (∏_j x_j)^{r_x}: take the product first (composes only),
-        // then fold each ciphertext component with a single shared-squaring
-        // dual-exponentiation `phb^m · (∏x)^{r_x}` instead of one exp per party
-        // plus composes.
         let mut prod_x1 = setup
             .identity()
             .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
@@ -287,8 +218,6 @@ impl Jtx25OnlineSignMachine {
             .ct_from_components(&s1, &s2)
             .map_err(|e| TecdsaError::Other(format!("ct_from: {e}")))?;
 
-        // --- Partial decryption ---
-        // party_index is 1-based (matches PartyId convention and t-CL evaluation points).
         let my_party_index = presignature.party_index as usize;
         let sk_share = &presignature.cl_sk_share;
 
@@ -319,7 +248,6 @@ impl Jtx25OnlineSignMachine {
         let pi_1 = RPartDecProof::prove(&mut setup, &my_pk_raw, &c1_ct, &pc_1, sk_share)
             .map_err(|e| TecdsaError::Other(format!("pi_1: {e}")))?;
 
-        // Serialize and broadcast.
         let pc_0_ser = SerializedQfi::from_qfi(&pc_0)
             .map_err(|e| TecdsaError::Other(format!("ser pc_0: {e}")))?;
         let pi_0_ser = SerRPartDecProof::from_proof(&pi_0)

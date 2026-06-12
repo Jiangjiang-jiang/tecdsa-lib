@@ -1,13 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
-//! JTX25 Threshold ECDSA from Threshold CL Encryption.
-//!
-//! Implements the Jiang-Tang-Xue 2025 protocol:
-//! - **3-round keygen:** PVSS for ECDSA key + threshold CL DKG
-//! - **2-round presign (offline):** threshold CL homomorphic operations
-//! - **1-round sign (online):** threshold CL partial decryption + assembly
-//! - **Normal variant:** additive nonce sharing among signing set (no DRG)
-//! - **Robust variant** (`robust` feature): DRG for k_i, tolerates dropouts after presign
 
 pub(crate) mod cl_wire;
 pub mod error;
@@ -20,11 +11,6 @@ pub mod sign;
 pub use key_share::Jtx25KeyShare;
 use tecdsa_protocol::{NoOpMachine, Protocol};
 
-/// JTX25 robust threshold ECDSA protocol descriptor.
-///
-/// JTX25 is NOT generic over `C: TecdsaCurve` because the underlying
-/// CL-HSM encryption (bicycl-rs) is parameterized by a fixed curve
-/// order `q` at setup time; secp256k1 only.
 pub struct Jtx25;
 
 impl Protocol for Jtx25 {

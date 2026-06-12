@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! CGGMP20 threshold key generation (DKG) protocol.
-//!
-//! A 3-round distributed key generation protocol where `n` parties produce a
-//! shared ECDSA key via Feldman VSS, hash commitments, and Schnorr proofs.
-
 pub mod msg;
 mod rounds;
 
@@ -17,7 +11,6 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, SessionConfig,
 
 use crate::key_share::Cggmp20CoreKeyShare;
 
-/// Threshold key generation state machine implementing the CGGMP20 DKG protocol.
 pub struct Cggmp20KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -30,9 +23,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new keygen state machine.
-    ///
-    /// Generates initial secrets and queues Round 1 broadcast messages.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
         let state = Round1State::<C>::new(config, rng);
         Self {
@@ -152,7 +142,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round<C: TecdsaCurve>(msg: &KeygenMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,

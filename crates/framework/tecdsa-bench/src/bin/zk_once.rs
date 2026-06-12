@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! One-shot ZK proof timing.
-//!
-//! This is intentionally not a statistical benchmark. It runs each operation
-//! once with Profile B fixtures and prints TSV rows:
-//!
-//! family/proof/op<TAB>elapsed_ns<TAB>elapsed_human
-
 use std::{
     str::FromStr,
     sync::Mutex,
@@ -29,25 +21,17 @@ fn time_once<T>(name: &str, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// Collected proof sizes (`proof-id -> bytes`), flushed to a per-process TSV at
-/// the end of `main` for `build_zk_table.py` to consume (mirrors how
-/// `protocol_once` persists comm under `target/comm_online/`).
 static SIZES: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
 
-/// Record a proof's serialized size (bytes): print a human-readable
-/// `<id>/size<TAB><bytes><TAB>bytes` row and stash `(<id>, bytes)` for the TSV.
 fn record_size(id: &str, bytes: usize) {
     println!("{id}/size\t{bytes}\tbytes");
     SIZES.lock().expect("sizes lock").push((id.to_string(), bytes));
 }
 
-/// Record the serialized wire size of a `serde`-serializable proof under the
-/// orchestrator's bincode config -- the same sizing as the MtA comm column.
 fn size_of<T: serde::Serialize>(id: &str, proof: &T) {
     record_size(id, wire_size(proof));
 }
 
-/// Flush all recorded sizes to `target/zk_sizes/<pid>.tsv` as `<id>\t<bytes>`.
 fn write_sizes() {
     let dir = std::path::Path::new("target/zk_sizes");
     std::fs::create_dir_all(dir).expect("create zk_sizes dir");
@@ -98,7 +82,6 @@ fn main() {
     run_group("zk/joye_libert", || joye_libert_zk_once(&jl, &jl_extra));
     run_group("zk/evrf", evrf_zk_once);
 
-    // Persist the collected proof sizes for build_zk_table.py.
     write_sizes();
 }
 
@@ -246,10 +229,6 @@ fn class_group_zk_once(
         let proof = time_once("zk/class_group/r_enc/prove", || {
             REncProof::prove(&mut setup, &pk, &ct, &m_bytes, &r_bytes).expect("r_enc prove")
         });
-        // REncProof holds Qfi commitments (not serde-serializable); size it
-        // natively via to_bytes + the response byte-vectors, exactly as the
-        // r_ped_ec proof and the MtA comm column do. Consumed by
-        // build_mta_table.py for the CL row's R_{CL-Enc} contribution.
         record_size(
             "zk/class_group/r_enc",
             proof.t1.to_bytes().len()
@@ -300,7 +279,6 @@ fn class_group_zk_once(
         let ct = setup
             .encrypt_with_r_bytes(&pk, &m_bytes, &r_bytes)
             .expect("enc");
-        // EC Pedersen commitment for cross-domain proof.
         let m_scalar = {
             use elliptic_curve::ops::Reduce;
             let mut buf = [0u8; 32];
@@ -531,8 +509,6 @@ fn class_group_zk_once(
             RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v_bytes, &x_bytes, &r_bytes_nim)
                 .expect("prove")
         });
-        // RPedEcProof holds a Qfi (not serde-serializable); size it natively
-        // via to_bytes + the response byte-vectors, as in the MtA comm column.
         record_size(
             "zk/class_group/r_ped_ec",
             proof.c_tilde.to_bytes().len()

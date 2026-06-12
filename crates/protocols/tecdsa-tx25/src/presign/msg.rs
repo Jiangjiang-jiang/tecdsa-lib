@@ -1,31 +1,15 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! TX25 presign message types and serialization helpers.
-
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
     cl::{ClCiphertext, Qfi},
     zk::{r_dec_dl::RDecDlProof, r_enc::REncProof, r_m_aff_dl_ec::RMAffDlEcProof, r_sh::RShProof},
 };
 
-// ---------------------------------------------------------------------------
-// Message types
-// ---------------------------------------------------------------------------
-
-/// Messages exchanged during TX25 presigning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Tx25PresignMsg {
-    /// Round 1: C_gamma, R_Enc proof, PVSS (c1, {c2_j}, R_Sh proof).
     Round1(Vec<u8>),
-    /// Round 2: {C_alpha, C_alpha_hat, B, B_hat}, R_i, R_Dec_DL proof,
-    /// R_m_AffDL_Ec proofs.
     Round2(Vec<u8>),
 }
 
-// ---------------------------------------------------------------------------
-// Serialised CL types for messages
-// ---------------------------------------------------------------------------
-
-/// A CL ciphertext serialised as two binary QFI blobs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerializedClCt {
     pub(crate) c1: Vec<u8>,
@@ -47,7 +31,6 @@ impl SerializedClCt {
     }
 }
 
-/// A single QFI element serialised as compact binary bytes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerializedQfi {
     pub(crate) data: Vec<u8>,
@@ -64,11 +47,6 @@ impl SerializedQfi {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Serialised ZK proofs for messages
-// ---------------------------------------------------------------------------
-
-/// Serialised R_Enc proof.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerREncProof {
     pub(crate) t1: SerializedQfi,
@@ -100,7 +78,6 @@ impl SerREncProof {
     }
 }
 
-/// Serialised R_Sh proof (already has pub fields: k, rho_response).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerRShProof {
     pub(crate) k: Vec<u8>,
@@ -123,7 +100,6 @@ impl SerRShProof {
     }
 }
 
-/// Serialised R_Dec_DL proof (pub fields: t1, t2, z, e).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerRDecDlProof {
     pub(crate) t1: SerializedQfi,
@@ -152,7 +128,6 @@ impl SerRDecDlProof {
     }
 }
 
-/// Serialised R_m_AffDL_Ec proof.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerRMAffDlEcProof {
     pub(crate) d_prime_1: SerializedQfi,
@@ -190,57 +165,30 @@ impl SerRMAffDlEcProof {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 1 message payload
-// ---------------------------------------------------------------------------
-
-/// Serialised Round 1 message payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R1Payload {
-    /// MPMtA Round 1: encrypted gamma_i.
     pub(crate) c_gamma: SerializedClCt,
-    /// MPMtA Round 1: R_Enc proof for c_gamma.
     pub(crate) r_enc_proof: SerREncProof,
-    /// PVSS c1 = h^rho (shared across all parties).
     pub(crate) pvss_c1: SerializedQfi,
-    /// PVSS c2_j for each party j (encrypted shares).
     pub(crate) pvss_c2s: Vec<SerializedQfi>,
-    /// PVSS R_Sh proof.
     pub(crate) pvss_proof: SerRShProof,
 }
 
-// ---------------------------------------------------------------------------
-// Round 2 message payload
-// ---------------------------------------------------------------------------
-
-/// Per-party MtA output in Round 2 (for one counterparty j).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R2PerPartyMtA {
-    /// C_alpha_{j,i} for k*gamma MtA.
     pub(crate) c_alpha: SerializedClCt,
-    /// C_alpha_hat_{j,i} for x*gamma MtA.
     pub(crate) c_alpha_hat: SerializedClCt,
-    /// B_{i,j} = beta_{i,j} * G (compressed bytes).
     pub(crate) b_point_bytes: Vec<u8>,
-    /// B_hat_{i,j} = beta_hat_{i,j} * G (compressed bytes).
     pub(crate) b_hat_point_bytes: Vec<u8>,
 }
 
-/// Serialised Round 2 message payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R2Payload {
-    /// Per-counterparty MtA outputs (indexed by party position in all_parties).
     pub(crate) mta_outputs: Vec<R2PerPartyMtA>,
-    /// R_i = k_i * G (compressed bytes).
     pub(crate) r_point_bytes: Vec<u8>,
-    /// Partial decryption pd = c1^{sk} for R_Dec_DL verification.
     pub(crate) pd: SerializedQfi,
-    /// The c1 that was used to compute pd (identifies which PVSS distribution).
     pub(crate) pd_c1: SerializedQfi,
-    /// R_Dec_DL proof for ShareComb.
     pub(crate) dec_dl_proof: SerRDecDlProof,
-    /// R_m_AffDL_Ec proof for k*gamma MPMtA2.
     pub(crate) kg_proof: SerRMAffDlEcProof,
-    /// R_m_AffDL_Ec proof for x*gamma MPMtA2.
     pub(crate) xg_proof: SerRMAffDlEcProof,
 }

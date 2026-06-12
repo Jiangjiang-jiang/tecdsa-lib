@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! LN18 sign message types for the real StateMachine implementations.
-//!
-//! Provides serializable message envelopes for the 2-round offline phase
-//! (input(k) || input(rho)) and the 6-round online phase (element-out +
-//! interleaved mult1/mult2).
-
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -17,10 +10,6 @@ use crate::f_mult::{
     input::{InputRound1Msg, InputRound2Msg},
     mult::{MultRound1Msg, MultRound2Msg, MultRound3Msg, MultRound4Msg, MultRound5Msg},
 };
-
-// ---------------------------------------------------------------------------
-// Serde helpers (reused from keygen/msg.rs pattern)
-// ---------------------------------------------------------------------------
 
 fn ser_point<C: TecdsaCurve, S: Serializer>(
     pt: &C::ProjectivePoint,
@@ -71,11 +60,6 @@ where
         .ok_or_else(|| serde::de::Error::custom("invalid scalar encoding"))
 }
 
-// ---------------------------------------------------------------------------
-// Serializable wrappers for sub-protocol messages
-// ---------------------------------------------------------------------------
-
-/// Serializable representation of `InputRound1Msg` (commitment only).
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SerInputRound1 {
     pub from: u16,
@@ -100,7 +84,6 @@ impl SerInputRound1 {
     }
 }
 
-/// Serializable representation of `InputRound2Msg<C>`.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct SerInputRound2<C: TecdsaCurve>
@@ -179,7 +162,6 @@ where
     }
 }
 
-/// Serializable representation of `ElementOutMsg<C>`.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct SerElementOut<C: TecdsaCurve>
@@ -239,7 +221,6 @@ where
     }
 }
 
-/// Serializable wrapper for `MultRound1Msg<C>`: $(E_i, F_i)$ + R_prod proof.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct SerMultRound1<C: TecdsaCurve>
@@ -257,7 +238,6 @@ where
         deserialize_with = "de_point::<C, _>"
     )]
     pub f_i: C::ProjectivePoint,
-    // ProdProof fields: x, y_commit, w (3 points), z1, z2 (2 scalars), + nested DdhProof (2 points + 1 scalar)
     #[serde(
         serialize_with = "ser_point::<C, _>",
         deserialize_with = "de_point::<C, _>"
@@ -283,7 +263,6 @@ where
         deserialize_with = "de_scalar::<C, _>"
     )]
     pub prod_z2: C::Scalar,
-    // Nested DdhProof in ProdProof
     #[serde(
         serialize_with = "ser_point::<C, _>",
         deserialize_with = "de_point::<C, _>"
@@ -345,7 +324,6 @@ where
     }
 }
 
-/// Serializable wrapper for `MultRound2Msg<C>`: $(A_i, B_i)$ + R_EG proof.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct SerMultRound2<C: TecdsaCurve>
@@ -363,7 +341,6 @@ where
         deserialize_with = "de_point::<C, _>"
     )]
     pub b_i: C::ProjectivePoint,
-    // EgexpProof fields
     #[serde(
         serialize_with = "ser_point::<C, _>",
         deserialize_with = "de_point::<C, _>"
@@ -420,7 +397,6 @@ where
     }
 }
 
-/// Serializable wrapper for `MultRound3Msg<C>`: checkDH rerandomization.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct SerMultRound3<C: TecdsaCurve>
@@ -438,7 +414,6 @@ where
         deserialize_with = "de_point::<C, _>"
     )]
     pub v_prime_i: C::ProjectivePoint,
-    // ReProof fields: x, y (2 points) + z1, z2 (2 scalars)
     #[serde(
         serialize_with = "ser_point::<C, _>",
         deserialize_with = "de_point::<C, _>"
@@ -495,7 +470,6 @@ where
     }
 }
 
-/// Serializable wrapper for `MultRound4Msg<C>`: checkDH partial decryption.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct SerMultRound4<C: TecdsaCurve>
@@ -508,7 +482,6 @@ where
         deserialize_with = "de_point::<C, _>"
     )]
     pub w_i: C::ProjectivePoint,
-    // DdhProof fields
     #[serde(
         serialize_with = "ser_point::<C, _>",
         deserialize_with = "de_point::<C, _>"
@@ -556,7 +529,6 @@ where
     }
 }
 
-/// Serializable wrapper for `MultRound5Msg<C>`: reveal c_i + R_DH proof.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct SerMultRound5<C: TecdsaCurve>
@@ -616,14 +588,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Offline sign message envelope (Rounds 1-2)
-// ---------------------------------------------------------------------------
-
-/// Message envelope for the LN18 offline signing phase (2 rounds).
-///
-/// Wraps parallel `input(k)` and `input(rho)` messages into a single
-/// enum used by `Ln18OfflineSignMachine`.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 #[allow(clippy::large_enum_variant)]
@@ -631,25 +595,16 @@ pub enum Ln18OfflineSignMsg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Round 1: hash commitments for both input(k) and input(rho).
     Round1Input {
         k: SerInputRound1,
         rho: SerInputRound1,
     },
-    /// Round 2: decommitments with ciphertexts and proofs for both inputs.
     Round2Input {
         k: SerInputRound2<C>,
         rho: SerInputRound2<C>,
     },
 }
 
-// ---------------------------------------------------------------------------
-// Online sign message envelope (Rounds 3-8)
-// ---------------------------------------------------------------------------
-
-/// Message envelope for the LN18 online signing phase (6 rounds).
-///
-/// Wraps interleaved element-out, mult1(k,rho), and mult2(rho,alpha) messages.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 #[allow(clippy::large_enum_variant)]
@@ -657,62 +612,44 @@ pub enum Ln18OnlineSignMsg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Round 3: element-out(k) || mult1(k,rho).R1
     Round3 {
         element_out: SerElementOut<C>,
         mult1_r1: SerMultRound1<C>,
     },
-    /// Round 4: mult1.R2 || mult2(rho,alpha).R1
     Round4 {
         mult1_r2: SerMultRound2<C>,
         mult2_r1: SerMultRound1<C>,
     },
-    /// Round 5: mult1.R3 || mult2.R2
     Round5 {
         mult1_r3: SerMultRound3<C>,
         mult2_r2: SerMultRound2<C>,
     },
-    /// Round 6: mult1.R4 || mult2.R3
     Round6 {
         mult1_r4: SerMultRound4<C>,
         mult2_r3: SerMultRound3<C>,
     },
-    /// Round 7: mult1.R5 || mult2.R4
     Round7 {
         mult1_r5: SerMultRound5<C>,
         mult2_r4: SerMultRound4<C>,
     },
-    /// Round 8: mult2.R5 (mult1 finishes locally after Round 7)
     Round8 { mult2_r5: SerMultRound5<C> },
 }
 
-// ---------------------------------------------------------------------------
-// Legacy placeholder types for backward compatibility
-// ---------------------------------------------------------------------------
-
-/// Placeholder message type for the legacy presign state machine.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ln18PresignMsg {
     pub(crate) _placeholder: u8,
 }
 
-/// Placeholder message type for the legacy sign state machine.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ln18SignMsg {
     pub(crate) _placeholder: u8,
 }
 
-/// Placeholder message type for the legacy full-sign state machine.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ln18FullSignMsg {
     pub(crate) _placeholder: u8,
 }
 
-// ---------------------------------------------------------------------------
-// Round number helpers
-// ---------------------------------------------------------------------------
-
-/// Extract the round number from an offline sign message variant.
 pub(crate) fn offline_msg_round<C: TecdsaCurve>(msg: &Ln18OfflineSignMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,
@@ -723,7 +660,6 @@ where
     }
 }
 
-/// Extract the round number from an online sign message variant.
 pub(crate) fn online_msg_round<C: TecdsaCurve>(msg: &Ln18OnlineSignMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,

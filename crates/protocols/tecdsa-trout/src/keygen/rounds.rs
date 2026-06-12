@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,8 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! Round states, helpers, and transition functions for Trout interactive DKG.
 
 use std::collections::BTreeMap;
 
@@ -33,25 +30,18 @@ use crate::{
     key_share::TroutKeyShare,
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Serialize a `ProjectivePoint` to bytes (33 bytes compressed).
 pub(crate) fn proj_to_bytes(p: &k256::ProjectivePoint) -> Vec<u8> {
     let encoded = p.to_bytes();
     let slice: &[u8] = encoded.as_ref();
     slice.to_vec()
 }
 
-/// Serialize a `Scalar` to 32-byte big-endian representation.
 pub(crate) fn scalar_to_bytes(s: &k256::Scalar) -> Vec<u8> {
     let repr = s.to_repr();
     let slice: &[u8] = repr.as_ref();
     slice.to_vec()
 }
 
-/// Deserialize a `ProjectivePoint` from compressed bytes.
 pub(crate) fn proj_from_bytes(bytes: &[u8]) -> tecdsa_core::Result<k256::ProjectivePoint> {
     let mut repr = <k256::ProjectivePoint as GroupEncoding>::Repr::default();
     let repr_slice: &mut [u8] = repr.as_mut();
@@ -66,10 +56,6 @@ pub(crate) fn proj_from_bytes(bytes: &[u8]) -> tecdsa_core::Result<k256::Project
     Option::from(k256::ProjectivePoint::from_bytes(&repr))
         .ok_or_else(|| TecdsaError::Other("invalid EC point".into()))
 }
-
-// ---------------------------------------------------------------------------
-// Serialized types for wire messages
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerQfi {
@@ -131,10 +117,6 @@ impl SerRClDlEcProof {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Serialized DlogProof (avoids Debug bound on DlogProof<C>)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerDlogProof {
     pub commitment_bytes: Vec<u8>,
@@ -165,10 +147,6 @@ impl SerDlogProof {
     }
 }
 
-// ---------------------------------------------------------------------------
-// R2 broadcast payload
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R2BcastPayload {
     pub nonce: Vec<u8>,
@@ -178,10 +156,6 @@ pub(crate) struct R2BcastPayload {
     pub dlog_proof: SerDlogProof,
 }
 
-// ---------------------------------------------------------------------------
-// R3 broadcast payload
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R3Payload {
     pub x_i_bytes: Vec<u8>,
@@ -189,10 +163,6 @@ pub(crate) struct R3Payload {
     pub ct_c2_abc: SerQfi,
     pub proof: SerRClDlEcProof,
 }
-
-// ---------------------------------------------------------------------------
-// Internal state types
-// ---------------------------------------------------------------------------
 
 pub(crate) struct R1LocalState {
     pub evrf_sk: EvrfSecretKey<k256::Secp256k1>,
@@ -231,11 +201,6 @@ pub(crate) struct R3ReceivedData {
     pub proof: RClDlEcProof,
 }
 
-// ---------------------------------------------------------------------------
-// compute_commitment
-// ---------------------------------------------------------------------------
-
-/// Compute the hash commitment over Round 1 public data.
 pub(crate) fn compute_commitment(
     nonce: &[u8; 32],
     evrf_pk_bytes: &[u8],
@@ -257,12 +222,6 @@ pub(crate) fn compute_commitment(
     hasher.finalize().into()
 }
 
-// ---------------------------------------------------------------------------
-// Round transition functions
-// ---------------------------------------------------------------------------
-
-/// Transition from R2 -> R3: verify commitments, CL, VSS, compute combined
-/// share, CL-encrypt, prove R_CL-EC.
 #[allow(clippy::type_complexity)]
 pub(crate) fn transition_to_r3(
     my_id: PartyId,
@@ -274,17 +233,16 @@ pub(crate) fn transition_to_r3(
     setup: &mut ClSetup,
     r3_data: &mut BTreeMap<PartyId, R3ReceivedData>,
 ) -> tecdsa_core::Result<(
-    k256::Scalar,                                     // combined_share
-    Vec<u8>,                                          // delta_i
-    k256::ProjectivePoint,                            // public_key
-    Vec<k256::ProjectivePoint>,                       // public_shares
-    (String, String, String),                         // cl_pk_abc
-    (String, String, String, String, String, String), // my_ct_components
-    Vec<u8>,                                          // r3_bytes to broadcast
+    k256::Scalar,
+    Vec<u8>,
+    k256::ProjectivePoint,
+    Vec<k256::ProjectivePoint>,
+    (String, String, String),
+    (String, String, String, String, String, String),
+    Vec<u8>,
 )> {
     let n = all_parties.len();
 
-    // 1. Verify all hash commitments match decommitments
     for (&pid, r2) in r2_bcasts {
         let stored_commitment = r1_commitments
             .get(&pid)
@@ -306,7 +264,6 @@ pub(crate) fn transition_to_r3(
         }
     }
 
-    // 2. Verify all DLog proofs for A_{k,0}
     for (&pid, r2) in r2_bcasts {
         let a_k_0 = r2.vss_commitments[0];
         if !r2.dlog_proof.verify(&a_k_0, b"trout-dkg-dlog") {
@@ -316,7 +273,6 @@ pub(crate) fn transition_to_r3(
         }
     }
 
-    // 3. Combine CL key contributions: Y^cl = product of Y_k
     let party_ids: Vec<PartyId> = all_parties.to_vec();
     let first_pid = party_ids[0];
     let first_abc = &r2_bcasts[&first_pid].cl_contribution_abc;
@@ -335,7 +291,6 @@ pub(crate) fn transition_to_r3(
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
     let cl_pk_abc = qfi_to_abc(&y_cl).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
-    // 4. Verify all received VSS shares
     for (&pid, &share_val) in r2_shares {
         let sender_r2 = r2_bcasts
             .get(&pid)
@@ -351,19 +306,16 @@ pub(crate) fn transition_to_r3(
         }
     }
 
-    // 5. Compute combined share: x_i = sum_k s_{k,i}
     let mut combined_share = k256::Scalar::ZERO;
     for &share_val in r2_shares.values() {
         combined_share += share_val;
     }
 
-    // 6. Compute combined public key: X = sum_k A_{k,0}
     let mut public_key = k256::ProjectivePoint::IDENTITY;
     for r2 in r2_bcasts.values() {
         public_key += r2.vss_commitments[0];
     }
 
-    // 7. Compute X_j for all parties: X_j = sum_k(sum_l A_{k,l} * j^l)
     let mut public_shares = Vec::with_capacity(n);
     for party_j_0based in 0..n {
         let j = (party_j_0based + 1) as u64;
@@ -379,15 +331,12 @@ pub(crate) fn transition_to_r3(
         public_shares.push(x_j);
     }
 
-    // Our own X_i
     let my_0based = (my_1based - 1) as usize;
     let my_x_i_point = public_shares[my_0based];
     let my_x_i_bytes = proj_to_bytes(&my_x_i_point);
 
-    // 8. CL-encrypt combined share
     let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&combined_share);
 
-    // Generate encryption randomness delta_i
     let (sk_tmp, _) = setup
         .keygen()
         .map_err(|e| TecdsaError::Other(format!("keygen for delta: {e}")))?;
@@ -404,7 +353,6 @@ pub(crate) fn transition_to_r3(
     let ct_c1_abc = qfi_to_abc(&c1).map_err(|e| TecdsaError::Other(format!("{e}")))?;
     let ct_c2_abc = qfi_to_abc(&c2).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
-    // 9. Generate R_CL-EC proof
     let proof = RClDlEcProof::prove(setup, &cl_pk, &ct, &my_x_i_bytes, &x_i_bytes, &delta_i)
         .map_err(|e| TecdsaError::Other(format!("RClDlEcProof::prove: {e}")))?;
 
@@ -421,7 +369,6 @@ pub(crate) fn transition_to_r3(
     let r3_bytes = bincode::serde::encode_to_vec(&r3_payload, bincode::config::standard())
         .map_err(|e| TecdsaError::Other(format!("serialize R3: {e}")))?;
 
-    // Store our own R3 data
     r3_data.insert(
         my_id,
         R3ReceivedData {
@@ -458,7 +405,6 @@ pub(crate) fn transition_to_r3(
     ))
 }
 
-/// Finalize: verify all R3 proofs and construct TroutKeyShare.
 pub(crate) fn finalize(
     my_id: PartyId,
     all_parties: &[PartyId],
@@ -485,12 +431,10 @@ pub(crate) fn finalize(
         .pk_from_qfi(&y_cl)
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
 
-    // 1. Verify all R_CL-EC proofs + X_i consistency
     for (&pid, r3) in r3_data {
         if pid == my_id {
             continue;
         }
-        // Check X_i matches locally computed public share
         let j_0based = all_parties
             .iter()
             .position(|p| *p == pid)
@@ -520,7 +464,6 @@ pub(crate) fn finalize(
         }
     }
 
-    // 2. Collect all eVRF public keys in order
     let mut all_evrf_pks: Vec<EvrfPublicKey<k256::Secp256k1>> = Vec::with_capacity(n);
     for &pid in all_parties {
         if pid == my_id {
@@ -533,7 +476,6 @@ pub(crate) fn finalize(
         }
     }
 
-    // 3. Collect all ciphertext components in order
     let mut all_ct_components: Vec<(String, String, String, String, String, String)> =
         Vec::with_capacity(n);
     for &pid in all_parties {

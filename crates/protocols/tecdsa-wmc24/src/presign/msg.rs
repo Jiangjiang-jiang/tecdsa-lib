@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMC24 presign message types and serialization helpers.
-
 use elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
@@ -11,20 +8,12 @@ use tecdsa_curve::zk::ddh::DdhProof;
 
 use crate::curve_wire::point_from_bytes;
 
-// ---------------------------------------------------------------------------
-// Message types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Wmc24PresignMsg {
     Round1(Vec<u8>),
     Round2(Vec<u8>),
     Round3(Vec<u8>),
 }
-
-// ---------------------------------------------------------------------------
-// Serialized CL types
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerializedQfi {
@@ -68,7 +57,6 @@ impl SerializedClCt {
     }
 }
 
-// Serialized proofs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerREncProof {
     pub(crate) t1: SerializedQfi,
@@ -192,17 +180,10 @@ impl SerRPartDecProof {
     }
 }
 
-/// Serialized EC DDH proof for ElGamal partial decryption correctness.
-///
-/// Proves knowledge of `eldk_i` such that `elek_i = eldk_i * G` and
-/// `pd_elg_i = eldk_i * c_0` (i.e., the partial decryption is correct).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerDdhProof {
-    /// Commitment R_G = r * G (compressed SEC1).
     pub(crate) g_r_bytes: Vec<u8>,
-    /// Commitment R_A = r * A (compressed SEC1).
     pub(crate) a_r_bytes: Vec<u8>,
-    /// Response scalar z = r - e * w (big-endian bytes).
     pub(crate) z_bytes: Vec<u8>,
 }
 
@@ -234,10 +215,6 @@ impl SerDdhProof {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round payloads
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R1Payload {
     pub(crate) k_bar_i: SerializedClCt,
@@ -248,7 +225,6 @@ pub(crate) struct R1Payload {
 pub(crate) struct R2Payload {
     pub(crate) xk_bar_i: SerializedClCt,
     pub(crate) pi_dl_cl_x: SerRDlClProof,
-    /// ElGamal ciphertext of g^{gamma_i}: (c0_bytes, c1_bytes)
     pub(crate) d_gamma_c0_bytes: Vec<u8>,
     pub(crate) d_gamma_c1_bytes: Vec<u8>,
     pub(crate) gk_bar_i: SerializedClCt,
@@ -257,15 +233,10 @@ pub(crate) struct R2Payload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct R3Payload {
-    /// ElGamal partial decryption: eldk_i * D_gamma.c0
     pub(crate) pd_elg_bytes: Vec<u8>,
-    /// DDH proof for ElGamal partial decryption correctness.
-    /// Proves (G, D_gamma.c0, elek_i, pd_elg_i) is a DDH tuple with witness eldk_i.
     pub(crate) pi_part_dec_elg: SerDdhProof,
-    /// CL partial decryption of gk_bar
     pub(crate) pd_cl: SerializedQfi,
     pub(crate) pi_part_dec_cl: SerRPartDecProof,
     pub(crate) party_index: usize,
-    /// Index of this party in the all_parties list (for elek_shares lookup).
     pub(crate) party_dkg_index: usize,
 }

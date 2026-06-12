@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Zero-knowledge proofs over CL-HSM class groups.
-//!
-//! Each sub-module implements a Sigma-protocol relation following the
-//! Fiat-Shamir heuristic (SHA-256).  The naming convention `r_*` mirrors
-//! the relation names used in the threshold ECDSA literature.
-
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -40,15 +33,6 @@ use sha2::{Digest, Sha256};
 
 use crate::cl::{ClResult, ClSetup, Qfi};
 
-/// Hashes QFI elements + optional extra byte slices via SHA-256 and
-/// returns the result reduced modulo `q` as big-endian bytes.
-///
-/// `label` is a domain-separation tag (e.g. `b"R_key"`) that prevents
-/// cross-relation challenge collisions.  Each QFI is serialised via its
-/// compact binary encoding (`to_bytes`).
-///
-/// Context-free challenge derivation. Prefer [`challenge_from_qfi_with_prefix`]
-/// for new code that has session/party context available.
 pub(crate) fn challenge_from_qfi(
     setup: &ClSetup,
     label: &[u8],
@@ -76,9 +60,6 @@ pub(crate) fn challenge_from_qfi(
     Ok(e.to_digits::<u8>(Order::Msf))
 }
 
-/// Like [`challenge_from_qfi`], but prepends an opaque context prefix before
-/// the relation label and QFI elements. Use this when binding the challenge
-/// to a session/party/round context.
 pub(crate) fn challenge_from_qfi_with_prefix(
     setup: &ClSetup,
     prefix: &[u8],
@@ -108,15 +89,11 @@ pub(crate) fn challenge_from_qfi_with_prefix(
     Ok(e.to_digits::<u8>(Order::Msf))
 }
 
-/// Samples a random value in `[0, secretkey_bound)` by generating a
-/// keypair and extracting the secret key scalar as big-endian bytes.
 pub(crate) fn sample_random(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
     let (sk, _pk) = setup.keygen()?;
     setup.sk_to_bytes(&sk)
 }
 
-/// Samples a random value in `[0, q)` by sampling a larger value and
-/// reducing modulo q, returned as big-endian bytes.
 pub(crate) fn sample_random_mod_q(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
     let r = sample_random(setup)?;
     let r_uint = Integer::from_digits(&r, Order::Msf);
@@ -126,7 +103,6 @@ pub(crate) fn sample_random_mod_q(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
     Ok(reduced.to_digits::<u8>(Order::Msf))
 }
 
-/// Computes `(a + e * w) mod q` for big-integer big-endian byte slices.
 pub(crate) fn response_mod_q(a: &[u8], e: &[u8], w: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
     let a = Integer::from_digits(a, Order::Msf);
     let e = Integer::from_digits(e, Order::Msf);
@@ -136,8 +112,6 @@ pub(crate) fn response_mod_q(a: &[u8], e: &[u8], w: &[u8], q: &[u8]) -> ClResult
     Ok(resp.to_digits::<u8>(Order::Msf))
 }
 
-/// Computes `a + e * w` (unbounded, for class-group exponents),
-/// returned as big-endian bytes.
 pub(crate) fn response_unbounded(a: &[u8], e: &[u8], w: &[u8]) -> ClResult<Vec<u8>> {
     let a = Integer::from_digits(a, Order::Msf);
     let e = Integer::from_digits(e, Order::Msf);
@@ -146,11 +120,6 @@ pub(crate) fn response_unbounded(a: &[u8], e: &[u8], w: &[u8]) -> ClResult<Vec<u
     Ok(resp.to_digits::<u8>(Order::Msf))
 }
 
-/// Verifies an F-subgroup Schnorr check in scalar arithmetic:
-/// `z == dlog_in_F(t) + e * dlog_in_F(Y) mod q`.
-///
-/// This is needed because F-subgroup elements from `power_of_f` cannot
-/// be composed/exponentiated via `Cl(Delta)` operations.
 #[allow(non_snake_case)]
 pub(crate) fn verify_f_check(
     setup: &ClSetup,

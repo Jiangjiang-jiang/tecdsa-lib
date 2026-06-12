@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! TX25 online sign message types and serialization.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, PrimeField};
@@ -8,54 +5,26 @@ use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::zk::ddh::DdhProof;
 
-// ---------------------------------------------------------------------------
-// Message types
-// ---------------------------------------------------------------------------
-
-/// Messages exchanged during TX25 online signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Tx25OnlineSignMsg {
-    /// The single online round broadcast.
     Online(Vec<u8>),
 }
 
-/// Deserialized content of an online round broadcast from one party.
 #[derive(Clone)]
 pub(crate) struct OnlineRoundMsg {
-    /// Masked delta shares delta_{j,nu} for each party nu in S.
     pub(crate) delta_shares: BTreeMap<u16, k256::Scalar>,
-    /// Chi shares chi_{j,nu} for each party nu in S.
     pub(crate) chi_shares: BTreeMap<u16, k256::Scalar>,
-    /// D_j = gamma_j * R.
     pub(crate) d_point: k256::ProjectivePoint,
-    /// Gamma_j = gamma_j * (mG + rX).
     pub(crate) gamma_point: k256::ProjectivePoint,
-    /// DDH proof psi_j.
     pub(crate) ddh_proof: DdhProof<k256::Secp256k1>,
 }
 
-// ---------------------------------------------------------------------------
-// Serialization helpers
-// ---------------------------------------------------------------------------
-
-/// Serialize an `OnlineRoundMsg` into a byte vector.
-///
-/// Format:
-/// - 2 bytes: number of parties (u16 BE)
-/// - For each party (sorted by id):
-///   - 2 bytes: party id (u16 BE)
-///   - 32 bytes: delta scalar (BE)
-///   - 32 bytes: chi scalar (BE)
-/// - 33 bytes: D_j compressed point
-/// - 33 bytes: Gamma_j compressed point
-/// - DDH proof: 33 + 33 + 32 = 98 bytes (g_r, a_r compressed, z scalar)
 pub(crate) fn serialize_online_msg(msg: &OnlineRoundMsg) -> Vec<u8> {
     let n = msg.delta_shares.len() as u16;
     let mut buf = Vec::with_capacity(2 + (n as usize) * 66 + 33 + 33 + 98);
 
     buf.extend_from_slice(&n.to_be_bytes());
 
-    // Iterate in sorted order (BTreeMap guarantees this).
     for (&pid, delta) in &msg.delta_shares {
         buf.extend_from_slice(&pid.to_be_bytes());
         buf.extend_from_slice(delta.to_repr().as_ref());
@@ -69,7 +38,6 @@ pub(crate) fn serialize_online_msg(msg: &OnlineRoundMsg) -> Vec<u8> {
     buf.extend_from_slice(msg.d_point.to_bytes().as_ref());
     buf.extend_from_slice(msg.gamma_point.to_bytes().as_ref());
 
-    // DDH proof: g_r, a_r (compressed points), z (scalar)
     buf.extend_from_slice(msg.ddh_proof.g_r.to_bytes().as_ref());
     buf.extend_from_slice(msg.ddh_proof.a_r.to_bytes().as_ref());
     buf.extend_from_slice(msg.ddh_proof.z.to_repr().as_ref());
@@ -77,7 +45,6 @@ pub(crate) fn serialize_online_msg(msg: &OnlineRoundMsg) -> Vec<u8> {
     buf
 }
 
-/// Deserialize an `OnlineRoundMsg` from bytes.
 pub(crate) fn deserialize_online_msg(data: &[u8]) -> Result<OnlineRoundMsg, TecdsaError> {
     if data.len() < 2 {
         return Err(TecdsaError::Other("online msg too short".into()));
@@ -86,10 +53,7 @@ pub(crate) fn deserialize_online_msg(data: &[u8]) -> Result<OnlineRoundMsg, Tecd
     let n = u16::from_be_bytes([data[0], data[1]]) as usize;
     let mut offset = 2;
 
-    // Each party entry: 2 (id) + 32 (delta) + 32 (chi) = 66 bytes
     let shares_size = n * 66;
-    // Points: 33 (D) + 33 (Gamma) = 66 bytes
-    // DDH proof: 33 (g_r) + 33 (a_r) + 32 (z) = 98 bytes
     let expected = 2 + shares_size + 66 + 98;
     if data.len() < expected {
         return Err(TecdsaError::Other(format!(
@@ -123,21 +87,18 @@ pub(crate) fn deserialize_online_msg(data: &[u8]) -> Result<OnlineRoundMsg, Tecd
         chi_shares.insert(pid, chi);
     }
 
-    // D_j: 33-byte compressed point
     let d_bytes: [u8; 33] = data[offset..offset + 33]
         .try_into()
         .map_err(|_| TecdsaError::Other("invalid D point bytes".into()))?;
     let d_point = decompress_point(&d_bytes)?;
     offset += 33;
 
-    // Gamma_j: 33-byte compressed point
     let gamma_bytes: [u8; 33] = data[offset..offset + 33]
         .try_into()
         .map_err(|_| TecdsaError::Other("invalid Gamma point bytes".into()))?;
     let gamma_point = decompress_point(&gamma_bytes)?;
     offset += 33;
 
-    // DDH proof: g_r (33), a_r (33), z (32)
     let g_r_bytes: [u8; 33] = data[offset..offset + 33]
         .try_into()
         .map_err(|_| TecdsaError::Other("invalid g_r bytes".into()))?;
@@ -167,7 +128,6 @@ pub(crate) fn deserialize_online_msg(data: &[u8]) -> Result<OnlineRoundMsg, Tecd
     })
 }
 
-/// Decompress a 33-byte SEC1 compressed point into a ProjectivePoint.
 pub(crate) fn decompress_point(bytes: &[u8; 33]) -> Result<k256::ProjectivePoint, TecdsaError> {
     let repr = k256::CompressedPoint::try_from(bytes.as_slice())
         .map_err(|_| TecdsaError::Other("invalid compressed point length".into()))?;

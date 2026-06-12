@@ -1,24 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for GGN16 presigning (Rounds 1-5).
-//!
-//! The presigning protocol is message-independent and produces a
-//! [`Ggn16Presignature`] that can be consumed by online signing.
-//!
-//! ## Protocol Rounds
-//!
-//! 1. **Commit(u_i, v_i):** each party samples rho_i, encrypts u_i = E(rho_i)
-//!    and v_i = rho_i ×_E alpha, then broadcasts a hash commitment.
-//! 2. **Decommit:** each party opens the commitment and broadcasts u_i, v_i.
-//!    Parties aggregate u = sum(u_i), v = sum(v_i).
-//! 3. **Commit(r_i, w_i):** each party samples k_i, computes r_i = k_i*G and
-//!    w_i = k_i ×_E u +_E E(c_i*q), then broadcasts a hash commitment.
-//! 4. **Decommit:** each party opens the commitment and broadcasts r_i, w_i.
-//!    Parties aggregate w = sum(w_i), R = sum(r_i), r = x(R) mod q.
-//! 5. **Threshold decrypt w:** each party broadcasts a partial decryption of w.
-//!    After combining, psi = eta^{-1} mod q.
-//!
-//! Reference: Gennaro, Goldfeder, Narayanan. ACNS 2016, Section 4.3.
-
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
@@ -53,10 +32,6 @@ use crate::{
     utils::{deserialize_point, serialize_for_commit_r1, serialize_for_commit_r3},
 };
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
 pub(crate) struct PresignConfig<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -65,10 +40,6 @@ where
     pub my_id: PartyId,
     pub signer_parties: Vec<PartyId>,
 }
-
-// ---------------------------------------------------------------------------
-// Round enum
-// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 pub(crate) enum PresignRound<C: TecdsaCurve>
@@ -85,17 +56,12 @@ where
     Poisoned,
 }
 
-// ---------------------------------------------------------------------------
-// Round 1: Commit to (u_i, v_i)
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round1State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     pub config: PresignConfig<C>,
 
-    // Own secrets
     pub rho_i: Integer,
     pub u_i: Integer,
     pub v_i: Integer,
@@ -116,19 +82,13 @@ where
         let ek = &config.key_share.threshold_setup.ek;
         let alpha = &config.key_share.alpha;
 
-        // 1. Sample rho_i in Z_q
         let q = group_order_integer::<C>();
         let rho_i = q.random_below_ref(rng);
 
-        // 2. u_i = E(rho_i; r_u) -- encrypt under shared Paillier key
         let (u_i, r_u) = ek
             .encrypt_with_random(rng, &rho_i)
             .expect("Paillier encryption of rho_i must succeed");
 
-        // 3. v_i = alpha^{rho_i} * r_v^N mod N^2
-        //    omul gives alpha^{rho_i} mod N^2 (without explicit re-randomization).
-        //    We then re-randomize with a fresh r_v so the prover can construct
-        //    the HomoMultProof witness (r_c3 = r_v).
         let v_i_raw = ek
             .omul(&rho_i, alpha)
             .expect("homomorphic scalar-mul must succeed");
@@ -138,11 +98,9 @@ where
             .expect("r_v^N mod N^2 must succeed");
         let v_i = (&v_i_raw * &r_v_n).modulo(ek.nn());
 
-        // 4. Hash commitment: C_{1,i} = Com(u_i || v_i)
         let commit_data = serialize_for_commit_r1(&u_i, &v_i);
         let (hash_commitment, decommit_nonce) = HashCommitment::commit(&commit_data, rng);
 
-        // 5. Broadcast C_{1,i}
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Ggn16SignMsg::Round1(SignRound1Msg {
@@ -185,15 +143,9 @@ where
         self.round1_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round 2: broadcast decommitment + (u_i, v_i) + HomoMultProof.
     pub fn advance(mut self, rng: &mut impl CryptoRngCore) -> Round2State<C> {
         let ek = &self.config.key_share.threshold_setup.ek;
 
-        // Construct Pi_{1,i} (HomoMultProof):
-        //   c1 = u_i = Enc(rho_i; r_u)
-        //   c2 = alpha = Enc(x)
-        //   c3 = v_i = alpha^{rho_i} * r_v^N mod N^2
-        // Witness: eta = rho_i, r_c1 = r_u, r_c3 = r_v
         let statement = HomoMultStatement {
             c1: self.u_i.clone(),
             c2: self.config.key_share.alpha.clone(),
@@ -221,7 +173,6 @@ where
             }),
         }];
 
-        // Zeroize encryption randomness not carried to the next round
         self.r_u = Integer::from(0u32);
         self.r_v = Integer::from(0u32);
 
@@ -237,11 +188,7 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 2: Decommit (u_i, v_i), aggregate u and v
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)] // rho_i retained for potential extensions
+#[allow(dead_code)]
 pub(crate) struct Round2State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -282,11 +229,9 @@ where
         self.round2_msgs.len() == self.expected_count()
     }
 
-    /// Verify commitments, compute aggregates u and v, transition to Round 3.
     pub fn advance(mut self, rng: &mut impl CryptoRngCore) -> tecdsa_core::Result<Round3State<C>> {
         let ek = &self.config.key_share.threshold_setup.ek;
 
-        // Verify all decommitments and aggregate
         let mut u = self.u_i.clone();
         let mut v = self.v_i.clone();
 
@@ -301,7 +246,6 @@ where
                 TecdsaError::Other(format!("missing round1 commitment from party {pid}"))
             })?;
 
-            // Verify hash commitment
             let commit_data = serialize_for_commit_r1(&r2.u_i, &r2.v_i);
             if !r1.commitment.verify(&commit_data, &r2.nonce) {
                 return Err(TecdsaError::InvalidCommitment(format!(
@@ -309,7 +253,6 @@ where
                 )));
             }
 
-            // Verify Pi_{1,i} (HomoMultProof)
             let proof = HomoMultProof::from_bytes(&r2.homo_mult_proof).ok_or_else(|| {
                 TecdsaError::Other(format!("party {pid} sent malformed HomoMultProof"))
             })?;
@@ -329,7 +272,6 @@ where
                 ))
             })?;
 
-            // Aggregate: u = oadd(u, u_j), v = oadd(v, v_j)
             u = ek
                 .oadd(&u, &r2.u_i)
                 .map_err(|e| TecdsaError::Other(format!("oadd u failed: {e}")))?;
@@ -338,26 +280,17 @@ where
                 .map_err(|e| TecdsaError::Other(format!("oadd v failed: {e}")))?;
         }
 
-        // Now u = E(rho) and v = E(rho * x) where rho = sum(rho_i)
-
-        // Round 3: sample k_i, c_i, compute r_i = k_i*G and w_i
         let q = group_order_integer::<C>();
 
-        // k_i in Z_q (nonzero)
         let k_i_scalar = C::random_scalar(rng);
         let k_i = scalar_to_integer::<C>(&k_i_scalar);
 
-        // r_i = k_i * G
         let r_i = C::generator() * k_i_scalar;
         let r_i_bytes: Vec<u8> = r_i.to_bytes().as_ref().to_vec();
 
-        // c_i in Z: sample small range. For testing, use q^2 range.
-        // In production, c_i should be from a range like q^6, but for
-        // correctness testing we use q^2 (statistical security can be relaxed).
         let c_i_bound = &q * &q;
         let c_i = c_i_bound.random_below_ref(rng);
 
-        // w_i = k_i ×_E u +_E E(c_i * q)
         let ki_times_u = ek
             .omul(&k_i, &u)
             .map_err(|e| TecdsaError::Other(format!("omul k_i*u failed: {e}")))?;
@@ -369,7 +302,6 @@ where
             .oadd(&ki_times_u, &enc_ciq)
             .map_err(|e| TecdsaError::Other(format!("oadd w_i failed: {e}")))?;
 
-        // Hash commitment: C_{2,i} = Com(r_i || w_i)
         let commit_data = serialize_for_commit_r3(&r_i_bytes, &w_i);
         let (hash_commitment, decommit_nonce) = HashCommitment::commit(&commit_data, rng);
 
@@ -380,7 +312,6 @@ where
             }),
         }];
 
-        // Zeroize secrets not carried to the next round
         self.rho_i = Integer::from(0u32);
 
         Ok(Round3State {
@@ -401,22 +332,16 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 3: Commit to (r_i, w_i)
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)] // k_i_scalar retained alongside k_i (Integer form used by proof)
+#[allow(dead_code)]
 pub(crate) struct Round3State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     pub config: PresignConfig<C>,
 
-    // Aggregates from Round 2
     pub u: Integer,
     pub v: Integer,
 
-    // Own secrets for this round
     pub k_i_scalar: C::Scalar,
     pub k_i: Integer,
     pub c_i: Integer,
@@ -457,16 +382,9 @@ where
         self.round3_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round 4: broadcast decommitment + (r_i, w_i) + NonceConsistProof.
     pub fn advance(mut self, rng: &mut impl CryptoRngCore) -> Round4State<C> {
         let ek = &self.config.key_share.threshold_setup.ek;
 
-        // Construct Pi_{2,i} (NonceConsistProof):
-        //   G = generator
-        //   r_i = G^{k_i}
-        //   w_i = u^{k_i} * Gamma^{c_i*q} * r_w^N mod N^2
-        //   u = aggregated ciphertext E(rho)
-        // Witness: eta1 = k_i, eta2 = c_i, r_c = r_w
         let statement = NonceConsistStatement::<C> {
             G: C::generator(),
             r_i: self.r_i,
@@ -495,7 +413,6 @@ where
             }),
         }];
 
-        // Zeroize secrets not carried to the next round
         self.k_i_scalar.zeroize();
         self.k_i = Integer::from(0u32);
         self.c_i = Integer::from(0u32);
@@ -515,22 +432,16 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 4: Decommit (r_i, w_i), aggregate R and w
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)] // r_i_bytes retained for debugging/auditing
+#[allow(dead_code)]
 pub(crate) struct Round4State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     pub config: PresignConfig<C>,
 
-    // Aggregates from Round 2
     pub u: Integer,
     pub v: Integer,
 
-    // Own values
     pub r_i: C::ProjectivePoint,
     pub r_i_bytes: Vec<u8>,
     pub w_i: Integer,
@@ -567,12 +478,10 @@ where
         self.round4_msgs.len() == self.expected_count()
     }
 
-    /// Verify commitments, aggregate R and w, start threshold decryption.
     pub fn advance(self) -> tecdsa_core::Result<Round5State<C>> {
         let ek = &self.config.key_share.threshold_setup.ek;
         let setup = &self.config.key_share.threshold_setup;
 
-        // Verify all decommitments and aggregate
         let mut R = self.r_i;
         let mut w = self.w_i.clone();
 
@@ -587,7 +496,6 @@ where
                 TecdsaError::Other(format!("missing round3 commitment from party {pid}"))
             })?;
 
-            // Verify hash commitment
             let commit_data = serialize_for_commit_r3(&r4.r_i_bytes, &r4.w_i);
             if !r3.commitment.verify(&commit_data, &r4.nonce) {
                 return Err(TecdsaError::InvalidCommitment(format!(
@@ -595,12 +503,10 @@ where
                 )));
             }
 
-            // Deserialize r_j (needed for both proof verification and aggregation)
             let r_j = deserialize_point::<C>(&r4.r_i_bytes).map_err(|_| {
                 TecdsaError::Other(format!("party {pid} sent invalid r_i point encoding"))
             })?;
 
-            // Verify Pi_{2,i} (NonceConsistProof)
             let proof =
                 NonceConsistProof::<C>::from_bytes(&r4.nonce_consist_proof).ok_or_else(|| {
                     TecdsaError::Other(format!("party {pid} sent malformed NonceConsistProof"))
@@ -622,21 +528,17 @@ where
                 ))
             })?;
 
-            // Aggregate
             R += r_j;
             w = ek
                 .oadd(&w, &r4.w_i)
                 .map_err(|e| TecdsaError::Other(format!("oadd w failed: {e}")))?;
         }
 
-        // Compute r = x_coord(R) mod q
         let R_affine = R.to_affine();
         let r = C::xcoord_mod_q(&R_affine);
 
-        // Threshold decrypt w: each party computes partial decryption
         let my_partial = partial_decrypt(&w, &self.config.key_share.decryption_share, setup);
 
-        // Broadcast partial decryption
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Ggn16SignMsg::Round5(SignRound5Msg {
@@ -658,25 +560,19 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 5: Threshold decrypt w, compute psi
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)] // w retained for debugging/auditing
+#[allow(dead_code)]
 pub(crate) struct Round5State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     pub config: PresignConfig<C>,
 
-    // Aggregates
     pub u: Integer,
     pub v: Integer,
     pub R: C::ProjectivePoint,
     pub r: C::Scalar,
     pub w: Integer,
 
-    // Own partial decryption
     pub my_partial: PartialDecryption,
 
     pub outgoing: Vec<Outgoing<Ggn16SignMsg>>,
@@ -710,11 +606,9 @@ where
         self.round5_msgs.len() == self.expected_count()
     }
 
-    /// Combine partial decryptions of w, compute psi, produce Ggn16Presignature.
     pub fn finish(self) -> tecdsa_core::Result<Ggn16Presignature<C>> {
         let setup = &self.config.key_share.threshold_setup;
 
-        // Collect all partial decryptions (own + received)
         let mut partials = vec![self.my_partial];
         for pid in &self.config.signer_parties {
             if *pid == self.config.my_id {
@@ -726,15 +620,12 @@ where
             partials.push(r5.partial_w.clone());
         }
 
-        // Combine partial decryptions: eta = D(w) = k*rho + c*q (mod q => k*rho)
         let eta = combine_partials(&partials, setup)
             .map_err(|e| TecdsaError::Other(format!("threshold decryption of w failed: {e}")))?;
 
-        // Reduce eta mod q to get k*rho mod q
         let q = group_order_integer::<C>();
         let eta_mod_q = eta.modulo_ref(&q);
 
-        // Compute psi = (k*rho)^{-1} mod q
         let eta_scalar = integer_to_scalar::<C>(&eta_mod_q);
         let psi = eta_scalar
             .invert()

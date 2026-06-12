@@ -1,30 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! LN18 threshold ECDSA signing (Protocol 5.1), split into Presign + OnlineSign.
-//!
-//! ## Presign (Offline, message-independent) -- 8 rounds
-//!
-//! Following Section 5.2.1 of the paper, we parallelize the sub-protocols:
-//!
-//! - **Rounds 1-2: Input(k) || Input(rho)** — both inputs run simultaneously,
-//!   sharing the same 2 commitment/decommitment rounds.
-//! - **Round 3: Element-out(k).R1 || Mult(k,rho).R1** — element-out and mult
-//!   start simultaneously. Element-out completes after this round. MtA (Step 0
-//!   of mult) runs before Round 3 as a local computation.
-//! - **Rounds 4-8: Mult(k,rho).R2-R6** — mult continues its remaining 5 rounds.
-//!
-//! Total presign: 2 + 6 = 8 interaction rounds (paper-matching).
-//! Output: [`Ln18Presignature`] per party.
-//!
-//! ## OnlineSign (needs message) -- 6 rounds
-//!
-//! 4. **Affine** (local): compute alpha = m' + x*r using the stored x input
-//!    from KeyGen. No communication.
-//! 5. **Mult rho*alpha** (6 rounds): compute additive shares of beta = rho*alpha
-//!    via F_mult.mult backed by Paillier MtA (includes checkDH).
-//! 6. **Compute s** (local): s = tau^{-1} * beta, normalize to low-S.
-//!
-//! Total online: 6 interaction rounds.
-
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
@@ -59,55 +32,21 @@ use crate::{
     mta::paillier::{MtaRound1Msg, MtaRound2Msg, PaillierMtaState},
 };
 
-// ===========================================================================
-// Parameter types
-// ===========================================================================
-
-/// Parameters needed to run the LN18 signing protocol for a single party.
-///
-/// For t-of-n signing, use [`sign::build_signing_setup`](crate::sign::build_signing_setup)
-/// to construct these from keygen output. It handles Lagrange weighting,
-/// per-session Init, and Input(w_i) automatically.
-///
-/// `stored_x_input` must contain the **Lagrange-weighted** share for this
-/// signer subset (via `Input(λ_i · f(party_id))`), not the raw keygen share.
 #[derive(Clone)]
 pub struct Ln18PresignParams<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// This party's key share from keygen.
     pub key_share: Ln18KeyShare<C>,
-    /// This party's Paillier decryption key.
     pub paillier_dk: DecryptionKey,
-    /// Paillier encryption keys for all signer parties.
     pub paillier_eks: BTreeMap<PartyId, EncryptionKey>,
-    /// Ring-Pedersen auxiliary parameters for all signer parties.
     pub ntilde_params: BTreeMap<PartyId, NTildeParams>,
-    /// Init output for this signing session (ElGamal key material,
-    /// scoped to the signer subset).
     pub init_output: InitOutput<C>,
-    /// Lagrange-weighted x input for this signer subset, produced by
-    /// running `Input(w_i)` where `w_i = λ_i · f(party_id)`.
     pub stored_x_input: InputOutput<C>,
 }
 
-/// Legacy alias: `Ln18SignParams` maps to `Ln18PresignParams` for backward compatibility.
 pub type Ln18SignParams<C> = Ln18PresignParams<C>;
 
-// ===========================================================================
-// Presign (Offline, message-independent)
-// ===========================================================================
-
-/// Run the LN18 presign (offline) protocol for all parties in parallel (simulation).
-///
-/// This produces message-independent [`Ln18Presignature`]s that can later be
-/// combined with a message digest in [`ln18_online_sign_parallel`].
-///
-/// Achieves 8 rounds by parallelizing sub-protocols per Section 5.2.1:
-/// - Rounds 1-2: Input(k) || Input(rho) (both inputs share the same 2 rounds)
-/// - Round 3: Element-out(k) || Mult(k,rho).R1 (start both simultaneously)
-/// - Rounds 4-8: Mult(k,rho).R2-R6 (element-out already done after Round 3)
 pub fn ln18_presign_parallel<C: TecdsaCurve>(
     params: &[Ln18PresignParams<C>],
     parties: &[PartyId],
@@ -124,25 +63,14 @@ where
     let elgamal_pk = params[0].init_output.elgamal_pk;
     let pk_shares = &params[0].init_output.elgamal_pk_shares;
 
-    // ---------------------------------------------------------------
-    // Rounds 1-2: Input(k) || Input(rho) — both inputs run in parallel,
-    // sharing the same 2 commitment/decommitment rounds.
-    // ---------------------------------------------------------------
     let k_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
     let rho_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
 
     let (input_k_outputs, input_rho_outputs) =
         run_parallel_input_phases::<C>(parties, elgamal_pk, &k_shares, &rho_shares, rng);
 
-    // ---------------------------------------------------------------
-    // MtA (Step 0, no interaction rounds — runs before Round 3)
-    // ---------------------------------------------------------------
     let tau_mta_shares = run_paillier_mta::<C>(parties, &k_shares, &rho_shares, params, rng);
 
-    // ---------------------------------------------------------------
-    // Round 3: Element-out(k) || Mult(k,rho).R1 — both start simultaneously
-    // ---------------------------------------------------------------
-    // Create element-out states + messages
     let mut eo_states: Vec<ElementOutState<C>> = Vec::with_capacity(n);
     let mut eo_msgs: Vec<ElementOutMsg<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -159,7 +87,6 @@ where
         eo_msgs.push(msg);
     }
 
-    // Create mult states + Round-1 messages (simultaneously with element-out)
     let d_shares: Vec<C::Scalar> = params.iter().map(|p| p.init_output.d_i).collect();
     let mut mult_states: Vec<MultState<C>> = Vec::with_capacity(n);
     let mut mult_r1_msgs: Vec<MultRound1Msg<C>> = Vec::with_capacity(n);
@@ -179,7 +106,6 @@ where
         mult_r1_msgs.push(msg);
     }
 
-    // --- After Round 3: element-out finishes (1-round protocol), extract R ---
     let mut R_point = None;
     for i in 0..n {
         let others: Vec<_> = eo_msgs
@@ -197,21 +123,13 @@ where
     }
     let R = R_point.expect("must have at least one party");
 
-    // Compute r = x-coord(R) mod q
     let r: C::Scalar = C::xcoord_mod_q(&R.to_affine());
     if r.is_zero().into() {
-        // Probability 1/q (< 2^{-256}): mathematically negligible.
         panic!("r is zero -- probability < 2^{{-256}}");
     }
 
-    // ---------------------------------------------------------------
-    // Rounds 4-8: Mult(k,rho).R2-R6 (element-out is already done)
-    // ---------------------------------------------------------------
     let tau_mult_outputs = continue_mult_phase::<C>(&mut mult_states, &mult_r1_msgs, rng);
 
-    // ---------------------------------------------------------------
-    // Build presignatures
-    // ---------------------------------------------------------------
     let mut presigs = Vec::with_capacity(n);
     for i in 0..n {
         presigs.push(Ln18Presignature {
@@ -228,31 +146,16 @@ where
     presigs
 }
 
-// ===========================================================================
-// OnlineSign (needs message)
-// ===========================================================================
-
-/// Parameters for the online signing phase (Paillier MtA variant).
 pub struct Ln18OnlineSignParams<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// This party's Paillier decryption key.
     pub paillier_dk: DecryptionKey,
-    /// Paillier encryption keys for all parties.
     pub paillier_eks: BTreeMap<PartyId, EncryptionKey>,
-    /// Ring-Pedersen auxiliary parameters for all parties.
     pub ntilde_params: BTreeMap<PartyId, NTildeParams>,
-    /// This party's presignature from the offline phase.
     pub presignature: Ln18Presignature<C>,
 }
 
-/// Run the LN18 online signing protocol for all parties in parallel (simulation).
-///
-/// Takes presignatures from [`ln18_presign_parallel`] plus the message digest
-/// and produces ECDSA signatures.
-///
-/// Steps: affine(m'+xr) + mult(rho, alpha) + compute s.
 pub fn ln18_online_sign_parallel<C: TecdsaCurve>(
     online_params: &[Ln18OnlineSignParams<C>],
     parties: &[PartyId],
@@ -271,9 +174,6 @@ where
     let elgamal_pk = online_params[0].presignature.elgamal_pk;
     let pk_shares = &online_params[0].presignature.elgamal_pk_shares;
 
-    // ---------------------------------------------------------------
-    // Step 4: Affine -- compute alpha = m' + x * r (local, no communication)
-    // ---------------------------------------------------------------
     let m_prime = *message_digest;
     let mut affine_outputs: Vec<AffineOutput<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -288,7 +188,6 @@ where
         affine_outputs.push(output);
     }
 
-    // Convert affine outputs to InputOutput for the next mult phase
     let alpha_as_input: Vec<InputOutput<C>> = affine_outputs
         .into_iter()
         .map(|ao| InputOutput {
@@ -299,16 +198,12 @@ where
         })
         .collect();
 
-    // ---------------------------------------------------------------
-    // Step 5: Mult(rho, alpha) -> beta shares (beta = rho * alpha = rho*(m'+xr))
-    // ---------------------------------------------------------------
     let rho_shares: Vec<C::Scalar> = online_params
         .iter()
         .map(|p| p.presignature.stored_rho_input.a_i)
         .collect();
     let alpha_shares: Vec<C::Scalar> = alpha_as_input.iter().map(|io| io.a_i).collect();
 
-    // Build temporary Ln18PresignParams just for the MtA helper
     let temp_presign_params: Vec<Ln18PresignParams<C>> = online_params
         .iter()
         .map(|op| Ln18PresignParams {
@@ -359,9 +254,6 @@ where
         rng,
     );
 
-    // ---------------------------------------------------------------
-    // Step 6: Compute s = tau^{-1} * beta, normalize to low-S
-    // ---------------------------------------------------------------
     let tau: C::Scalar = online_params
         .iter()
         .map(|p| p.presignature.tau_i)
@@ -383,27 +275,6 @@ where
     (0..n).map(|_| Signature { r, s }).collect()
 }
 
-// ===========================================================================
-// FullSign -- 8-round mode with interleaved mult1/mult2
-// ===========================================================================
-
-/// Run the LN18 full-sign protocol in 8 rounds with interleaved mult1/mult2.
-///
-/// When the message `m` is known from the start, we can interleave the two
-/// multiplication sub-protocols (mult1 = k*rho, mult2 = rho*alpha) to achieve
-/// the paper's optimal 8-round signing:
-///
-/// | Round | Activity                                                    |
-/// |-------|-------------------------------------------------------------|
-/// | 1-2   | Input(k) ‖ Input(rho)                                       |
-/// | 3     | Element-out(k) ‖ Mult1(k,rho).R1 → get R,r; affine; MtA₂   |
-/// | 4     | Mult1.R2 ‖ Mult2.R1                                         |
-/// | 5     | Mult1.R3 ‖ Mult2.R2                                         |
-/// | 6     | Mult1.R4 ‖ Mult2.R3                                         |
-/// | 7     | Mult1.R5 ‖ Mult2.R4                                         |
-/// | 8     | Mult1.R6 ‖ Mult2.R5                                         |
-///
-/// After Round 8: Mult2.R6 (local verify), compute s = tau⁻¹ · beta.
 pub fn ln18_full_sign_parallel<C: TecdsaCurve>(
     params: &[Ln18PresignParams<C>],
     parties: &[PartyId],
@@ -421,24 +292,14 @@ where
     let elgamal_pk = params[0].init_output.elgamal_pk;
     let pk_shares = &params[0].init_output.elgamal_pk_shares;
 
-    // ---------------------------------------------------------------
-    // Rounds 1-2: Input(k) || Input(rho) — both inputs run in parallel,
-    // sharing the same 2 commitment/decommitment rounds.
-    // ---------------------------------------------------------------
     let k_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
     let rho_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
 
     let (input_k_outputs, input_rho_outputs) =
         run_parallel_input_phases::<C>(parties, elgamal_pk, &k_shares, &rho_shares, rng);
 
-    // ---------------------------------------------------------------
-    // MtA₁ (Step 0 for mult1: k*rho — no interaction rounds)
-    // ---------------------------------------------------------------
     let tau_mta_shares = run_paillier_mta::<C>(parties, &k_shares, &rho_shares, params, rng);
 
-    // ---------------------------------------------------------------
-    // Round 3: Element-out(k) || Mult1(k,rho).R1
-    // ---------------------------------------------------------------
     let mut eo_states: Vec<ElementOutState<C>> = Vec::with_capacity(n);
     let mut eo_msgs: Vec<ElementOutMsg<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -474,7 +335,6 @@ where
         mult1_r1_msgs.push(msg);
     }
 
-    // --- After Round 3: element-out finishes, extract R ---
     let mut R_point = None;
     for i in 0..n {
         let others: Vec<_> = eo_msgs
@@ -494,11 +354,9 @@ where
 
     let r: C::Scalar = C::xcoord_mod_q(&R.to_affine());
     if r.is_zero().into() {
-        // Probability 1/q (< 2^{-256}): mathematically negligible.
         panic!("r is zero -- probability < 2^{{-256}}");
     }
 
-    // --- Affine: compute alpha = m' + x*r (local, no communication) ---
     let m_prime = *message_digest;
     let mut alpha_as_input: Vec<InputOutput<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -518,11 +376,9 @@ where
         });
     }
 
-    // --- MtA₂ (Step 0 for mult2: rho*alpha — runs between R3 and R4) ---
     let alpha_shares: Vec<C::Scalar> = alpha_as_input.iter().map(|io| io.a_i).collect();
     let beta_mta_shares = run_paillier_mta::<C>(parties, &rho_shares, &alpha_shares, params, rng);
 
-    // --- Create mult2 states (will start R1 in Round 4) ---
     let mut mult2_states: Vec<MultState<C>> = Vec::with_capacity(n);
     let mut mult2_r1_msgs: Vec<MultRound1Msg<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -541,10 +397,6 @@ where
         mult2_r1_msgs.push(msg);
     }
 
-    // ---------------------------------------------------------------
-    // Round 4: Mult1.R2 || Mult2.R1
-    // ---------------------------------------------------------------
-    // Mult1: process R1 msgs -> produce R2 msgs
     let mut mult1_r2_msgs: Vec<MultRound2Msg<C>> = Vec::with_capacity(n);
     let mut mult1_r1_results: Vec<MultRound1Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -560,13 +412,7 @@ where
         mult1_r2_msgs.push(r2);
         mult1_r1_results.push(r1_res);
     }
-    // Mult2: R1 messages were already produced by MultState::new above.
-    // (mult2_r1_msgs are sent in this round)
 
-    // ---------------------------------------------------------------
-    // Round 5: Mult1.R3 || Mult2.R2
-    // ---------------------------------------------------------------
-    // Mult1: handle R2 -> produce R3
     let mut mult1_r3_msgs: Vec<MultRound3Msg<C>> = Vec::with_capacity(n);
     let mut mult1_r2_results: Vec<MultRound2Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -583,7 +429,6 @@ where
         mult1_r2_results.push(r2_res);
     }
 
-    // Mult2: handle R1 -> produce R2
     let mut mult2_r2_msgs: Vec<MultRound2Msg<C>> = Vec::with_capacity(n);
     let mut mult2_r1_results: Vec<MultRound1Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -600,10 +445,6 @@ where
         mult2_r1_results.push(r1_res);
     }
 
-    // ---------------------------------------------------------------
-    // Round 6: Mult1.R4 || Mult2.R3
-    // ---------------------------------------------------------------
-    // Mult1: handle R3 -> produce R4
     let mut mult1_r4_msgs: Vec<MultRound4Msg<C>> = Vec::with_capacity(n);
     let mut mult1_r3_results: Vec<MultRound3Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -620,7 +461,6 @@ where
         mult1_r3_results.push(r3_res);
     }
 
-    // Mult2: handle R2 -> produce R3
     let mut mult2_r3_msgs: Vec<MultRound3Msg<C>> = Vec::with_capacity(n);
     let mut mult2_r2_results: Vec<MultRound2Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -637,10 +477,6 @@ where
         mult2_r2_results.push(r2_res);
     }
 
-    // ---------------------------------------------------------------
-    // Round 7: Mult1.R5 || Mult2.R4
-    // ---------------------------------------------------------------
-    // Mult1: handle R4 -> produce R5
     let mut mult1_r5_msgs: Vec<MultRound5Msg<C>> = Vec::with_capacity(n);
     let mut mult1_r4_results: Vec<MultRound4Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -657,7 +493,6 @@ where
         mult1_r4_results.push(r4_res);
     }
 
-    // Mult2: handle R3 -> produce R4
     let mut mult2_r4_msgs: Vec<MultRound4Msg<C>> = Vec::with_capacity(n);
     let mut mult2_r3_results: Vec<MultRound3Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -674,10 +509,6 @@ where
         mult2_r3_results.push(r3_res);
     }
 
-    // ---------------------------------------------------------------
-    // Round 8: Mult1.R6 || Mult2.R5
-    // ---------------------------------------------------------------
-    // Mult1: finish_round5 (R6 = verify c_i proofs, output)
     let mut tau_outputs: Vec<MultOutput<C>> = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = mult1_r5_msgs
@@ -692,7 +523,6 @@ where
         tau_outputs.push(output);
     }
 
-    // Mult2: handle R4 -> produce R5
     let mut mult2_r5_msgs: Vec<MultRound5Msg<C>> = Vec::with_capacity(n);
     let mut mult2_r4_results: Vec<MultRound4Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -709,9 +539,6 @@ where
         mult2_r4_results.push(r4_res);
     }
 
-    // ---------------------------------------------------------------
-    // After Round 8: Mult2.R6 (local verify), compute s
-    // ---------------------------------------------------------------
     let mut beta_outputs: Vec<MultOutput<C>> = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = mult2_r5_msgs
@@ -726,7 +553,6 @@ where
         beta_outputs.push(output);
     }
 
-    // Compute s = tau^{-1} * beta, normalize to low-S
     let tau: C::Scalar = tau_outputs
         .iter()
         .map(|o| o.c_i)
@@ -748,14 +574,6 @@ where
     (0..n).map(|_| Signature { r, s }).collect()
 }
 
-// ===========================================================================
-// Legacy combined function (delegates to presign + online sign)
-// ===========================================================================
-
-/// Run the full LN18 signing protocol for all parties in parallel (simulation).
-///
-/// This is a convenience wrapper that calls [`ln18_presign_parallel`] followed
-/// by [`ln18_online_sign_parallel`].
 pub fn ln18_sign_parallel<C: TecdsaCurve>(
     params: &[Ln18PresignParams<C>],
     parties: &[PartyId],
@@ -783,10 +601,6 @@ where
     ln18_online_sign_parallel(&online_params, parties, message_digest, rng)
 }
 
-// ---------------------------------------------------------------------------
-// Helper: run the input sub-protocol (2 rounds: commit, decommit+verify)
-// for n parties. Retained for use by online sign and tests.
-// ---------------------------------------------------------------------------
 #[allow(dead_code)]
 fn run_input_phase<C: TecdsaCurve>(
     parties: &[PartyId],
@@ -800,7 +614,6 @@ where
 {
     let n = parties.len();
 
-    // Round 1: commitments
     let mut input_states: Vec<InputState<C>> = Vec::with_capacity(n);
     let mut input_r1_msgs: Vec<InputRound1Msg> = Vec::with_capacity(n);
     for i in 0..n {
@@ -810,7 +623,6 @@ where
         input_r1_msgs.push(msg);
     }
 
-    // Round 2: decommitments
     let mut input_r2_msgs: Vec<InputRound2Msg<C>> = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = input_r1_msgs
@@ -825,7 +637,6 @@ where
         input_r2_msgs.push(r2);
     }
 
-    // Finish: verify decommitments and proofs
     let mut outputs = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = input_r2_msgs
@@ -842,12 +653,6 @@ where
     outputs
 }
 
-// ---------------------------------------------------------------------------
-// Helper: run TWO input sub-protocols in parallel (2 shared rounds)
-//
-// Instead of running input(k) and input(rho) sequentially (4 rounds), both
-// inputs share the same 2 commitment/decommitment rounds (2 rounds total).
-// ---------------------------------------------------------------------------
 fn run_parallel_input_phases<C: TecdsaCurve>(
     parties: &[PartyId],
     elgamal_pk: C::ProjectivePoint,
@@ -861,7 +666,6 @@ where
 {
     let n = parties.len();
 
-    // Round 1: all parties send commitments for BOTH inputs simultaneously
     let mut states_a: Vec<InputState<C>> = Vec::with_capacity(n);
     let mut r1_msgs_a: Vec<InputRound1Msg> = Vec::with_capacity(n);
     let mut states_b: Vec<InputState<C>> = Vec::with_capacity(n);
@@ -878,8 +682,6 @@ where
         r1_msgs_b.push(mb);
     }
 
-    // Round 2: all parties process Round-1 messages and send decommitments
-    // for BOTH inputs simultaneously
     let mut r2_msgs_a: Vec<InputRound2Msg<C>> = Vec::with_capacity(n);
     let mut r2_msgs_b: Vec<InputRound2Msg<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -906,7 +708,6 @@ where
         r2_msgs_b.push(r2b);
     }
 
-    // Finish: verify decommitments and proofs for both inputs
     let mut outputs_a = Vec::with_capacity(n);
     let mut outputs_b = Vec::with_capacity(n);
     for i in 0..n {
@@ -936,14 +737,6 @@ where
     (outputs_a, outputs_b)
 }
 
-// ---------------------------------------------------------------------------
-// Helper: continue the mult sub-protocol from Round 2 onwards (5 remaining
-// rounds), given already-created MultStates and Round-1 messages.
-//
-// This is used when mult's Round 1 was already sent in a shared round
-// (parallel with element-out), and we just need to process the Round-1
-// messages and run Rounds 2-6.
-// ---------------------------------------------------------------------------
 fn continue_mult_phase<C: TecdsaCurve>(
     mult_states: &mut [MultState<C>],
     r1_msgs: &[MultRound1Msg<C>],
@@ -955,7 +748,6 @@ where
 {
     let n = mult_states.len();
 
-    // Round 2 (= protocol Round 4): process R1, send (A_i, B_i) + R_EG
     let mut r2_msgs: Vec<MultRound2Msg<C>> = Vec::with_capacity(n);
     let mut r1_results: Vec<MultRound1Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -972,7 +764,6 @@ where
         r1_results.push(r1_res);
     }
 
-    // Round 3 (= protocol Round 5): checkDH Round 1
     let mut r3_msgs: Vec<MultRound3Msg<C>> = Vec::with_capacity(n);
     let mut r2_results: Vec<MultRound2Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -989,7 +780,6 @@ where
         r2_results.push(r2_res);
     }
 
-    // Round 4 (= protocol Round 6): checkDH Round 2
     let mut r4_msgs: Vec<MultRound4Msg<C>> = Vec::with_capacity(n);
     let mut r3_results: Vec<MultRound3Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1006,7 +796,6 @@ where
         r3_results.push(r3_res);
     }
 
-    // Round 5 (= protocol Round 7): checkDH verify + send c_i
     let mut r5_msgs: Vec<MultRound5Msg<C>> = Vec::with_capacity(n);
     let mut r4_results: Vec<MultRound4Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1023,7 +812,6 @@ where
         r4_results.push(r4_res);
     }
 
-    // Round 6 (= protocol Round 8): verify c_i proofs, output
     let mut outputs: Vec<MultOutput<C>> = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = r5_msgs
@@ -1041,9 +829,6 @@ where
     outputs
 }
 
-// ---------------------------------------------------------------------------
-// Helper: run Paillier MtA for n parties
-// ---------------------------------------------------------------------------
 fn run_paillier_mta<C: TecdsaCurve>(
     parties: &[PartyId],
     a_shares: &[C::Scalar],
@@ -1058,7 +843,6 @@ where
 {
     let n = parties.len();
 
-    // Round 1
     let mut states: Vec<PaillierMtaState<C>> = Vec::with_capacity(n);
     let mut all_r1_msgs: Vec<Vec<(PartyId, MtaRound1Msg)>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1076,7 +860,6 @@ where
         all_r1_msgs.push(r1_msgs);
     }
 
-    // Round 2
     let mut all_r2_msgs: Vec<Vec<(PartyId, MtaRound2Msg<C>)>> = Vec::with_capacity(n);
     for i in 0..n {
         let mut msgs_for_i: Vec<MtaRound1Msg> = Vec::new();
@@ -1096,7 +879,6 @@ where
         all_r2_msgs.push(r2_msgs);
     }
 
-    // Finish
     let mut c_shares = Vec::with_capacity(n);
     for i in 0..n {
         let mut msgs_for_i: Vec<MtaRound2Msg<C>> = Vec::new();
@@ -1119,9 +901,6 @@ where
     c_shares
 }
 
-// ---------------------------------------------------------------------------
-// Helper: run the mult sub-protocol (6 rounds with checkDH) for n parties
-// ---------------------------------------------------------------------------
 fn run_mult_phase<C: TecdsaCurve>(
     parties: &[PartyId],
     input_a: &[InputOutput<C>],
@@ -1138,7 +917,6 @@ where
 {
     let n = parties.len();
 
-    // Round 1
     let mut mult_states: Vec<MultState<C>> = Vec::with_capacity(n);
     let mut r1_msgs: Vec<MultRound1Msg<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1157,7 +935,6 @@ where
         r1_msgs.push(msg);
     }
 
-    // Round 2
     let mut r2_msgs: Vec<MultRound2Msg<C>> = Vec::with_capacity(n);
     let mut r1_results: Vec<MultRound1Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1174,7 +951,6 @@ where
         r1_results.push(r1_res);
     }
 
-    // Round 3 (checkDH Round 1)
     let mut r3_msgs: Vec<MultRound3Msg<C>> = Vec::with_capacity(n);
     let mut r2_results: Vec<MultRound2Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1191,7 +967,6 @@ where
         r2_results.push(r2_res);
     }
 
-    // Round 4 (checkDH Round 2)
     let mut r4_msgs: Vec<MultRound4Msg<C>> = Vec::with_capacity(n);
     let mut r3_results: Vec<MultRound3Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1208,7 +983,6 @@ where
         r3_results.push(r3_res);
     }
 
-    // Round 5 (checkDH verify + send c_i)
     let mut r5_msgs: Vec<MultRound5Msg<C>> = Vec::with_capacity(n);
     let mut r4_results: Vec<MultRound4Result<C>> = Vec::with_capacity(n);
     for i in 0..n {
@@ -1225,7 +999,6 @@ where
         r4_results.push(r4_res);
     }
 
-    // Round 6 (verify c_i proofs, output)
     let mut outputs: Vec<MultOutput<C>> = Vec::with_capacity(n);
     for i in 0..n {
         let others: Vec<_> = r5_msgs
@@ -1243,10 +1016,6 @@ where
     outputs
 }
 
-// ===========================================================================
-// OT-based sign variant (behind mta-ot feature)
-// ===========================================================================
-
 #[cfg(feature = "mta-ot")]
 mod ot_sign {
     use elliptic_curve::ops::Reduce;
@@ -1254,29 +1023,17 @@ mod ot_sign {
     use super::*;
     use crate::mta::ot::{OtMtaInitMsg, OtMtaRound1Msg, OtMtaRound2Msg, OtMtaState};
 
-    /// Parameters needed to run the LN18 presign protocol with OT MtA.
     pub struct Ln18OtPresignParams<C: TecdsaCurve>
     where
         FieldBytesSize<C>: ModulusSize,
     {
-        /// This party's key share from keygen.
         pub key_share: Ln18KeyShare<C>,
-        /// The init output from keygen (ElGamal key material).
         pub init_output: InitOutput<C>,
-        /// Stored x input state from KeyGen's input call (identifier 0).
         pub stored_x_input: InputOutput<C>,
     }
 
-    /// Legacy alias for backward compatibility.
     pub type Ln18OtSignParams<C> = Ln18OtPresignParams<C>;
 
-    /// Run the LN18 presign (offline) protocol with OT-based MtA for all parties
-    /// in parallel (simulation).
-    ///
-    /// Achieves 8 rounds by parallelizing sub-protocols per Section 5.2.1:
-    /// - Rounds 1-2: Input(k) || Input(rho)
-    /// - Round 3: Element-out(k) || Mult(k,rho).R1
-    /// - Rounds 4-8: Mult(k,rho).R2-R6
     pub fn ln18_presign_parallel_ot<C: TecdsaCurve>(
         params: &[Ln18OtPresignParams<C>],
         parties: &[PartyId],
@@ -1293,17 +1050,14 @@ mod ot_sign {
         let elgamal_pk = params[0].init_output.elgamal_pk;
         let pk_shares = &params[0].init_output.elgamal_pk_shares;
 
-        // Rounds 1-2: Input(k) || Input(rho) — parallel inputs in 2 shared rounds
         let k_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
         let rho_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
 
         let (input_k_outputs, input_rho_outputs) =
             run_parallel_input_phases::<C>(parties, elgamal_pk, &k_shares, &rho_shares, rng);
 
-        // MtA (Step 0, no interaction rounds — runs before Round 3)
         let tau_mta_shares = run_ot_mta_helper::<C>(parties, &k_shares, &rho_shares, rng);
 
-        // Round 3: Element-out(k) || Mult(k,rho).R1 — both start simultaneously
         let mut eo_states: Vec<ElementOutState<C>> = Vec::with_capacity(n);
         let mut eo_msgs: Vec<ElementOutMsg<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1320,7 +1074,6 @@ mod ot_sign {
             eo_msgs.push(msg);
         }
 
-        // Create mult states + Round-1 messages simultaneously
         let d_shares: Vec<C::Scalar> = params.iter().map(|p| p.init_output.d_i).collect();
         let mut mult_states: Vec<MultState<C>> = Vec::with_capacity(n);
         let mut mult_r1_msgs: Vec<MultRound1Msg<C>> = Vec::with_capacity(n);
@@ -1340,7 +1093,6 @@ mod ot_sign {
             mult_r1_msgs.push(msg);
         }
 
-        // After Round 3: element-out finishes
         let mut R_point = None;
         for i in 0..n {
             let others: Vec<_> = eo_msgs
@@ -1360,14 +1112,11 @@ mod ot_sign {
 
         let r: C::Scalar = C::xcoord_mod_q(&R.to_affine());
         if r.is_zero().into() {
-            // Probability 1/q (< 2^{-256}): mathematically negligible.
             panic!("r is zero -- probability < 2^{{-256}}");
         }
 
-        // Rounds 4-8: Mult(k,rho).R2-R6
         let tau_mult_outputs = continue_mult_phase::<C>(&mut mult_states, &mult_r1_msgs, rng);
 
-        // Build presignatures
         let mut presigs = Vec::with_capacity(n);
         for i in 0..n {
             presigs.push(Ln18Presignature {
@@ -1384,17 +1133,13 @@ mod ot_sign {
         presigs
     }
 
-    /// Parameters for the OT online signing phase.
     pub struct Ln18OtOnlineSignParams<C: TecdsaCurve>
     where
         FieldBytesSize<C>: ModulusSize,
     {
-        /// This party's presignature from the offline phase.
         pub presignature: Ln18Presignature<C>,
     }
 
-    /// Run the LN18 online signing protocol with OT-based MtA for all parties
-    /// in parallel (simulation).
     pub fn ln18_online_sign_parallel_ot<C: TecdsaCurve>(
         online_params: &[Ln18OtOnlineSignParams<C>],
         parties: &[PartyId],
@@ -1413,7 +1158,6 @@ mod ot_sign {
         let elgamal_pk = online_params[0].presignature.elgamal_pk;
         let pk_shares = &online_params[0].presignature.elgamal_pk_shares;
 
-        // Step 4: Affine
         let m_prime = *message_digest;
         let mut affine_outputs: Vec<AffineOutput<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1438,7 +1182,6 @@ mod ot_sign {
             })
             .collect();
 
-        // Step 5: Mult(rho, alpha) -> beta shares (using OT MtA)
         let rho_shares: Vec<C::Scalar> = online_params
             .iter()
             .map(|p| p.presignature.stored_rho_input.a_i)
@@ -1466,7 +1209,6 @@ mod ot_sign {
             rng,
         );
 
-        // Step 6: Compute s = tau^{-1} * beta
         let tau: C::Scalar = online_params
             .iter()
             .map(|p| p.presignature.tau_i)
@@ -1488,7 +1230,6 @@ mod ot_sign {
         (0..n).map(|_| Signature { r, s }).collect()
     }
 
-    /// Legacy combined function: presign + online sign with OT MtA.
     pub fn ln18_sign_parallel_ot<C: TecdsaCurve>(
         params: &[Ln18OtPresignParams<C>],
         parties: &[PartyId],
@@ -1512,11 +1253,6 @@ mod ot_sign {
         ln18_online_sign_parallel_ot(&online_params, parties, message_digest, rng)
     }
 
-    /// Run the LN18 full-sign protocol in 8 rounds with interleaved mult1/mult2
-    /// using OT-based MtA.
-    ///
-    /// Same structure as [`ln18_full_sign_parallel`](super::ln18_full_sign_parallel)
-    /// but uses OT MtA instead of Paillier MtA.
     pub fn ln18_full_sign_parallel_ot<C: TecdsaCurve>(
         params: &[Ln18OtPresignParams<C>],
         parties: &[PartyId],
@@ -1534,17 +1270,14 @@ mod ot_sign {
         let elgamal_pk = params[0].init_output.elgamal_pk;
         let pk_shares = &params[0].init_output.elgamal_pk_shares;
 
-        // Rounds 1-2: Input(k) || Input(rho)
         let k_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
         let rho_shares: Vec<C::Scalar> = (0..n).map(|_| C::random_scalar(rng)).collect();
 
         let (input_k_outputs, input_rho_outputs) =
             run_parallel_input_phases::<C>(parties, elgamal_pk, &k_shares, &rho_shares, rng);
 
-        // MtA_1 (OT): k*rho
         let tau_mta_shares = run_ot_mta_helper::<C>(parties, &k_shares, &rho_shares, rng);
 
-        // Round 3: Element-out(k) || Mult1(k,rho).R1
         let mut eo_states: Vec<ElementOutState<C>> = Vec::with_capacity(n);
         let mut eo_msgs: Vec<ElementOutMsg<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1580,7 +1313,6 @@ mod ot_sign {
             mult1_r1_msgs.push(msg);
         }
 
-        // After Round 3: element-out finishes, extract R
         let mut R_point = None;
         for i in 0..n {
             let others: Vec<_> = eo_msgs
@@ -1600,11 +1332,9 @@ mod ot_sign {
 
         let r: C::Scalar = C::xcoord_mod_q(&R.to_affine());
         if r.is_zero().into() {
-            // Probability 1/q (< 2^{-256}): mathematically negligible.
             panic!("r is zero -- probability < 2^{{-256}}");
         }
 
-        // Affine: compute alpha = m' + x*r (local)
         let m_prime = *message_digest;
         let mut alpha_as_input: Vec<InputOutput<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1624,11 +1354,9 @@ mod ot_sign {
             });
         }
 
-        // MtA_2 (OT): rho*alpha
         let alpha_shares: Vec<C::Scalar> = alpha_as_input.iter().map(|io| io.a_i).collect();
         let beta_mta_shares = run_ot_mta_helper::<C>(parties, &rho_shares, &alpha_shares, rng);
 
-        // Create mult2 states
         let mut mult2_states: Vec<MultState<C>> = Vec::with_capacity(n);
         let mut mult2_r1_msgs: Vec<MultRound1Msg<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1647,7 +1375,6 @@ mod ot_sign {
             mult2_r1_msgs.push(msg);
         }
 
-        // Round 4: Mult1.R2 || Mult2.R1
         let mut mult1_r2_msgs: Vec<MultRound2Msg<C>> = Vec::with_capacity(n);
         let mut mult1_r1_results: Vec<MultRound1Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1664,7 +1391,6 @@ mod ot_sign {
             mult1_r1_results.push(r1_res);
         }
 
-        // Round 5: Mult1.R3 || Mult2.R2
         let mut mult1_r3_msgs: Vec<MultRound3Msg<C>> = Vec::with_capacity(n);
         let mut mult1_r2_results: Vec<MultRound2Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1696,7 +1422,6 @@ mod ot_sign {
             mult2_r1_results.push(r1_res);
         }
 
-        // Round 6: Mult1.R4 || Mult2.R3
         let mut mult1_r4_msgs: Vec<MultRound4Msg<C>> = Vec::with_capacity(n);
         let mut mult1_r3_results: Vec<MultRound3Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1728,7 +1453,6 @@ mod ot_sign {
             mult2_r2_results.push(r2_res);
         }
 
-        // Round 7: Mult1.R5 || Mult2.R4
         let mut mult1_r5_msgs: Vec<MultRound5Msg<C>> = Vec::with_capacity(n);
         let mut mult1_r4_results: Vec<MultRound4Result<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1760,7 +1484,6 @@ mod ot_sign {
             mult2_r3_results.push(r3_res);
         }
 
-        // Round 8: Mult1.R6 || Mult2.R5
         let mut tau_outputs: Vec<MultOutput<C>> = Vec::with_capacity(n);
         for i in 0..n {
             let others: Vec<_> = mult1_r5_msgs
@@ -1790,7 +1513,6 @@ mod ot_sign {
             mult2_r4_results.push(r4_res);
         }
 
-        // After Round 8: Mult2.R6 (local verify)
         let mut beta_outputs: Vec<MultOutput<C>> = Vec::with_capacity(n);
         for i in 0..n {
             let others: Vec<_> = mult2_r5_msgs
@@ -1805,7 +1527,6 @@ mod ot_sign {
             beta_outputs.push(output);
         }
 
-        // Compute s = tau^{-1} * beta
         let tau: C::Scalar = tau_outputs
             .iter()
             .map(|o| o.c_i)
@@ -1827,7 +1548,6 @@ mod ot_sign {
         (0..n).map(|_| Signature { r, s }).collect()
     }
 
-    /// Run OT MtA for `n` parties and return $c_i$ shares.
     fn run_ot_mta_helper<C: TecdsaCurve>(
         parties: &[PartyId],
         a_shares: &[C::Scalar],
@@ -1840,7 +1560,6 @@ mod ot_sign {
     {
         let n = parties.len();
 
-        // Init
         let mut states: Vec<OtMtaState<C>> = Vec::with_capacity(n);
         let mut all_init_msgs: Vec<Vec<(PartyId, OtMtaInitMsg)>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -1850,7 +1569,6 @@ mod ot_sign {
             all_init_msgs.push(init_msgs);
         }
 
-        // Deliver init messages
         for i in 0..n {
             let mut msgs_for_i: Vec<OtMtaInitMsg> = Vec::new();
             for j in 0..n {
@@ -1868,7 +1586,6 @@ mod ot_sign {
                 .expect("OT MtA init should succeed");
         }
 
-        // Round 1: receiver phase 1
         let mut all_r1_msgs: Vec<Vec<(PartyId, OtMtaRound1Msg)>> = Vec::with_capacity(n);
         for i in 0..n {
             let r1_msgs = states[i]
@@ -1877,7 +1594,6 @@ mod ot_sign {
             all_r1_msgs.push(r1_msgs);
         }
 
-        // Round 2: sender processes, responds
         let mut all_r2_msgs: Vec<Vec<(PartyId, OtMtaRound2Msg)>> = Vec::with_capacity(n);
         for i in 0..n {
             let mut msgs_for_i: Vec<OtMtaRound1Msg> = Vec::new();
@@ -1897,7 +1613,6 @@ mod ot_sign {
             all_r2_msgs.push(r2_msgs);
         }
 
-        // Finish
         let mut c_shares = Vec::with_capacity(n);
         for i in 0..n {
             let mut msgs_for_i: Vec<OtMtaRound2Msg> = Vec::new();

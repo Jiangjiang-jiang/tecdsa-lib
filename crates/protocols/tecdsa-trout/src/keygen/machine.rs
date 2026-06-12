@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,8 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! StateMachine implementation for Trout interactive DKG.
 
 use std::collections::BTreeMap;
 
@@ -36,15 +33,6 @@ use super::{
 };
 use crate::{error::qfi_to_abc, key_share::TroutKeyShare};
 
-// ---------------------------------------------------------------------------
-// TroutKeygenMachine
-// ---------------------------------------------------------------------------
-
-/// StateMachine for the Trout 3-round interactive DKG (Protocol 3.1).
-///
-/// On construction, Round 1 logic executes immediately and a 32-byte hash
-/// commitment is queued for broadcast.  Subsequent rounds are driven by
-/// `handle` as messages arrive from other parties.
 pub struct TroutKeygenMachine {
     my_id: PartyId,
     all_parties: Vec<PartyId>,
@@ -62,7 +50,6 @@ pub struct TroutKeygenMachine {
 
     r3_data: BTreeMap<PartyId, R3ReceivedData>,
 
-    // Intermediate values computed during R2->R3 transition, consumed during finalize.
     stash_combined_share: Option<k256::Scalar>,
     stash_delta_i: Option<Vec<u8>>,
     stash_public_key: Option<k256::ProjectivePoint>,
@@ -93,13 +80,6 @@ impl Drop for TroutKeygenMachine {
 }
 
 impl TroutKeygenMachine {
-    /// Create a new Trout DKG state machine from a pre-built `ClSetup`.
-    ///
-    /// This avoids recreating the expensive CL setup per party,
-    /// which is useful in benchmarks where all parties share the same
-    /// discriminant parameters.
-    ///
-    /// See [`Self::new`] for the full documentation.
     pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -108,10 +88,6 @@ impl TroutKeygenMachine {
         use_128bit: bool,
         mut setup: ClSetup,
     ) -> tecdsa_core::Result<Self> {
-        // Generate the per-party long-term key material (eVRF keypair + CL public
-        // contribution), then delegate. Benches time this (n,t)-independent keygen
-        // separately (see `setup_benchmarks`) and call `new_with_key_material` so
-        // DKG measures only the interactive sharing.
         let mut rng = rand::rngs::OsRng;
         let (evrf_sk, evrf_pk) = EvrfSecretKey::<k256::Secp256k1>::generate(&mut rng);
         let (_cl_sk_i, cl_pk_i) = setup
@@ -130,9 +106,6 @@ impl TroutKeygenMachine {
         )
     }
 
-    /// Like [`new_with_setup`](Self::new_with_setup) but reuses pre-generated
-    /// per-party key material (eVRF keypair + CL public contribution) instead of
-    /// generating it inside the constructor.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_key_material(
         my_id: PartyId,
@@ -157,12 +130,10 @@ impl TroutKeygenMachine {
         let cl_contribution_abc =
             qfi_to_abc(y_i).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
-        // 3. Feldman VSS
         let x_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rng);
         let (vss_shares, vss_commitments) =
             tecdsa_vss::feldman::split::<k256::Secp256k1>(&x_i, threshold, n, &mut rng);
 
-        // 4. DlogProof for A_{i,0} = x_i * G
         let a_i_0 = vss_commitments[0];
         let ephemeral = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut rng);
         let dlog_proof = tecdsa_curve::zk::dlog::DlogProof::<k256::Secp256k1>::prove(
@@ -172,7 +143,6 @@ impl TroutKeygenMachine {
             b"trout-dkg-dlog",
         );
 
-        // 5. Compute commitment
         let mut nonce = [0u8; 32];
         rng.fill_bytes(&mut nonce);
 
@@ -185,11 +155,9 @@ impl TroutKeygenMachine {
             &dlog_proof,
         );
 
-        // Store our own R1 commitment
         let mut r1_commitments = BTreeMap::new();
         r1_commitments.insert(my_id, commitment);
 
-        // Queue R1 broadcast
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: TroutKeygenMsg::Round1(commitment.to_vec()),
@@ -232,15 +200,6 @@ impl TroutKeygenMachine {
         })
     }
 
-    /// Create a new Trout DKG state machine.
-    ///
-    /// Immediately executes Round 1 logic:
-    /// - Generate eVRF keypair
-    /// - Generate CL key contribution
-    /// - Run Feldman VSS on a random secret
-    /// - Prove DLog for the constant coefficient
-    /// - Hash-commit to all public data
-    /// - Queue the commitment for broadcast
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -284,11 +243,6 @@ impl TroutKeygenMachine {
             .map(|i| i as u16 + 1)
     }
 
-    // -----------------------------------------------------------------------
-    // Round transitions
-    // -----------------------------------------------------------------------
-
-    /// Transition from R1 -> R2: broadcast decommitment and send P2P shares.
     fn transition_to_r2(&mut self) -> tecdsa_core::Result<()> {
         let r1 = self
             .r1_state
@@ -309,7 +263,6 @@ impl TroutKeygenMachine {
         let r2_bytes = bincode::serde::encode_to_vec(&r2_payload, bincode::config::standard())
             .map_err(|e| TecdsaError::Other(format!("serialize R2 bcast: {e}")))?;
 
-        // Store our own R2 bcast
         self.r2_bcasts.insert(
             self.my_id,
             R2ReceivedBcast {
@@ -321,7 +274,6 @@ impl TroutKeygenMachine {
             },
         );
 
-        // Store our own VSS share to self
         let my_1based = self.my_1based_index();
         let my_share_value = r1
             .vss_shares
@@ -331,13 +283,11 @@ impl TroutKeygenMachine {
             .value;
         self.r2_shares.insert(self.my_id, my_share_value);
 
-        // Broadcast R2
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: TroutKeygenMsg::Round2Bcast(r2_bytes),
         });
 
-        // P2P: send VSS share s_{my, j} to each party j
         for &party in &self.all_parties {
             if party == self.my_id {
                 continue;
@@ -361,7 +311,6 @@ impl TroutKeygenMachine {
         Ok(())
     }
 
-    /// Transition from R2 -> R3: delegates to rounds::transition_to_r3.
     fn transition_to_r3(&mut self) -> tecdsa_core::Result<()> {
         let my_1based = self.my_1based_index();
 
@@ -384,13 +333,11 @@ impl TroutKeygenMachine {
             &mut self.r3_data,
         )?;
 
-        // Broadcast R3
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: TroutKeygenMsg::Round3(r3_bytes),
         });
 
-        // Stash intermediate values for finalize
         self.stash_combined_share = Some(combined_share);
         self.stash_delta_i = Some(delta_i);
         self.stash_public_key = Some(public_key);
@@ -402,7 +349,6 @@ impl TroutKeygenMachine {
         Ok(())
     }
 
-    /// Finalize: verify all R3 proofs and construct TroutKeyShare.
     fn finalize(&mut self) -> tecdsa_core::Result<()> {
         let r1_state = self
             .r1_state
@@ -458,7 +404,6 @@ impl TroutKeygenMachine {
         Ok(())
     }
 
-    /// Check whether all R2 broadcasts and P2P shares have been received.
     fn check_r2_complete(&mut self) -> tecdsa_core::Result<()> {
         if self.r2_bcasts.len() == self.n() && self.r2_shares.len() == self.n() {
             self.transition_to_r3()?;
@@ -652,10 +597,7 @@ mod tests {
 
     use super::*;
 
-    /// Helper: route all outgoing messages from all machines to their recipients.
-    /// Returns true if all machines are done.
     fn route_messages(machines: &mut [TroutKeygenMachine]) -> bool {
-        // Collect all outgoing messages from all parties.
         let mut pending: Vec<(PartyId, Outgoing<TroutKeygenMsg>)> = Vec::new();
         for (idx, machine) in machines.iter_mut().enumerate() {
             let party_id = PartyId(idx as u16 + 1);
@@ -664,14 +606,13 @@ mod tests {
             }
         }
 
-        // Deliver each message to its recipient(s).
         for (from, outgoing) in pending {
             match outgoing.to {
                 Recipient::Broadcast => {
                     for (idx, machine) in machines.iter_mut().enumerate() {
                         let recipient_id = PartyId(idx as u16 + 1);
                         if recipient_id == from {
-                            continue; // skip self-delivery
+                            continue;
                         }
                         machine
                             .handle(from, outgoing.msg.clone())
@@ -697,21 +638,14 @@ mod tests {
         machines.iter().all(|m| m.is_done())
     }
 
-    /// Interactive 3-round DKG for 3 parties (n=3, t=2).
-    ///
-    /// Verifies:
-    /// - All parties produce valid `TroutKeyShare`.
-    /// - All parties agree on the same public key.
-    /// - Public verification shares satisfy X_i = x_i * G.
     #[test]
-    #[ignore] // CL operations are slow (~30-60s in debug mode)
+    #[ignore]
     fn keygen_interactive_3_parties() {
         let seed = "33333";
         let n = 3u16;
-        let t = 2u16; // reconstruction threshold: 2 parties needed to sign
+        let t = 2u16;
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-        // Create machines (Round 1 executes immediately in the constructor).
         let mut machines: Vec<TroutKeygenMachine> = (0..n)
             .map(|i| {
                 TroutKeygenMachine::new(
@@ -719,13 +653,12 @@ mod tests {
                     all_parties.clone(),
                     t,
                     seed,
-                    false, // use_128bit = false for fast testing
+                    false,
                 )
                 .expect("TroutKeygenMachine::new")
             })
             .collect();
 
-        // Drive the protocol through rounds until all machines are done.
         let max_rounds = 20;
         for round in 0..max_rounds {
             if route_messages(&mut machines) {
@@ -738,19 +671,16 @@ mod tests {
             );
         }
 
-        // All machines should be done.
         assert!(
             machines.iter().all(|m| m.is_done()),
             "not all machines completed"
         );
 
-        // Extract key shares.
         let key_shares: Vec<TroutKeyShare> = machines
             .into_iter()
             .map(|m| m.finish().expect("finish"))
             .collect();
 
-        // 1. Verify all parties agree on the same public key.
         let public_key = key_shares[0].public_key;
         for (i, ks) in key_shares.iter().enumerate() {
             assert_eq!(
@@ -761,7 +691,6 @@ mod tests {
             );
         }
 
-        // 2. Verify public verification shares are consistent: X_i = x_i * G.
         for ks in &key_shares {
             let expected_x_i =
                 <k256::Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR
@@ -774,7 +703,6 @@ mod tests {
             );
         }
 
-        // 3. Verify all parties have the same public_shares vector.
         for (i, ks) in key_shares.iter().enumerate() {
             assert_eq!(
                 ks.public_shares,
@@ -784,7 +712,6 @@ mod tests {
             );
         }
 
-        // 4. Verify threshold and total.
         for ks in &key_shares {
             assert_eq!(ks.threshold, t);
             assert_eq!(ks.total, n);

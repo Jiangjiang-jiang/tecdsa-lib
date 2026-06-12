@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,23 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! StateMachine wrapper for the Trout online signing protocol.
-//!
-//! ## Protocol flow
-//!
-//! 1. On construction: verify all presign broadcast proofs (eVRF, R_{CL-EC},
-//!    R_{ComKwlg}), reconstruct public aggregated ciphertext/commitment
-//!    components, compute this party's F_i contributions for both scaled
-//!    decryption instances, and queue a broadcast of `(F_i_1, F_i_2)`.
-//! 2. Round 1: collect F-share broadcasts from all other parties.
-//! 3. Once all collected: aggregate F_i shares, solve discrete logs, compute
-//!    `s = (u*k)^{-1} * u*(H(m)+r*x)`, verify ECDSA, output signature.
-//!
-//! ## Backward compatibility
-//!
-//! `new_simulation()` provides the old simulation-mode constructor that calls
-//! `sign_round2()` directly with all parties' secrets.
 
 use std::collections::BTreeMap;
 
@@ -56,32 +38,16 @@ use crate::{
     presign::types::TroutPresignOutput,
 };
 
-// ---------------------------------------------------------------------------
-// Wire message types
-// ---------------------------------------------------------------------------
-
-/// Sign wire message for the Trout protocol.
-///
-/// Each party broadcasts its scaled decryption shares (F_i_1, F_i_2) serialized
-/// as `(a, b, c)` decimal string triples for the two scaled decryption instances.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TroutSignMsg {
-    /// Round 1: party's F-share contributions for both scaled decryptions.
     FShares(TroutFSharePayload),
 }
 
-/// Payload containing a party's scaled decryption shares.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TroutFSharePayload {
-    /// F_i for scaled decryption #1 (u*k), as (a, b, c) decimal strings.
     pub f_i_1_abc: (String, String, String),
-    /// F_i for scaled decryption #2 (u*(H(m)+r*x)), as (a, b, c) decimal strings.
     pub f_i_2_abc: (String, String, String),
 }
-
-// ---------------------------------------------------------------------------
-// State machine internals
-// ---------------------------------------------------------------------------
 
 struct ReceivedFShare {
     f_i_1: Qfi,
@@ -99,7 +65,6 @@ struct Round1State {
     outgoing: Vec<Outgoing<TroutSignMsg>>,
 }
 
-/// Data needed to finalize the signature after collecting all F-shares.
 struct FinalizeData {
     r_scalar: k256::Scalar,
     public_key: k256::ProjectivePoint,
@@ -107,15 +72,6 @@ struct FinalizeData {
     setup: ClSetup,
 }
 
-// ---------------------------------------------------------------------------
-// Public state machine
-// ---------------------------------------------------------------------------
-
-/// StateMachine wrapper for Trout online signing.
-///
-/// On construction, verifies presign proofs, computes this party's F_i
-/// contributions, and queues them for broadcast. Collects F-shares from
-/// all other parties, then aggregates and produces the final ECDSA signature.
 pub struct TroutSignMachine {
     round: SignRound,
     my_id: PartyId,
@@ -125,22 +81,6 @@ pub struct TroutSignMachine {
 }
 
 impl TroutSignMachine {
-    /// Create a new sign state machine for distributed execution.
-    ///
-    /// Each party provides only its OWN presign output. The constructor:
-    /// 1. Verifies all presign broadcast proofs (R_{CL-EC}, R_{ComKwlg})
-    /// 2. Reconstructs public aggregated ciphertext/commitment components
-    /// 3. Computes this party's F_i contributions for both scaled decryptions
-    /// 4. Queues broadcast of the F-shares
-    ///
-    /// # Arguments
-    /// - `my_id`: this party's ID (1-based `PartyId`)
-    /// - `all_parties`: all participating party IDs (1-based)
-    /// - `my_presign`: this party's presign output (consumed by value)
-    /// - `message`: the message digest to sign
-    /// - `share`: this party's key share (for public key verification)
-    /// - `setup`: CL-HSM setup (consumed by value, stored for finalization)
-    /// - `cl_pk`: the joint CL public key
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -159,9 +99,6 @@ impl TroutSignMachine {
         let m_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(message.digest());
         let broadcasts = &my_presign.all_broadcasts;
 
-        // -----------------------------------------------------------
-        // Verify R_{CL-EC} proofs: K_tilde_i encrypts same k_i as R_i
-        // -----------------------------------------------------------
         for bcast in broadcasts {
             let (c1_a, c1_b, c1_c) = &bcast.kt_c1_abc;
             let (c2_a, c2_b, c2_c) = &bcast.kt_c2_abc;
@@ -185,9 +122,6 @@ impl TroutSignMachine {
             }
         }
 
-        // -----------------------------------------------------------
-        // Verify R_{ComKwlg} proofs
-        // -----------------------------------------------------------
         let pk_elt = cl_pk.elt();
         for bcast in broadcasts {
             let (a, b, c) = &bcast.u_com_abc;
@@ -206,9 +140,6 @@ impl TroutSignMachine {
             }
         }
 
-        // -----------------------------------------------------------
-        // Reconstruct ciphertext and commitment components
-        // -----------------------------------------------------------
         let mut kt_components = Vec::new();
         for bcast in broadcasts {
             let (c1_a, c1_b, c1_c) = &bcast.kt_c1_abc;
@@ -239,9 +170,6 @@ impl TroutSignMachine {
             ct_scaled_components.push((c1, c2));
         }
 
-        // -----------------------------------------------------------
-        // Compute Z_tilde_j = r * C_tilde_j_scaled, add Enc(0, H(m))
-        // -----------------------------------------------------------
         let mut z_components = Vec::new();
         for (c1, c2) in &ct_scaled_components {
             let z_c1 = setup
@@ -262,9 +190,6 @@ impl TroutSignMachine {
             .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
         z_components.insert(0, (old_c1, new_z0_c2));
 
-        // -----------------------------------------------------------
-        // Scaled Decryption #1 public data: u * k
-        // -----------------------------------------------------------
         let (kt_a1, kt_a2) = aggregate_ciphertext_components(&setup, &kt_components)
             .map_err(|e| TecdsaError::Other(format!("agg_ct: {e}")))?;
         let u_b_agg = aggregate_commitments(&setup, &u_coms)
@@ -276,9 +201,6 @@ impl TroutSignMachine {
             b_agg: u_b_agg,
         };
 
-        // -----------------------------------------------------------
-        // Scaled Decryption #2 public data: u * (H(m) + r*x)
-        // -----------------------------------------------------------
         let (z_a1, z_a2) = aggregate_ciphertext_components(&setup, &z_components)
             .map_err(|e| TecdsaError::Other(format!("agg_ct z: {e}")))?;
         let u_b_agg2 = aggregate_commitments(&setup, &u_coms)
@@ -290,11 +212,6 @@ impl TroutSignMachine {
             b_agg: u_b_agg2,
         };
 
-        // -----------------------------------------------------------
-        // Compute THIS party's F_i for both scaled decryptions
-        // -----------------------------------------------------------
-
-        // SD1 input: alpha_i, beta_i, b_i = u_i
         let sd1_input = ScaledDecryptPartyInput {
             alpha_i: my_presign.alpha_i.clone(),
             beta_i: my_presign.beta_i.clone(),
@@ -303,7 +220,6 @@ impl TroutSignMachine {
         let f_i_1 = compute_f_share(&setup, &sd1_input, &sd1_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD1: {e}")))?;
 
-        // SD2 input: alpha_z_i = r * l_i * delta_i, beta_i, b_i = u_i
         let alpha_z = {
             let r_val = Integer::from_digits(&r_bytes, Order::Msf);
             let lid_val = Integer::from_digits(&my_presign.l_i_delta_i, Order::Msf);
@@ -317,9 +233,6 @@ impl TroutSignMachine {
         let f_i_2 = compute_f_share(&setup, &sd2_input, &sd2_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD2: {e}")))?;
 
-        // -----------------------------------------------------------
-        // Serialize F_i shares and queue broadcast
-        // -----------------------------------------------------------
         let f_i_1_abc =
             qfi_to_abc(&f_i_1).map_err(|e| TecdsaError::Other(format!("qfi_to_abc: {e}")))?;
         let f_i_2_abc =
@@ -335,7 +248,6 @@ impl TroutSignMachine {
             msg: TroutSignMsg::FShares(payload),
         }];
 
-        // Store own F-shares
         let mut received = BTreeMap::new();
         received.insert(my_id, ReceivedFShare { f_i_1, f_i_2 });
 
@@ -355,10 +267,6 @@ impl TroutSignMachine {
         })
     }
 
-    /// Simulation-mode constructor (backward compatible).
-    ///
-    /// Takes ALL parties' presign outputs and immediately computes the
-    /// signature via `sign_round2()`. The resulting machine is already done.
     pub fn new_simulation(
         all_presigns: &[TroutPresignOutput],
         message: &DataToSign<k256::Secp256k1>,
@@ -378,7 +286,6 @@ impl TroutSignMachine {
         }
     }
 
-    /// Deserialize a received F-share payload into Qfi elements.
     fn deserialize_fshares(payload: &TroutFSharePayload) -> Result<(Qfi, Qfi), TecdsaError> {
         let (a1, b1, c1) = &payload.f_i_1_abc;
         let f_i_1 = qfi_from_abc(a1, b1, c1)
@@ -389,7 +296,6 @@ impl TroutSignMachine {
         Ok((f_i_1, f_i_2))
     }
 
-    /// Finalize: aggregate all F-shares and compute the ECDSA signature.
     fn finalize_signature(
         &self,
         state: Round1State,
@@ -399,7 +305,6 @@ impl TroutSignMachine {
             .as_ref()
             .ok_or_else(|| TecdsaError::Other("finalize data missing".into()))?;
 
-        // Collect F-shares in order
         let mut f1_shares = Vec::new();
         let mut f2_shares = Vec::new();
         for fshare in state.received.into_values() {
@@ -407,19 +312,16 @@ impl TroutSignMachine {
             f2_shares.push(fshare.f_i_2);
         }
 
-        // Aggregate and solve SD1: u*k
         let uk = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
             &aggregate_and_solve(&fin.setup, &f1_shares)
                 .map_err(|e| TecdsaError::Other(format!("agg_solve SD1: {e}")))?,
         );
 
-        // Aggregate and solve SD2: u*(H(m) + r*x)
         let u_mx = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
             &aggregate_and_solve(&fin.setup, &f2_shares)
                 .map_err(|e| TecdsaError::Other(format!("agg_solve SD2: {e}")))?,
         );
 
-        // Compute s = (u*k)^{-1} * u*(H(m)+r*x)
         let uk_inv = uk
             .invert()
             .into_option()
@@ -430,7 +332,6 @@ impl TroutSignMachine {
 
         let sig = Signature { r: fin.r_scalar, s };
 
-        // Verify the signature
         verify_ecdsa::<k256::Secp256k1>(&sig, &fin.public_key, &fin.message)
             .map_err(|e| TecdsaError::InvalidProof(format!("final verification: {e}")))?;
 

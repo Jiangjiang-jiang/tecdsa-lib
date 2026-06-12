@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Shared utility functions for the DKLs23 protocol crate.
-//!
-//! Centralizes common operations used across keygen, presign, and sign rounds:
-//! - Sender validation
-//! - Point and scalar (de)serialization
-
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
@@ -16,7 +9,6 @@ use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::PartyId;
 
-/// Validate that the sender is not self, and is part of the protocol parties.
 pub fn validate_sender(
     from: PartyId,
     my_id: PartyId,
@@ -31,9 +23,6 @@ pub fn validate_sender(
     Ok(())
 }
 
-/// Check for duplicate messages and validate the sender in one step.
-///
-/// Returns an error if the sender is invalid or a duplicate message is detected.
 pub fn validate_sender_no_dup<V>(
     from: PartyId,
     my_id: PartyId,
@@ -47,9 +36,6 @@ pub fn validate_sender_no_dup<V>(
     Ok(())
 }
 
-/// Deserialize a projective point from its compressed SEC1 byte encoding.
-// Internal byte-decoding helper; the error carries no information beyond
-// "malformed input", so a unit error is intentional here.
 #[allow(clippy::result_unit_err)]
 pub fn deserialize_point<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::ProjectivePoint, ()>
 where
@@ -66,8 +52,6 @@ where
     Option::from(opt).ok_or(())
 }
 
-/// Deserialize a scalar from its canonical big-endian byte representation.
-// Internal byte-decoding helper; the unit error ("malformed input") is intentional.
 #[allow(clippy::result_unit_err)]
 pub fn deserialize_scalar<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::Scalar, ()>
 where

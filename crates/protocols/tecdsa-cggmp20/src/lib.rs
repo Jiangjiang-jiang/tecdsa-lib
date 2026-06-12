@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 
 pub mod key_share;
@@ -16,19 +15,8 @@ pub mod trusted_dealer;
 #[cfg(feature = "identifiable-abort")]
 pub mod ia;
 
-// ---------------------------------------------------------------------------
-// Protocol trait implementation
-// ---------------------------------------------------------------------------
-
 use tecdsa_protocol::Protocol;
 
-/// Concrete protocol descriptor for the CGGMP20 (revised, 2024) threshold
-/// ECDSA scheme instantiated over secp256k1.
-///
-/// CGGMP20 is NOT generic over `C: TecdsaCurve` because the presign and
-/// sign state machines require the `BridgeCurve` bound for interop with
-/// `paillier-zk` (which uses `generic_ec` types).  `BridgeCurve` is
-/// currently only implemented for `k256::Secp256k1`.
 pub struct Cggmp20;
 
 impl Protocol for Cggmp20 {
@@ -52,17 +40,8 @@ impl Protocol for Cggmp20 {
     const METADATA: tecdsa_protocol::ProtocolMetadata = crate::metadata::METADATA;
 }
 
-// ---------------------------------------------------------------------------
-// KeyImport implementation
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "key-import")]
 impl tecdsa_protocol::KeyImport for Cggmp20 {
-    /// Import a raw 32-byte secp256k1 secret key into CGGMP20 core key shares.
-    ///
-    /// Returns `Cggmp20CoreKeyShare` values (without `AuxInfo`). Callers must
-    /// run the auxiliary-info protocol separately to obtain Paillier keys and
-    /// ring-Pedersen parameters before signing.
     fn import_key(
         secret_key: &[u8],
         threshold: u16,
@@ -71,7 +50,6 @@ impl tecdsa_protocol::KeyImport for Cggmp20 {
     ) -> Result<Vec<Self::KeyShare>, tecdsa_core::TecdsaError> {
         use elliptic_curve::{FieldBytes, PrimeField};
 
-        // Validate byte length
         if secret_key.len() != 32 {
             return Err(tecdsa_core::TecdsaError::InvalidKey(format!(
                 "expected 32-byte secp256k1 secret key, got {} bytes",
@@ -79,7 +57,6 @@ impl tecdsa_protocol::KeyImport for Cggmp20 {
             )));
         }
 
-        // Deserialize big-endian bytes into a scalar
         let mut fb = FieldBytes::<k256::Secp256k1>::default();
         fb.copy_from_slice(secret_key);
         let scalar =
@@ -89,14 +66,12 @@ impl tecdsa_protocol::KeyImport for Cggmp20 {
                 )
             })?;
 
-        // Validate threshold parameters
         if threshold == 0 || threshold > total {
             return Err(tecdsa_core::TecdsaError::InvalidKey(format!(
                 "invalid threshold parameters: threshold={threshold}, total={total}"
             )));
         }
 
-        // Delegate to the trusted dealer
         Ok(trusted_dealer::deal::<k256::Secp256k1>(
             &scalar, threshold, total, rng,
         ))

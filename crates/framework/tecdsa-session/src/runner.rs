@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Transport-agnostic protocol runner that drives a [`StateMachine`] through
-//! its round lifecycle, encoding outgoing messages and decoding/validating
-//! incoming ones via the [`tecdsa_wire`] envelope format.
-
 use std::collections::{HashMap, HashSet};
 
 use tecdsa_protocol::{
@@ -13,11 +8,6 @@ use tecdsa_wire::Header;
 
 use crate::{config::SessionRunConfig, error::SessionError, metrics::SessionMetrics};
 
-/// Core protocol loop driver.
-///
-/// `SessionRunner` handles wire encoding/decoding and header validation but
-/// does **not** own a transport -- callers are responsible for moving bytes
-/// between parties.
 pub(crate) struct SessionRunner<M>
 where
     M: StateMachine,
@@ -33,8 +23,6 @@ where
     #[allow(dead_code)]
     current_round_num: u16,
     future_buffer: HashMap<u16, Vec<(PartyId, M::Inbound)>>,
-    /// Tracks `(from, round, to)` triples to detect duplicate wire messages.
-    /// The `to` field distinguishes broadcast (0xFFFF) from P2P messages.
     seen: HashSet<(u16, u16, u16)>,
     pub(crate) metrics: SessionMetrics,
 }
@@ -45,7 +33,6 @@ where
     M::Outbound: serde::Serialize,
     M::Inbound: serde::de::DeserializeOwned,
 {
-    /// Create a new `SessionRunner`.
     pub(crate) fn new(
         machine: M,
         session_id: [u8; 32],
@@ -67,8 +54,6 @@ where
         }
     }
 
-    /// Drain outgoing messages from the state machine, encode them into wire
-    /// format, and return `(Recipient, bytes)` pairs for the caller to deliver.
     pub(crate) fn step_encode(&mut self) -> Result<Vec<(Recipient, Vec<u8>)>, SessionError> {
         let outgoing: Vec<Outgoing<M::Outbound>> = self.machine.drain_outgoing();
         let mut result = Vec::with_capacity(outgoing.len());
@@ -95,9 +80,6 @@ where
         Ok(result)
     }
 
-    /// Decode and validate incoming wire messages, feeding them to the state
-    /// machine.  Messages for future rounds are buffered; stale messages are
-    /// discarded.
     pub(crate) fn step_decode(&mut self, raw: &[(PartyId, Vec<u8>)]) -> Result<(), SessionError> {
         for (from, bytes) in raw {
             self.metrics.bytes_received += bytes.len();
@@ -106,7 +88,6 @@ where
             let (header, msg): (Header, M::Inbound) =
                 tecdsa_wire::decode(bytes).map_err(|e| SessionError::Wire(e.to_string()))?;
 
-            // --- header validation ---
             if header.session_id != self.session_id {
                 return Err(SessionError::InvalidHeader {
                     reason: format!(
@@ -132,8 +113,6 @@ where
                 });
             }
 
-            // duplicate detection -- include `to` to allow a party to send
-            // both broadcast (to=0xFFFF) and P2P (to=specific) in the same round.
             if !self.seen.insert((header.from, header.round, header.to)) {
                 return Err(SessionError::DuplicateMessage {
                     from: *from,
@@ -153,10 +132,8 @@ where
                     .or_default()
                     .push((*from, msg));
             }
-            // header.round < current => stale, silently discard
         }
 
-        // Drain buffered messages that now match the (possibly advanced) current round.
         let current = self.machine.current_round();
         if let Some(buffered) = self.future_buffer.remove(&current) {
             for (from, msg) in buffered {
@@ -170,17 +147,14 @@ where
         Ok(())
     }
 
-    /// Whether the underlying state machine has completed.
     pub(crate) fn is_done(&self) -> bool {
         self.machine.is_done()
     }
 
-    /// Consume the runner and return the protocol output.
     pub(crate) fn finish(self) -> Result<M::Output, SessionError> {
         self.machine.finish().map_err(SessionError::Protocol)
     }
 
-    /// Current round number as reported by the state machine.
     pub(crate) fn current_round(&self) -> u16 {
         self.machine.current_round()
     }

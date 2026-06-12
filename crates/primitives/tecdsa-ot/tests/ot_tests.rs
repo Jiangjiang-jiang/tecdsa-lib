@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Integration tests for the base OT protocol.
-
 use rand_core::OsRng;
 use tecdsa_ot::base_ot::{BaseOtReceiver, BaseOtSender, MSG_LEN};
 
@@ -65,7 +62,6 @@ fn base_ot_random_messages_both_choices() {
 fn base_ot_multiple_independent_sessions() {
     let mut rng = OsRng;
 
-    // Run several independent OT sessions to check there is no shared state.
     for _ in 0..5 {
         let mut m0 = [0u8; MSG_LEN];
         let mut m1 = [0u8; MSG_LEN];
@@ -86,7 +82,6 @@ fn base_ot_multiple_independent_sessions() {
     }
 }
 
-/// Verify that different sender setups produce different keys/ciphertexts.
 #[test]
 fn base_ot_different_senders_produce_different_payloads() {
     let mut rng = OsRng;
@@ -108,11 +103,9 @@ fn base_ot_different_senders_produce_different_payloads() {
         .encrypt(&response2, &m0, &m1)
         .expect("encrypt should succeed");
 
-    // With overwhelming probability, different random keys lead to different ciphertexts.
     assert_ne!(payload1.ct0, payload2.ct0);
 }
 
-/// Ensure the receiver cannot trivially recover the non-chosen message.
 #[test]
 fn base_ot_receiver_cannot_get_both_messages() {
     let mut rng = OsRng;
@@ -126,12 +119,9 @@ fn base_ot_receiver_cannot_get_both_messages() {
         .encrypt(&response, &m0, &m1)
         .expect("encrypt should succeed");
 
-    // Receiver correctly gets m0.
     let got = receiver.decrypt(&payload);
     assert_eq!(got, m0);
 
-    // ct1 is encrypted under k1. Without k1, decrypting it with an
-    // all-zero key gives garbage, not m1.
     let bad_decrypt = payload.ct1;
     assert_ne!(bad_decrypt, m1, "ct1 alone should not reveal m1");
 }

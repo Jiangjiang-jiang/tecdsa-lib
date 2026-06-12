@@ -1,17 +1,6 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Canonical parameter types for threshold ECDSA protocols.
-//!
-//! Throughout this repository, `(n, t)` means `t`-of-`n` reconstruction/signing.
-//! `t` is the reconstruction threshold (number of parties required to sign).
-//! The maximum tolerated corruptions is `t - 1`.
-
 use std::fmt;
 
 use crate::party::PartyId;
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamError {
@@ -40,18 +29,6 @@ impl fmt::Display for ParamError {
 
 impl std::error::Error for ParamError {}
 
-// ---------------------------------------------------------------------------
-// Threshold
-// ---------------------------------------------------------------------------
-
-/// Protocol threshold parameters.
-///
-/// `t` is the reconstruction/signing threshold: the number of parties required
-/// to reconstruct the secret or produce a signature. The maximum tolerated
-/// corruptions is `t - 1`.
-///
-/// For example, `Threshold::new(3, 2)` means 3 parties, any 2 can sign,
-/// at most 1 corrupted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Threshold {
     n: u16,
@@ -59,10 +36,6 @@ pub struct Threshold {
 }
 
 impl Threshold {
-    /// Create a new threshold with `t`-of-`n` semantics.
-    ///
-    /// `t` is the reconstruction threshold (number of parties needed to sign).
-    /// Requires `1 <= t <= n`.
     pub fn new(n: u16, t: u16) -> Result<Self, ParamError> {
         if n == 0 {
             return Err(ParamError::ZeroParties);
@@ -73,22 +46,18 @@ impl Threshold {
         Ok(Self { n, t })
     }
 
-    /// Total number of parties.
     pub const fn n(self) -> u16 {
         self.n
     }
 
-    /// Reconstruction/signing threshold (number of parties required).
     pub const fn t(self) -> u16 {
         self.t
     }
 
-    /// Reconstruction/signing threshold (same as `t()`).
     pub const fn reconstruct_threshold(self) -> u16 {
         self.t
     }
 
-    /// Maximum tolerated corruptions = t - 1.
     pub const fn max_corruptions(self) -> u16 {
         self.t - 1
     }
@@ -100,37 +69,16 @@ impl fmt::Display for Threshold {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SecurityLevel
-// ---------------------------------------------------------------------------
-
-/// Cryptographic security level, determining parameter sizes across all
-/// primitive families (RSA/Paillier, class-group, Joye-Libert, OT).
-///
-/// Parameter table (from BICYCL seclevel.inl):
-///
-/// | Level | Paillier N | CL |Delta_K| | JL N | lambda_s | Curve |
-/// |-------|------------|--------------|------|----------|---------|
-/// | 112 | 2048-bit | 1348-bit | 2048 | 42 | secp256k1 |
-/// | 128 | 3072-bit | 1827-bit | 3072 | 42 | secp256k1 |
-/// | 192 | 7680-bit | 3598-bit | - | 66 | - |
-/// | 256 | 15360-bit | 5971-bit | - | 66 | - |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SecurityLevel {
-    /// Small parameters for fast unit tests. NOT for benchmarks or production.
     TestOnly,
-    /// 112-bit security: 2048-bit Paillier, 1348-bit CL discriminant.
     Bits112,
-    /// 128-bit security: 3072-bit Paillier, 1827-bit CL discriminant.
     Bits128,
-    /// 192-bit security (reserved).
     Bits192,
-    /// 256-bit security (reserved).
     Bits256,
 }
 
 impl SecurityLevel {
-    /// RSA/Paillier modulus bit-length.
     pub const fn paillier_modulus_bits(self) -> u32 {
         match self {
             Self::TestOnly => 1024,
@@ -141,7 +89,6 @@ impl SecurityLevel {
         }
     }
 
-    /// Class-group discriminant bit-length |Delta_K|.
     pub const fn cl_discriminant_bits(self) -> u32 {
         match self {
             Self::TestOnly => 300,
@@ -152,7 +99,6 @@ impl SecurityLevel {
         }
     }
 
-    /// Joye-Libert modulus bit-length.
     pub const fn jl_modulus_bits(self) -> u32 {
         match self {
             Self::TestOnly => 1024,
@@ -163,7 +109,6 @@ impl SecurityLevel {
         }
     }
 
-    /// Statistical security parameter lambda_s.
     pub const fn statistical_security(self) -> u32 {
         match self {
             Self::TestOnly => 40,
@@ -172,7 +117,6 @@ impl SecurityLevel {
         }
     }
 
-    /// OT extension security parameter kappa.
     pub const fn ot_kappa(self) -> u32 {
         match self {
             Self::TestOnly => 128,
@@ -196,11 +140,6 @@ impl fmt::Display for SecurityLevel {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PartySet
-// ---------------------------------------------------------------------------
-
-/// Validated set of protocol participants with threshold parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartySet {
     local_party: PartyId,
@@ -253,17 +192,12 @@ impl PartySet {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn threshold_new_semantics() {
-        // (n=5, t=3) means 3-of-5: 3 parties reconstruct, 2 corrupted max
         let threshold = Threshold::new(5, 3).unwrap();
         assert_eq!(threshold.n(), 5);
         assert_eq!(threshold.t(), 3);

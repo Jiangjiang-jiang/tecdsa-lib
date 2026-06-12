@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_protocol::PartyId;
 use tecdsa_transport::{InMemoryNetwork, Transport};
 
@@ -59,7 +58,6 @@ fn in_memory_receive_drains_mailbox() {
 #[test]
 fn in_memory_send_to_unknown_party_is_noop() {
     let mut net = InMemoryNetwork::new(2);
-    // Party 99 does not exist; this should not panic.
     net.send(PartyId(0), PartyId(99), vec![1, 2, 3]);
 }
 

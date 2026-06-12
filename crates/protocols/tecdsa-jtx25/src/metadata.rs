@@ -1,9 +1,5 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! JTX25 protocol metadata constant.
-
 use tecdsa_protocol::{PhaseEligibility, PhaseMode, PhaseModes, ProtocolMetadata};
 
-/// JTX25 protocol metadata.
 pub const METADATA: ProtocolMetadata = ProtocolMetadata {
     name: "JTX25-Robust",
     version: "1.0",

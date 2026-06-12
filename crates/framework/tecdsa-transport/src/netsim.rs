@@ -1,27 +1,13 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Network simulation profiles for benchmark parametrization.
-//!
-//! These profiles capture representative real-world network conditions.
-//! They are used by the benchmark harness (`tecdsa-bench`) to parametrize
-//! round-trip measurements under different latency/loss settings.
-
-/// A named set of network characteristics used to simulate real-world conditions.
 #[derive(Debug, Clone)]
 pub struct NetworkProfile {
-    /// Human-readable name for this profile (e.g. `"LAN"`, `"satellite"`).
     pub name: &'static str,
-    /// One-way latency in milliseconds (median).
     pub latency_ms: u32,
-    /// Latency jitter in milliseconds (± half-range).
     pub jitter_ms: u32,
-    /// Packet-loss rate in the range `[0.0, 1.0]`.
     pub loss_rate: f64,
-    /// Available bandwidth in kilobits per second.
     pub bandwidth_kbps: u32,
 }
 
 impl NetworkProfile {
-    /// Local-area network: sub-millisecond latency, no loss, ~1 Gbps.
     #[must_use]
     pub fn lan() -> Self {
         Self {
@@ -33,7 +19,6 @@ impl NetworkProfile {
         }
     }
 
-    /// Wide-area network (continental): ~50 ms latency, no loss, ~100 Mbps.
     #[must_use]
     pub fn wan() -> Self {
         Self {
@@ -45,7 +30,6 @@ impl NetworkProfile {
         }
     }
 
-    /// Lossy wide-area network: ~80 ms latency, 1 % loss, ~50 Mbps.
     #[must_use]
     pub fn lossy_wan() -> Self {
         Self {
@@ -57,7 +41,6 @@ impl NetworkProfile {
         }
     }
 
-    /// Geostationary satellite link: ~600 ms latency, 2 % loss, ~10 Mbps.
     #[must_use]
     pub fn satellite() -> Self {
         Self {
@@ -69,7 +52,6 @@ impl NetworkProfile {
         }
     }
 
-    /// Return an ordered list of all built-in profiles, from fastest to slowest.
     #[must_use]
     pub fn all() -> Vec<Self> {
         vec![

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,27 +6,16 @@
     clippy::doc_markdown
 )]
 
-//! R_key: knowledge-of-secret-key proof for CL-HSM.
-//!
-//! Standard Sigma protocol proving knowledge of `sk` such that
-//! `pk = h^sk`. Domain-separated from R_ClKwlg for use in the
-//! key-generation context of TX25/JTX25 protocols.
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
-/// Key proof (Sigma protocol).
 pub struct RKeyProof {
-    /// Commitment `t = h^a`.
     pub t: Qfi,
-    /// Response `z = a + e * sk` (unbounded integer, big-endian bytes).
     pub z: Vec<u8>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
 }
 
 impl RKeyProof {
-    /// Proves knowledge of `sk` such that `pk = h^{sk}`.
     pub fn prove(setup: &mut ClSetup, pk: &ClHsmqkPublicKey, sk_bytes: &[u8]) -> ClResult<Self> {
         let a = sample_random(setup)?;
         let t = setup.power_of_h_bytes(&a)?;
@@ -40,7 +28,6 @@ impl RKeyProof {
         Ok(Self { t, z, e })
     }
 
-    /// Verifies the key proof.
     pub fn verify(&self, setup: &ClSetup, pk: &ClHsmqkPublicKey) -> ClResult<bool> {
         let pk_elt = pk.elt();
 
@@ -49,7 +36,6 @@ impl RKeyProof {
             return Ok(false);
         }
 
-        // Check: h^z == t * pk^e
         let h_z = setup.power_of_h_bytes(&self.z)?;
         let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs = setup.compose(&self.t, &pk_e)?;

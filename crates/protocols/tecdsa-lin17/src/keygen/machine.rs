@@ -1,29 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! StateMachine wrapper for the Lin17 two-party interactive DKG.
-//!
-//! Wraps the pure functions from [`super::interactive`] and
-//! [`tecdsa_paillier::zk::pdl`] into a [`StateMachine`] that exchanges serialized
-//! messages between Party1 and Party2.
-//!
-//! ## Message flow (7 rounds)
-//!
-//! ```text
-//! Party1                                 Party2
-//!   |--- Round1 (commitment) ------------>|
-//!   |<-- Round2 (Q2, DLog proof) ---------|
-//!   |--- Round3 (decommit, ek, c_key) --->|
-//!   |<-- Round4 (PDL verifier msg1) ------|  (P2 = verifier)
-//!   |--- Round5 (PDL prover msg1) ------->|  (P1 = prover)
-//!   |<-- Round6 (PDL verifier msg2) ------|
-//!   |--- Round7 (PDL prover msg2) ------->|
-//!   done                                  done
-//! ```
-//!
-//! ## Key sharing
-//!
-//! Lin17 uses **multiplicative** key sharing: `x = x_1 * x_2`.
-//! P1 holds `(x_1, dk)`, P2 holds `(x_2, ek, c_key = Enc(x_1))`.
-
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
@@ -53,26 +27,12 @@ use crate::{
     },
 };
 
-// ---------------------------------------------------------------------------
-// Two-party role
-// ---------------------------------------------------------------------------
-
-/// Role in the two-party protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TwoPartyRole {
-    /// P1 (server): generates Paillier keys, holds decryption key.
     Party1,
-    /// P2 (client): holds encryption key and ciphertext.
     Party2,
 }
 
-// ---------------------------------------------------------------------------
-// Combined key share
-// ---------------------------------------------------------------------------
-
-/// Combined key share wrapping both party types.
-///
-/// The variant indicates which role this party played during keygen.
 pub enum Lin17KeyShare<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -105,53 +65,31 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Wire message envelope
-// ---------------------------------------------------------------------------
-
-/// Envelope message for the Lin17 keygen state machine.
-///
-/// Each variant carries the serialized payload for the corresponding round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Lin17KeygenMsg {
-    /// P1 -> P2: commitment to (Q1, DLog proof).
     Round1(Vec<u8>),
-    /// P2 -> P1: Q2 + DLog proof.
     Round2(Vec<u8>),
-    /// P1 -> P2: decommit Q1, Paillier key, c_key, proofs.
     Round3(Vec<u8>),
-    /// P2 -> P1: PDL verifier msg1 (c_tag, commitment).
     Round4(Vec<u8>),
-    /// P1 -> P2: PDL prover msg1 (Q_hat commitment).
     Round5(Vec<u8>),
-    /// P2 -> P1: PDL verifier msg2 (decommit a, b).
     Round6(Vec<u8>),
-    /// P1 -> P2: PDL prover msg2 (decommit Q_hat).
     Round7(Vec<u8>),
 }
-
-// ---------------------------------------------------------------------------
-// Internal state
-// ---------------------------------------------------------------------------
 
 enum Lin17KeygenState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// P2 waiting for P1's Round1 commitment (initial state for P2).
     P2WaitingForR1 {
         p2_state: KeyGenP2State<C>,
         p2_r2_msg: KeyGenP2Round2Msg<C>,
     },
-    /// P1 sent Round1 (commitment), waiting for Round2 from P2.
     P1WaitingForR2 { p1_state: KeyGenP1State<C> },
-    /// P2 received Round1, sent Round2, waiting for Round3 from P1.
     P2WaitingForR3 {
         p2_state: KeyGenP2State<C>,
         p1_r1_msg: KeyGenP1Round1Msg,
     },
-    /// P1 received Round2, sent Round3, waiting for Round4 (PDL verifier msg1) from P2.
     P1WaitingForR4 {
         p1_state: KeyGenP1State<C>,
         dk: tecdsa_paillier::DecryptionKey,
@@ -159,7 +97,6 @@ where
         c_key: tecdsa_paillier::Ciphertext,
         p2_q2: C::ProjectivePoint,
     },
-    /// P2 verified Round3, sent Round4 (PDL verifier msg1), waiting for Round5 from P1.
     P2WaitingForR5 {
         p2_state: KeyGenP2State<C>,
         p1_q1: C::ProjectivePoint,
@@ -167,7 +104,6 @@ where
         c_key: tecdsa_paillier::Ciphertext,
         pdl_v_state: PdlVerifierState<C>,
     },
-    /// P1 received PDL verifier msg1, sent PDL prover msg1, waiting for Round6 from P2.
     P1WaitingForR6 {
         p1_state: KeyGenP1State<C>,
         dk: tecdsa_paillier::DecryptionKey,
@@ -175,7 +111,6 @@ where
         pdl_v_msg1: PdlVerifierMsg1,
         pdl_p_state: PdlProverState<C>,
     },
-    /// P2 received PDL prover msg1, sent Round6 (PDL verifier msg2), waiting for Round7 from P1.
     P2WaitingForR7 {
         p2_state: KeyGenP2State<C>,
         p1_q1: C::ProjectivePoint,
@@ -184,20 +119,9 @@ where
         pdl_v_state: PdlVerifierState<C>,
         pdl_p_msg1: PdlProverMsg1,
     },
-    /// Terminal state: output has been produced.
     Done,
 }
 
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
-
-/// Lin17 interactive keygen state machine.
-///
-/// Construct via [`Lin17KeygenMachine::new`], specifying the role, own party
-/// ID, and peer party ID.  For `Party1`, the constructor immediately produces
-/// the Round1 message (commitment) and queues it.  For `Party2`, the machine
-/// waits for the Round1 message from `Party1`.
 pub struct Lin17KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -213,10 +137,6 @@ where
     output: Option<Lin17KeyShare<C>>,
     round: u16,
     ia_report: Option<IaReport>,
-    /// Optional precomputed Paillier key for P1, injected via
-    /// [`Lin17KeygenMachine::new_with_setup`]. When present, P1 uses it in
-    /// round 3 instead of generating a fresh keypair (the keypair is a one-time
-    /// setup step, kept out of the DKG round timing).
     precomputed_dk: Option<tecdsa_paillier::DecryptionKey>,
 }
 
@@ -225,16 +145,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new keygen state machine.
-    ///
-    /// - `Party1` role: immediately samples `x_1`, creates a commitment, and
-    ///   queues the Round1 message.
-    /// - `Party2` role: enters the waiting-for-Round1 state (waits for P1's
-    ///   commitment).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `my_id == peer_id`.
     pub fn new(
         role: TwoPartyRole,
         my_id: PartyId,
@@ -244,18 +154,6 @@ where
         Self::new_with_setup(role, my_id, peer_id, None, rng)
     }
 
-    /// Like [`Lin17KeygenMachine::new`], but lets the caller inject P1's
-    /// **precomputed** Paillier decryption key.
-    ///
-    /// P1's Paillier keypair is a one-time, message-independent setup step. By
-    /// generating it up front and passing it here, callers (e.g. benchmark
-    /// harnesses) keep the (multi-second) safe-prime generation out of the
-    /// measured DKG rounds. `precomputed_dk` is only consumed by `Party1`
-    /// (in round 3); for `Party2` it is ignored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `my_id == peer_id`.
     pub fn new_with_setup(
         role: TwoPartyRole,
         my_id: PartyId,
@@ -278,9 +176,6 @@ where
                 (Lin17KeygenState::P1WaitingForR2 { p1_state }, vec![out], 1)
             }
             TwoPartyRole::Party2 => {
-                // P2 eagerly samples x_2 and creates its DLog proof (no
-                // dependency on P1's commitment), but defers sending Round2
-                // until P1's Round1 commitment arrives.
                 let (p2_r2_msg, p2_state) = party2_keygen_round2::<C>(rng);
                 (
                     Lin17KeygenState::P2WaitingForR1 {
@@ -316,8 +211,6 @@ where
         Ok(())
     }
 
-    // -- Round handlers --
-
     fn handle_p2_waiting_for_r1(
         &mut self,
         from: PartyId,
@@ -352,8 +245,6 @@ where
         self.validate_sender(from)?;
         let p2_r2_msg: KeyGenP2Round2Msg<C> = decode_r2::<C>(&payload)?;
 
-        // Use the precomputed Paillier key if one was injected via
-        // `new_with_setup`; otherwise generate a fresh keypair in-round.
         let (p1_r3_msg, dk) = match self.precomputed_dk.take() {
             Some(dk) => {
                 party1_keygen_round3_with_precomputed_dk::<C>(&p1_state, &p2_r2_msg, dk, rng)
@@ -394,7 +285,6 @@ where
         self.validate_sender(from)?;
         let p1_r3_msg: KeyGenP1Round3Msg<C> = decode_r3::<C>(&payload)?;
 
-        // Verify P1's round 3 message (commitment, DLog, ciphertext, correct-key, range)
         if let Err(e) = party2_verify_round3::<C>(&p2_state, &p1_r1_msg, &p1_r3_msg) {
             self.ia_report = Some(IaReport {
                 blamed: vec![from],
@@ -412,7 +302,6 @@ where
         let ek = p1_r3_msg.ek.clone();
         let c_key = p1_r3_msg.c_key.clone();
 
-        // Start PDL verification: P2 is the verifier.
         let (pdl_v_msg1, pdl_v_state) = verifier_step1::<C>(&ek, &c_key, &p1_q1, rng)
             .map_err(|e| TecdsaError::Other(format!("PDL verifier step1 failed: {e}")))?;
 
@@ -449,7 +338,6 @@ where
         let _ = c_key;
         let pdl_v_msg1 = decode_r4(&payload)?;
 
-        // P1 is the prover in PDL.
         let (pdl_p_msg1, pdl_p_state) = prover_step1::<C>(&dk, &pdl_v_msg1, rng)
             .map_err(|e| TecdsaError::Other(format!("PDL prover step1 failed: {e}")))?;
 
@@ -483,7 +371,6 @@ where
         self.validate_sender(from)?;
         let pdl_p_msg1 = decode_r5(&payload)?;
 
-        // P2 sends decommitment (a, b, nonce).
         let pdl_v_msg2 = verifier_step2::<C>(&pdl_v_state);
 
         let r6_payload = encode_r6(&pdl_v_msg2)?;
@@ -517,7 +404,6 @@ where
         self.validate_sender(from)?;
         let pdl_v_msg2 = decode_r6(&payload)?;
 
-        // P1 checks the decommitment and verifies a*x1+b == alpha.
         let pdl_p_msg2 = prover_step2::<C>(&p1_state.x1, &pdl_p_state, &pdl_v_msg1, &pdl_v_msg2)
             .map_err(|e| {
                 self.ia_report = Some(IaReport {
@@ -536,9 +422,7 @@ where
             msg: Lin17KeygenMsg::Round7(r7_payload),
         });
 
-        // P1 is done: finalize key share.
         let share = party1_finalize_keygen::<C>(&p1_state, &p2_q2, dk);
-        // Zeroize transient secret scalar before dropping p1_state.
         p1_state.x1.zeroize();
         self.output = Some(Lin17KeyShare::Party1(share));
         self.state = Lin17KeygenState::Done;
@@ -560,7 +444,6 @@ where
         self.validate_sender(from)?;
         let pdl_p_msg2: PdlProverMsg2<C> = decode_r7::<C>(&payload)?;
 
-        // P2 runs verifier_finalize to check Q_hat == Q_tag.
         if let Err(e) = verifier_finalize::<C>(&pdl_v_state, &pdl_p_msg1, &pdl_p_msg2) {
             self.ia_report = Some(IaReport {
                 blamed: vec![from],
@@ -574,9 +457,7 @@ where
             )));
         }
 
-        // P2 is done: finalize key share.
         let share = party2_finalize_keygen::<C>(&p2_state, &p1_q1, c_key, ek);
-        // Zeroize transient secret scalar before dropping p2_state.
         p2_state.x2.zeroize();
         self.output = Some(Lin17KeyShare::Party2(share));
         self.state = Lin17KeygenState::Done;
@@ -584,10 +465,6 @@ where
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// StateMachine impl
-// ---------------------------------------------------------------------------
 
 impl<C: TecdsaCurve> StateMachine for Lin17KeygenMachine<C>
 where

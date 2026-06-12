@@ -1,24 +1,8 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire-path integration tests for all 17 threshold ECDSA protocol keygen machines.
-//!
-//! Each test constructs keygen state machines for a protocol and runs them
-//! through [`WireOrchestrator`], which routes every message through the full
-//! wire encode/decode path (bincode serialization).  This verifies that
-//! protocol messages survive serialization round-trips.
-//!
-//! Protocols with expensive crypto (CL class groups, Paillier keygen) are
-//! marked `#[ignore]` so the default test suite runs quickly.
-
 #![allow(non_snake_case)]
 
 use tecdsa_protocol::{PartyId, PartyInfo, SessionConfig, SessionId};
 use tecdsa_testkit::WireOrchestrator;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Build `SessionConfig`s for `n` parties with 1-based IDs and threshold `t`.
 fn session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
     let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
@@ -36,10 +20,6 @@ fn session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
         .collect()
 }
 
-/// Assert that every party in the `WireOrchestratorResult` succeeded.
-///
-/// Uses a relaxed bound (no `Debug` on `T`) because some protocol output types
-/// do not derive `Debug`.
 fn assert_all_ok<T>(results: &[tecdsa_core::Result<T>], protocol: &str) {
     for (i, res) in results.iter().enumerate() {
         assert!(
@@ -51,10 +31,6 @@ fn assert_all_ok<T>(results: &[tecdsa_core::Result<T>], protocol: &str) {
         );
     }
 }
-
-// ===========================================================================
-// 1. CGGMP20 -- Paillier-based, 3-round keygen
-// ===========================================================================
 
 #[test]
 fn wire_cggmp20_keygen() {
@@ -74,10 +50,6 @@ fn wire_cggmp20_keygen() {
     let results = WireOrchestrator::new(machines, 10).run();
     assert_all_ok(&results, "CGGMP20");
 }
-
-// ===========================================================================
-// 2. DKLs23 -- OT-based, keygen via Orchestrator-compatible StateMachine
-// ===========================================================================
 
 #[test]
 fn wire_dkls23_keygen() {
@@ -100,10 +72,6 @@ fn wire_dkls23_keygen() {
     assert_all_ok(&results, "DKLs23");
 }
 
-// ===========================================================================
-// 3. GG18 -- Paillier-based, 4-round keygen (with small precomputed keys)
-// ===========================================================================
-
 #[test]
 fn wire_gg18_keygen() {
     use tecdsa_core::Csprng;
@@ -118,7 +86,6 @@ fn wire_gg18_keygen() {
     let machines: Vec<(PartyId, Gg18KeygenMachine<k256::Secp256k1>)> = configs
         .iter()
         .map(|cfg| {
-            // Small Paillier keys for speed.
             let p = Integer::generate_safe_prime(&mut rng, 256);
             let q = Integer::generate_safe_prime(&mut rng, 256);
             let dk = DecryptionKey::from_primes(p, q).expect("valid primes");
@@ -141,10 +108,6 @@ fn wire_gg18_keygen() {
     assert_all_ok(&results, "GG18");
 }
 
-// ===========================================================================
-// 4. GGN16 -- Shared Paillier + threshold decryption, complex setup
-// ===========================================================================
-
 #[test]
 #[ignore = "slow Paillier keygen"]
 fn wire_ggn16_keygen() {
@@ -152,13 +115,12 @@ fn wire_ggn16_keygen() {
     use tecdsa_paillier::{backend::Integer, threshold::trusted_dealer_setup};
 
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2-of-3
+    let t = 2u16;
     let mut rng = rand::thread_rng();
 
     let (setup, dec_shares) =
         trusted_dealer_setup(t - 1, n, &mut rng).expect("trusted dealer setup");
 
-    // Ring-Pedersen parameters.
     let p = Integer::generate_safe_prime(&mut rng, 256);
     let q = Integer::generate_safe_prime(&mut rng, 256);
     let n_tilde = &p * &q;
@@ -195,10 +157,6 @@ fn wire_ggn16_keygen() {
     assert_all_ok(&results, "GGN16");
 }
 
-// ===========================================================================
-// 5. LN18 -- EGexpEnc + Paillier, uses SessionConfig
-// ===========================================================================
-
 #[test]
 fn wire_ln18_keygen() {
     use tecdsa_core::Csprng;
@@ -231,10 +189,6 @@ fn wire_ln18_keygen() {
     assert_all_ok(&results, "LN18");
 }
 
-// ===========================================================================
-// 6. WMY23 -- CL-based MtA, class group operations
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_wmy23_keygen() {
@@ -252,7 +206,7 @@ fn wire_wmy23_keygen() {
                 all_parties.clone(),
                 t,
                 "12345",
-                false, // insecure CL params for speed
+                false,
             )
             .expect("WMY23 keygen machine construction");
             (pid, machine)
@@ -263,17 +217,13 @@ fn wire_wmy23_keygen() {
     assert_all_ok(&results, "WMY23");
 }
 
-// ===========================================================================
-// 7. TX25 -- CL public-checked MtA, 3-round keygen
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_tx25_keygen() {
     use tecdsa_tx25::keygen::Tx25KeygenMachine;
 
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2-of-3
+    let t = 2u16;
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, Tx25KeygenMachine)> = all_parties
@@ -284,7 +234,7 @@ fn wire_tx25_keygen() {
                 all_parties.clone(),
                 t,
                 "90001",
-                false, // insecure CL params
+                false,
             )
             .expect("TX25 keygen machine construction");
             (pid, machine)
@@ -295,17 +245,13 @@ fn wire_tx25_keygen() {
     assert_all_ok(&results, "TX25");
 }
 
-// ===========================================================================
-// 8. JTX25 -- Threshold CL decryption, 3-round keygen
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_jtx25_keygen() {
     use tecdsa_jtx25::keygen::Jtx25KeygenMachine;
 
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2-of-3
+    let t = 2u16;
     let all_parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, Jtx25KeygenMachine)> = all_parties
@@ -316,7 +262,7 @@ fn wire_jtx25_keygen() {
                 all_parties.clone(),
                 t,
                 "50001",
-                false, // insecure CL params
+                false,
             )
             .expect("JTX25 keygen machine construction");
             (pid, machine)
@@ -327,17 +273,13 @@ fn wire_jtx25_keygen() {
     assert_all_ok(&results, "JTX25");
 }
 
-// ===========================================================================
-// 9. WMC24 -- Threshold CL + threshold ElGamal, 3-round keygen
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_wmc24_keygen() {
     use tecdsa_wmc24::keygen::Wmc24KeygenMachine;
 
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2-of-3
+    let t = 2u16;
     let all_parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, Wmc24KeygenMachine)> = all_parties
@@ -353,10 +295,6 @@ fn wire_wmc24_keygen() {
     assert_all_ok(&results, "WMC24");
 }
 
-// ===========================================================================
-// 10. LLZ25 -- NIM over class groups, 3-round interactive keygen
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_llz25_keygen() {
@@ -364,13 +302,10 @@ fn wire_llz25_keygen() {
     use tecdsa_llz25::keygen::Llz25KeygenMachine;
 
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2-of-3
+    let t = 2u16;
     let seed = "12345";
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-    // LLZ25 interactive keygen needs a CL public key (pk_crs).
-    // ClHsmqkPublicKey does not impl Clone, so each party creates its own
-    // deterministic setup with the same seed and generates the same pk_crs.
     let machines: Vec<(PartyId, Llz25KeygenMachine)> = all_parties
         .iter()
         .map(|&pid| {
@@ -386,17 +321,13 @@ fn wire_llz25_keygen() {
     assert_all_ok(&results, "LLZ25");
 }
 
-// ===========================================================================
-// 11. Trout -- eVRF + CL scaled decryption, 3-round interactive keygen
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_trout_keygen() {
     use tecdsa_trout::keygen::TroutKeygenMachine;
 
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2-of-3
+    let t = 2u16;
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     let machines: Vec<(PartyId, TroutKeygenMachine)> = all_parties
@@ -412,20 +343,15 @@ fn wire_trout_keygen() {
     assert_all_ok(&results, "Trout");
 }
 
-// ===========================================================================
-// 12. XAL23 -- JL-based MtA, interactive keygen
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (JL key generation)"]
 fn wire_xal23_keygen() {
     use tecdsa_xal23::keygen::Xal23KeygenMachine;
 
     let n = 3u16;
-    let t = 2u16; // reconstruction threshold: 2-of-3
+    let t = 2u16;
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-    // Reduced JL parameters for testing speed.
     let jl_p_bits: u64 = 800;
     let jl_k: u32 = 544;
 
@@ -441,10 +367,6 @@ fn wire_xal23_keygen() {
     let results = WireOrchestrator::new(machines, 15).run();
     assert_all_ok(&results, "XAL23");
 }
-
-// ===========================================================================
-// 13. Lin17 -- 2-party, multiplicative sharing, Paillier
-// ===========================================================================
 
 #[test]
 #[ignore = "slow crypto operations (Paillier keygen ~10-30s debug)"]
@@ -467,10 +389,6 @@ fn wire_lin17_keygen() {
     assert_all_ok(&results, "Lin17");
 }
 
-// ===========================================================================
-// 14. KGG24 -- 2-party, additive sharing, Paillier + proactive refresh
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (Paillier keygen ~10-30s debug)"]
 fn wire_kgg24_keygen() {
@@ -492,10 +410,6 @@ fn wire_kgg24_keygen() {
     assert_all_ok(&results, "KGG24");
 }
 
-// ===========================================================================
-// 15. XAL+21 -- 2-party, generic MtA, Paillier
-// ===========================================================================
-
 #[test]
 #[ignore = "slow crypto operations (Paillier keygen ~10-30s debug)"]
 fn wire_xal21_keygen() {
@@ -516,10 +430,6 @@ fn wire_xal21_keygen() {
     let results = WireOrchestrator::new(machines, 20).run();
     assert_all_ok(&results, "XAL+21");
 }
-
-// ===========================================================================
-// 16. ABC+24 -- 2-party, Paillier OLE, additive sharing
-// ===========================================================================
 
 #[test]
 #[ignore = "slow crypto operations (Paillier keygen ~10-30s debug)"]

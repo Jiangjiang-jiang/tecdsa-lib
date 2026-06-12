@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -12,10 +11,6 @@
     non_snake_case
 )]
 
-//! End-to-end integration tests for the WMC24 threshold ECDSA protocol.
-//!
-//! Tests: keygen -> presign -> online sign -> verify.
-
 use elliptic_curve::CurveArithmetic;
 use tecdsa_class_group::cl::ClSetup;
 use tecdsa_protocol::PartyId;
@@ -26,13 +21,6 @@ use tecdsa_wmc24::{
     sign::Wmc24OnlineSignMachine,
 };
 
-// ---------------------------------------------------------------------------
-// Helper: run keygen state machine
-// ---------------------------------------------------------------------------
-
-/// Run keygen for `n` parties with reconstruction threshold `t`.
-///
-/// `t` parties are needed to sign.
 fn run_keygen(n: usize, t: u16) -> Vec<Wmc24KeyShare> {
     run_keygen_with_seed(n, t, "60001", false)
 }
@@ -64,10 +52,6 @@ fn run_keygen_with_seed(
         .map(|(i, r)| r.unwrap_or_else(|e| panic!("party {i} keygen finish() failed: {e}")))
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// Helper: run presign state machine
-// ---------------------------------------------------------------------------
 
 fn run_presign(key_shares: &[Wmc24KeyShare], signer_indices: &[usize]) -> Vec<Wmc24Presignature> {
     let seed = &key_shares[0].cl_setup_seed;
@@ -106,10 +90,6 @@ fn run_presign(key_shares: &[Wmc24KeyShare], signer_indices: &[usize]) -> Vec<Wm
         })
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// Helper: run online sign state machine
-// ---------------------------------------------------------------------------
 
 fn run_online_sign(
     key_shares: &[Wmc24KeyShare],
@@ -153,13 +133,9 @@ fn run_online_sign(
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn test_keygen_5_of_2() {
-    let shares = run_keygen(5, 2); // reconstruction threshold=2, need 2 to sign
+    let shares = run_keygen(5, 2);
 
     let pk0 = shares[0].public_key;
     for share in &shares[1..] {
@@ -179,7 +155,6 @@ fn test_keygen_5_of_2() {
         }
     }
 
-    // Verify public_shares[i] = secret_share_i * G.
     for share in &shares {
         let expected =
             <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * share.secret_share;
@@ -191,7 +166,6 @@ fn test_keygen_5_of_2() {
         );
     }
 
-    // Verify ElGamal keys.
     let elek0 = shares[0].elek;
     for share in &shares[1..] {
         assert_eq!(
@@ -200,7 +174,6 @@ fn test_keygen_5_of_2() {
         );
     }
 
-    // Verify elek = Lagrange interpolation of elek_shares (Shamir polynomial evaluation shares).
     let n = shares.len();
     let indices: Vec<u16> = (1..=n as u16).collect();
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
@@ -217,7 +190,6 @@ fn test_keygen_5_of_2() {
         "elek must equal Lagrange interpolation of elek_shares"
     );
 
-    // Verify each party's elek_share = eldk_i * G.
     for share in &shares {
         let my_idx = (share.party_index - 1) as usize;
         let expected =
@@ -245,16 +217,13 @@ fn test_keygen_128bit_3_of_2() {
 #[test]
 fn test_full_protocol_keygen_presign_sign() {
     let n = 5;
-    let t = 2u16; // reconstruction threshold
+    let t = 2u16;
 
-    // Step 1: Keygen (now produces proper Shamir ElGamal shares natively).
     let key_shares = run_keygen(n, t);
 
-    // Step 2: Presign with all 5 parties.
     let signer_indices: Vec<usize> = (0..n).collect();
     let presignatures = run_presign(&key_shares, &signer_indices);
 
-    // Verify all presignatures have the same R point and r_x.
     let r0 = presignatures[0].r_point;
     let rx0 = presignatures[0].r_x;
     for presig in &presignatures[1..] {
@@ -262,18 +231,15 @@ fn test_full_protocol_keygen_presign_sign() {
         assert_eq!(rx0, presig.r_x, "all presignatures must agree on r_x");
     }
 
-    // Step 4: Online sign.
     let message = b"Hello WMC24 threshold ECDSA!";
     let signatures = run_online_sign(&key_shares, presignatures, &signer_indices, message);
 
-    // All parties produce the same signature.
     let sig0 = &signatures[0];
     for sig in &signatures[1..] {
         assert_eq!(sig0.r, sig.r, "r values must match");
         assert_eq!(sig0.s, sig.s, "s values must match");
     }
 
-    // Verify the signature independently.
     let public_key = key_shares[0].public_key;
     let m = {
         use elliptic_curve::PrimeField;
@@ -296,9 +262,8 @@ fn test_full_protocol_keygen_presign_sign() {
 
 #[test]
 fn test_threshold_subset_signing() {
-    // n=5, t=2, sign with parties {0, 2, 4} (a subset of t=2 or more).
     let n = 5;
-    let t = 2u16; // reconstruction threshold
+    let t = 2u16;
 
     let key_shares = run_keygen(n, t);
 

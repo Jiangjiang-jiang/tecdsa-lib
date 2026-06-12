@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! ZK proof of JL plaintext equality (`Pi_JLEqu`).
-//!
-//! Relation: R_{JL-equ} = {(C, c; m) |
-//!   c  = y^{2^k * m} * h^{2^k * r} mod N    (commitment under pk)
-//!   C  = y0^{2^k * m} * h0^{2^k * r0} mod N0 (commitment under pk0)
-//!   m in [0, B]}
-//!
-//! Proves that the same plaintext `m` is committed in two different JL instances.
-
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -15,49 +5,24 @@ use tecdsa_bigint::{mul_mod, pow_mod, random_below};
 
 use crate::kgen::JlPublicKey;
 
-/// Non-interactive proof of plaintext equality across two JL instances.
-///
-/// Proves knowledge of `(m, r, r0)` such that
-/// `c = y^{2^k*m} * h^{2^k*r} mod N` and
-/// `C = y0^{2^k*m} * h0^{2^k*r0} mod N0`
-/// with the same `m in [0, B]`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkJlEquProof {
-    /// Commitment under pk: d = y^{2^k*v} * h^{2^k*w} mod N
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub d: Integer,
-    /// Commitment under pk0: d' = y0^{2^k*v} * h0^{2^k*w0} mod N0
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub d_prime: Integer,
-    /// Response for the message: z_m = e*m + v
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_m: Integer,
-    /// Response for randomness under pk: z_r = e*r + w
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r: Integer,
-    /// Response for randomness under pk0: z_r0 = e*r0 + w0
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub z_r0: Integer,
 }
 
-/// Statistical security parameter (in bits).
 const STAT_SEC: u32 = 80;
-/// Fiat-Shamir challenge size (in bits).
 const CHALLENGE_BITS: u32 = 80;
 
 impl ZkJlEquProof {
-    /// Creates a proof of plaintext equality.
-    ///
-    /// # Arguments
-    ///
-    /// * `pk` - First JL public key (for commitment `c`)
-    /// * `pk0` - Second JL public key (for commitment `C`)
-    /// * `c` - Commitment under `pk`
-    /// * `c_prime` - Commitment under `pk0`
-    /// * `m` - The shared plaintext witness
-    /// * `r` - Randomness for commitment `c` under `pk`
-    /// * `r0` - Randomness for commitment `C` under `pk0`
-    /// * `msg_bits` - Bound on the message bit-length
     #[allow(clippy::many_single_char_names, clippy::too_many_arguments)]
     pub fn prove(
         pk: &JlPublicKey,
@@ -72,7 +37,6 @@ impl ZkJlEquProof {
     ) -> Self {
         let two_pow_k = Integer::from(1) << pk.k;
 
-        // Upper bounds
         let v_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + msg_bits);
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
         let w0_bound = Integer::from(&pk0.n << (STAT_SEC + CHALLENGE_BITS));
@@ -81,14 +45,12 @@ impl ZkJlEquProof {
         let w = random_below(&w_bound, rng);
         let w0 = random_below(&w0_bound, rng);
 
-        // Commitment under pk: d = y^{2^k*v} * h^{2^k*w} mod N
         let exp_y = Integer::from(&two_pow_k * &v);
         let exp_h = Integer::from(&two_pow_k * &w);
         let y_v = pow_mod(&pk.y, &exp_y, &pk.n);
         let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
         let d = mul_mod(&y_v, &h_w, &pk.n);
 
-        // Commitment under pk0: d' = y0^{2^k*v} * h0^{2^k*w0} mod N0
         let two_pow_k0 = Integer::from(1) << pk0.k;
         let exp_y0 = Integer::from(&two_pow_k0 * &v);
         let exp_h0 = Integer::from(&two_pow_k0 * &w0);
@@ -96,10 +58,8 @@ impl ZkJlEquProof {
         let h0_w0 = pow_mod(&pk0.h, &exp_h0, &pk0.n);
         let d_prime = mul_mod(&y0_v, &h0_w0, &pk0.n);
 
-        // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, pk0, c, c_prime, &d, &d_prime);
 
-        // Responses
         let z_m = Integer::from(&e * m) + &v;
         let z_r = Integer::from(&e * r) + &w;
         let z_r0 = Integer::from(&e * r0) + &w0;
@@ -113,7 +73,6 @@ impl ZkJlEquProof {
         }
     }
 
-    /// Verifies the proof against two public keys and two commitments.
     #[must_use]
     pub fn verify(
         &self,
@@ -125,10 +84,8 @@ impl ZkJlEquProof {
         let two_pow_k = Integer::from(1) << pk.k;
         let two_pow_k0 = Integer::from(1) << pk0.k;
 
-        // Recompute challenge
         let e = fiat_shamir_challenge(pk, pk0, c, c_prime, &self.d, &self.d_prime);
 
-        // Check 1: y^{2^k*z_m} * h^{2^k*z_r} == c^e * d mod N
         let exp_y = Integer::from(&two_pow_k * &self.z_m);
         let exp_h = Integer::from(&two_pow_k * &self.z_r);
         let lhs1_y = pow_mod(&pk.y, &exp_y, &pk.n);
@@ -142,7 +99,6 @@ impl ZkJlEquProof {
             return false;
         }
 
-        // Check 2: y0^{2^k0*z_m} * h0^{2^k0*z_r0} == c'^e * d' mod N0
         let exp_y0 = Integer::from(&two_pow_k0 * &self.z_m);
         let exp_h0 = Integer::from(&two_pow_k0 * &self.z_r0);
         let lhs2_y = pow_mod(&pk0.y, &exp_y0, &pk0.n);
@@ -156,7 +112,6 @@ impl ZkJlEquProof {
     }
 }
 
-/// Computes the Fiat-Shamir challenge.
 fn fiat_shamir_challenge(
     pk: &JlPublicKey,
     pk0: &JlPublicKey,
@@ -221,7 +176,6 @@ mod tests {
         let c = jl_commit(&pk, &m1, &r);
         let c_prime = jl_commit(&pk0, &m2, &r0);
 
-        // Try to prove equality with wrong message
         let proof = ZkJlEquProof::prove(&pk, &pk0, &c, &c_prime, &m1, &r, &r0, 32, &mut rng);
         assert!(!proof.verify(&pk, &pk0, &c, &c_prime));
     }

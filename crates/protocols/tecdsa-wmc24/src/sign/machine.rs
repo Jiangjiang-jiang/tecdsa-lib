@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMC24 online sign state machine.
-
 use std::collections::BTreeMap;
 
 use tecdsa_class_group::{
@@ -18,10 +15,6 @@ use tecdsa_protocol::{
 use super::{msg::*, rounds::*};
 use crate::presign::Wmc24Presignature;
 
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
-
 pub struct Wmc24OnlineSignMachine {
     my_id: PartyId,
     all_parties: Vec<PartyId>,
@@ -29,7 +22,6 @@ pub struct Wmc24OnlineSignMachine {
     _message_hash: k256::Scalar,
     message: DataToSign<k256::Secp256k1>,
     public_key: k256::ProjectivePoint,
-    /// The combined ciphertext Enc(km + rkx).
     c_sig: ClCiphertext,
     setup: ClSetup,
     _cl_pk: ClPublicKey,
@@ -49,9 +41,6 @@ impl Wmc24OnlineSignMachine {
         message: &[u8],
         public_key: k256::ProjectivePoint,
     ) -> tecdsa_core::Result<Self> {
-        // Rebuild the (global) CL public parameters from the stored seed, then
-        // delegate. Benches holding the shared `ClSetup` call `new_with_setup`
-        // to avoid timing this one-time global setup as online-sign cost.
         let setup = if presignature.use_128bit_security {
             ClSetup::new_secp256k1_128bit(&presignature.cl_setup_seed)
         } else {
@@ -61,8 +50,6 @@ impl Wmc24OnlineSignMachine {
         Self::new_with_setup(my_id, all_parties, presignature, message, public_key, setup)
     }
 
-    /// Like [`new`](Self::new) but reuses a pre-built [`ClSetup`] (the global CL
-    /// public parameters) instead of reconstructing it from the presignature seed.
     pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -81,27 +68,23 @@ impl Wmc24OnlineSignMachine {
         let r_x = presignature.r_x;
         let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_x);
 
-        // Reconstruct k_bar ciphertext.
         let kb_c1 = Qfi::from_bytes(&presignature.k_bar_c1_abc.data);
         let kb_c2 = Qfi::from_bytes(&presignature.k_bar_c2_abc.data);
         let k_bar = setup
             .ct_from_components(&kb_c1, &kb_c2)
             .map_err(|e| TecdsaError::Other(format!("k_bar ct: {e}")))?;
 
-        // Reconstruct xk_bar ciphertext.
         let xk_c1 = Qfi::from_bytes(&presignature.xk_bar_c1_abc.data);
         let xk_c2 = Qfi::from_bytes(&presignature.xk_bar_c2_abc.data);
         let xk_bar = setup
             .ct_from_components(&xk_c1, &xk_c2)
             .map_err(|e| TecdsaError::Other(format!("xk_bar ct: {e}")))?;
 
-        // Reconstruct aggregate CL PK.
         let cl_pk_qfi = Qfi::from_bytes(&presignature.cl_pk_abc.data);
         let cl_pk = setup
             .pk_from_qfi(&cl_pk_qfi)
             .map_err(|e| TecdsaError::Other(format!("cl_pk from_qfi: {e}")))?;
 
-        // Reconstruct per-party CL PK shares.
         let mut cl_pk_shares: BTreeMap<u16, ClPublicKey> = BTreeMap::new();
         for (&pid, abc) in &presignature.cl_pk_share_abcs {
             let qfi = Qfi::from_bytes(&abc.data);
@@ -111,8 +94,6 @@ impl Wmc24OnlineSignMachine {
             cl_pk_shares.insert(pid, pk);
         }
 
-        // Compute Enc(km + rkx) = (m * k_bar) + (r * xk_bar).
-        // m * k_bar: component-wise exponentiation.
         let (kb_c1_comp, kb_c2_comp) = setup
             .ct_components(&k_bar)
             .map_err(|e| TecdsaError::Other(format!("k_bar comp: {e}")))?;
@@ -120,9 +101,6 @@ impl Wmc24OnlineSignMachine {
             .ct_components(&xk_bar)
             .map_err(|e| TecdsaError::Other(format!("xk_bar comp: {e}")))?;
 
-        // Each signature ciphertext component is the two-base product
-        // `k_bar^m · xk_bar^{r_x}`; fold it with one shared-squaring
-        // dual-exponentiation instead of two exps + a compose.
         let exps = [m_bytes.to_vec(), r_x_bytes.to_vec()];
         let sig_c1 = setup
             .multiexp_bytes(&[&kb_c1_comp, &xk_c1_comp], &exps)
@@ -134,8 +112,6 @@ impl Wmc24OnlineSignMachine {
             .ct_from_components(&sig_c1, &sig_c2)
             .map_err(|e| TecdsaError::Other(format!("ct_from sig: {e}")))?;
 
-        // Partial decrypt c_sig.
-        // party_index is 1-based (matches PartyId convention and t-CL evaluation points).
         let my_party_index = presignature.party_index as usize;
         let sk_share = &presignature.cl_sk_share;
 
@@ -225,8 +201,6 @@ impl Wmc24OnlineSignMachine {
         let s_bytes = threshold_cl::final_decrypt(&self.setup, &self.c_sig, n_parties_dkg, &pd_s)
             .map_err(|e| TecdsaError::Other(format!("final_decrypt: {e}")))?;
 
-        // s = km + rkx -- this is already the s value for ECDSA with R = g^{1/k}.
-        // ECDSA verify: g^{s^{-1}m} * X^{s^{-1}r} = g^{(m+rx)/s} = g^{(m+rx)/(km+rkx)} = g^{1/k} = R
         let s_raw = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&s_bytes);
         let s = low_s_normalize::<k256::Secp256k1>(s_raw);
 
@@ -238,7 +212,6 @@ impl Wmc24OnlineSignMachine {
             return Ok(());
         }
 
-        // Try with negated s.
         let s_neg = low_s_normalize::<k256::Secp256k1>(-s_raw);
         let sig_neg = Signature { r: r_x, s: s_neg };
         if verify_ecdsa::<k256::Secp256k1>(&sig_neg, &self.public_key, &self.message).is_ok() {
@@ -264,7 +237,6 @@ impl StateMachine for Wmc24OnlineSignMachine {
             return Err(TecdsaError::Other("machine already done".into()));
         }
 
-        // Reject messages from self.
         if from == self.my_id {
             return Err(TecdsaError::Other("received message from self".into()));
         }

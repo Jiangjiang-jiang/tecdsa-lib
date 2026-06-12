@@ -1,25 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! GG18 presigning protocol (Phases 1-4, message-independent).
-//!
-//! Produces a [`Gg18Presignature`] that can later be combined with a message
-//! hash in the online signing phase (Phase 5).
-//!
-//! The presign runs 3 message rounds:
-//!
-//! 1. **Round 1 (Phase 1+2a merged):** Broadcast Com(g_γ_i) + P2P c_A with AliceProof.
-//! 2. **Round 2 (Phase 2b):** P2P c_B with BobProofExt.
-//! 3. **Round 3 (Phase 3+4 merged):** Broadcast δ_i + decommit g_γ_i + Schnorr proof for γ_i.
-//!
-//! After Round 3, each party has R, r, k_i, and sigma_i — everything needed
-//! for online signing without knowing the message.
-//!
-//! # MtA backend
-//!
-//! This module uses Paillier MtA directly (inline `tecdsa_paillier` homomorphic
-//! operations with `AliceProof`/`BobProofExt` ZK proofs) rather than the
-//! `tecdsa_protocol::MtA` trait. See `rounds` module documentation for the
-//! detailed rationale.
-
 mod rounds;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
@@ -34,13 +12,11 @@ use crate::sign::msg::Gg18SignMsg;
 
 pub mod types;
 
-/// GG18 presigning state machine (Phases 1-4, 3 message rounds).
 pub struct Gg18PresignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     round: PresignRound<C>,
-    /// RNG carried through the protocol for rounds that need randomness.
     rng: tecdsa_core::Csprng,
 }
 
@@ -49,7 +25,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new GG18 presigning state machine.
     pub fn new(config: PresignConfig<C>, rng: &mut impl rand_core::CryptoRngCore) -> Self {
         let state = Round1State::new(config, rng);
         Self {
@@ -170,7 +145,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round<C: TecdsaCurve>(msg: &Gg18SignMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,

@@ -1,30 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for GG18 presigning (Phases 1-4).
-//!
-//! The presign protocol has 3 message rounds:
-//!
-//! 1. **Round 1 (Phase 1+2a merged):** Broadcast Com(g_gamma_i) + P2P c_A with AliceProof.
-//! 2. **Round 2 (Phase 2b):** P2P: Bob responds with c_b + BobProofExt.
-//! 3. **Round 3 (Phase 3+4 merged):** Broadcast delta_i + decommit g_gamma_i + Schnorr proof, compute R.
-//!
-//! After Round 3, each party has R, r, k_i, sigma_i -- the presignature.
-//!
-//! # Proof system abstraction
-//!
-//! GG18 uses `Gg18Proofs` from `tecdsa_paillier::mta` for Alice's range proofs
-//! (via the `PaillierMtaProofs` trait), and `BobProofExt` directly for Bob's
-//! extended range proofs (which include EC point verification not expressible
-//! through the trait).
-//!
-//! GG18 uses inline Paillier operations rather than the full `MtA` trait because:
-//!
-//! 1. **1-to-N broadcast with shared ciphertext.** Alice encrypts k_i once and
-//!    sends the same c_a to all peers. Each Bob runs *two* MtA instances on
-//!    this c_a: one with gamma_j (for delta) and one with w_j (for sigma).
-//!
-//! 2. **Deferred proof verification.** Bob's gamma range proof cannot be
-//!    verified until Round 3 (when g_gamma_j is decommitted).
-
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
@@ -52,10 +25,6 @@ use crate::{
     sign::{msg::*, sign_keys::SignKeys},
 };
 
-// ---------------------------------------------------------------------------
-// Round enum
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 pub(crate) enum PresignRound<C: TecdsaCurve>
 where
@@ -69,22 +38,14 @@ where
     Gone,
 }
 
-// ---------------------------------------------------------------------------
-// Presign session configuration
-// ---------------------------------------------------------------------------
-
-/// Configuration for a presigning session (message-independent).
 pub struct PresignConfig<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// The key share from keygen.
     pub key_share: Gg18KeyShare<C>,
-    /// The signing subset (1-based party indices).
     pub signers: Vec<u16>,
 }
 
-/// Shared state carried across all presigning rounds.
 #[allow(dead_code)]
 struct SharedState<C: TecdsaCurve>
 where
@@ -97,27 +58,19 @@ where
     sign_keys: SignKeys<C>,
 }
 
-// ---------------------------------------------------------------------------
-// Round 1: Phase 1 + Phase 2a merged -- commit g_gamma_i + MtA Alice
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round1State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     shared: SharedState<C>,
     decommit_nonce: [u8; 32],
-    /// Schnorr ephemeral for the gamma_i proof (used in Round 3).
     gamma_schnorr_eph: C::Scalar,
-    /// Our c_a ciphertext (stored for potential proof verification).
     #[allow(dead_code)]
     c_a: Integer,
     pub outgoing: Vec<Outgoing<Gg18SignMsg<C>>>,
     round1_broadcasts: BTreeMap<PartyId, MsgSignRound1Broadcast>,
     round1_p2ps: BTreeMap<PartyId, MsgSignRound1P2p>,
-    /// Bob's beta shares from handling Alice messages in Round 1.
     beta_shares: BTreeMap<PartyId, C::Scalar>,
-    /// Bob's nu shares from handling Alice messages in Round 1.
     nu_shares: BTreeMap<PartyId, C::Scalar>,
 }
 
@@ -131,7 +84,6 @@ where
         let my_id = PartyId(my_1based);
         let signer_parties: Vec<PartyId> = config.signers.iter().map(|&i| PartyId(i)).collect();
 
-        // Compute Lagrange coefficient
         let lagrange_coeffs = lagrange::coefficients::<C>(&config.signers);
         let my_signer_pos = config
             .signers
@@ -142,14 +94,11 @@ where
 
         let sign_keys = SignKeys::create(&config.key_share.secret_share, &lambda_i, rng);
 
-        // Commit to g_gamma_i
         let commit_data = point_to_bytes::<C>(&sign_keys.g_gamma_i);
         let (commitment, decommit_nonce) = HashCommitment::commit(&commit_data, rng);
 
-        // Schnorr ephemeral for gamma_i proof (used in Round 3)
         let gamma_schnorr_eph = C::random_scalar(rng);
 
-        // Encrypt k_i for MtA Alice messages.
         let my_idx = (my_id.0 - 1) as usize;
         let my_ek = &config.key_share.paillier_eks[my_idx];
         let k_i_int = scalar_to_integer::<C>(&sign_keys.k_i);
@@ -157,25 +106,20 @@ where
             .encrypt_with_random(rng, &k_i_int)
             .expect("Paillier encrypt must succeed");
 
-        // Build outgoing messages:
-        // 1. Broadcast: commitment to g_gamma_i
         let mut outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Gg18SignMsg::Round1Broadcast(MsgSignRound1Broadcast { commitment }),
         }];
 
-        // 2. P2P to each peer: c_a + AliceProof
-        //    Alice proof uses the RECEIVER's N_tilde params via Gg18Proofs.
         for &pid in &signer_parties {
             if pid == my_id {
                 continue;
             }
-            // Alice proof uses the RECEIVER's N-tilde params
             let receiver_ntilde = &config.key_share.n_tilde_params[(pid.0 - 1) as usize];
             let proof_setup = Gg18ProofSetup {
                 ntilde: receiver_ntilde.clone(),
             };
-            let q_dummy = Integer::zero(); // q is derived internally by Gg18Proofs
+            let q_dummy = Integer::zero();
             let alice_proof =
                 Gg18Proofs::prove_sender(my_ek, &k_i_int, &c_a, &r_a, &proof_setup, &q_dummy, rng);
             outgoing.push(Outgoing {
@@ -234,7 +178,6 @@ where
             return Err(TecdsaError::DuplicateMessage(from.0));
         }
 
-        // Verify Alice's range proof using OUR N_tilde params via Gg18Proofs
         let my_idx = (self.shared.my_id.0 - 1) as usize;
         let my_ntilde = &self.shared.key_share.n_tilde_params[my_idx];
         let sender_ek = &self.shared.key_share.paillier_eks[(from.0 - 1) as usize];
@@ -255,14 +198,9 @@ where
             )));
         }
 
-        // Bob's role: compute c_b for both MtA protocols.
-        // Uses direct Paillier homomorphic operations (omul + oadd) with
-        // GG18-specific BobProofExt range proofs (which require EC point
-        // data not expressible through the PaillierMtaProofs trait).
         let c_a_j = &msg.c_a.0;
         let sender_ntilde = &self.shared.key_share.n_tilde_params[(from.0 - 1) as usize];
 
-        // MtA for (k_j, gamma_i):
         let gamma_i_int = scalar_to_integer::<C>(&self.shared.sign_keys.gamma_i);
         let beta_prim = sender_ek.half_n().random_below_ref(rng);
         let r_bob_gamma = Integer::sample_in_mult_group_of(rng, sender_ek.n());
@@ -273,7 +211,6 @@ where
             .expect("encrypt beta");
         let c_b_gamma = sender_ek.oadd(&b_times_ca, &enc_beta).expect("oadd");
 
-        // MtA for (k_j, w_i):
         let w_i_int = scalar_to_integer::<C>(&self.shared.sign_keys.w_i);
         let nu_prim = sender_ek.half_n().random_below_ref(rng);
         let r_bob_w = Integer::sample_in_mult_group_of(rng, sender_ek.n());
@@ -284,7 +221,6 @@ where
             .expect("encrypt nu");
         let c_b_w = sender_ek.oadd(&w_times_ca, &enc_nu).expect("oadd");
 
-        // Generate Bob's extended proofs (BobProofExt includes EC DLog check)
         let bob_proof_gamma = BobProofExt::<C>::prove(
             c_a_j,
             &c_b_gamma,
@@ -309,17 +245,14 @@ where
             rng,
         );
 
-        // Store Bob's shares: beta = -beta_prim, nu = -nu_prim
         let neg_beta_scalar = -integer_to_scalar::<C>(&beta_prim);
         let neg_nu_scalar = -integer_to_scalar::<C>(&nu_prim);
         self.beta_shares.insert(from, neg_beta_scalar);
         self.nu_shares.insert(from, neg_nu_scalar);
 
-        // Compute w_i * G for the proof (Bob's claimed public point)
         let w_i_scalar = integer_to_scalar::<C>(&w_i_int);
         let w_j_point = C::generator() * w_i_scalar;
 
-        // Queue Bob response to Alice
         self.outgoing.push(Outgoing {
             to: Recipient::Party(from),
             msg: Gg18SignMsg::Round2(MsgSignRound2 {
@@ -340,9 +273,7 @@ where
             && self.round1_p2ps.len() == self.expected_count()
     }
 
-    /// Transition to Round 2: wait for Bob responses.
     pub fn advance(mut self) -> Round2State<C> {
-        // Collect beta and nu shares in signer order
         let mut beta_vec = Vec::new();
         let mut nu_vec = Vec::new();
         for &pid in &self.shared.signer_parties {
@@ -353,7 +284,6 @@ where
             nu_vec.push(self.nu_shares[&pid]);
         }
 
-        // Zeroize secret shares not carried to the next round
         for v in self.beta_shares.values_mut() {
             v.zeroize();
         }
@@ -374,10 +304,6 @@ where
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 2: receive Bob responses, decrypt to get alpha/mu shares
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round2State<C: TecdsaCurve>
 where
@@ -409,7 +335,6 @@ where
             return Err(TecdsaError::DuplicateMessage(from.0));
         }
 
-        // Verify Bob's w range proof (BobProofExt with EC check -- immediate)
         let my_ek = &self.shared.key_share.paillier_eks[(self.shared.my_id.0 - 1) as usize];
         let my_ntilde = &self.shared.key_share.n_tilde_params[(self.shared.my_id.0 - 1) as usize];
 
@@ -426,7 +351,6 @@ where
                 TecdsaError::InvalidProof(format!("party {from} Bob w range proof failed: {e}"))
             })?;
 
-        // bob_proof_gamma deferred: gamma_j*G not yet revealed (committed in Round 1).
         self.round2_msgs.insert(from, msg);
         Ok(())
     }
@@ -435,9 +359,7 @@ where
         self.round2_msgs.len() == self.expected_count()
     }
 
-    /// Decrypt Bob responses, compute delta_i and sigma_i, transition to Round 3.
     pub fn advance(mut self) -> Round3State<C> {
-        // Alice's role: decrypt each c_b
         let mut alpha_vec = Vec::new();
         let mut mu_vec = Vec::new();
 
@@ -466,14 +388,12 @@ where
             mu_vec.push(mu);
         }
 
-        // Compute delta_i and sigma_i
         let delta_i = self
             .shared
             .sign_keys
             .compute_delta_i(&alpha_vec, &self.beta_vec);
         let sigma_i = self.shared.sign_keys.compute_sigma_i(&mu_vec, &self.nu_vec);
 
-        // Build Round 3 message: delta_i + decommit g_gamma_i + Schnorr proof for gamma_i
         let gamma_proof = DlogProof::<C>::prove(
             &self.shared.sign_keys.gamma_i,
             &self.gamma_schnorr_eph,
@@ -491,7 +411,6 @@ where
             }),
         }];
 
-        // Zeroize secrets not carried to the next round
         self.gamma_schnorr_eph.zeroize();
         for s in &mut self.beta_vec {
             s.zeroize();
@@ -512,10 +431,6 @@ where
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 3: Phase 3+4 merged -- delta + decommit + Schnorr verify, compute R
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round3State<C: TecdsaCurve>
 where
@@ -553,15 +468,12 @@ where
         self.round3_msgs.len() == self.expected_count()
     }
 
-    /// Verify decommitments, Schnorr proofs, compute R, and produce the presignature.
     pub fn finish(mut self) -> tecdsa_core::Result<Gg18Presignature<C>> {
-        // Verify all decommitments and Schnorr proofs
         for (&pid, decom) in &self.round3_msgs {
             let commit = self.round1_broadcasts.get(&pid).ok_or_else(|| {
                 TecdsaError::Other(format!("missing round1 broadcast from {pid}"))
             })?;
 
-            // Verify hash commitment for g_gamma_i
             let commit_data = decom.g_gamma_i.to_bytes();
             if !commit
                 .commitment
@@ -572,16 +484,12 @@ where
                 )));
             }
 
-            // Verify Schnorr proof for gamma_i
             if !decom.gamma_proof.verify(&decom.g_gamma_i, &[]) {
                 return Err(TecdsaError::InvalidProof(format!(
                     "party {pid} Schnorr proof for gamma_i failed"
                 )));
             }
 
-            // Deferred verification: Bob's gamma range proof (from Round 2)
-            // Now that g_gamma_j is revealed, we can verify BobProofExt
-            // which includes EC DLog verification.
             if let Some(bob_msg) = self.round2_bob_msgs.get(&pid) {
                 let my_ek = &self.shared.key_share.paillier_eks[(self.shared.my_id.0 - 1) as usize];
                 let my_ntilde =
@@ -604,7 +512,6 @@ where
             }
         }
 
-        // Collect all g_gamma_i and delta_i
         let mut g_gamma_vec = vec![self.shared.sign_keys.g_gamma_i];
         let mut all_deltas = vec![self.delta_i];
         for &pid in &self.shared.signer_parties {
@@ -615,11 +522,9 @@ where
             all_deltas.push(self.round3_msgs[&pid].delta_i);
         }
 
-        // Compute delta_inv and R
         let delta_inv = SignKeys::<C>::reconstruct_delta_inv(&all_deltas)?;
         let (R, r) = SignKeys::<C>::compute_R(&delta_inv, &g_gamma_vec);
 
-        // Zeroize secrets not included in the presignature output
         self.delta_i.zeroize();
 
         Ok(Gg18Presignature {
@@ -634,11 +539,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Serialize a projective point to bytes.
 fn point_to_bytes<C: TecdsaCurve>(p: &C::ProjectivePoint) -> Vec<u8>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -646,7 +546,6 @@ where
     p.to_bytes().as_ref().to_vec()
 }
 
-/// Convert a Paillier `Integer` (which may be negative) to an EC scalar mod q.
 fn signed_integer_to_scalar<C: TecdsaCurve>(
     i: &Integer,
 ) -> <C as elliptic_curve::CurveArithmetic>::Scalar

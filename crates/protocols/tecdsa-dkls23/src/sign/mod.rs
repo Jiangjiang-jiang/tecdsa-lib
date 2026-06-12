@@ -1,21 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! DKLs23 online signing protocol (Round 4, 1 round).
-//!
-//! Consumes a `Dkls23Presignature` and a message digest to produce a
-//! threshold ECDSA signature in a single round of interaction.
-//!
-//! Each party computes its partial signature contributions `(u_i, w_i)`:
-//!   u_i = r_i * mask_i + sum_j(c^u_{i,j} + d^u_{j,i})
-//!   v_i = sk_i * mask_i + sum_j(c^v_{i,j} + d^v_{j,i})
-//!   w_i = H(m) * phi_i + r_x * v_i
-//! where mask_i = phi_i + sum_j(psi_{j,i}).
-//!
-//! After collecting all (u_j, w_j), the signature is assembled:
-//!   s = sum(w_j) * sum(u_j)^{-1} mod q
-//!
-//! Reference: Doerner, Kondi, Lee, shelat. "Threshold ECDSA in Three Rounds."
-//! IEEE S&P 2023, Section 3.2, Protocol 3.6.
-
 pub mod msg;
 mod rounds;
 
@@ -29,11 +11,6 @@ use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Signature, StateMachine};
 
-/// DKLs23 online signing state machine (1 round).
-///
-/// Drives a single party through the 1-round online signing protocol.
-/// Create one instance per party via [`Dkls23OnlineSignMachine::new`],
-/// then feed messages through the [`StateMachine`] trait.
 pub struct Dkls23OnlineSignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -46,11 +23,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new DKLs23 online signing state machine.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Online signing configuration with presignature and message.
     #[must_use]
     pub fn new(config: OnlineSignConfig<C>) -> Self {
         let state = Round4State::new(config);
@@ -126,7 +98,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round<C: TecdsaCurve>(msg: &Dkls23SignMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,

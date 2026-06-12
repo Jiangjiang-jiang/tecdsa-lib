@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Known-Answer Tests (KAT) for wire format stability.
-//!
-//! Vectors are loaded from `tests/vectors/wire_v1.json` (the single source of
-//! truth). Any change to the encoding that causes these tests to fail means a
-//! wire-incompatible change.
-
 use tecdsa_wire::{decode, encode, Header};
 
 #[derive(serde::Deserialize)]
@@ -57,7 +50,6 @@ fn kat_wire_v1_vectors_encode_and_decode() {
         let payload = hex::decode(&vector.payload_hex).expect("valid payload hex");
         let expected_encoded = hex::decode(&vector.encoded_hex).expect("valid encoded hex");
 
-        // Encode and compare
         let encoded = encode(&header, &payload)
             .unwrap_or_else(|e| panic!("{}: encode failed: {e}", vector.name));
         assert_eq!(
@@ -66,7 +58,6 @@ fn kat_wire_v1_vectors_encode_and_decode() {
             vector.name
         );
 
-        // Decode and compare
         let (decoded_header, decoded_payload) = decode::<Vec<u8>>(&expected_encoded)
             .unwrap_or_else(|e| panic!("{}: decode failed: {e}", vector.name));
         assert_eq!(

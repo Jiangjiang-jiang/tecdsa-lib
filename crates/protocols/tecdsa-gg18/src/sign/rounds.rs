@@ -1,14 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for GG18 online signing (Phase 5).
-//!
-//! The online signing protocol has 5 message rounds:
-//!
-//! 1. **Round 4 (Phase 5a):** Broadcast commitment to (V_i, A_i, B_i).
-//! 2. **Round 5 (Phase 5b):** Broadcast decommitment + proofs.
-//! 3. **Round 6 (Phase 5c):** Broadcast commitment to (U_i, T_i).
-//! 4. **Round 7 (Phase 5d):** Broadcast decommitment (U_i, T_i) — NO s_i. Verify zero-check.
-//! 5. **Round 8 (Phase 5e):** Broadcast s_i only after zero-check passes.
-
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
@@ -32,10 +21,6 @@ use zeroize::Zeroize;
 use super::msg::*;
 use crate::{presign::types::Gg18Presignature, sign::sign_keys::SignKeys};
 
-// ---------------------------------------------------------------------------
-// Round enum
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 pub(crate) enum OnlineSignRound<C: TecdsaCurve>
 where
@@ -51,22 +36,14 @@ where
     Gone,
 }
 
-// ---------------------------------------------------------------------------
-// Online signing session configuration
-// ---------------------------------------------------------------------------
-
-/// Configuration for an online signing session.
 pub struct OnlineSignConfig<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// The presignature from the presign phase.
     pub presignature: Gg18Presignature<C>,
-    /// The message digest to sign (as a scalar).
     pub message: DataToSign<C>,
 }
 
-/// Shared state carried across all online signing rounds.
 struct OnlineSharedState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -76,10 +53,6 @@ where
     message: DataToSign<C>,
     public_key: C::ProjectivePoint,
 }
-
-// ---------------------------------------------------------------------------
-// Round 4: Phase 5a — commit to (V_i, A_i, B_i)
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round4State<C: TecdsaCurve>
 where
@@ -106,17 +79,14 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create the initial Round 4 state from a presignature and message.
     pub fn new(config: OnlineSignConfig<C>, rng: &mut impl CryptoRngCore) -> Self {
         let presig = config.presignature;
         let R = presig.R;
         let r = presig.r;
 
-        // Compute partial signature s_i = m * k_i + r * sigma_i
         let m = *config.message.digest();
         let s_i = SignKeys::<C>::compute_s_i_static(&m, &presig.k_i, &r, &presig.sigma_i);
 
-        // Phase 5a: compute V_i, A_i, B_i
         let l_i = C::random_scalar(rng);
         let rho_i = C::random_scalar(rng);
 
@@ -126,7 +96,6 @@ where
         let l_i_rho_i = l_i * rho_i;
         let B_i = G * l_i_rho_i;
 
-        // HomoElGamal proof
         let homo_stmt = HomoElGamalStatement::<C> {
             G: A_i,
             H: R,
@@ -137,11 +106,9 @@ where
         let homo_witness = HomoElGamalWitness::<C> { x: s_i, r: l_i };
         let homo_proof = HomoElGamalProof::prove(&homo_witness, &homo_stmt, rng);
 
-        // DLog proof for rho_i
         let schnorr_eph = C::random_scalar(rng);
         let dlog_proof = DlogProof::<C>::prove(&rho_i, &schnorr_eph, &A_i, &[]);
 
-        // Commit to (V_i, A_i, B_i)
         let commit_data_5a = build_phase5_commit_data::<C>(&V_i, &A_i, &B_i);
         let (commitment_5a, decommit_nonce_5a) = HashCommitment::commit(&commit_data_5a, rng);
 
@@ -192,7 +159,6 @@ where
         self.round4_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round 5: broadcast decommitment + proofs.
     pub fn advance(self) -> Round5State<C> {
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
@@ -222,10 +188,6 @@ where
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 5: Phase 5b — decommit and verify proofs
-// ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
 pub(crate) struct Round5State<C: TecdsaCurve>
@@ -268,18 +230,15 @@ where
         self.round5_msgs.len() == self.expected_count()
     }
 
-    /// Verify decommitments and proofs, compute V and A sums. Transition to Round 6.
     pub fn advance(mut self, rng: &mut impl CryptoRngCore) -> tecdsa_core::Result<Round6State<C>> {
         let G = C::generator();
 
-        // Verify each peer's decommitment and proofs
         for (&pid, decom) in &self.round5_msgs {
             let commit = self
                 .round4_msgs
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing round4 from {pid}")))?;
 
-            // Verify hash commitment
             let commit_data = build_phase5_commit_data::<C>(&decom.V_i, &decom.A_i, &decom.B_i);
             if !commit
                 .commitment
@@ -290,7 +249,6 @@ where
                 )));
             }
 
-            // Verify HomoElGamal proof
             let homo_stmt = HomoElGamalStatement::<C> {
                 G: decom.A_i,
                 H: self.R,
@@ -304,7 +262,6 @@ where
                 ))
             })?;
 
-            // Verify DLog proof for rho_i
             if !decom.dlog_proof.verify(&decom.A_i, &[]) {
                 return Err(TecdsaError::InvalidProof(format!(
                     "party {pid} DLog proof for rho_i failed"
@@ -312,7 +269,6 @@ where
             }
         }
 
-        // Compute V = sum of all V_i (including ours)
         let mut V = self.V_i;
         for &pid in &self.shared.signer_parties {
             if pid == self.shared.my_id {
@@ -321,7 +277,6 @@ where
             V += self.round5_msgs[&pid].V_i;
         }
 
-        // Compute A = sum of ALL parties' A_i (including self).
         let mut A_sum = self.A_i;
         for &pid in &self.shared.signer_parties {
             if pid == self.shared.my_id {
@@ -330,17 +285,14 @@ where
             A_sum += self.round5_msgs[&pid].A_i;
         }
 
-        // V_check = V - m*G - r*Y
         let m = *self.shared.message.digest();
         let gm = G * m;
         let yr = self.shared.public_key * self.r;
         let V_check = V - gm - yr;
 
-        // U_i = V_check * rho_i, T_i = A_sum * l_i
         let U_i = V_check * self.rho_i;
         let T_i = A_sum * self.l_i;
 
-        // Commit to (U_i, T_i)
         let commit_data_5c = build_phase5c_commit_data::<C>(&U_i, &T_i);
         let (commitment_5c, decommit_nonce_5c) = HashCommitment::commit(&commit_data_5c, rng);
 
@@ -351,7 +303,6 @@ where
             }),
         }];
 
-        // Zeroize secrets not carried to the next round
         self.l_i.zeroize();
         self.rho_i.zeroize();
 
@@ -368,10 +319,6 @@ where
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 6: Phase 5c — commit to (U_i, T_i)
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round6State<C: TecdsaCurve>
 where
@@ -410,7 +357,6 @@ where
         self.round6_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round 7: broadcast (U_i, T_i) decommitment — WITHOUT s_i.
     pub fn advance(self) -> Round7State<C> {
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
@@ -434,10 +380,6 @@ where
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 7: Phase 5d — verify decommitments + zero-check, NO s_i
-// ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
 pub(crate) struct Round7State<C: TecdsaCurve>
@@ -477,11 +419,7 @@ where
         self.round7_msgs.len() == self.expected_count()
     }
 
-    /// Verify decommitments and perform zero-check.
-    /// If zero-check passes, transition to Round 8 (broadcast s_i).
-    /// If zero-check fails, return an error — s_i is NOT exposed.
     pub fn advance(self) -> tecdsa_core::Result<Round8State<C>> {
-        // Verify decommitments
         for (&pid, decom) in &self.round7_msgs {
             let commit = self
                 .round6_msgs
@@ -499,7 +437,6 @@ where
             }
         }
 
-        // Collect all T_i, U_i
         let mut sum_T = self.T_i;
         let mut sum_U = self.U_i;
         for &pid in &self.shared.signer_parties {
@@ -510,14 +447,12 @@ where
             sum_U += self.round7_msgs[&pid].U_i;
         }
 
-        // Phase 5 zero-check
         if sum_T.to_bytes().as_ref() != sum_U.to_bytes().as_ref() {
             return Err(TecdsaError::InvalidProof(
                 "Phase 5 zero-check failed: sum(T_i) != sum(U_i)".into(),
             ));
         }
 
-        // SECURITY: Only now that zero-check passed do we send s_i
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Gg18SignMsg::Round8(MsgPhase5eSig { s_i: self.s_i }),
@@ -532,10 +467,6 @@ where
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Round 8: Phase 5e — collect s_i values and assemble signature
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round8State<C: TecdsaCurve>
 where
@@ -571,9 +502,7 @@ where
         self.round8_msgs.len() == self.expected_count()
     }
 
-    /// Assemble and verify the final ECDSA signature.
     pub fn finish(mut self) -> tecdsa_core::Result<Signature<C>> {
-        // Assemble signature: s = sum(s_i)
         let mut s: C::Scalar = self.s_i;
         for &pid in &self.shared.signer_parties {
             if pid == self.shared.my_id {
@@ -582,24 +511,17 @@ where
             s += self.round8_msgs[&pid].s_i;
         }
 
-        // Low-S normalization
         let s = low_s_normalize::<C>(s);
 
         let sig = Signature { r: self.r, s };
 
-        // Final ECDSA verification
         verify_ecdsa::<C>(&sig, &self.shared.public_key, &self.shared.message)?;
 
-        // Zeroize partial signature share
         self.s_i.zeroize();
 
         Ok(sig)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn build_phase5_commit_data<C: TecdsaCurve>(
     V: &C::ProjectivePoint,

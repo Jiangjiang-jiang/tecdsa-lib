@@ -1,9 +1,5 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! LN18 protocol metadata constant.
-
 use tecdsa_protocol::{PhaseEligibility, PhaseMode, PhaseModes, ProtocolMetadata};
 
-/// LN18 protocol metadata.
 pub const METADATA: ProtocolMetadata = ProtocolMetadata {
     name: "LN18",
     version: "1.0",

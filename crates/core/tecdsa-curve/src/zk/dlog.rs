@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #[cfg(not(feature = "std"))]
 use alloc::{format, string::String, string::ToString, vec::Vec};
 
@@ -10,17 +9,11 @@ use sha2::{Digest, Sha256};
 
 use crate::TecdsaCurve;
 
-/// Schnorr-style discrete-log proof `DLOG{ w : P = w*G }`.
-///
-/// Proves knowledge of a scalar `w` such that `P = w * G` using the standard
-/// Schnorr sigma protocol made non-interactive via Fiat-Shamir (SHA-256).
 pub struct DlogProof<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Schnorr commitment point `R = r*G`.
     pub commitment: C::ProjectivePoint,
-    /// Schnorr response scalar `s = r + c*w`.
     pub response: C::Scalar,
 }
 
@@ -36,7 +29,6 @@ where
     }
 }
 
-// Manual Serialize: encode commitment as GroupEncoding bytes, response as PrimeField repr bytes.
 impl<C: TecdsaCurve> Serialize for DlogProof<C>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -140,7 +132,6 @@ where
     }
 }
 
-/// Decode a `ProjectivePoint` from bytes using `GroupEncoding`.
 fn decode_point<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::ProjectivePoint, String>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -159,7 +150,6 @@ where
     Option::from(ct).ok_or_else(|| "invalid commitment point".to_string())
 }
 
-/// Decode a `Scalar` from its big-endian repr bytes.
 fn decode_scalar<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::Scalar, String>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -183,7 +173,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Compute the Fiat-Shamir challenge: `c = H(R || P || aux)` reduced to a scalar.
     fn challenge(
         commitment: &C::ProjectivePoint,
         public_point: &C::ProjectivePoint,
@@ -202,13 +191,6 @@ where
         crate::conv::bytes_to_scalar::<C>(&hash)
     }
 
-    /// Create a Schnorr proof of knowledge of `witness` such that
-    /// `public_point = witness * G`.
-    ///
-    /// - `witness`: the secret scalar `w`
-    /// - `ephemeral_secret`: a random scalar `r` (the Schnorr nonce)
-    /// - `public_point`: the statement `P = w * G`
-    /// - `aux`: auxiliary data mixed into the Fiat-Shamir challenge (e.g. combined rid)
     #[must_use]
     pub fn prove(
         witness: &C::Scalar,
@@ -218,7 +200,6 @@ where
     ) -> Self {
         let commitment = C::generator() * ephemeral_secret;
         let c = Self::challenge(&commitment, public_point, aux);
-        // s = r + c * w
         let response = *ephemeral_secret + c * *witness;
         Self {
             commitment,
@@ -226,10 +207,6 @@ where
         }
     }
 
-    /// Verify a Schnorr proof against `public_point`.
-    ///
-    /// Checks that `response * G == commitment + c * public_point` where
-    /// `c = H(commitment || public_point || aux)`.
     #[must_use]
     pub fn verify(&self, public_point: &C::ProjectivePoint, aux: &[u8]) -> bool {
         let c = Self::challenge(&self.commitment, public_point, aux);
@@ -273,7 +250,6 @@ mod tests {
             let mut proof =
                 DlogProof::<Secp256k1>::prove(&w, &ephemeral, &public_point, b"test-aux");
 
-            // Mutate the response scalar by adding 1.
             proof.response += <Secp256k1 as elliptic_curve::CurveArithmetic>::Scalar::ONE;
 
             assert!(

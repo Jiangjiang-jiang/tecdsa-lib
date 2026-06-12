@@ -1,26 +1,17 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! LLZ25 error types.
-
-/// Errors in the LLZ25 protocol.
 #[derive(Debug, thiserror::Error)]
 pub enum Llz25Error {
-    /// CL class-group operation failure.
     #[error("class-group error: {0}")]
     ClassGroup(String),
 
-    /// Invalid proof.
     #[error("invalid proof: {0}")]
     InvalidProof(String),
 
-    /// Protocol violation (wrong round, unknown party, etc.).
     #[error("protocol error: {0}")]
     Protocol(String),
 
-    /// Signature verification failure.
     #[error("signature verification failed: {0}")]
     SignatureVerification(String),
 
-    /// Generic wrapping for upstream errors.
     #[error("{0}")]
     Other(String),
 }

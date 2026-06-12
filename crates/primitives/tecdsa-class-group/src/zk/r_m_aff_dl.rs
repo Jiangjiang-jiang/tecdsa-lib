@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,12 +6,6 @@
     clippy::doc_markdown
 )]
 
-//! `R_m_aff_dl` — MtA affine DL relation (with batch support).
-//!
-//! Proves knowledge of `(x, y, r)` such that
-//!   `ct_out = x * ct_in + Enc(pk, y; r)`  (affine on ciphertexts)
-//!   `Y = f^y`  (DL relation in F-subgroup).
-
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
 };
@@ -20,7 +13,6 @@ use crate::cl::{
     Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
-/// MtA affine DL proof.
 pub struct RMAffDlProof {
     t1: Qfi,
     t2: Qfi,
@@ -32,7 +24,6 @@ pub struct RMAffDlProof {
 }
 
 impl RMAffDlProof {
-    /// Generates a MtA affine DL proof.
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         setup: &mut ClSetup,
@@ -51,12 +42,10 @@ impl RMAffDlProof {
         let pk_elt = pk.elt();
         let (ci1, ci2) = setup.ct_components(ct_in)?;
 
-        // t1 = ci1^a3 * h^a1  (mirrors co1 = ci1^x * h^r_enc)
         let ci1_a3 = setup.exp_bytes(&ci1, &a3)?;
         let h_a1 = setup.power_of_h_bytes(&a1)?;
         let t1 = setup.compose(&ci1_a3, &h_a1)?;
 
-        // t2 = pk^a1 * f^a2 * ci2^a3
         let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
         let f_a2 = setup.power_of_f_bytes(&a2)?;
         let ci2_a3 = setup.exp_bytes(&ci2, &a3)?;
@@ -75,8 +64,6 @@ impl RMAffDlProof {
         let q_bytes = setup.q_bytes()?;
         let z1 = response_unbounded(&a1, &e, r_bytes)?;
         let z2 = response_mod_q(&a2, &e, y_bytes, &q_bytes)?;
-        // z3 must be unbounded: used as exponent on H-subgroup
-        // elements (ci1, ci2) whose order is unknown.
         let z3 = response_unbounded(&a3, &e, x_bytes)?;
 
         Ok(Self {
@@ -90,7 +77,6 @@ impl RMAffDlProof {
         })
     }
 
-    /// Verifies the MtA affine DL proof.
     pub fn verify(
         &self,
         setup: &ClSetup,
@@ -115,7 +101,6 @@ impl RMAffDlProof {
             return Ok(false);
         }
 
-        // Check 1: h^z1 * ci1^z3 == t1 * co1^e
         let h_z1 = setup.power_of_h_bytes(&self.z1)?;
         let ci1_z3 = setup.exp_bytes(&ci1, &self.z3)?;
         let lhs1 = setup.compose(&h_z1, &ci1_z3)?;
@@ -125,7 +110,6 @@ impl RMAffDlProof {
             return Ok(false);
         }
 
-        // Check 2: pk^z1 * f^z2 * ci2^z3 == t2 * co2^e
         let pk_z1 = setup.pk_pow_bytes(pk, &self.z1)?;
         let f_z2 = setup.power_of_f_bytes(&self.z2)?;
         let ci2_z3 = setup.exp_bytes(&ci2, &self.z3)?;
@@ -137,7 +121,6 @@ impl RMAffDlProof {
             return Ok(false);
         }
 
-        // Check 3: f^z2 == s * Y^e  (scalar check via dlog_in_F)
         if !super::verify_f_check(setup, &self.z2, &self.s, &self.e, y_point)? {
             return Ok(false);
         }
@@ -230,7 +213,6 @@ mod tests {
             .expect("enc_out");
         let y_point = setup.power_of_f("7").expect("f^y");
 
-        // Prove with wrong y.
         let wrong_y_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
         let proof = RMAffDlProof::prove(
             &mut setup,

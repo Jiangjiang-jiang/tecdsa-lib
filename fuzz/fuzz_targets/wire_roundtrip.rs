@@ -6,7 +6,6 @@ fuzz_target!(|data: &[u8]| {
     if data.len() < 42 {
         return;
     }
-    // Extract header fields from fuzz input
     let mut session_id = [0u8; 32];
     session_id.copy_from_slice(&data[..32]);
     let protocol_id = u16::from_be_bytes([data[32], data[33]]);

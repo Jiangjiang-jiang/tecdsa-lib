@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,11 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! StateMachine wrapper for the Trout presigning protocol.
-//!
-//! Wraps the pure `presign_round1` function into a `StateMachine` that
-//! collects broadcasts from all parties and produces a `TroutPresignOutput`.
 
 use std::collections::BTreeMap;
 
@@ -39,10 +33,6 @@ use crate::{
     key_share::TroutKeyShare,
 };
 
-// ---------------------------------------------------------------------------
-// Serialized QFI (a, b, c) for wire messages
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerQfi {
     a: String,
@@ -62,10 +52,6 @@ impl SerQfi {
         (self.a.clone(), self.b.clone(), self.c.clone())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Serialized proofs
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerRClDlEcProof {
@@ -138,11 +124,6 @@ impl SerRComKwlgProof {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Wire message types
-// ---------------------------------------------------------------------------
-
-/// Presign broadcast message (Round 1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TroutPresignMsg {
     Round1(Vec<u8>),
@@ -163,17 +144,9 @@ struct R1Payload {
     pi_com_kwlg: SerRComKwlgProof,
 }
 
-// ---------------------------------------------------------------------------
-// Received data
-// ---------------------------------------------------------------------------
-
 struct ReceivedR1 {
     broadcast: TroutRound1Broadcast,
 }
-
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
 
 enum PresignRound {
     Round1(Round1State),
@@ -186,12 +159,6 @@ struct Round1State {
     outgoing: Vec<Outgoing<TroutPresignMsg>>,
 }
 
-/// StateMachine wrapper for Trout presigning.
-///
-/// After construction, the machine is in Round 1. It broadcasts its own
-/// presign message and waits to receive broadcasts from all other parties.
-/// Once all broadcasts are received and verified, it transitions to Done
-/// with a `TroutPresignOutput`.
 pub struct TroutPresignMachine {
     round: PresignRound,
     setup: ClSetup,
@@ -204,16 +171,6 @@ pub struct TroutPresignMachine {
 }
 
 impl TroutPresignMachine {
-    /// Create a new presign state machine.
-    ///
-    /// # Arguments
-    /// - `my_id`: this party's ID (1-based)
-    /// - `all_parties`: all participating party IDs (1-based)
-    /// - `share`: this party's key share
-    /// - `signing_parties_1based`: 1-based party indices of signing parties
-    /// - `session_nonce`: unique nonce for this session
-    /// - `setup`: CL-HSM setup
-    /// - `cl_pk`: the joint CL public key
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -237,7 +194,6 @@ impl TroutPresignMachine {
             &mut rng,
         )?;
 
-        // Serialize the broadcast for wire transmission.
         let pi_cl_ec_ser = SerRClDlEcProof::from_proof(&bcast.pi_cl_ec)
             .map_err(|e| TroutError::InvalidParam(format!("serialize pi_cl_ec: {e}")))?;
         let pi_com_kwlg_ser = SerRComKwlgProof::from_proof(&bcast.pi_com_kwlg)
@@ -273,7 +229,6 @@ impl TroutPresignMachine {
             msg: TroutPresignMsg::Round1(payload_bytes),
         }];
 
-        // Store our own broadcast.
         let mut received = BTreeMap::new();
         received.insert(my_id, ReceivedR1 { broadcast: bcast });
 
@@ -292,7 +247,6 @@ impl TroutPresignMachine {
     }
 
     fn finalize(&mut self, state: Round1State) -> tecdsa_core::Result<TroutPresignOutput> {
-        // Compute R = sum(R_i)
         let mut big_r = k256::ProjectivePoint::IDENTITY;
         for r1 in state.received.values() {
             let r_i_affine =
@@ -304,7 +258,6 @@ impl TroutPresignMachine {
         let r_affine = elliptic_curve::group::Curve::to_affine(&big_r);
         let r_scalar = <k256::Secp256k1 as TecdsaCurve>::xcoord_mod_q(&r_affine);
 
-        // Verify eVRF proofs
         for r1 in state.received.values() {
             let bcast = &r1.broadcast;
             let party_pos = (bcast.party_index - 1) as usize;
@@ -317,15 +270,12 @@ impl TroutPresignMachine {
             let evrf_pk = &self.share.all_evrf_pks[party_pos];
             let ok = bcast.evrf_proof.verify(
                 evrf_pk,
-                &[], // session nonce not stored -- eVRF proof checked at receive time
+                &[],
                 &bcast.evrf_output,
             );
-            // eVRF proofs are verified during message receipt in a real
-            // deployment; skip re-verification here if nonce isn't available.
             let _ = ok;
         }
 
-        // Verify R_{CL-EC} proofs
         for r1 in state.received.values() {
             let bcast = &r1.broadcast;
             let (c1_a, c1_b, c1_c) = &bcast.kt_c1_abc;
@@ -350,7 +300,6 @@ impl TroutPresignMachine {
             }
         }
 
-        // Verify R_{ComKwlg} proofs (U_i = h^beta_i * pk^u_i)
         let pk_elt = self.cl_pk.elt();
         for r1 in state.received.values() {
             let bcast = &r1.broadcast;
@@ -369,11 +318,9 @@ impl TroutPresignMachine {
             }
         }
 
-        // Collect all broadcasts in order
         let all_broadcasts: Vec<TroutRound1Broadcast> =
             state.received.into_values().map(|r| r.broadcast).collect();
 
-        // Take ownership of my_state (replace with dummy for the fields we move)
         let my_state = &self.my_state;
 
         Ok(TroutPresignOutput {
@@ -423,7 +370,6 @@ impl StateMachine for TroutPresignMachine {
                     bincode::serde::decode_from_slice(&data, bincode::config::standard())
                         .map_err(|e| TecdsaError::Other(format!("deser R1: {e}")))?;
 
-                // Deserialize proofs
                 let pi_cl_ec = payload
                     .pi_cl_ec
                     .to_proof()
@@ -433,7 +379,6 @@ impl StateMachine for TroutPresignMachine {
                     .to_proof()
                     .map_err(|e| TecdsaError::Other(format!("pi_com_kwlg from {from}: {e}")))?;
 
-                // Deserialize eVRF
                 let (evrf_output, _) = bincode::serde::decode_from_slice(
                     &payload.evrf_output_bytes,
                     bincode::config::standard(),

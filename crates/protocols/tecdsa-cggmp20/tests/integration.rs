@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::ops::{LinearCombination, Reduce};
 use sha2::{Digest, Sha256};
 use tecdsa_cggmp20::{
@@ -18,7 +17,6 @@ use tecdsa_protocol::{
 
 type C = k256::Secp256k1;
 
-/// Test-only security level with small primes for fast tests.
 #[derive(Debug, Clone, Copy)]
 struct TestLevel;
 
@@ -232,7 +230,6 @@ fn run_presign(
         .collect()
 }
 
-/// Build a DataToSign from a message by SHA-256 hashing and reducing mod q.
 fn make_data_to_sign(message: &[u8]) -> DataToSign<C> {
     let hash_bytes: [u8; 32] = Sha256::digest(message).into();
     let fb = k256::FieldBytes::from(hash_bytes);
@@ -240,7 +237,6 @@ fn make_data_to_sign(message: &[u8]) -> DataToSign<C> {
     DataToSign::from_digest(scalar)
 }
 
-/// Manual ECDSA verify: check s^{-1}*(m*G + r*PK) has x-coordinate equal to r.
 fn verify_signature(
     sig_r: k256::Scalar,
     sig_s: k256::Scalar,
@@ -263,48 +259,39 @@ fn verify_signature(
 #[test]
 #[ignore = "slow: full pipeline (~5 min in debug)"]
 fn full_pipeline_keygen_auxinfo_presign_sign_verify() {
-    // Step 1: DKG for 3 parties, 2-of-3 signing threshold.
     let core_shares = run_keygen(3, 2);
     assert_eq!(core_shares.len(), 3);
 
-    // Step 2: AuxInfo for all 3 parties.
     let aux_infos = run_aux_info(3);
     assert_eq!(aux_infos.len(), 3);
 
-    // Step 3: Presign with signers [1, 2].
     let signers = [1u16, 2];
     let presigs = run_presign(&core_shares, &aux_infos, &signers);
     assert_eq!(presigs.len(), 2);
 
-    // Step 4: Prepare message digest.
     let data_to_sign = make_data_to_sign(b"integration test message");
 
-    // Step 5: Each signer computes a partial signature.
     let partials: Vec<_> = presigs
         .iter()
         .map(|(presig, _)| presig.partial_sign(&data_to_sign))
         .collect();
 
-    // Step 6: Combine partial signatures into a full ECDSA signature.
     let pub_data = &presigs[0].1;
     let public_key = &core_shares[0].public_key;
     let sig = PartialSignature::combine(&partials, pub_data, public_key, &data_to_sign)
         .expect("combine must succeed");
 
-    // Step 7: Verify ECDSA manually.
     verify_signature(sig.r, sig.s, &data_to_sign, public_key);
 }
 
 #[test]
 #[ignore = "slow: multiple presign+sign rounds (~5 min in debug)"]
 fn multiple_signatures_different_presignatures() {
-    // Shared setup: keygen and auxinfo once.
     let core_shares = run_keygen(3, 2);
     let aux_infos = run_aux_info(3);
     let signers = [1u16, 2];
     let public_key = &core_shares[0].public_key;
 
-    // First presign session: sign "msg1".
     let presigs_1 = run_presign(&core_shares, &aux_infos, &signers);
     let data1 = make_data_to_sign(b"msg1");
     let partials_1: Vec<_> = presigs_1
@@ -314,7 +301,6 @@ fn multiple_signatures_different_presignatures() {
     let sig1 = PartialSignature::combine(&partials_1, &presigs_1[0].1, public_key, &data1)
         .expect("combine must succeed for msg1");
 
-    // Second presign session: sign "msg2".
     let presigs_2 = run_presign(&core_shares, &aux_infos, &signers);
     let data2 = make_data_to_sign(b"msg2");
     let partials_2: Vec<_> = presigs_2
@@ -324,11 +310,9 @@ fn multiple_signatures_different_presignatures() {
     let sig2 = PartialSignature::combine(&partials_2, &presigs_2[0].1, public_key, &data2)
         .expect("combine must succeed for msg2");
 
-    // Both signatures must verify against the same public key.
     verify_signature(sig1.r, sig1.s, &data1, public_key);
     verify_signature(sig2.r, sig2.s, &data2, public_key);
 
-    // Different presign sessions produce different nonce points, hence different r values.
     assert_ne!(
         sig1.r, sig2.r,
         "different presign sessions must produce different r"
@@ -338,13 +322,11 @@ fn multiple_signatures_different_presignatures() {
 #[test]
 #[ignore = "slow: multiple signer subset rounds (~5 min in debug)"]
 fn different_signer_subsets_produce_valid_signatures() {
-    // Shared setup: keygen and auxinfo once.
     let core_shares = run_keygen(3, 2);
     let aux_infos = run_aux_info(3);
     let public_key = &core_shares[0].public_key;
     let message = b"test";
 
-    // First subset: signers [1, 2].
     let signers_12 = [1u16, 2];
     let presigs_12 = run_presign(&core_shares, &aux_infos, &signers_12);
     let data = make_data_to_sign(message);
@@ -355,7 +337,6 @@ fn different_signer_subsets_produce_valid_signatures() {
     let sig_12 = PartialSignature::combine(&partials_12, &presigs_12[0].1, public_key, &data)
         .expect("combine must succeed for subset [1,2]");
 
-    // Second subset: signers [2, 3].
     let signers_23 = [2u16, 3];
     let presigs_23 = run_presign(&core_shares, &aux_infos, &signers_23);
     let partials_23: Vec<_> = presigs_23
@@ -365,11 +346,9 @@ fn different_signer_subsets_produce_valid_signatures() {
     let sig_23 = PartialSignature::combine(&partials_23, &presigs_23[0].1, public_key, &data)
         .expect("combine must succeed for subset [2,3]");
 
-    // Both signatures must verify against the same public key.
     verify_signature(sig_12.r, sig_12.s, &data, public_key);
     verify_signature(sig_23.r, sig_23.s, &data, public_key);
 
-    // Different k values (fresh presign sessions) produce different r values.
     assert_ne!(
         sig_12.r, sig_23.r,
         "different signer subsets use different nonces, r must differ"

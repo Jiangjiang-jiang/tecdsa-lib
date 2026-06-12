@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,53 +6,20 @@
     clippy::doc_markdown
 )]
 
-//! Coin-flip protocol for distributed random number generation.
-//!
-//! A 2-round commit-reveal protocol used in DKG-CL setup to jointly generate
-//! random values (e.g., CL prime `q'` and base element `h`).
-//!
-//! ## Protocol
-//!
-//! 1. **Round 1 (Commit)**: Each party samples a random value `v` and nonce `r`,
-//!    broadcasts `commitment = SHA-256(r || v)`.
-//! 2. **Round 2 (Reveal)**: Each party reveals `(v, r)`.
-//!    All parties verify commitments and combine revealed values via XOR.
-//!
-//! The XOR combination ensures that if at least one party is honest
-//! (i.e., chose `v` uniformly at random), the combined output is uniform.
-
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 
-/// Round 1 output broadcast to all parties.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoinFlipCommitment {
-    /// `SHA-256(nonce || value)`
     pub hash: [u8; 32],
 }
 
-/// Round 1 private state kept by the committer.
 #[derive(Clone, Debug)]
 pub struct CoinFlipState {
-    /// The random value committed to.
     pub value: Vec<u8>,
-    /// The nonce used in the commitment.
     pub nonce: [u8; 32],
 }
 
-/// Generate a coin-flip commitment.
-///
-/// Samples `value_len` random bytes as the contributed value and a 32-byte
-/// nonce, then computes `commitment = SHA-256(nonce || value)`.
-///
-/// # Arguments
-///
-/// - `rng`: a cryptographic RNG.
-/// - `value_len`: the length in bytes of the random value to generate.
-///
-/// # Returns
-///
-/// A tuple of (commitment to broadcast, private state to keep).
 pub fn coin_flip_commit(
     rng: &mut impl CryptoRngCore,
     value_len: usize,
@@ -69,39 +35,12 @@ pub fn coin_flip_commit(
     (CoinFlipCommitment { hash }, CoinFlipState { value, nonce })
 }
 
-/// Verify a revealed value against its commitment.
-///
-/// Recomputes `SHA-256(nonce || value)` and checks equality with the
-/// commitment hash.
-///
-/// # Arguments
-///
-/// - `commitment`: the commitment received in Round 1.
-/// - `value`: the revealed value from Round 2.
-/// - `nonce`: the revealed nonce from Round 2.
-///
-/// # Returns
-///
-/// `true` if the commitment is valid, `false` otherwise.
 pub fn coin_flip_verify(commitment: &CoinFlipCommitment, value: &[u8], nonce: &[u8; 32]) -> bool {
     let expected = compute_commitment_hash(nonce, value);
-    // Constant-time comparison to prevent timing attacks on the hash.
     use subtle::ConstantTimeEq;
     commitment.hash.ct_eq(&expected).into()
 }
 
-/// Combine all parties' revealed values by XOR.
-///
-/// Each byte position is XORed across all values. All values must have the
-/// same length; this function panics if they differ.
-///
-/// # Arguments
-///
-/// - `values`: slice of byte-slice references, one per party.
-///
-/// # Panics
-///
-/// Panics if `values` is empty or if the values have different lengths.
 pub fn coin_flip_combine(values: &[&[u8]]) -> Vec<u8> {
     assert!(!values.is_empty(), "at least one value required");
     let len = values[0].len();
@@ -118,7 +57,6 @@ pub fn coin_flip_combine(values: &[&[u8]]) -> Vec<u8> {
     result
 }
 
-/// Internal: compute `SHA-256(nonce || value)`.
 fn compute_commitment_hash(nonce: &[u8; 32], value: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(nonce);
@@ -189,16 +127,13 @@ mod tests {
         let (c2, s2) = coin_flip_commit(&mut OsRng, 16);
         let (c3, s3) = coin_flip_commit(&mut OsRng, 16);
 
-        // All parties verify all commitments
         assert!(coin_flip_verify(&c1, &s1.value, &s1.nonce));
         assert!(coin_flip_verify(&c2, &s2.value, &s2.nonce));
         assert!(coin_flip_verify(&c3, &s3.value, &s3.nonce));
 
-        // Combine
         let combined = coin_flip_combine(&[&s1.value, &s2.value, &s3.value]);
         assert_eq!(combined.len(), 16);
 
-        // Result is deterministic regardless of combination order
         let combined2 = coin_flip_combine(&[&s3.value, &s1.value, &s2.value]);
         assert_eq!(combined, combined2);
     }

@@ -1,11 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(clippy::similar_names, clippy::many_single_char_names)]
-
-//! TX25 benchmark with paper-exact parameters (128-bit CL security).
-//!
-//! Paper: Tang & Xue, S&P 2025, Table 4, n=5, t=1.
-//! Paper environment: MacBook Pro M1 Pro, macOS Monterey 12.3, 16GB RAM.
-//! Paper CL params: CL-HSM_q, 256-bit Z_q, 1827-bit Delta_K.
 
 use std::time::Instant;
 
@@ -62,7 +55,7 @@ fn run_single_round(machines: &mut [(PartyId, Tx25OnlineSignMachine)]) {
 #[test]
 fn bench_tx25_n5_128bit() {
     let n = 5u16;
-    let t = 2u16; // paper corruption threshold=1, repo reconstruction threshold=2
+    let t = 2u16;
     let seed = "128001";
     let party_ids: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
@@ -70,7 +63,6 @@ fn bench_tx25_n5_128bit() {
     println!("Paper: Tang & Xue, S&P 2025, Table 4");
     println!("Paper env: MacBook Pro M1 Pro, macOS 12.3\n");
 
-    // --- KeyGen ---
     let t0 = Instant::now();
     let keygen_machines: Vec<(PartyId, Tx25KeygenMachine)> = party_ids
         .iter()
@@ -87,7 +79,6 @@ fn bench_tx25_n5_128bit() {
         assert_eq!(pk, ks.public_key);
     }
 
-    // --- Presign (Offline) ---
     let t1 = Instant::now();
     let presign_machines: Vec<(PartyId, Tx25PresignMachine)> = party_ids
         .iter()
@@ -106,7 +97,6 @@ fn bench_tx25_n5_128bit() {
         assert_eq!(presignatures[0].r_point, ps.r_point);
     }
 
-    // --- Online Sign ---
     let message = b"TX25 benchmark message";
 
     let t2 = Instant::now();
@@ -140,7 +130,6 @@ fn bench_tx25_n5_128bit() {
         assert_eq!(sigs[0].s, s.s);
     }
 
-    // --- Report ---
     let n_f = n as f64;
     println!("| Phase   | Total (ms) | Per-party (ms) | Paper per-party (ms) | Ratio  |");
     println!("|---------|------------|----------------|----------------------|--------|");

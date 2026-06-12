@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::{
     party::PartyId,
     session::{SessionConfig, SessionId},
@@ -9,22 +8,13 @@ pub struct TranscriptContext {
     pub protocol: &'static str,
     pub phase: &'static str,
     pub session_id: SessionId,
-    /// The party that produced the proof (prover/sender), NOT the local verifier.
-    /// Both prover and verifier must set this to the prover's ID for transcript
-    /// consistency.
     pub prover_id: Option<PartyId>,
     pub counterparty: Option<PartyId>,
     pub round: u16,
-    /// Relation label (e.g. `b"R_enc"`, `b"R_cl_dl"`). Must be set explicitly;
-    /// there is no default.
     pub label: &'static [u8],
 }
 
 impl TranscriptContext {
-    /// Encode as a deterministic byte prefix for SHA-256 challenge derivation.
-    ///
-    /// Format: each field is length-prefixed (2-byte LE length + bytes).
-    /// Fields are written in struct order for deterministic output.
     pub fn to_challenge_prefix(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(128);
 
@@ -56,7 +46,6 @@ impl TranscriptContext {
         buf
     }
 
-    /// Create a context for deterministic benchmarks (fixed session, no party).
     pub fn for_benchmark(
         protocol: &'static str,
         phase: &'static str,
@@ -74,11 +63,6 @@ impl TranscriptContext {
         }
     }
 
-    /// Derive from an existing SessionConfig.
-    ///
-    /// `prover_id` is NOT set automatically — the caller must set it via
-    /// [`with_prover`](Self::with_prover) to ensure both prover and verifier
-    /// use the same transcript.
     pub fn with_session(
         config: &SessionConfig,
         protocol: &'static str,
@@ -97,14 +81,12 @@ impl TranscriptContext {
         }
     }
 
-    /// Set the prover/origin party for this transcript context.
     #[must_use]
     pub fn with_prover(mut self, prover: PartyId) -> Self {
         self.prover_id = Some(prover);
         self
     }
 
-    /// Set counterparty for point-to-point proof contexts.
     #[must_use]
     pub fn with_counterparty(mut self, counterparty: PartyId) -> Self {
         self.counterparty = Some(counterparty);

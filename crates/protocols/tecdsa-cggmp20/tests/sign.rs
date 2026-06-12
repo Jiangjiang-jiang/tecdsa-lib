@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::ops::{LinearCombination, Reduce};
 use sha2::{Digest, Sha256};
 use tecdsa_cggmp20::{
@@ -15,7 +14,6 @@ use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, S
 
 type C = k256::Secp256k1;
 
-/// Test-only security level with small primes for fast tests.
 #[derive(Debug, Clone, Copy)]
 struct TestLevel;
 
@@ -229,7 +227,6 @@ fn run_presign(
         .collect()
 }
 
-/// Build a DataToSign from a message by SHA-256 hashing and reducing mod q.
 fn make_data_to_sign(message: &[u8]) -> DataToSign<C> {
     let hash_bytes: [u8; 32] = Sha256::digest(message).into();
     let fb = k256::FieldBytes::from(hash_bytes);
@@ -237,9 +234,6 @@ fn make_data_to_sign(message: &[u8]) -> DataToSign<C> {
     DataToSign::from_digest(scalar)
 }
 
-/// Manual ECDSA verify: check s^{-1}*(m*G + r*PK) has x-coordinate equal to r.
-///
-/// This uses the CGGMP20 convention where r = xcoord(Gamma), not xcoord(k*G).
 fn verify_signature(
     sig_r: k256::Scalar,
     sig_s: k256::Scalar,
@@ -270,20 +264,16 @@ fn sign_2of3_verifies() {
 
     let data_to_sign = make_data_to_sign(b"hello world");
 
-    // Each signer computes a partial signature.
     let partials: Vec<_> = presigs
         .iter()
         .map(|(presig, _)| presig.partial_sign(&data_to_sign))
         .collect();
 
-    // Combine partial signatures into a full ECDSA signature.
-    // combine() internally verifies the signature — if it returns Ok, the sig is valid.
     let pub_data = &presigs[0].1;
     let public_key = &core_shares[0].public_key;
     let sig = PartialSignature::combine(&partials, pub_data, public_key, &data_to_sign)
         .expect("combine must succeed");
 
-    // Additionally verify via the standard ECDSA scalar check.
     verify_signature(sig.r, sig.s, &data_to_sign, public_key);
 }
 
@@ -294,7 +284,6 @@ fn sign_different_messages_produce_different_signatures() {
     let aux_infos = run_aux_info(3);
     let signers = [1u16, 2];
 
-    // First signing session.
     let presigs_1 = run_presign(&core_shares, &aux_infos, &signers);
     let data1 = make_data_to_sign(b"hello world");
     let partials_1: Vec<_> = presigs_1
@@ -309,7 +298,6 @@ fn sign_different_messages_produce_different_signatures() {
     )
     .expect("combine must succeed");
 
-    // Second signing session with a different message.
     let presigs_2 = run_presign(&core_shares, &aux_infos, &signers);
     let data2 = make_data_to_sign(b"different message");
     let partials_2: Vec<_> = presigs_2
@@ -324,7 +312,6 @@ fn sign_different_messages_produce_different_signatures() {
     )
     .expect("combine must succeed");
 
-    // Different messages must produce different signatures (with overwhelming probability).
     assert_ne!(
         sig1.r, sig2.r,
         "different messages should produce different r"

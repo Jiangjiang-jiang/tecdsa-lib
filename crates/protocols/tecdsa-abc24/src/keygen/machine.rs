@@ -1,20 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! StateMachine wrapper for the ABC+24 two-party interactive DKG.
-//!
-//! Wraps the pure functions from [`super::interactive`] into a
-//! [`StateMachine`] that exchanges serialized messages between Server and
-//! Client.
-//!
-//! ## Message flow
-//!
-//! ```text
-//! Server (Party1)                   Client (Party2)
-//!   |--- Step1 (commitment,ek,pi) --->|
-//!   |<-- Step2 (X1, dlog_proof) ------|
-//!   |--- Step3 (X2, nonce, E) ------->|
-//!   done                              done (verify + finalize)
-//! ```
-
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
@@ -38,26 +21,12 @@ use crate::{
     },
 };
 
-// ---------------------------------------------------------------------------
-// Two-party role
-// ---------------------------------------------------------------------------
-
-/// Role in the two-party protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TwoPartyRole {
-    /// Server (Party1): generates Paillier keys, holds decryption key.
     Party1,
-    /// Client (Party2): initiates verification, holds encryption key and ciphertext.
     Party2,
 }
 
-// ---------------------------------------------------------------------------
-// Combined key share
-// ---------------------------------------------------------------------------
-
-/// Combined key share wrapping both party types.
-///
-/// The variant indicates which role this party played during keygen.
 pub enum Abc24KeyShare<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -90,52 +59,24 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Wire message envelope
-// ---------------------------------------------------------------------------
-
-/// Envelope message for the keygen state machine.
-///
-/// Each variant carries the serialized payload for the corresponding step.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Abc24KeygenMsg {
-    /// Server -> Client: commitment to X_2, Paillier key, correct key proof.
     Step1(Vec<u8>),
-    /// Client -> Server: X_1, DLog proof.
     Step2(Vec<u8>),
-    /// Server -> Client: X_2, decommitment nonce, enc(x_2).
     Step3(Vec<u8>),
 }
-
-// ---------------------------------------------------------------------------
-// Internal state
-// ---------------------------------------------------------------------------
 
 enum Abc24KeygenState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Server initial state: generates Step1 message, waiting for Step2.
     ServerWaitingForStep2 { server_state: ServerStep1State<C> },
-    /// Client initial state: waiting for Step1 from Server.
     ClientWaitingForStep1,
-    /// Client: received Step1, sent Step2, waiting for Step3.
     ClientWaitingForStep3 { client_state: ClientStep2State<C> },
-    /// Terminal state: output has been produced.
     Done,
 }
 
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
-
-/// ABC+24 interactive keygen state machine.
-///
-/// Construct via [`Abc24KeygenMachine::new`], specifying the role, own party
-/// ID, and peer party ID. For `Party1` (Server), the constructor immediately
-/// produces the Step1 message (queued in `outgoing`). For `Party2` (Client),
-/// the machine waits for the Step1 message from Server.
 pub struct Abc24KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -158,15 +99,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new keygen state machine.
-    ///
-    /// - `Party1` (Server) role: immediately samples keys, creates commitment,
-    ///   and queues the Step1 message.
-    /// - `Party2` (Client) role: enters the waiting-for-Step1 state.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `my_id == peer_id`.
     pub fn new(
         role: TwoPartyRole,
         my_id: PartyId,
@@ -176,19 +108,6 @@ where
         Self::new_with_setup(role, my_id, peer_id, None, rng)
     }
 
-    /// Like [`Abc24KeygenMachine::new`], but lets the caller inject the Server's
-    /// **precomputed** Paillier decryption key.
-    ///
-    /// The server's Paillier keypair is part of the one-time `SetupData` it
-    /// publishes non-interactively; it is message-independent. By generating it
-    /// up front and passing it here, callers (e.g. benchmark harnesses) keep the
-    /// (multi-second) safe-prime generation out of the measured DKG steps.
-    /// `precomputed_dk` is only consumed by `Party1` (the Server, in step 1);
-    /// for `Party2` (the Client) it is ignored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `my_id == peer_id`.
     pub fn new_with_setup(
         role: TwoPartyRole,
         my_id: PartyId,
@@ -302,7 +221,6 @@ where
         });
 
         let share = server_finalize_keygen::<C>(&s3_state);
-        // Zeroize transient secret scalars before dropping state objects.
         server_state.x2.zeroize();
         s3_state.x2.zeroize();
         self.output = Some(Abc24KeyShare::Party1(share));
@@ -335,7 +253,6 @@ where
         }
 
         let share = client_finalize_keygen::<C>(&client_state, &s3_msg);
-        // Zeroize transient secret scalar before dropping client_state.
         client_state.x1.zeroize();
         self.output = Some(Abc24KeyShare::Party2(share));
         self.state = Abc24KeygenState::Done;
@@ -353,10 +270,6 @@ where
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// StateMachine impl
-// ---------------------------------------------------------------------------
 
 impl<C: TecdsaCurve> StateMachine for Abc24KeygenMachine<C>
 where

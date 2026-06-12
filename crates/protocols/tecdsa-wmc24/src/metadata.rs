@@ -1,9 +1,5 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMC24 protocol metadata constant.
-
 use tecdsa_protocol::{PhaseEligibility, PhaseMode, PhaseModes, ProtocolMetadata};
 
-/// WMC24 protocol metadata.
 pub const METADATA: ProtocolMetadata = ProtocolMetadata {
     name: "WMC24",
     version: "1.0",

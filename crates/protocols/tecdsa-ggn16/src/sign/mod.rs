@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! GGN16 online signing protocol (Round 6).
-//!
-//! Consumes a [`Ggn16Presignature`] and a message digest to produce a
-//! threshold ECDSA signature in a single round of interaction.
-
 pub mod msg;
 pub mod rounds;
 
@@ -20,11 +14,6 @@ use tecdsa_protocol::{
 
 use crate::presign::Ggn16Presignature;
 
-/// GGN16 online signing state machine (Round 6).
-///
-/// Drives a single party through the 1-round online signing protocol.
-/// Create one instance per party via [`Ggn16OnlineSignMachine::new`],
-/// then feed messages through the [`StateMachine`] trait.
 pub struct Ggn16OnlineSignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -38,12 +27,6 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
     C::ProjectivePoint: LinearCombination<[(C::ProjectivePoint, C::Scalar); 2]>,
 {
-    /// Create a new GGN16 online signing state machine.
-    ///
-    /// # Arguments
-    ///
-    /// * `presignature` - The presignature from the presigning phase.
-    /// * `message` - The message digest to sign.
     pub fn new(
         presignature: Ggn16Presignature<C>,
         message: DataToSign<C>,

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMY23 online signing message types and wire (de)serialization.
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::{group::GroupEncoding, PrimeField};
@@ -9,12 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::nizk::RDl2PcProof;
 use crate::sign::rounds::SignContribution;
 
-/// Messages exchanged during WMY23 identifiable online signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Wmy23SignMsg {
-    /// Round 5 (Phase 1a): the party's partial signature plus its MtAwc
-    /// shares-in-exponent and NIZKDL-2PC proofs (serialised
-    /// [`WireContribution`]).
     Round5(Vec<u8>),
 }
 
@@ -89,11 +82,6 @@ fn proof_from_wire(w: &WireProof) -> Result<RDl2PcProof, String> {
     })
 }
 
-/// Serialize a [`SignContribution`] for broadcast.
-///
-/// # Errors
-///
-/// Returns an error if `bincode` encoding fails.
 pub fn serialize_contribution(c: &SignContribution) -> Result<Vec<u8>, String> {
     let mut entries = Vec::new();
     for j in 0..c.m_row.len() {
@@ -120,13 +108,6 @@ pub fn serialize_contribution(c: &SignContribution) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("serialize contribution: {e}"))
 }
 
-/// Deserialize a [`SignContribution`] received from a peer.
-///
-/// `n` is the quorum size, used to size the per-counterparty vectors.
-///
-/// # Errors
-///
-/// Returns an error if decoding fails or any index/point/scalar is invalid.
 pub fn deserialize_contribution(data: &[u8], n: usize) -> Result<SignContribution, String> {
     let (wire, _): (WireContribution, _) =
         bincode::serde::decode_from_slice(data, bincode::config::standard())

@@ -1,27 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Per-session signing setup for LN18.
-//!
-//! LN18 signing requires per-session setup scoped to the signer subset:
-//! 1. **Lagrange weighting**: convert Shamir shares to additive shares
-//!    for the chosen signers.
-//! 2. **Init**: ElGamal DKG for the signer subset (2 rounds).
-//! 3. **Input(w_i)**: distribute Lagrange-weighted shares via the Input
-//!    sub-protocol (2 rounds).
-//! 4. **Paillier + NTilde**: generate Paillier keys and Ring-Pedersen
-//!    parameters for each signer.
-//!
-//! This is analogous to CGGMP20's aux_info phase — protocol-specific
-//! setup that runs after keygen but before signing.
-//!
-//! # Example
-//!
-//! ```ignore
-//! let key_shares = run_keygen(n, t);
-//! let signers = vec![PartyId(1), PartyId(2)];
-//! let sign_params = build_signing_setup::<C>(&key_shares, &signers, &mut rng)?;
-//! // sign_params[i] is ready for Ln18OfflineSignMachine
-//! ```
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
@@ -40,16 +16,6 @@ use crate::{
     sign::rounds::Ln18PresignParams,
 };
 
-/// Build signing parameters for a signer subset from keygen output.
-///
-/// This is the canonical setup path for LN18 t-of-n signing. It:
-/// 1. Computes Lagrange coefficients for the signer subset
-/// 2. Runs Init (ElGamal DKG) with the signers
-/// 3. Runs Input(w_i) with Lagrange-weighted shares
-/// 4. Generates Paillier keys and NTilde params for each signer
-///
-/// On success, the returned `Ln18PresignParams` can be passed directly to
-/// `Ln18OfflineSignMachine`.
 pub fn build_signing_setup<C: TecdsaCurve>(
     key_shares: &[Ln18KeyShare<C>],
     signers: &[PartyId],
@@ -70,7 +36,6 @@ where
     let n = key_shares[0].n;
     let t = key_shares[0].t;
 
-    // 1. Lagrange coefficients (1-based evaluation points = PartyId values)
     let signer_pts: Vec<u16> = signers.iter().map(|p| p.0).collect();
     let lagrange = tecdsa_vss::lagrange::coefficients::<C>(&signer_pts);
     let weighted: Vec<C::Scalar> = signers
@@ -81,10 +46,8 @@ where
         })
         .collect::<tecdsa_core::Result<_>>()?;
 
-    // 2. Init with signer subset
     let init_outputs = run_init(signers, rng);
 
-    // 3. Paillier + NTilde for each signer
     let mut dks = Vec::with_capacity(signers.len());
     let mut eks = BTreeMap::new();
     let mut ntilde_map = BTreeMap::new();
@@ -96,10 +59,8 @@ where
         ntilde_map.insert(pid, nt);
     }
 
-    // 4. Input(w_i) for signer subset
     let stored_x_inputs = run_input(signers, init_outputs[0].elgamal_pk, &weighted, rng);
 
-    // 5. Build params
     let params = signers
         .iter()
         .enumerate()
@@ -125,8 +86,6 @@ where
 
     Ok(params)
 }
-
-// --- Internal helpers ---
 
 fn share_for_party<C: TecdsaCurve>(
     key_shares: &[Ln18KeyShare<C>],

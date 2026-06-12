@@ -1,25 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Protocol 4.7 (Rounds 3-4) / Section 7 -- $\mathcal{F}_\text{checkDH}$:
-//! securely check whether $(G, \mathcal{P}, U, V)$ is a Diffie-Hellman tuple
-//! (i.e., $V = d \cdot U$ where $\mathcal{P} = d \cdot G$) without revealing
-//! anything else. 3 rounds.
-//!
-//! Each party holds:
-//! - $d_i$: their ElGamal secret share ($d = \sum d_i$, $\mathcal{P} = d \cdot G$)
-//! - $\mathcal{P}_i = d_i \cdot G$: their public share
-//! - $(G, \mathcal{P}, U, V)$: the tuple to check
-//!
-//! **Round 1:** Each $P_i$ samples $r_i, s_i$, computes rerandomization:
-//!   $U'_i = r_i G + s_i U$, $V'_i = r_i \mathcal{P} + s_i V$.
-//!   Sends $(U'_i, V'_i)$ with $R_{RE}$ proof.
-//!
-//! **Round 2:** Verify all $R_{RE}$ proofs. Compute $(U', V') = \sum (U'_j, V'_j)$.
-//!   Each $P_i$ computes $W_i = d_i \cdot U'$ and sends $W_i$ with $R_{DH}$ proof
-//!   that $(G, U', \mathcal{P}_i, W_i)$ is a DH tuple (witness $d_i$).
-//!
-//! **Round 3:** Verify all $R_{DH}$ proofs. Check $\sum W_j = V'$.
-//!   If equal -> accept (it's a DH tuple). If not -> reject.
-
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::{
@@ -31,22 +9,13 @@ use tecdsa_curve::{
 };
 use tecdsa_protocol::PartyId;
 
-// ---------------------------------------------------------------------------
-// Messages
-// ---------------------------------------------------------------------------
-
-/// Round-1 broadcast: rerandomization shares $(U'_i, V'_i)$ and $R_{RE}$ proof.
 pub struct CheckDhRound1Msg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Sender party ID.
     pub from: PartyId,
-    /// Rerandomized U-share: $U'_i = r_i G + s_i U$.
     pub u_prime_i: C::ProjectivePoint,
-    /// Rerandomized V-share: $V'_i = r_i \mathcal{P} + s_i V$.
     pub v_prime_i: C::ProjectivePoint,
-    /// $R_{RE}$ proof that $(U'_i, V'_i)$ is a valid rerandomization.
     pub re_proof: ReProof<C>,
 }
 
@@ -64,16 +33,12 @@ where
     }
 }
 
-/// Round-2 broadcast: partial decryption $W_i = d_i \cdot U'$ and $R_{DH}$ proof.
 pub struct CheckDhRound2Msg<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Sender party ID.
     pub from: PartyId,
-    /// Partial decryption: $W_i = d_i \cdot U'$.
     pub w_i: C::ProjectivePoint,
-    /// $R_{DH}$ proof that $(G, U', \mathcal{P}_i, W_i)$ is a DH tuple with witness $d_i$.
     pub ddh_proof: DdhProof<C>,
 }
 
@@ -90,34 +55,19 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
-/// Internal state for the $\mathcal{F}_\text{checkDH}$ sub-protocol.
 pub struct CheckDhState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// This party's ID.
     my_id: PartyId,
-    /// All party IDs (sorted, including self).
     parties: Vec<PartyId>,
-    /// Own ElGamal secret share $d_i$.
     d_i: C::Scalar,
-    /// Own ElGamal public-key share $\mathcal{P}_i = d_i \cdot G$.
     p_i: C::ProjectivePoint,
-    /// Joint ElGamal public key $\mathcal{P} = d \cdot G$.
     elgamal_pk: C::ProjectivePoint,
-    /// Per-party ElGamal public-key shares $\{\mathcal{P}_j\}$, ordered by party index.
     elgamal_pk_shares: Vec<C::ProjectivePoint>,
-    /// Point $U$ from the tuple to check.
     u: C::ProjectivePoint,
-    /// Point $V$ from the tuple to check.
     v: C::ProjectivePoint,
-    /// Own rerandomization share $U'_i$ (kept for aggregation in Round 2).
     own_u_prime_i: C::ProjectivePoint,
-    /// Own rerandomization share $V'_i$ (kept for aggregation in Round 2).
     own_v_prime_i: C::ProjectivePoint,
 }
 
@@ -126,17 +76,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new checkDH state and produce the Round-1 broadcast message.
-    ///
-    /// # Arguments
-    /// - `my_id`: this party's ID
-    /// - `parties`: all party IDs (sorted, including self)
-    /// - `d_i`: own ElGamal decryption-key share
-    /// - `elgamal_pk`: joint ElGamal public key $\mathcal{P}$
-    /// - `elgamal_pk_shares`: per-party ElGamal public-key shares (ordered by party index)
-    /// - `u`: point $U$ of the tuple to check
-    /// - `v`: point $V$ of the tuple to check
-    /// - `rng`: cryptographic RNG
     pub fn new(
         my_id: PartyId,
         parties: Vec<PartyId>,
@@ -157,17 +96,12 @@ where
         let g = C::generator();
         let p_i = g * d_i;
 
-        // Sample rerandomization scalars
         let r_i = C::random_scalar(rng);
         let s_i = C::random_scalar(rng);
 
-        // Compute rerandomization shares
         let u_prime_i = g * r_i + u * s_i;
         let v_prime_i = elgamal_pk * r_i + v * s_i;
 
-        // Build R_RE proof
-        // Statement: (G, P, U, V, U'_i, V'_i) with witness (r_i, s_i)
-        // such that U'_i = r_i*G + s_i*U and V'_i = r_i*P + s_i*V
         let re_stmt = ReStatement::<C> {
             g,
             p: elgamal_pk,
@@ -204,10 +138,6 @@ where
         (state, round1_msg)
     }
 
-    /// Process all Round-1 messages, verify $R_{RE}$ proofs, aggregate
-    /// rerandomization shares, and produce the Round-2 broadcast message.
-    ///
-    /// `msgs` should contain all Round-1 messages from *other* parties.
     pub fn handle_round1(
         &self,
         msgs: &[CheckDhRound1Msg<C>],
@@ -216,7 +146,6 @@ where
         let n = self.parties.len();
         let g = C::generator();
 
-        // Collect all rerandomization shares (including own)
         let mut u_primes: Vec<Option<C::ProjectivePoint>> = vec![None; n];
         let mut v_primes: Vec<Option<C::ProjectivePoint>> = vec![None; n];
 
@@ -237,7 +166,6 @@ where
                 return Err(format!("duplicate Round-1 message from {}", msg.from));
             }
 
-            // Verify R_RE proof
             let re_stmt = ReStatement::<C> {
                 g,
                 p: self.elgamal_pk,
@@ -257,7 +185,6 @@ where
             v_primes[idx] = Some(msg.v_prime_i);
         }
 
-        // Ensure all parties sent Round-1 messages
         for (i, slot) in u_primes.iter().enumerate() {
             if slot.is_none() {
                 return Err(format!(
@@ -267,7 +194,6 @@ where
             }
         }
 
-        // Aggregate: (U', V') = sum of (U'_j, V'_j)
         let u_prime: C::ProjectivePoint = u_primes
             .iter()
             .map(|s| s.unwrap())
@@ -279,11 +205,8 @@ where
             .reduce(|acc, p| acc + p)
             .expect("at least one party");
 
-        // Compute W_i = d_i * U'
         let w_i = u_prime * self.d_i;
 
-        // Build R_DH proof: prove (G, U', P_i, W_i) is a DH tuple with witness d_i
-        // i.e., P_i = d_i * G and W_i = d_i * U'
         let ddh_stmt = DdhStatement::<C> {
             g,
             a: u_prime,
@@ -304,12 +227,6 @@ where
         Ok((round2_msg, aggregated))
     }
 
-    /// Process all Round-2 messages and determine whether $(G, \mathcal{P}, U, V)$
-    /// is a Diffie-Hellman tuple.
-    ///
-    /// Verifies all $R_{DH}$ proofs and checks $\sum W_j = V'$.
-    ///
-    /// Returns `Ok(true)` if the tuple is valid (DH), `Ok(false)` if not.
     pub fn finish_round2(
         &self,
         msgs: &[CheckDhRound2Msg<C>],
@@ -320,7 +237,6 @@ where
 
         let mut w_shares: Vec<Option<C::ProjectivePoint>> = vec![None; n];
 
-        // Compute own W_i (recompute to avoid storing extra state)
         let my_index = self.parties.iter().position(|p| *p == self.my_id).unwrap();
         let own_w_i = aggregated.u_prime * self.d_i;
         w_shares[my_index] = Some(own_w_i);
@@ -338,7 +254,6 @@ where
                 return Err(format!("duplicate Round-2 message from {}", msg.from));
             }
 
-            // Verify R_DH proof: (G, U', P_j, W_j) is DH tuple
             let ddh_stmt = DdhStatement::<C> {
                 g,
                 a: aggregated.u_prime,
@@ -355,7 +270,6 @@ where
             w_shares[idx] = Some(msg.w_i);
         }
 
-        // Ensure all parties sent Round-2 messages
         for (i, slot) in w_shares.iter().enumerate() {
             if slot.is_none() {
                 return Err(format!(
@@ -365,7 +279,6 @@ where
             }
         }
 
-        // Check: sum(W_j) == V'
         let sum_w: C::ProjectivePoint = w_shares
             .iter()
             .map(|s| s.unwrap())
@@ -376,17 +289,11 @@ where
     }
 }
 
-/// Aggregated rerandomization values computed at the end of Round 1.
-///
-/// Both parties must agree on $(U', V')$; this struct is passed from
-/// `handle_round1` to `finish_round2`.
 pub struct AggregatedRerand<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Aggregated rerandomized $U' = \sum U'_j$.
     pub u_prime: C::ProjectivePoint,
-    /// Aggregated rerandomized $V' = \sum V'_j$.
     pub v_prime: C::ProjectivePoint,
 }
 
@@ -397,7 +304,6 @@ mod tests {
     #[cfg(feature = "secp256k1")]
     type C = k256::Secp256k1;
 
-    /// Run the init sub-protocol and return the outputs needed for checkDH.
     #[cfg(feature = "secp256k1")]
     fn run_init(n: usize) -> (Vec<PartyId>, Vec<crate::f_mult::init::InitOutput<C>>) {
         use crate::f_mult::init::InitState;
@@ -444,8 +350,6 @@ mod tests {
         (parties, init_outputs)
     }
 
-    /// Run the full checkDH protocol for `n` parties on the given tuple (U, V).
-    /// Returns the accept/reject result from each party.
     #[cfg(feature = "secp256k1")]
     fn run_check_dh(
         parties: &[PartyId],
@@ -459,7 +363,6 @@ mod tests {
         let elgamal_pk = init_outputs[0].elgamal_pk;
         let pk_shares = &init_outputs[0].elgamal_pk_shares;
 
-        // --- Round 1: each party creates state + Round-1 message ---
         let mut states: Vec<CheckDhState<C>> = Vec::with_capacity(n);
         let mut r1_msgs: Vec<CheckDhRound1Msg<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -477,7 +380,6 @@ mod tests {
             r1_msgs.push(msg);
         }
 
-        // --- Round 2: each party processes Round-1 messages ---
         let mut r2_msgs: Vec<CheckDhRound2Msg<C>> = Vec::with_capacity(n);
         let mut aggregateds: Vec<AggregatedRerand<C>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -494,7 +396,6 @@ mod tests {
             aggregateds.push(agg);
         }
 
-        // Verify all parties computed the same aggregated (U', V')
         for i in 1..n {
             assert_eq!(
                 aggregateds[0].u_prime, aggregateds[i].u_prime,
@@ -506,7 +407,6 @@ mod tests {
             );
         }
 
-        // --- Round 3: each party processes Round-2 messages ---
         let mut results: Vec<bool> = Vec::with_capacity(n);
         for i in 0..n {
             let others: Vec<_> = r2_msgs
@@ -532,17 +432,15 @@ mod tests {
         let mut rng = rand::thread_rng();
         let g = C::generator();
 
-        // Reconstruct the full secret key d = sum(d_i)
         let d: <C as elliptic_curve::CurveArithmetic>::Scalar = init_outputs
             .iter()
             .map(|o| o.d_i)
             .reduce(|acc, x| acc + x)
             .unwrap();
 
-        // Create a valid DH tuple: (G, P, U, V) where V = d*U
         let u_scalar = C::random_scalar(&mut rng);
         let u = g * u_scalar;
-        let v = u * d; // V = d*U, so this is a valid DH tuple
+        let v = u * d;
 
         let results = run_check_dh(&parties, &init_outputs, u, v);
         for (i, result) in results.iter().enumerate() {
@@ -582,11 +480,10 @@ mod tests {
         let mut rng = rand::thread_rng();
         let g = C::generator();
 
-        // Create an INVALID DH tuple: V is random, not d*U
         let u_scalar = C::random_scalar(&mut rng);
         let u = g * u_scalar;
         let v_scalar = C::random_scalar(&mut rng);
-        let v = g * v_scalar; // V is random, NOT d*U
+        let v = g * v_scalar;
 
         let results = run_check_dh(&parties, &init_outputs, u, v);
         for (i, result) in results.iter().enumerate() {

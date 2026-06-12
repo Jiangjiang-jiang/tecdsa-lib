@@ -1,16 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! GG18 online signing protocol (Phase 5, message-dependent).
-//!
-//! Takes a `Gg18Presignature` from the presign phase plus a message hash,
-//! and runs Phase 5 (HomoElGamal verification + signature assembly) in
-//! 5 message rounds:
-//!
-//! 1. **Round 4 (Phase 5a):** Broadcast commitment to (V_i, A_i, B_i).
-//! 2. **Round 5 (Phase 5b):** Broadcast decommitment + proofs.
-//! 3. **Round 6 (Phase 5c):** Broadcast commitment to (U_i, T_i).
-//! 4. **Round 7 (Phase 5d):** Broadcast decommitment (U_i, T_i) — NO s_i.
-//! 5. **Round 8 (Phase 5e):** Broadcast s_i only after zero-check passes.
-
 pub mod msg;
 mod rounds;
 pub mod sign_keys;
@@ -25,13 +12,11 @@ use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Signature, StateMachine};
 
-/// GG18 online signing state machine (Phase 5, 5 message rounds).
 pub struct Gg18OnlineSignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     round: OnlineSignRound<C>,
-    /// RNG carried through the protocol for rounds that need randomness.
     rng: tecdsa_core::Csprng,
 }
 
@@ -40,7 +25,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new GG18 online signing state machine.
     pub fn new(config: OnlineSignConfig<C>, rng: &mut impl rand_core::CryptoRngCore) -> Self {
         let state = Round4State::new(config, rng);
         Self {
@@ -188,7 +172,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant.
 fn msg_round<C: TecdsaCurve>(msg: &Gg18SignMsg<C>) -> u16
 where
     FieldBytesSize<C>: ModulusSize,

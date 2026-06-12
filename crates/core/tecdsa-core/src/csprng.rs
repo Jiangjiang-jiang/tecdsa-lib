@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use rand_core::{CryptoRng, OsRng, RngCore};
 
 pub struct Csprng(OsRng);

@@ -1,14 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! ZK proofs for ring-Pedersen parameter correctness.
-//!
-//! - [`PiPrm`] -- proves knowledge of lambda such that s = t^lambda mod N,
-//!   using m = 80 binary Fiat-Shamir challenges (CGGMP20 Figure 13).
-//!   Soundness error: 2^{-80}.
-//!
-//! - [`PiMod`] -- proves N is a Paillier-Blum modulus: product of two primes
-//!   p, q with p = q = 3 mod 4, via Jacobi classification + Blum fourth roots
-//!   + N-th roots (CGGMP20 Figure 12). Soundness error: 2^{-81}.
-
 use rand_core::CryptoRngCore;
 use rug::Integer;
 use serde::{Deserialize, Serialize};
@@ -25,14 +14,6 @@ fn integer_to_bytes(val: &Integer) -> Vec<u8> {
     bytes
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Pi_prm — ring-Pedersen parameter proof (CGGMP20 Figure 13)
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Proof that ring-Pedersen parameters (N, s, t) are well-formed.
-///
-/// Demonstrates knowledge of lambda such that s = t^lambda mod N,
-/// using m = 80 binary Fiat-Shamir challenges per CGGMP20 Figure 13.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiPrm {
     #[serde(with = "tecdsa_bigint::int_wire::vec")]
@@ -42,7 +23,6 @@ pub struct PiPrm {
 }
 
 impl PiPrm {
-    /// Produce a `PiPrm` proof (CGGMP20 Figure 13, non-interactive).
     #[must_use]
     #[allow(clippy::similar_names)]
     pub fn prove(
@@ -81,7 +61,6 @@ impl PiPrm {
         Self { commitment, zs }
     }
 
-    /// Verify `PiPrm` proof (CGGMP20 Figure 13).
     #[must_use]
     pub fn verify(&self, params: &PedersenModParams) -> bool {
         if !params.is_well_formed() {
@@ -162,15 +141,6 @@ impl PiPrm {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Pi_mod — Blum modulus proof (CGGMP20 Figure 12)
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Proof that N is a Paillier-Blum modulus (CGGMP20 Figure 12).
-///
-/// Proves N = pq where p, q are primes with p = q = 3 mod 4,
-/// using m = 80 challenges with Jacobi classification, Blum fourth roots,
-/// and N-th roots. Soundness error: 2^{-81}.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiMod {
     #[serde(with = "tecdsa_bigint::int_wire")]
@@ -189,15 +159,6 @@ struct PiModPoint {
 }
 
 impl PiMod {
-    /// Prove that a raw modulus N = p*q is a Blum modulus (CGGMP20 Figure 12).
-    ///
-    /// This is the primary API for proving any RSA-type modulus is Blum,
-    /// including Paillier moduli used in CGGMP20 aux-info.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `find_residue` fails for a challenge, which should not
-    /// happen with a valid Blum modulus and correctly chosen w.
     #[allow(clippy::similar_names, clippy::many_single_char_names)]
     pub fn prove_modulus(
         n: &Integer,
@@ -246,11 +207,6 @@ impl PiMod {
         Some(Self { w, proof_points })
     }
 
-    /// Convenience wrapper: prove ring-Pedersen modulus is Blum.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `find_residue` fails (see [`prove_modulus`](Self::prove_modulus)).
     pub fn prove(
         params: &PedersenModParams,
         secret: &PedersenModSecret,
@@ -259,11 +215,6 @@ impl PiMod {
         Self::prove_modulus(&params.n, &secret.p, &secret.q, rng)
     }
 
-    /// Verify `PiMod` proof against a raw modulus N (CGGMP20 Figure 12).
-    ///
-    /// The `rng` parameter is used for probabilistic Miller-Rabin composite
-    /// testing (25 rounds). For deterministic benchmark results, pass a
-    /// seeded CSPRNG.
     #[must_use]
     pub fn verify_modulus(&self, n: &Integer, rng: &mut impl CryptoRngCore) -> bool {
         use crate::number_theory::is_probably_composite;
@@ -332,7 +283,6 @@ impl PiMod {
         true
     }
 
-    /// Convenience wrapper: verify against ring-Pedersen modulus.
     #[must_use]
     pub fn verify(&self, params: &PedersenModParams, rng: &mut impl CryptoRngCore) -> bool {
         self.verify_modulus(&params.n, rng)
@@ -387,8 +337,6 @@ mod tests {
         PedersenModParams::generate(bits, &mut rng)
     }
 
-    // -- PiPrm tests --
-
     #[test]
     fn piprm_honest_proof_verifies() {
         let (params, secret) = generate_blum_params(256);
@@ -435,8 +383,6 @@ mod tests {
         assert_eq!(proof.commitment.len(), SECURITY_PARAM);
         assert_eq!(proof.zs.len(), SECURITY_PARAM);
     }
-
-    // -- PiMod tests --
 
     #[test]
     fn pimod_honest_proof_verifies() {
@@ -500,7 +446,6 @@ mod tests {
         let (params, secret) = generate_blum_params(256);
         let mut rng = rand::thread_rng();
         let mut proof = PiMod::prove(&params, &secret, &mut rng).expect("prove must succeed");
-        // Replace w with a value that has Jacobi symbol +1 (a QR)
         let qr = params
             .t
             .clone()

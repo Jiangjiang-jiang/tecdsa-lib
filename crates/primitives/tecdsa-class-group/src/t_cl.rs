@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -8,29 +7,13 @@
     clippy::cast_possible_wrap
 )]
 
-//! Threshold CL: partial decryption, final decryption, and Lagrange
-//! interpolation over class-group elements.
-//!
-//! In a `(t, n)` threshold CL scheme, each party `i` holds a share
-//! `sk_i` of the secret key and a public key `pk_i = h^{sk_i}`.
-//! The overall secret key is `sk = sum(lambda_i * sk_i)` over any
-//! `t`-subset, where `lambda_i` are Lagrange coefficients.
-//!
-//! - **`PartialDecryption`**: party `i` computes `pd_i = c1^{sk_i}`.
-//! - **`FinDec`**: given `t` partial decryptions, combine them via
-//!   Lagrange in the exponent: `combined = product(pd_i^{lambda_i})`,
-//!   then extract plaintext from `c2 * combined^{-1}`.
-
 use rug::{integer::Order, Integer};
 use tecdsa_bigint::{mul_mod, pow_mod};
 
 use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
 
-/// A partial decryption share from party `i`.
 pub struct PartialDecryption {
-    /// The party index (1-based).
     pub party_index: usize,
-    /// The decryption share `pd_i = c1^{sk_i}`.
     pub dec_share: Qfi,
 }
 
@@ -42,9 +25,6 @@ impl std::fmt::Debug for PartialDecryption {
     }
 }
 
-/// Computes a partial decryption for party `i`.
-///
-/// `sk_i_bytes` is party `i`'s secret-key share as big-endian bytes.
 pub fn partial_decrypt(
     setup: &ClSetup,
     ct: &ClHsmqkCiphertext,
@@ -59,14 +39,6 @@ pub fn partial_decrypt(
     })
 }
 
-/// Computes integer Lagrange coefficients scaled by `delta` for the
-/// given party indices evaluated at x=0.
-///
-/// Each coefficient is `delta * product_{j!=k} (-i_j / (i_k - i_j))`,
-/// which is guaranteed to be an integer because `delta = N!` contains
-/// all required denominators as factors.
-///
-/// Returns `(index, signed_lambda)` pairs.
 fn lagrange_coefficients_delta(indices: &[usize], delta: &Integer) -> Vec<(usize, Integer)> {
     let mut result = Vec::with_capacity(indices.len());
     for (k, &i_k) in indices.iter().enumerate() {
@@ -79,7 +51,6 @@ fn lagrange_coefficients_delta(indices: &[usize], delta: &Integer) -> Vec<(usize
             }
             let i_j_big = Integer::from(i_j as i64);
             let diff = Integer::from(&i_k_big - &i_j_big);
-            // Exact division: delta = N! ensures this is always exact.
             coeff /= &diff;
             coeff *= Integer::from(-&i_j_big);
         }
@@ -90,22 +61,6 @@ fn lagrange_coefficients_delta(indices: &[usize], delta: &Integer) -> Vec<(usize
     result
 }
 
-/// Final decryption: combines `t` partial decryptions using Lagrange
-/// interpolation to recover the plaintext.
-///
-/// Uses the "delta trick" from threshold CL-HSMqk: Lagrange
-/// coefficients are multiplied by `delta = N!` to ensure integer
-/// exponents.  The combined result is `c1^{sk * delta^2}`, so
-/// `c2^{delta^2} * combined^{-1} = f^{m * delta^2}`, and the plaintext
-/// is recovered as `dlog_in_F(.) * delta^{-2} mod q`.
-///
-/// - `n_parties`: total number of parties (used to compute `delta = n!`).
-/// - `partial_decs`: exactly `t` partial decryptions from distinct parties.
-///
-/// Each partial decryption share must have been computed from a key
-/// share where the Shamir polynomial has constant term `delta * sk`.
-///
-/// Returns the plaintext as big-endian bytes.
 #[allow(non_snake_case)]
 pub fn final_decrypt(
     setup: &ClSetup,
@@ -116,7 +71,6 @@ pub fn final_decrypt(
     let q_bytes = setup.q_bytes()?;
     let q = Integer::from_digits(&q_bytes, Order::Msf);
 
-    // delta = n_parties!
     let mut delta = Integer::from(1);
     for i in 2..=n_parties {
         delta *= i as i64;
@@ -125,10 +79,6 @@ pub fn final_decrypt(
     let indices: Vec<usize> = partial_decs.iter().map(|pd| pd.party_index).collect();
     let coeffs = lagrange_coefficients_delta(&indices, &delta);
 
-    // Compute combined = product(pd_i^{lambda_i}) via one shared-squaring
-    // multi-exponentiation (lambda_i are signed Lagrange-delta coefficients).
-    // Since shares come from F(j) = delta*sk + r1*j + ..., and lambda_i includes
-    // a delta factor, the combined exponent is sk * delta^2.
     let mut bases: Vec<&Qfi> = Vec::with_capacity(coeffs.len());
     let mut exps: Vec<(bool, Vec<u8>)> = Vec::with_capacity(coeffs.len());
     for (idx, lambda) in &coeffs {
@@ -137,17 +87,11 @@ pub fn final_decrypt(
             .find(|p| p.party_index == *idx)
             .expect("party index mismatch");
         bases.push(&pd.dec_share);
-        // `to_digits` yields the magnitude (sign discarded); track sign separately.
         let should_invert = lambda.cmp0() == core::cmp::Ordering::Less;
         exps.push((should_invert, lambda.to_digits::<u8>(Order::Msf)));
     }
     let mut combined = setup.multiexp_signed_bytes(&bases, &exps)?;
 
-    // plaintext element = c2^{delta^2} * combined^{-1}
-    //
-    // combined = c1^{sk * delta^2}
-    // c2^{delta^2} = (h^{sk*r} * f^m)^{delta^2} = h^{sk*r*delta^2} * f^{m*delta^2}
-    // result = f^{m * delta^2}
     let delta2 = Integer::from(&delta * &delta);
     let delta2_bytes = delta2.to_digits::<u8>(Order::Msf);
     let (_c1, c2) = setup.ct_components(ct)?;
@@ -155,11 +99,9 @@ pub fn final_decrypt(
     combined.neg();
     let plaintext_elt = setup.compose(&c2_delta2, &combined)?;
 
-    // Extract m * delta^2 mod q, then divide by delta^2 mod q.
     let m_scaled_bytes = setup.dlog_in_F_bytes(&plaintext_elt)?;
     let m_scaled = Integer::from_digits(&m_scaled_bytes, Order::Msf);
 
-    // delta2_inv = delta^{-2} mod q  (via Fermat's little theorem)
     let q_minus_2 = Integer::from(&q - 2);
     let delta2_inv = pow_mod(&delta2, &q_minus_2, &q);
 
@@ -172,18 +114,6 @@ mod tests {
     use super::*;
     use crate::cl::ClSetup;
 
-    /// Generates threshold key shares using the delta-scaled Shamir
-    /// scheme matching the BICYCL threshold CL protocol.
-    ///
-    /// The polynomial is `F(X) = delta * sk + r1 * X + ... + r_{t-1} * X^{t-1}`
-    /// where `delta = n!` (n factorial).  The constant term is scaled
-    /// by delta so that integer Lagrange interpolation (also scaled
-    /// by delta) recovers `sk * delta^2` exactly.
-    ///
-    /// Shares are computed over the integers (unbounded), NOT mod q.
-    ///
-    /// Returns shares as signed big-endian byte strings (for exp_bytes,
-    /// callers must handle sign separately).
     fn shamir_share_delta(
         setup: &mut ClSetup,
         sk_bytes: &[u8],
@@ -192,15 +122,12 @@ mod tests {
     ) -> ClResult<Vec<Vec<u8>>> {
         let sk = Integer::from_digits(sk_bytes, Order::Msf);
 
-        // delta = n!
         let mut delta = Integer::from(1);
         for i in 2..=n {
             delta *= i as u64;
         }
         let delta_sk = Integer::from(&delta * &sk);
 
-        // Generate t-1 random coefficients (arbitrary precision).
-        // Use secretkey_bound as the range for random coefficients.
         let mut coeffs: Vec<Integer> = vec![delta_sk];
         for _ in 1..t {
             let r = super::super::zk::sample_random(setup)?;
@@ -208,7 +135,6 @@ mod tests {
             coeffs.push(r_val);
         }
 
-        // Evaluate polynomial at i = 1, 2, ..., n (over the integers).
         let mut shares = Vec::with_capacity(n);
         for i in 1..=n {
             let x = Integer::from(i as i64);
@@ -218,15 +144,7 @@ mod tests {
                 val += Integer::from(coeff * &x_pow);
                 x_pow *= &x;
             }
-            // Store share magnitude as big-endian bytes. exp_bytes
-            // requires unsigned input; for small (t,n) and large
-            // delta*sk, polynomial evaluations are always non-negative.
-            // We assert this below to catch any unexpected cases.
             let abs_bytes = val.to_digits::<u8>(Order::Msf);
-            // For negative values, we'd need to negate after exponentiation.
-            // In practice, delta * sk is much larger than the random terms,
-            // so shares are always positive.
-            // To be safe, we'll assert non-negative in tests.
             assert!(
                 val.cmp0() != core::cmp::Ordering::Less,
                 "test assumption: share should be non-negative for small t,n"
@@ -243,13 +161,11 @@ mod tests {
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
 
-        let msg = b"\x2a"; // 42
+        let msg = b"\x2a";
         let ct = setup.encrypt_bytes(&pk_raw, msg).expect("encrypt");
 
-        // Single party (1-of-1) partial decryption = full decryption.
         let pd = partial_decrypt(&setup, &ct, 1, &sk_bytes).expect("pd");
 
-        // Verify: pd = c1^sk, so c2 * pd^{-1} should give f^m.
         let (_c1, c2) = setup.ct_components(&ct).expect("comp");
         let mut pd_inv = pd.dec_share.clone();
         pd_inv.neg();
@@ -273,7 +189,6 @@ mod tests {
         let t = 2;
         let shares = shamir_share_delta(&mut setup, &sk_bytes, n, t).expect("shares");
 
-        // Partial decryptions from parties 1 and 2.
         let pd1 = partial_decrypt(&setup, &ct, 1, &shares[0]).expect("pd1");
         let pd2 = partial_decrypt(&setup, &ct, 2, &shares[1]).expect("pd2");
 
@@ -296,7 +211,6 @@ mod tests {
         let t = 3;
         let shares = shamir_share_delta(&mut setup, &sk_bytes, n, t).expect("shares");
 
-        // Partial decryptions from parties 1, 3, 5.
         let pd1 = partial_decrypt(&setup, &ct, 1, &shares[0]).expect("pd1");
         let pd3 = partial_decrypt(&setup, &ct, 3, &shares[2]).expect("pd3");
         let pd5 = partial_decrypt(&setup, &ct, 5, &shares[4]).expect("pd5");

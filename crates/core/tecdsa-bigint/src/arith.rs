@@ -1,20 +1,10 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use rug::{Complete, Integer};
 
-/// Computes the greatest common divisor of `a` and `b`.
 #[must_use]
 pub fn gcd(a: &Integer, b: &Integer) -> Integer {
     a.clone().gcd(b)
 }
 
-/// Modular exponentiation: returns `base^exp mod modulus` as the unique
-/// representative in `[0, modulus)`.
-///
-/// `modulus` must be non-zero.
-///
-/// # Panics
-///
-/// Panics if `exp` is negative and `base` is not invertible modulo `modulus`.
 #[must_use]
 pub fn pow_mod(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
     base.pow_mod_ref(exp, modulus)
@@ -22,27 +12,11 @@ pub fn pow_mod(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
         .complete()
 }
 
-/// Computes `(a * b) mod modulus` as the unique representative in
-/// `[0, modulus)`.
-///
-/// `modulus` must be non-zero.
 #[must_use]
 pub fn mul_mod(a: &Integer, b: &Integer, modulus: &Integer) -> Integer {
     (a * b).complete().modulo(modulus)
 }
 
-/// Simultaneous multi-exponentiation `∏ bases[i]^exps[i] mod modulus` via an
-/// interleaved fixed-window (Straus/Shamir) algorithm: a single squaring chain
-/// is shared across all bases (`max_bits` squarings instead of one full chain
-/// per base), which is the dominant cost. Each base contributes one
-/// multiplication per nonzero `W`-bit window.
-///
-/// Modular inversion is *not* free here (unlike class groups), so this uses
-/// plain unsigned windows rather than signed-digit (NAF/JSF) recoding. All
-/// exponents must be non-negative.
-///
-/// # Panics
-/// Panics if `bases.len() != exps.len()`.
 #[must_use]
 pub fn multi_exp(bases: &[&Integer], exps: &[&Integer], modulus: &Integer) -> Integer {
     assert_eq!(
@@ -61,7 +35,6 @@ pub fn multi_exp(bases: &[&Integer], exps: &[&Integer], modulus: &Integer) -> In
         return Integer::from(1);
     }
 
-    // Per-base window table: base^d mod modulus for d in 0..2^W.
     let mut tables: Vec<Vec<Integer>> = Vec::with_capacity(bases.len());
     for b in bases {
         let mut tab = Vec::with_capacity(TABLE);
@@ -95,18 +68,11 @@ pub fn multi_exp(bases: &[&Integer], exps: &[&Integer], modulus: &Integer) -> In
     result
 }
 
-/// Computes the Jacobi symbol `(a/n)`.
-///
-/// Returns `1`, `-1`, or `0`.  `n` must be a positive odd integer.
 #[must_use]
 pub fn jacobi(a: &Integer, n: &Integer) -> i8 {
     a.jacobi(n) as i8
 }
 
-/// Tonelli-Shanks square root: returns `r` such that `r² ≡ n (mod p)`,
-/// or `None` if `n` is a quadratic non-residue mod `p`.
-///
-/// `p` must be an odd prime.
 #[must_use]
 #[allow(clippy::many_single_char_names)]
 pub fn tonelli_shanks(n: &Integer, p: &Integer) -> Option<Integer> {

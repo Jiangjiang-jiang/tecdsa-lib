@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -6,14 +5,6 @@
     clippy::missing_panics_doc,
     clippy::doc_markdown
 )]
-
-//! `R_part_dec` — partial decryption proof.
-//!
-//! Proves that `pd = c1^{sk}` is a correct partial decryption, where
-//! `pk = h^{sk}`.  This is the same relation as `R_dec_dl` but with
-//! the dedicated `Part_Dec` naming from the threshold ECDSA literature.
-//!
-//! Re-exports `RDecDlProof` under the `RPartDecProof` name.
 
 pub use super::r_dec_dl::RDecDlProof as RPartDecProof;
 
@@ -51,7 +42,6 @@ mod tests {
         let (c1, _) = setup.ct_components(&ct).expect("comp");
         let pd = setup.exp_bytes(&c1, &sk_bytes).expect("pd");
 
-        // Prove with a different sk.
         let (sk2, _) = setup.keygen().expect("kg2");
         let wrong_sk = setup.sk_to_bytes(&sk2).expect("bytes");
         let proof = RPartDecProof::prove(&mut setup, &pk_raw, &ct, &pd, &wrong_sk).expect("prove");

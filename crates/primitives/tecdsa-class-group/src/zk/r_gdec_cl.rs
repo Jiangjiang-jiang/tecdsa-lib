@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,18 +6,11 @@
     clippy::doc_markdown
 )]
 
-//! `R_gdec_cl` — generalized decryption proof.
-//!
-//! Proves that `D = c2 * (c1^{sk})^{-1}` is the correct generalized
-//! decryption of ciphertext `(c1, c2)` under secret key `sk`, where
-//! `pk = h^{sk}`.
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{
     Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
-/// Generalized decryption proof.
 pub struct RGdecClProof {
     t1: Qfi,
     t2: Qfi,
@@ -27,12 +19,10 @@ pub struct RGdecClProof {
 }
 
 impl RGdecClProof {
-    /// Constructs from raw parts (for deserialization).
     pub fn from_parts(t1: Qfi, t2: Qfi, z: Vec<u8>, e: Vec<u8>) -> Self {
         Self { t1, t2, z, e }
     }
 
-    /// Extracts raw parts (for serialization).
     pub fn to_parts(&self) -> (Qfi, Qfi, Vec<u8>, Vec<u8>) {
         (
             self.t1.clone(),
@@ -42,9 +32,6 @@ impl RGdecClProof {
         )
     }
 
-    /// Proves correct generalized decryption.
-    ///
-    /// `dec_result` is the decrypted element `D = c2 * (c1^{sk})^{-1}`.
     pub fn prove(
         setup: &mut ClSetup,
         pk: &ClHsmqkPublicKey,
@@ -71,7 +58,6 @@ impl RGdecClProof {
         Ok(Self { t1, t2, z, e })
     }
 
-    /// Verifies the generalized decryption proof.
     pub fn verify(
         &self,
         setup: &ClSetup,
@@ -92,7 +78,6 @@ impl RGdecClProof {
             return Ok(false);
         }
 
-        // Check 1: h^z == t1 * pk^e
         let h_z = setup.power_of_h_bytes(&self.z)?;
         let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
         let rhs1 = setup.compose(&self.t1, &pk_e)?;
@@ -100,13 +85,9 @@ impl RGdecClProof {
             return Ok(false);
         }
 
-        // Check 2: c1^z == t2 * (c2 * D^{-1})^e
-        // Note: c1^{sk} = c2 * D^{-1}, so we check c1^z == t2 * (c2 * D^{-1})^e.
         let mut d_inv = dec_result.clone();
         d_inv.neg();
         let c2_d_inv = setup.compose(&c2, &d_inv)?;
-        // c1^z == t2 * (c2*D^-1)^e ⟺ c1^z * (c2*D^-1)^{-e} == t2 (shared-squaring
-        // multi-exp; both bases vary per proof).
         let lhs2 = setup.multiexp_signed_bytes(
             &[&c1, &c2_d_inv],
             &[(false, self.z.clone()), (true, self.e.clone())],

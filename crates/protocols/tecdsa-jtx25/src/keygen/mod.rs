@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -14,33 +13,6 @@
     non_snake_case
 )]
 
-//! JTX25 key generation protocol (3 rounds).
-//!
-//! Runs two concurrent DKGs:
-//! 1. **DKG-CL**: distributed threshold CL key pair via the paper-compliant
-//!    `dkg_cl` module (Gen/GenVf/Reveal/RevealVf/Aggregate) using chunk
-//!    encryption, Pedersen commitments, and Z_Blnt / Z_GDec-CL proofs.
-//! 2. **DKG-Sig**: ECDSA signing key (X, {X_i, x_i}) using PVSS.
-//!
-//! ## Rounds
-//!
-//! 1. **Round 1**: each party generates CL keypair (sk_i, pk_i), broadcasts
-//!    `(pk_i, pi_key)`.
-//! 2. **Round 2**: after verifying R_key proofs, each party:
-//!    - DKG-Sig: distributes PVSS shares for the ECDSA signing key (broadcast).
-//!    - DKG-CL Gen: calls `dkg_cl_gen()`, broadcasts PCs + chunk_cts + agg_cts
-//!      + Z_Blnt proofs, and sends per-recipient encrypted chunks via P2P.
-//! 3. **Round 3**: after verifying R_Sh and Z_Blnt proofs, each party:
-//!    - DKG-Sig: decrypts PVSS shares, combines into x_i, proves R_Dec_DL.
-//!    - DKG-CL Reveal: calls `dkg_cl_reveal()`, broadcasts CL pk share +
-//!      Z_GDec-CL proof.
-//!    - DKG-CL RevealVf + Aggregate: verifies proofs, computes aggregate pk.
-//!
-//! After verifying Round 3 proofs, each party:
-//! - Computes joint ECDSA PK via Lagrange interpolation.
-//! - Aggregates CL pk via `dkg_cl_aggregate()`.
-//! - Stores the `Jtx25KeyShare` with DKG-CL combined shares.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
@@ -55,22 +27,13 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, Sta
 
 use crate::{error::Jtx25Error, key_share::Jtx25KeyShare};
 
-// ---------------------------------------------------------------------------
-// Message type
-// ---------------------------------------------------------------------------
-
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum Jtx25KeygenMsg {
     Round1(Vec<u8>),
     Round2(Vec<u8>),
-    /// P2P message carrying DKG-CL per-recipient chunk ciphertexts.
     Round2P2p(Vec<u8>),
     Round3(Vec<u8>),
 }
-
-// ---------------------------------------------------------------------------
-// Internal round states
-// ---------------------------------------------------------------------------
 
 struct Round1State {
     my_id: PartyId,
@@ -100,11 +63,8 @@ struct Round2State {
     cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     my_pvss: tecdsa_class_group::pvss_share::PvssShareOutput,
     received: BTreeMap<PartyId, Round2Msg>,
-    /// DKG-CL Gen output (kept for Reveal phase).
     dkg_cl_gen_output: DkgClGenOutput,
-    /// Received DKG-CL Gen per-recipient data from peers (for GenVf + Reveal).
     dkg_cl_received: BTreeMap<PartyId, DkgClGenPerRecipient>,
-    /// Count of P2P messages received (for round gate synchronization).
     p2p_received: std::collections::BTreeSet<PartyId>,
     outgoing: Vec<Outgoing<Jtx25KeygenMsg>>,
     cl_setup_seed: String,
@@ -126,15 +86,9 @@ struct Round3State {
     outgoing: Vec<Outgoing<Jtx25KeygenMsg>>,
     cl_setup_seed: String,
     use_128bit_security: bool,
-    /// DKG-CL combined secret share (from `dkg_cl_reveal`).
     dkg_cl_combined_share: Vec<u8>,
-    /// Own DKG-CL public key share `h^{combined_share}`.
     my_dkg_cl_lifted_share: Qfi,
-    /// Own DKG-CL combined ciphertext (for RevealVf).
     _my_dkg_cl_combined_ct: tecdsa_class_group::cl::ClCiphertext,
-    /// Received DKG-CL per-recipient chunk ciphertexts from all dealers
-    /// (indexed by dealer party ID). Stored for RevealVf reconstruction
-    /// of each party's combined ciphertext.
     _all_dkg_cl_chunk_cts: BTreeMap<PartyId, Vec<(Qfi, Qfi)>>,
     cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     pvss_c1_qfis: BTreeMap<PartyId, Qfi>,
@@ -142,24 +96,17 @@ struct Round3State {
 
 struct Round3Msg {
     public_share: k256::ProjectivePoint,
-    /// DKG-CL public key share from Reveal phase.
     dkg_cl_lifted_share: Qfi,
-    /// DKG-CL R_GDec-CL proof (kept for diagnostics).
     _dkg_cl_proof: DkgClRevealWire,
 }
 
-/// Wire-friendly representation of DKG-CL Reveal data.
 struct DkgClRevealWire {
-    /// The CL public key share `h^{x_i}`.
     lifted_share: Qfi,
-    /// R_GDec-CL proof fields.
     proof_t1: Qfi,
     proof_t2: Qfi,
     proof_z: Vec<u8>,
     proof_e: Vec<u8>,
-    /// combined_share bytes (needed for RevealVf to reconstruct D).
     combined_share: Vec<u8>,
-    /// combined_ct components (c1, c2) for proof verification.
     combined_ct_c1: Qfi,
     combined_ct_c2: Qfi,
 }
@@ -176,10 +123,6 @@ use tecdsa_class_group::pvss_share::{
     pvss_share_decrypt, pvss_share_distribute, pvss_share_verify, PvssShareOutput,
 };
 
-// ---------------------------------------------------------------------------
-// Public machine
-// ---------------------------------------------------------------------------
-
 pub struct Jtx25KeygenMachine {
     round: KeygenRound,
     setup: ClSetup,
@@ -187,13 +130,6 @@ pub struct Jtx25KeygenMachine {
 }
 
 impl Jtx25KeygenMachine {
-    /// Create a new JTX25 keygen state machine from a pre-built `ClSetup`.
-    ///
-    /// This avoids recreating the expensive CL setup per party,
-    /// which is useful in benchmarks where all parties share the same
-    /// discriminant parameters.
-    ///
-    /// See [`Self::new`] for the full documentation.
     pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -202,9 +138,6 @@ impl Jtx25KeygenMachine {
         use_128bit_security: bool,
         mut setup: ClSetup,
     ) -> tecdsa_core::Result<Self> {
-        // Generate the per-party long-term CL keypair, then delegate. Benches time
-        // this (n,t)-independent keygen separately (see `setup_benchmarks`) and call
-        // `new_with_keypair` so DKG measures only the interactive sharing.
         let (cl_sk_raw, cl_pk_raw) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
@@ -220,8 +153,6 @@ impl Jtx25KeygenMachine {
         )
     }
 
-    /// Like [`new_with_setup`](Self::new_with_setup) but reuses a pre-generated
-    /// per-party CL keypair instead of generating it inside the constructor.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_keypair(
         my_id: PartyId,
@@ -243,18 +174,15 @@ impl Jtx25KeygenMachine {
             )));
         }
 
-        // Per-party CL keypair is provided by the caller.
         let cl_sk_bytes = setup
             .sk_to_bytes(&cl_sk_raw)
             .map_err(|e| TecdsaError::Other(format!("sk_to_bytes: {e}")))?;
 
         let cl_pk_qfi = cl_pk_raw.elt().clone();
 
-        // Generate R_key proof.
         let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_bytes)
             .map_err(|e| TecdsaError::Other(format!("R_key prove: {e}")))?;
 
-        // Serialize and queue Round 1 broadcast.
         let r1_payload = serialize_round1(&cl_pk_qfi, &proof)
             .map_err(|e| TecdsaError::Other(format!("R1 serialize: {e}")))?;
 
@@ -284,10 +212,6 @@ impl Jtx25KeygenMachine {
         })
     }
 
-    /// Create a new JTX25 keygen state machine.
-    ///
-    /// Immediately runs Round 1 (CL key generation + R_key proof) and
-    /// queues the Round 1 broadcast.
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -323,7 +247,6 @@ impl StateMachine for Jtx25KeygenMachine {
     type Outbound = Jtx25KeygenMsg;
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
-        // Reject messages from self.
         let my_id = match &self.round {
             KeygenRound::Round1(s) => s.my_id,
             KeygenRound::Round2(s) => s.my_id,
@@ -343,7 +266,6 @@ impl StateMachine for Jtx25KeygenMachine {
         let round = std::mem::replace(&mut self.round, KeygenRound::Poisoned);
 
         match (round, msg) {
-            // -- Round 1: collect CL public keys + R_key proofs --
             (KeygenRound::Round1(mut state), Jtx25KeygenMsg::Round1(data)) => {
                 if state.received.contains_key(&from) {
                     self.round = KeygenRound::Round1(state);
@@ -383,7 +305,6 @@ impl StateMachine for Jtx25KeygenMachine {
                 Ok(())
             }
 
-            // -- Round 2 broadcast: collect PVSS distributions + DKG-CL Gen data --
             (KeygenRound::Round2(mut state), Jtx25KeygenMsg::Round2(data)) => {
                 if state.received.contains_key(&from) {
                     self.round = KeygenRound::Round2(state);
@@ -418,7 +339,6 @@ impl StateMachine for Jtx25KeygenMachine {
                     ordered_pks.push(pk);
                 }
 
-                // Verify PVSS R_Sh proof.
                 let valid = pvss_share_verify(
                     &self.setup,
                     &party_ids,
@@ -436,7 +356,6 @@ impl StateMachine for Jtx25KeygenMachine {
                     )));
                 }
 
-                // Verify DKG-CL GenVf (R_Blnt proof).
                 let from_idx = state
                     .all_parties
                     .iter()
@@ -469,7 +388,6 @@ impl StateMachine for Jtx25KeygenMachine {
                 state.received.insert(from, Round2Msg { c1, c2s });
                 state.dkg_cl_received.insert(from, dkg_cl_gen_per_recipient);
 
-                // Transition when broadcast and P2P received from all peers.
                 let expected = self.expected_count();
                 if state.received.len() == expected
                     && state.dkg_cl_received.len() == expected
@@ -483,10 +401,6 @@ impl StateMachine for Jtx25KeygenMachine {
                 Ok(())
             }
 
-            // -- Round 2 P2P: synchronization messages --
-            // In the paper-compliant DKG-CL, all per-recipient data is
-            // broadcast (proofs are publicly verifiable). P2P messages are
-            // retained for round synchronization only.
             (KeygenRound::Round2(mut state), Jtx25KeygenMsg::Round2P2p(_data)) => {
                 if !state.all_parties.contains(&from) {
                     self.round = KeygenRound::Round2(state);
@@ -498,7 +412,6 @@ impl StateMachine for Jtx25KeygenMachine {
                 }
                 state.p2p_received.insert(from);
 
-                // Transition when broadcast and P2P received from all peers.
                 let expected = self.expected_count();
                 if state.received.len() == expected
                     && state.dkg_cl_received.len() == expected
@@ -512,7 +425,6 @@ impl StateMachine for Jtx25KeygenMachine {
                 Ok(())
             }
 
-            // -- Round 3: collect public shares + DKG-CL Reveal data --
             (KeygenRound::Round3(mut state), Jtx25KeygenMsg::Round3(data)) => {
                 if state.received.contains_key(&from) {
                     self.round = KeygenRound::Round3(state);
@@ -522,7 +434,6 @@ impl StateMachine for Jtx25KeygenMachine {
                 let (public_share, proof, pd, dkg_cl_reveal_wire) = deserialize_round3(&data)
                     .map_err(|e| TecdsaError::Other(format!("R3 deserialize from {from}: {e}")))?;
 
-                // Verify R_Dec_DL for PVSS.
                 let from_pk_qfi = state
                     .cl_pk_qfis
                     .get(&from)
@@ -555,7 +466,6 @@ impl StateMachine for Jtx25KeygenMachine {
                     )));
                 }
 
-                // Verify DKG-CL RevealVf (R_GDec-CL proof).
                 let from_reveal_ct = self
                     .setup
                     .ct_from_components(
@@ -657,10 +567,6 @@ impl StateMachine for Jtx25KeygenMachine {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round transitions
-// ---------------------------------------------------------------------------
-
 impl Jtx25KeygenMachine {
     fn transition_r1_to_r2(&mut self, state: Round1State) -> tecdsa_core::Result<Round2State> {
         let n = state.all_parties.len();
@@ -697,7 +603,6 @@ impl Jtx25KeygenMachine {
             }
         }
 
-        // Run PVSS ShareDist for ECDSA signing key.
         let party_ids: Vec<u16> = (1..=n as u16).collect();
 
         let pvss_output = pvss_share_distribute(
@@ -709,7 +614,6 @@ impl Jtx25KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("pvss_distribute: {e}")))?;
 
-        // --- DKG-CL Gen: paper-compliant chunk encryption + R_Blnt ---
         let dkg_cl_gen_output = dkg_cl::dkg_cl_gen_with_secret(
             &mut self.setup,
             &ordered_pks,
@@ -720,43 +624,14 @@ impl Jtx25KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("DKG-CL Gen failed: {e}")))?;
 
-        // Serialize Round 2 broadcast: PVSS data + DKG-CL Gen per-recipient
-        // data for the recipient (we send our own per-recipient[my_idx] as
-        // a self-reference; each peer gets per_recipient[peer_idx]).
-        //
-        // The broadcast carries: PVSS + DKG-CL Gen data for the RECEIVER.
-        // Since each peer needs different per-recipient data, we need to
-        // send per-peer messages.
-        //
-        // Design choice: We send a single broadcast with PVSS data + our
-        // OWN DKG-CL per-recipient[receiver_idx] in per-party messages.
-        // But since the Orchestrator/transport layer supports broadcast +
-        // P2P, we use broadcast for PVSS and P2P for DKG-CL per-recipient.
-        //
-        // Actually, looking at the existing pattern: Round2 broadcast carries
-        // PVSS and Round2P2p carries per-recipient data. We'll reuse this
-        // pattern: broadcast carries PVSS + our DKG-CL per_recipient[my_idx]
-        // (self data, needed by all for round completion), and P2P carries
-        // per_recipient[peer_idx] for each peer.
-        //
-        // REVISED: To simplify verification, we send per-recipient-specific
-        // Round2 broadcast messages. Since the transport layer broadcasts
-        // to all, and each receiver extracts their data from the broadcast,
-        // we encode the DKG-CL per-recipient data for ALL recipients in the
-        // broadcast. This is simpler and matches the paper (all Gen data is
-        // public).
-
         let r2_payload = serialize_round2_with_dkg_cl(&pvss_output, &dkg_cl_gen_output, n)
             .map_err(|e| TecdsaError::Other(format!("R2 serialize: {e}")))?;
 
-        // Build outgoing: broadcast PVSS + DKG-CL Gen data.
         let mut outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Jtx25KeygenMsg::Round2(r2_payload),
         }];
 
-        // Send P2P messages (kept for round synchronization).
-        // Each peer gets a dummy P2P message to satisfy the round gate.
         for pid in &state.all_parties {
             if *pid == my_id {
                 continue;
@@ -801,14 +676,10 @@ impl Jtx25KeygenMachine {
             .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
         let n = state.all_parties.len();
 
-        // ---- DKG-Sig: PVSS decrypt and combine ----
-
-        // Start with own PVSS share.
         let mut x_i = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
             &state.my_pvss.secret_share_bytes,
         );
 
-        // Decrypt shares from other parties.
         for pid in &state.all_parties {
             if *pid == my_id {
                 continue;
@@ -833,10 +704,6 @@ impl Jtx25KeygenMachine {
         let big_x_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_i;
         let big_x_i_bytes = big_x_i.to_bytes().to_vec();
 
-        // ---- DKG-CL Reveal (JTX25 variant: integer shares, no mod-q) ----
-        // Collect chunk ciphertexts addressed to this party from all dealers.
-        // Decrypt chunks, recompose to integer Shamir shares, sum WITHOUT
-        // mod-q reduction to produce shares compatible with t_cl::partial_decrypt.
         let mut received_chunks: Vec<Vec<(Qfi, Qfi)>> = Vec::with_capacity(n);
         let mut all_dkg_cl_chunk_cts: BTreeMap<PartyId, Vec<(Qfi, Qfi)>> = BTreeMap::new();
 
@@ -869,7 +736,6 @@ impl Jtx25KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("DKG-CL Reveal failed: {e}")))?;
 
-        // Generate R_Dec_DL proof using own PVSS ciphertext.
         let c1_ref = &state.my_pvss.c1;
         let c2_my_ref = &state.my_pvss.c2s[my_idx];
         let ct_ref = self
@@ -891,7 +757,6 @@ impl Jtx25KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove: {e}")))?;
 
-        // Extract R_GDec-CL proof parts for serialization.
         let (proof_t1, proof_t2, proof_z, proof_e) = dkg_cl_reveal.proof.to_parts();
         let (combined_ct_c1, combined_ct_c2) = self
             .setup
@@ -918,7 +783,6 @@ impl Jtx25KeygenMachine {
             msg: Jtx25KeygenMsg::Round3(r3_payload),
         }];
 
-        // Carry forward PVSS c1 values for R_Dec_DL verification.
         let mut pvss_c1_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
         pvss_c1_qfis.insert(my_id, state.my_pvss.c1.clone());
         for (pid, r2_msg) in &state.received {
@@ -945,8 +809,6 @@ impl Jtx25KeygenMachine {
     }
 }
 
-/// Finalize keygen: collect public shares, compute joint ECDSA public key,
-/// aggregate CL public keys via DKG-CL, and store combined CL threshold shares.
 fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<Jtx25KeyShare> {
     let n = state.all_parties.len();
     let my_id = state.my_id;
@@ -956,7 +818,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
         .position(|p| *p == my_id)
         .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
 
-    // Collect all public shares in party order.
     let mut public_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
     for pid in &state.all_parties {
         if *pid == my_id {
@@ -970,7 +831,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
         }
     }
 
-    // Joint public key via Lagrange interpolation.
     let indices: Vec<u16> = (1..=n as u16).collect();
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
 
@@ -981,7 +841,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
 
     let party_index = (my_idx + 1) as u16;
 
-    // --- Aggregate CL public key: pk = compose(pk_1, ..., pk_n) = h^{sum(sk_i)} ---
     let mut agg_pk_qfi = setup
         .identity()
         .map_err(|e| TecdsaError::Other(format!("CL identity: {e}")))?;
@@ -998,8 +857,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
         .pk_from_qfi(&agg_pk_qfi)
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi agg: {e}")))?;
 
-    // Collect per-party CL public key shares: h^{combined_integer_share_j}.
-    // These are broadcast in Round 3 using the historical "lifted share" field.
     let mut cl_pk_shares: Vec<Qfi> = Vec::with_capacity(n);
     for pid in &state.all_parties {
         if *pid == my_id {
@@ -1029,13 +886,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
     })
 }
 
-// ---------------------------------------------------------------------------
-// Threshold CL key sharing (delta-scaled Shamir) -- utility for tests
-// ---------------------------------------------------------------------------
-
-/// Generates threshold CL key shares using the delta-scaled Shamir scheme.
-/// Used by the threshold CL partial/final decrypt tests (not by the paper-
-/// compliant DKG-CL protocol flow which uses `dkg_cl` module instead).
 pub fn shamir_share_delta(
     setup: &mut ClSetup,
     sk_bytes: &[u8],
@@ -1044,14 +894,12 @@ pub fn shamir_share_delta(
 ) -> Result<Vec<Vec<u8>>, Jtx25Error> {
     let sk = Integer::from_digits(sk_bytes, Order::Msf);
 
-    // delta = n!
     let mut delta = Integer::from(1);
     for i in 2..=n {
         delta *= Integer::from(i as u64);
     }
     let delta_sk = Integer::from(&delta * &sk);
 
-    // Generate t-1 random coefficients.
     let mut coeffs: Vec<Integer> = vec![delta_sk];
     for _ in 1..t {
         let (rsk, _) = setup.keygen()?;
@@ -1060,7 +908,6 @@ pub fn shamir_share_delta(
         coeffs.push(r_val);
     }
 
-    // Evaluate polynomial at i = 1, 2, ..., n.
     let mut shares = Vec::with_capacity(n);
     for i in 1..=n {
         let x = Integer::from(i as i64);
@@ -1076,10 +923,6 @@ pub fn shamir_share_delta(
 
     Ok(shares)
 }
-
-// ---------------------------------------------------------------------------
-// Wire-format serialization
-// ---------------------------------------------------------------------------
 
 fn write_field(buf: &mut Vec<u8>, data: &[u8]) {
     buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
@@ -1103,13 +946,11 @@ fn read_field(data: &[u8], pos: usize) -> Result<(&[u8], usize), Jtx25Error> {
     Ok((&data[start..end], end))
 }
 
-/// Write a Qfi as binary (length-prefixed to_bytes()).
 fn write_qfi_bin(buf: &mut Vec<u8>, qfi: &Qfi) {
     let bytes = qfi.to_bytes();
     write_field(buf, &bytes);
 }
 
-/// Read a Qfi from binary (length-prefixed from_bytes()).
 fn read_qfi_bin(data: &[u8], pos: usize) -> Result<(Qfi, usize), Jtx25Error> {
     let (bytes, new_pos) = read_field(data, pos)?;
     Ok((Qfi::from_bytes(bytes), new_pos))
@@ -1137,8 +978,6 @@ fn deserialize_round1(data: &[u8]) -> Result<(Qfi, RKeyProof), Jtx25Error> {
     Ok((pk, proof))
 }
 
-/// Serialize Round 2 broadcast: PVSS data + DKG-CL Gen per-recipient data for
-/// all n recipients.
 fn serialize_round2_with_dkg_cl(
     pvss: &PvssShareOutput,
     dkg_cl_gen: &DkgClGenOutput,
@@ -1146,7 +985,6 @@ fn serialize_round2_with_dkg_cl(
 ) -> Result<Vec<u8>, Jtx25Error> {
     let mut buf = Vec::new();
 
-    // ---- PVSS section ----
     buf.extend_from_slice(&(pvss.c2s.len() as u32).to_le_bytes());
     write_qfi_bin(&mut buf, &pvss.c1);
     for c2 in &pvss.c2s {
@@ -1155,28 +993,22 @@ fn serialize_round2_with_dkg_cl(
     write_field(&mut buf, &pvss.proof.k);
     write_field(&mut buf, &pvss.proof.rho_response);
 
-    // ---- DKG-CL Gen section ----
-    // Number of recipients.
     buf.extend_from_slice(&(n as u32).to_le_bytes());
 
     for recipient_idx in 0..n {
         let per = &dkg_cl_gen.per_recipient[recipient_idx];
 
-        // PC (Pedersen commitment)
         write_qfi_bin(&mut buf, &per.pc);
 
-        // Number of chunk ciphertexts
         buf.extend_from_slice(&(per.chunk_cts.len() as u32).to_le_bytes());
         for (c0, c1) in &per.chunk_cts {
             write_qfi_bin(&mut buf, c0);
             write_qfi_bin(&mut buf, c1);
         }
 
-        // Aggregated ciphertext (c0, c1)
         write_qfi_bin(&mut buf, &per.agg_ct.0);
         write_qfi_bin(&mut buf, &per.agg_ct.1);
 
-        // R_Blnt proof
         serialize_r_blnt_proof(&mut buf, &per.proof);
     }
 
@@ -1184,32 +1016,25 @@ fn serialize_round2_with_dkg_cl(
 }
 
 fn serialize_r_blnt_proof(buf: &mut Vec<u8>, proof: &tecdsa_class_group::zk::r_blnt::RBlntProof) {
-    // c_commit
     write_qfi_bin(buf, &proof.c_commit);
-    // r_chunks count + elements
     buf.extend_from_slice(&(proof.r_chunks.len() as u32).to_le_bytes());
     for r in &proof.r_chunks {
         write_qfi_bin(buf, r);
     }
-    // s_chunks count + elements
     buf.extend_from_slice(&(proof.s_chunks.len() as u32).to_le_bytes());
     for s in &proof.s_chunks {
         write_qfi_bin(buf, s);
     }
-    // r_0, s_0
     write_qfi_bin(buf, &proof.r_0);
     write_qfi_bin(buf, &proof.s_0);
-    // z1_chunks
     buf.extend_from_slice(&(proof.z1_chunks.len() as u32).to_le_bytes());
     for z in &proof.z1_chunks {
         write_field(buf, z);
     }
-    // z3_chunks
     buf.extend_from_slice(&(proof.z3_chunks.len() as u32).to_le_bytes());
     for z in &proof.z3_chunks {
         write_field(buf, z);
     }
-    // z2, z4, e
     write_field(buf, &proof.z2);
     write_field(buf, &proof.z4);
     write_field(buf, &proof.e);
@@ -1221,7 +1046,6 @@ fn deserialize_r_blnt_proof(
 ) -> Result<(tecdsa_class_group::zk::r_blnt::RBlntProof, usize), Jtx25Error> {
     let (c_commit, mut pos) = read_qfi_bin(data, pos)?;
 
-    // r_chunks
     if pos + 4 > data.len() {
         return Err(Jtx25Error::InvalidInput("truncated r_chunks count".into()));
     }
@@ -1238,7 +1062,6 @@ fn deserialize_r_blnt_proof(
         pos = new_pos;
     }
 
-    // s_chunks
     if pos + 4 > data.len() {
         return Err(Jtx25Error::InvalidInput("truncated s_chunks count".into()));
     }
@@ -1255,11 +1078,9 @@ fn deserialize_r_blnt_proof(
         pos = new_pos;
     }
 
-    // r_0, s_0
     let (r_0, pos) = read_qfi_bin(data, pos)?;
     let (s_0, mut pos) = read_qfi_bin(data, pos)?;
 
-    // z1_chunks
     if pos + 4 > data.len() {
         return Err(Jtx25Error::InvalidInput("truncated z1_chunks count".into()));
     }
@@ -1276,7 +1097,6 @@ fn deserialize_r_blnt_proof(
         pos = new_pos;
     }
 
-    // z3_chunks
     if pos + 4 > data.len() {
         return Err(Jtx25Error::InvalidInput("truncated z3_chunks count".into()));
     }
@@ -1293,7 +1113,6 @@ fn deserialize_r_blnt_proof(
         pos = new_pos;
     }
 
-    // z2, z4, e
     let (z2, pos) = read_field(data, pos)?;
     let (z4, pos) = read_field(data, pos)?;
     let (e, pos) = read_field(data, pos)?;
@@ -1315,8 +1134,6 @@ fn deserialize_r_blnt_proof(
     ))
 }
 
-/// Deserialize Round 2 broadcast: PVSS data + DKG-CL Gen per-recipient data.
-/// The receiver extracts their DKG-CL per-recipient bundle using `my_idx`.
 #[allow(clippy::type_complexity)]
 fn deserialize_round2_full(
     data: &[u8],
@@ -1326,7 +1143,6 @@ fn deserialize_round2_full(
         return Err(Jtx25Error::InvalidInput("R2 data too short".into()));
     }
 
-    // ---- PVSS section ----
     let n_pvss = u32::from_le_bytes(
         data[0..4]
             .try_into()
@@ -1350,7 +1166,6 @@ fn deserialize_round2_full(
         rho_response: rho_response_bytes.to_vec(),
     };
 
-    // ---- DKG-CL Gen section ----
     if pos + 4 > data.len() {
         return Err(Jtx25Error::InvalidInput("truncated DKG-CL count".into()));
     }
@@ -1364,11 +1179,9 @@ fn deserialize_round2_full(
     let mut my_per_recipient: Option<DkgClGenPerRecipient> = None;
 
     for recipient_idx in 0..n_dkg {
-        // PC
         let (pc, new_pos) = read_qfi_bin(data, pos)?;
         pos = new_pos;
 
-        // chunk_cts count
         if pos + 4 > data.len() {
             return Err(Jtx25Error::InvalidInput("truncated chunk_cts count".into()));
         }
@@ -1388,13 +1201,11 @@ fn deserialize_round2_full(
             chunk_cts.push((c0, c1_chunk));
         }
 
-        // agg_ct
         let (agg_c0, new_pos) = read_qfi_bin(data, pos)?;
         pos = new_pos;
         let (agg_c1, new_pos) = read_qfi_bin(data, pos)?;
         pos = new_pos;
 
-        // R_Blnt proof
         let (proof_blnt, new_pos) = deserialize_r_blnt_proof(data, pos)?;
         pos = new_pos;
 
@@ -1438,7 +1249,6 @@ fn serialize_round3(
     write_field(&mut buf, &proof.z);
     write_field(&mut buf, &proof.e);
 
-    // DKG-CL Reveal data
     write_qfi_bin(&mut buf, dkg_cl_lifted_share);
     write_qfi_bin(&mut buf, dkg_cl_proof_t1);
     write_qfi_bin(&mut buf, dkg_cl_proof_t2);
@@ -1472,7 +1282,6 @@ fn deserialize_round3(
         e: e_bytes.to_vec(),
     };
 
-    // DKG-CL Reveal data
     let (dkg_cl_lifted_share, pos) = read_qfi_bin(data, pos)?;
     let (dkg_cl_proof_t1, pos) = read_qfi_bin(data, pos)?;
     let (dkg_cl_proof_t2, pos) = read_qfi_bin(data, pos)?;

@@ -1,10 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
-//! Session layer for threshold ECDSA protocol deployment.
-//!
-//! Connects [`tecdsa_protocol::StateMachine`] implementations to network
-//! [`Transport`](tecdsa_transport::Transport) via the
-//! [`tecdsa_wire`] envelope format.
 
 pub mod checkpoint;
 pub mod config;

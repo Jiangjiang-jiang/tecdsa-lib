@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,39 +6,21 @@
     clippy::doc_markdown
 )]
 
-//! `R_Ped_EC` -- Pedersen CL commitment + EC Pedersen commitment proof.
-//!
-//! Sigma protocol (Fiat-Shamir):  prover knows values `(r, v)` such that
-//!   `c = h^r * pk^v`    (Pedersen-like commitment in the class group)
-//! AND
-//!   `V = v * G`          (EC point -- discrete log)
-//!
-//! This is the proof used for NIM `Encode_A` outputs in LLZ25.
-//!
-//! Reference: LLZ25 (Lyu-Li-Zhou-Deng, CCS 2025), Section 4.3.
-
 use rug::{integer::Order, Integer};
 use tecdsa_curve::conv;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
-/// Proof of Pedersen CL commitment + EC discrete-log consistency.
 pub struct RPedEcProof {
-    /// Commitment in CL group: c_tilde = h^{a1} * pk^{a2}.
     pub c_tilde: Qfi,
-    /// EC commitment: V_tilde = a2 * G.
     pub v_tilde_bytes: Vec<u8>,
-    /// Response for randomness: s_r = a1 + e * r  (unbounded, big-endian bytes).
     pub s_r: Vec<u8>,
-    /// Response for value: s_v = a2 + e * v  (unbounded, big-endian bytes).
     pub s_v: Vec<u8>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
 }
 
 impl RPedEcProof {
-    /// Generates a proof that `c = h^r * pk^v` and `V = v * G`.
     pub fn prove(
         setup: &mut ClSetup,
         pk: &ClHsmqkPublicKey,
@@ -51,16 +32,13 @@ impl RPedEcProof {
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
-        // CL Pedersen commitment: c_tilde = h^{a1} * pk^{a2}.
         let h_a1 = setup.power_of_h_bytes(&a1)?;
         let pk_elt = pk.elt();
         let pk_a2 = setup.pk_pow_bytes(pk, &a2)?;
         let c_tilde = setup.compose(&h_a1, &pk_a2)?;
 
-        // EC commitment: V_tilde = a2 * G.
         let v_tilde_bytes = ec_scalar_base_mul_bytes(&a2);
 
-        // Compute challenge.
         let e = challenge_from_qfi(
             setup,
             b"R_ped_ec",
@@ -68,7 +46,6 @@ impl RPedEcProof {
             &[big_v_bytes, &v_tilde_bytes],
         )?;
 
-        // Compute responses (over Z for CL soundness).
         let s_r = response_unbounded(&a1, &e, r_bytes)?;
         let s_v = response_unbounded(&a2, &e, v_bytes)?;
 
@@ -81,7 +58,6 @@ impl RPedEcProof {
         })
     }
 
-    /// Verifies the Pedersen CL + EC proof.
     pub fn verify(
         &self,
         setup: &ClSetup,
@@ -91,7 +67,6 @@ impl RPedEcProof {
     ) -> ClResult<bool> {
         let pk_elt = pk.elt();
 
-        // Re-derive challenge.
         let e_check = challenge_from_qfi(
             setup,
             b"R_ped_ec",
@@ -102,7 +77,6 @@ impl RPedEcProof {
             return Ok(false);
         }
 
-        // Check 1: h^{s_r} * pk^{s_v} == c_tilde * c^e.
         let h_sr = setup.power_of_h_bytes(&self.s_r)?;
         let pk_sv = setup.pk_pow_bytes(pk, &self.s_v)?;
         let lhs = setup.compose(&h_sr, &pk_sv)?;
@@ -112,7 +86,6 @@ impl RPedEcProof {
             return Ok(false);
         }
 
-        // Check 2: (s_v mod q) * G == V_tilde + e * V.
         let q_bytes = setup.q_bytes()?;
         let s_v_mod_q = mod_reduce_bytes(&self.s_v, &q_bytes);
         if !ec_schnorr_check_bytes(&s_v_mod_q, &self.v_tilde_bytes, &self.e, big_v_bytes) {
@@ -122,10 +95,6 @@ impl RPedEcProof {
         Ok(true)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn mod_reduce_bytes(a: &[u8], q: &[u8]) -> Vec<u8> {
     let a_val = Integer::from_digits(a, Order::Msf);
@@ -206,13 +175,11 @@ mod tests {
 
         let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
 
-        // Compute pe_A = h^r * pk^x via NIM Encode_A.
         let mut nim = Nim::new(&mut setup);
         let encode_out = nim.encode_a(&42u32.to_be_bytes(), &pk).expect("encode_a");
         let pe_a = encode_out.pe_a;
         let r_bytes = encode_out.state.r_bytes.clone();
 
-        // V = x * G
         let x_scalar = integer_to_scalar(&Integer::from(42u32));
         let big_v = k256::ProjectivePoint::GENERATOR * x_scalar;
         let big_v_bytes = big_v.to_bytes().to_vec();
@@ -237,7 +204,6 @@ mod tests {
         let pe_a = encode_out.pe_a;
         let r_bytes = encode_out.state.r_bytes.clone();
 
-        // Use wrong V
         let wrong_scalar = integer_to_scalar(&Integer::from(99u32));
         let wrong_v = k256::ProjectivePoint::GENERATOR * wrong_scalar;
         let wrong_v_bytes = wrong_v.to_bytes().to_vec();

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -8,19 +7,6 @@
     clippy::cast_possible_wrap
 )]
 
-//! Cascudo-David PVSS (Publicly Verifiable Secret Sharing).
-//!
-//! The dealer:
-//! 1. Picks a secret `s` and generates Shamir shares `s_1, ..., s_n`.
-//! 2. Encrypts each share `s_i` under party `i`'s CL public key.
-//! 3. Generates a ZK proof of correct encryption for each share.
-//!
-//! Any verifier can check all proofs using only public keys.
-//!
-//! Reconstruction:
-//! 1. Each party `i` partially decrypts its encrypted share.
-//! 2. Combine `t` partial decryptions using Lagrange interpolation.
-
 use rug::{integer::Order, Integer};
 use tecdsa_bigint::{mul_mod, pow_mod};
 
@@ -29,13 +15,9 @@ use crate::{
     zk::r_enc::REncProof,
 };
 
-/// A PVSS dealing: encrypted shares + proofs of correct encryption.
 pub struct PvssDeal {
-    /// Encrypted shares, one per party (indexed 0..n-1).
     pub encrypted_shares: Vec<ClHsmqkCiphertext>,
-    /// Proofs of correct encryption, one per share.
     pub proofs: Vec<REncProof>,
-    /// Commitments to the polynomial coefficients: `f^{a_j}` for j = 0..t-1.
     pub commitments: Vec<Qfi>,
 }
 
@@ -47,14 +29,6 @@ impl std::fmt::Debug for PvssDeal {
     }
 }
 
-/// Deals a PVSS: generates Shamir shares, encrypts each under the
-/// corresponding public key, and produces ZK proofs.
-///
-/// - `secret_decimal`: the secret to share.
-/// - `pks`: public keys of each party (length = n).
-/// - `threshold`: the threshold `t` (requires `t` shares to reconstruct).
-///
-/// Returns the dealing.
 pub fn deal(
     setup: &mut ClSetup,
     secret_decimal: &str,
@@ -67,7 +41,6 @@ pub fn deal(
     let secret = Integer::from_str_radix(secret_decimal, 10)
         .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad secret: {e}")))?;
 
-    // Generate polynomial coefficients: a_0 = secret, a_1..a_{t-1} random.
     let mut coeffs = vec![secret];
     for _ in 1..threshold {
         let r = crate::zk::sample_random_mod_q(setup)?;
@@ -75,14 +48,12 @@ pub fn deal(
         coeffs.push(r_val);
     }
 
-    // Compute commitments: f^{a_j} for each coefficient.
     let mut commitments = Vec::with_capacity(threshold);
     for coeff in &coeffs {
         let c = setup.power_of_f(&coeff.to_string_radix(10))?;
         commitments.push(c);
     }
 
-    // Evaluate polynomial at i = 1, 2, ..., n to get shares.
     let mut shares = Vec::with_capacity(n);
     for i in 1..=n {
         let x = Integer::from(i as u64);
@@ -95,11 +66,9 @@ pub fn deal(
         shares.push(val);
     }
 
-    // Encrypt each share and produce a proof.
     let mut encrypted_shares = Vec::with_capacity(n);
     let mut proofs = Vec::with_capacity(n);
     for (i, share) in shares.iter().enumerate() {
-        // Encrypt with known randomness so we can produce the proof.
         let r_bytes = {
             let (sk, _) = setup.keygen()?;
             setup.sk_to_bytes(&sk)?
@@ -120,7 +89,6 @@ pub fn deal(
     })
 }
 
-/// Verifies a PVSS dealing: checks all ZK proofs.
 pub fn verify_deal(setup: &ClSetup, deal: &PvssDeal, pks: &[ClHsmqkPublicKey]) -> ClResult<bool> {
     if deal.encrypted_shares.len() != pks.len() || deal.proofs.len() != pks.len() {
         return Ok(false);
@@ -135,11 +103,6 @@ pub fn verify_deal(setup: &ClSetup, deal: &PvssDeal, pks: &[ClHsmqkPublicKey]) -
     Ok(true)
 }
 
-/// Reconstructs the secret from `t` decrypted shares using Lagrange
-/// interpolation over Z/q.
-///
-/// `shares` is a list of `(party_index, share_decimal)` pairs where
-/// `party_index` is 1-based.
 pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String> {
     let q_str = setup.cl().q().to_string();
     let q = Integer::from_str_radix(&q_str, 10)
@@ -152,7 +115,6 @@ pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String
         let share_val = Integer::from_str_radix(share_k, 10)
             .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad share: {e}")))?;
 
-        // Compute Lagrange coefficient lambda_k mod q.
         let mut num = Integer::from(1);
         let mut den = Integer::from(1);
         let i_k_big = Integer::from(i_k as i64);
@@ -166,11 +128,9 @@ pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String
             den *= Integer::from(&i_k_big - &i_j_big);
         }
 
-        // lambda_k = num * den^{-1} mod q (Euclidean reduction -> non-negative)
         let num_mod = num.modulo(&q);
         let den_mod = den.modulo(&q);
 
-        // Modular inverse of den via Fermat's little theorem: den^{q-2} mod q.
         let q_minus_2 = Integer::from(&q - 2);
         let den_inv = pow_mod(&den_mod, &q_minus_2, &q);
 
@@ -195,7 +155,6 @@ mod tests {
         let t = 2;
         let secret = "42";
 
-        // Generate key pairs for each party.
         let mut sks = Vec::new();
         let mut pks = Vec::new();
         for _ in 0..n {
@@ -204,20 +163,16 @@ mod tests {
             pks.push(pk);
         }
 
-        // Deal.
         let pvss_deal = deal(&mut setup, secret, &pks, t).expect("deal");
 
-        // Verify.
         assert!(verify_deal(&setup, &pvss_deal, &pks).expect("verify"));
 
-        // Decrypt each share.
         let mut decrypted_shares = Vec::new();
         for (i, ct) in pvss_deal.encrypted_shares.iter().enumerate() {
             let m = setup.decrypt(&sks[i], ct).expect("decrypt");
             decrypted_shares.push((i + 1, m));
         }
 
-        // Reconstruct from first t shares.
         let share_refs: Vec<(usize, &str)> = decrypted_shares[..t]
             .iter()
             .map(|(i, s)| (*i, s.as_str()))

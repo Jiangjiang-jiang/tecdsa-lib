@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 
 pub mod key_share;
@@ -16,17 +15,6 @@ use elliptic_curve::{
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{NoOpMachine, Protocol, ProtocolMetadata};
 
-/// Curve-generic GGN16 threshold-optimal ECDSA protocol descriptor.
-///
-/// Uses a shared Paillier key with threshold decryption (unlike GG18/CGGMP20
-/// which use per-party Paillier keys). The signing protocol is split into:
-///
-/// - **Presign (offline):** Rounds 1-5 (5 message rounds). Message-independent.
-///   Produces a [`presign::Ggn16Presignature`].
-/// - **OnlineSign:** Round 6 (1 message round). Threshold decrypts the
-///   encrypted signature $\sigma = E(s)$.
-///
-/// Reference: Gennaro, Goldfeder, Narayanan. ACNS 2016.
 pub struct Ggn16Protocol<C: TecdsaCurve>(PhantomData<C>)
 where
     FieldBytesSize<C>: ModulusSize;
@@ -54,5 +42,4 @@ where
     const METADATA: ProtocolMetadata = crate::metadata::METADATA;
 }
 
-/// Backward-compatible alias: GGN16 over secp256k1.
 pub type Ggn16 = Ggn16Protocol<k256::Secp256k1>;

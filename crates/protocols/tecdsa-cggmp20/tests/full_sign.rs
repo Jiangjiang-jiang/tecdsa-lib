@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::ops::{LinearCombination, Reduce};
 use sha2::{Digest, Sha256};
 use tecdsa_cggmp20::{
@@ -15,7 +14,6 @@ use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, S
 
 type C = k256::Secp256k1;
 
-/// Test-only security level with small primes for fast tests.
 #[derive(Debug, Clone, Copy)]
 struct TestLevel;
 
@@ -159,7 +157,6 @@ fn run_aux_info(n: u16) -> Vec<AuxInfo> {
         .collect()
 }
 
-/// Build a DataToSign from a message by SHA-256 hashing and reducing mod q.
 fn make_data_to_sign(message: &[u8]) -> DataToSign<C> {
     let hash_bytes: [u8; 32] = Sha256::digest(message).into();
     let fb = k256::FieldBytes::from(hash_bytes);
@@ -167,7 +164,6 @@ fn make_data_to_sign(message: &[u8]) -> DataToSign<C> {
     DataToSign::from_digest(scalar)
 }
 
-/// Manual ECDSA verify: check s^{-1}*(m*G + r*PK) has x-coordinate equal to r.
 fn verify_signature(
     sig_r: k256::Scalar,
     sig_s: k256::Scalar,
@@ -187,7 +183,6 @@ fn verify_signature(
     assert_eq!(check_r, r, "manual ECDSA verification must succeed");
 }
 
-/// Run the full-signing protocol for the given signing subset and return the signature.
 fn run_full_sign(
     core_shares: &[Cggmp20CoreKeyShare<C>],
     aux_infos: &[AuxInfo],
@@ -263,13 +258,11 @@ fn run_full_sign(
         "all machines must be done after the loop"
     );
 
-    // All parties should produce the same signature; return the first one.
     let sigs: Vec<_> = machines
         .into_iter()
         .map(|(_, m)| m.finish().expect("full_sign must succeed"))
         .collect();
 
-    // Check all parties agree on the signature.
     let r0 = sigs[0].r;
     let s0 = sigs[0].s;
     for sig in &sigs {
@@ -290,7 +283,6 @@ fn full_sign_2of3() {
     let data_to_sign = make_data_to_sign(b"test message");
     let sig = run_full_sign(&core_shares, &aux_infos, &signers, b"test message");
 
-    // Verify the signature is valid.
     let public_key = &core_shares[0].public_key;
     verify_signature(sig.r, sig.s, &data_to_sign, public_key);
 }
@@ -305,7 +297,6 @@ fn full_sign_3of3() {
     let data_to_sign = make_data_to_sign(b"test message");
     let sig = run_full_sign(&core_shares, &aux_infos, &signers, b"test message");
 
-    // Verify the signature is valid.
     let public_key = &core_shares[0].public_key;
     verify_signature(sig.r, sig.s, &data_to_sign, public_key);
 }

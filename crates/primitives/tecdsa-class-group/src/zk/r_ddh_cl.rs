@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,15 +6,9 @@
     clippy::doc_markdown
 )]
 
-//! `R_ddh_cl` — DDH over class groups.
-//!
-//! Proves that a DDH tuple `(g, A, B, C)` is valid: prover knows `x`
-//! such that `A = g^x` and `C = B^x`.
-
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{ClResult, ClSetup, Qfi};
 
-/// DDH proof over class groups.
 pub struct RDdhClProof {
     t1: Qfi,
     t2: Qfi,
@@ -24,7 +17,6 @@ pub struct RDdhClProof {
 }
 
 impl RDdhClProof {
-    /// Proves a DDH relation: `A = g^x` and `C = B^x`.
     pub fn prove(
         setup: &mut ClSetup,
         g: &Qfi,
@@ -45,7 +37,6 @@ impl RDdhClProof {
         Ok(Self { t1, t2, z, e })
     }
 
-    /// Verifies the DDH proof.
     pub fn verify(&self, setup: &ClSetup, g: &Qfi, a: &Qfi, b: &Qfi, c: &Qfi) -> ClResult<bool> {
         let e_check =
             challenge_from_qfi(setup, b"R_ddh_cl", &[g, a, b, c, &self.t1, &self.t2], &[])?;
@@ -53,7 +44,6 @@ impl RDdhClProof {
             return Ok(false);
         }
 
-        // Check 1: g^z == t1 * A^e ⟺ g^z * A^{-e} == t1 (shared-squaring multi-exp).
         let lhs1 = setup.multiexp_signed_bytes(
             &[g, a],
             &[(false, self.z.clone()), (true, self.e.clone())],
@@ -62,7 +52,6 @@ impl RDdhClProof {
             return Ok(false);
         }
 
-        // Check 2: B^z == t2 * C^e ⟺ B^z * C^{-e} == t2.
         let lhs2 = setup.multiexp_signed_bytes(
             &[b, c],
             &[(false, self.z.clone()), (true, self.e.clone())],
@@ -91,7 +80,6 @@ mod tests {
         let g = setup.cl().h().clone();
         let a = setup.exp(&g, x).expect("g^x");
 
-        // Pick another base B = h^r.
         let r = {
             let (sk, _) = setup.keygen().expect("kg");
             sk.to_string()

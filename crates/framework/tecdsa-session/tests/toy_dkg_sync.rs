@@ -1,15 +1,9 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Integration test: run a toy DKG through the `SessionRunner` wire
-//! encode/decode path via `run_multi_party_sync`, then compare results
-//! against the direct `Orchestrator` (which bypasses wire encoding).
-
 use tecdsa_core::{Result as TecdsaResult, TecdsaError};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, StateMachine};
 use tecdsa_session::{run_multi_party_sync, SessionRunConfig};
 use tecdsa_testkit::{toy_dkg::ToyDkgMachine, Orchestrator};
 use tecdsa_transport::InMemoryNetwork;
 
-/// Build the standard set of `(PartyId, ToyDkgMachine)` pairs.
 fn make_machines(n: u16) -> Vec<(PartyId, ToyDkgMachine)> {
     (0..n)
         .map(|i| (PartyId(i), ToyDkgMachine::new(PartyId(i), n)))
@@ -30,7 +24,6 @@ fn sync_session_toy_dkg_3_parties() {
         10,
     );
 
-    // All three parties must succeed.
     for (i, res) in session_results.iter().enumerate() {
         assert!(
             res.is_ok(),
@@ -39,12 +32,10 @@ fn sync_session_toy_dkg_3_parties() {
         );
     }
 
-    // Run via Orchestrator for comparison (no wire encoding).
     let orch_result = Orchestrator::new(make_machines(n), 10)
         .run()
         .expect("orchestrator must succeed");
 
-    // Both paths must produce identical combined public keys.
     for (i, (sr, or)) in session_results.iter().zip(orch_result.iter()).enumerate() {
         assert_eq!(
             sr.as_ref().unwrap(),
@@ -76,7 +67,6 @@ fn sync_session_toy_dkg_5_parties() {
         );
     }
 
-    // All parties must agree on the same combined key.
     let first = session_results[0].as_ref().unwrap();
     for (i, res) in session_results.iter().enumerate().skip(1) {
         assert_eq!(

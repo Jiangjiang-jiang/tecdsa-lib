@@ -1,9 +1,7 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::CurveArithmetic;
 use k256::Secp256k1;
 use tecdsa_vss::{feldman, lagrange, shamir};
 
-// Helper: construct a scalar from u64 — avoids rand_core 0.6/0.10 version mismatch.
 fn scalar_from_u64(v: u64) -> <Secp256k1 as CurveArithmetic>::Scalar {
     <Secp256k1 as CurveArithmetic>::Scalar::from(v)
 }
@@ -31,7 +29,6 @@ fn shamir_insufficient_shares_wrong_result() {
     let mut rng = rand::thread_rng();
     let secret = scalar_from_u64(42);
     let shares = shamir::split::<Secp256k1>(&secret, 3, 5, &mut rng);
-    // Reconstructing with only 2 of 3 shares gives a wrong result.
     let bad = shamir::reconstruct::<Secp256k1>(&shares[..2]);
     assert_ne!(secret, bad);
 }

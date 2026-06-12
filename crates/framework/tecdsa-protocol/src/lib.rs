@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![doc = "Protocol framework traits and types for the tecdsa threshold ECDSA library."]
 
 pub mod abort;

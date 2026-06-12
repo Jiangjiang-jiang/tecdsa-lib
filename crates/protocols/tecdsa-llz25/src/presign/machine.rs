@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,12 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! StateMachine wrapper for the LLZ25 presigning protocol.
-//!
-//! Wraps the pure `presign_round1` / `verify_presign_message` functions into
-//! a `StateMachine` that collects broadcasts from all parties, verifies ZK
-//! proofs, and produces an `Llz25Presignature`.
 
 use std::collections::BTreeMap;
 
@@ -35,10 +28,6 @@ use super::{
     PresignMessage, PresignState,
 };
 use crate::{error::Llz25Error, key_share::Llz25KeyShare};
-
-// ---------------------------------------------------------------------------
-// Serialized proofs (QFI elements as compact binary `Qfi::to_bytes`)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerRClDlEcProof {
@@ -105,73 +94,36 @@ impl SerRPedEcProof {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Serialized ciphertext (pe_k is ClHsmqkCiphertext, pe_gamma is Qfi)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerCiphertext {
     c1: Vec<u8>,
     c2: Vec<u8>,
 }
 
-// ---------------------------------------------------------------------------
-// Wire message types
-// ---------------------------------------------------------------------------
-
-/// Presign wire message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Llz25PresignMsg {
-    /// Round 1 broadcast: serialized presign message + proofs.
     Round1(Vec<u8>),
 }
 
-/// Serialized payload for Round 1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct R1Payload {
-    /// K_i = k_i * G (compressed point bytes).
     big_k_bytes: Vec<u8>,
-    /// Gamma_i = gamma_i * G (compressed point bytes).
     big_gamma_bytes: Vec<u8>,
-    /// pe_k ciphertext (c1, c2) as compact binary QFI encodings.
     pe_k: SerCiphertext,
-    /// pe_gamma commitment (single QFI, compact binary encoding).
     pe_gamma: Vec<u8>,
-    /// R_{CL-DL-EC} proof for (pe_k, K_i).
     proof_cl: SerRClDlEcProof,
-    /// R_{Ped-EC} proof for (pe_gamma, Gamma_i).
     proof_ped: SerRPedEcProof,
 }
 
-// ---------------------------------------------------------------------------
-// Presignature output
-// ---------------------------------------------------------------------------
-
-/// Output of the presigning phase, consumed by the sign phase.
-///
-/// Contains this party's secret presign state, all parties' broadcast
-/// messages (verified), and the key share needed for signing.
 pub struct Llz25Presignature {
-    /// This party's presign secret state (k_i, gamma_i, NIM states).
     pub my_state: PresignState,
-    /// Message-independent signing coefficients, with all NIM decoding already
-    /// done offline. The online sign phase only needs these (plus the public
-    /// key and presign messages).
     pub coefficients: PresignCoefficients,
-    /// All parties' verified presign messages, ordered by party position.
     pub all_messages: Vec<PresignMessage>,
-    /// This party's key share (needed for signing).
     pub key_share: Llz25KeyShare,
-    /// CL setup seed (for recreating ClSetup in sign phase).
     pub cl_setup_seed: String,
-    /// Whether to use 128-bit CL params.
     pub use_128bit: bool,
-    /// 1-based party indices of the signing quorum.
     pub quorum_indices: Vec<u16>,
-    /// This party's 0-based position in the quorum.
     pub my_pos: usize,
-    /// pe_x ciphertext components for each quorum party, needed for sign phase.
-    /// Each entry is (c1, c2) as compact binary QFI encodings.
     pub pe_x_components: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
@@ -184,11 +136,6 @@ impl std::fmt::Debug for Llz25Presignature {
     }
 }
 
-// ---------------------------------------------------------------------------
-// State machine internals
-// ---------------------------------------------------------------------------
-
-/// Received Round 1 data from a single party.
 struct ReceivedR1 {
     message: PresignMessage,
 }
@@ -204,16 +151,6 @@ struct Round1State {
     outgoing: Vec<Outgoing<Llz25PresignMsg>>,
 }
 
-// ---------------------------------------------------------------------------
-// Public state machine
-// ---------------------------------------------------------------------------
-
-/// StateMachine wrapper for LLZ25 presigning.
-///
-/// After construction, the machine is in Round 1. It broadcasts its own
-/// presign message and waits to receive broadcasts from all other parties.
-/// Once all broadcasts are received and ZK proofs verified, it transitions
-/// to Done with an `Llz25Presignature`.
 pub struct Llz25PresignMachine {
     round: PresignRound,
     setup: ClSetup,
@@ -227,18 +164,6 @@ pub struct Llz25PresignMachine {
 }
 
 impl Llz25PresignMachine {
-    /// Create a new presign state machine.
-    ///
-    /// Immediately runs `presign_round1` and queues the broadcast message.
-    ///
-    /// # Arguments
-    /// - `my_id`: this party's ID (1-based PartyId)
-    /// - `all_parties`: all participating party IDs (1-based)
-    /// - `key_share`: this party's key share from keygen
-    /// - `quorum_indices`: 1-based party indices of the signing quorum
-    /// - `my_pos`: this party's 0-based position in the quorum
-    /// - `setup`: CL-HSM setup (consumed)
-    /// - `pk_crs`: the CRS public key for NIM encoding
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -252,10 +177,8 @@ impl Llz25PresignMachine {
             return Err(Llz25Error::Protocol("my_id not in all_parties".into()));
         }
 
-        // Run presign Round 1.
         let (my_message, my_state) = presign_round1(&mut setup, &pk_crs)?;
 
-        // Serialize the broadcast message.
         use elliptic_curve::group::GroupEncoding;
         let big_k_bytes = my_message.big_k.to_bytes().to_vec();
         let big_gamma_bytes = my_message.big_gamma.to_bytes().to_vec();
@@ -293,7 +216,6 @@ impl Llz25PresignMachine {
             msg: Llz25PresignMsg::Round1(payload_bytes),
         }];
 
-        // Store our own broadcast.
         let mut received = BTreeMap::new();
         received.insert(
             my_id,
@@ -317,17 +239,14 @@ impl Llz25PresignMachine {
         })
     }
 
-    /// Deserialize an R1 payload into a `PresignMessage`.
     fn deserialize_r1(&self, data: &[u8]) -> Result<PresignMessage, TecdsaError> {
         let (payload, _): (R1Payload, _) =
             bincode::serde::decode_from_slice(data, bincode::config::standard())
                 .map_err(|e| TecdsaError::Other(format!("deser R1: {e}")))?;
 
-        // Deserialize EC points.
         let big_k = point_from_bytes(&payload.big_k_bytes)?;
         let big_gamma = point_from_bytes(&payload.big_gamma_bytes)?;
 
-        // Deserialize pe_k ciphertext.
         let pe_k_c1 = Qfi::from_bytes(&payload.pe_k.c1);
         let pe_k_c2 = Qfi::from_bytes(&payload.pe_k.c2);
         let pe_k = self
@@ -335,10 +254,8 @@ impl Llz25PresignMachine {
             .ct_from_components(&pe_k_c1, &pe_k_c2)
             .map_err(|e| TecdsaError::Other(format!("pe_k ct: {e}")))?;
 
-        // Deserialize pe_gamma QFI.
         let pe_gamma = Qfi::from_bytes(&payload.pe_gamma);
 
-        // Deserialize proofs.
         let proof_cl = payload
             .proof_cl
             .to_proof()
@@ -358,9 +275,7 @@ impl Llz25PresignMachine {
         })
     }
 
-    /// Finalize: verify all ZK proofs and build the presignature output.
     fn finalize(&mut self, state: Round1State) -> tecdsa_core::Result<Llz25Presignature> {
-        // Verify ZK proofs for all received messages (except our own, already trusted).
         for (&pid, r1) in &state.received {
             if pid == self.my_id {
                 continue;
@@ -374,11 +289,9 @@ impl Llz25PresignMachine {
             }
         }
 
-        // Collect messages in party order.
         let all_messages: Vec<PresignMessage> =
             state.received.into_values().map(|r| r.message).collect();
 
-        // Collect pe_x components for the quorum parties.
         let pe_x_components: Vec<(Vec<u8>, Vec<u8>)> = self
             .quorum_indices
             .iter()
@@ -388,7 +301,6 @@ impl Llz25PresignMachine {
             })
             .collect();
 
-        // Take ownership of my_state by swapping with a dummy.
         let my_state = std::mem::replace(
             &mut self.my_state,
             PresignState {
@@ -400,9 +312,6 @@ impl Llz25PresignMachine {
             },
         );
 
-        // Reconstruct pe_{x,j} ciphertexts for the quorum, then perform ALL NIM
-        // decoding offline (message-independent) and fold it into the signing
-        // coefficients consumed by the online sign phase.
         let pe_x_list: Vec<_> = pe_x_components
             .iter()
             .map(|(c1_bytes, c2_bytes)| {
@@ -425,7 +334,6 @@ impl Llz25PresignMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("compute_presign_coefficients: {e}")))?;
 
-        // Clone key_share fields we need.
         let key_share_clone = Llz25KeyShare {
             party_index: self.key_share.party_index,
             secret_share: self.key_share.secret_share,
@@ -454,7 +362,6 @@ impl Llz25PresignMachine {
     }
 }
 
-/// Deserialize compressed EC point bytes to `k256::ProjectivePoint`.
 fn point_from_bytes(bytes: &[u8]) -> Result<k256::ProjectivePoint, TecdsaError> {
     use tecdsa_curve::TecdsaCurve;
     let affine = <k256::Secp256k1 as TecdsaCurve>::point_from_bytes(bytes)

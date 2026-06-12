@@ -1,21 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! StateMachine wrapper for the XAL+21 two-party interactive DKG.
-//!
-//! Wraps the pure functions from [`super::interactive`] into a
-//! [`StateMachine`] that exchanges serialized messages between Party1 and
-//! Party2.
-//!
-//! ## Message flow
-//!
-//! ```text
-//! Party1                            Party2
-//!   |--- Round1 (commitment) -------->|
-//!   |<-- Round2 (Q2,ek,proofs) -------|
-//!   |--- Round3 (decommit Q1) ------->|
-//!   |                                 | (verify + finalize)
-//!   done                              done
-//! ```
-
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
@@ -37,26 +19,12 @@ use crate::{
     },
 };
 
-// ---------------------------------------------------------------------------
-// Two-party role
-// ---------------------------------------------------------------------------
-
-/// Role in the two-party protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TwoPartyRole {
-    /// P1 (server): initiates keygen with commitment, holds secret share x1.
     Party1,
-    /// P2 (client): generates Paillier keys, holds decryption key.
     Party2,
 }
 
-// ---------------------------------------------------------------------------
-// Combined key share
-// ---------------------------------------------------------------------------
-
-/// Combined key share wrapping both party types.
-///
-/// The variant indicates which role this party played during keygen.
 pub enum Xal21KeyShare<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -89,55 +57,27 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Wire message envelope
-// ---------------------------------------------------------------------------
-
-/// Envelope message for the keygen state machine.
-///
-/// Each variant carries the serialized payload for the corresponding round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Xal21KeygenMsg {
-    /// P1 -> P2: commitment to (Q1, DLog proof).
     Round1(Vec<u8>),
-    /// P2 -> P1: Q2, DLog proof, Paillier ek, Pi_GCD.
     Round2(Vec<u8>),
-    /// P1 -> P2: decommitment of (Q1, DLog proof).
     Round3(Vec<u8>),
 }
-
-// ---------------------------------------------------------------------------
-// Internal state
-// ---------------------------------------------------------------------------
 
 enum Xal21KeygenState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Party1: sent Round1 commitment, waiting for Round2 from P2.
     P1WaitingForR2 { p1_state: KeyGenP1State<C> },
-    /// Party2 initial state: waiting for Round1 from P1.
     P2WaitingForR1,
-    /// Party2: received Round1, sent Round2, waiting for Round3 from P1.
     P2WaitingForR3 {
         p2_state: KeyGenP2State<C>,
         p1_r1_msg: KeyGenP1Round1Msg,
     },
-    /// Terminal state: output has been produced.
     Done,
 }
 
-// ---------------------------------------------------------------------------
-// State machine
-// ---------------------------------------------------------------------------
-
-/// XAL+21 interactive keygen state machine.
-///
-/// Construct via [`Xal21KeygenMachine::new`], specifying the role, own party
-/// ID, and peer party ID.  For `Party1`, the constructor immediately produces
-/// the Round1 message (queued in `outgoing`).  For `Party2`, the machine
-/// waits for the Round1 message from `Party1`.
 pub struct Xal21KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -153,10 +93,6 @@ where
     output: Option<Xal21KeyShare<C>>,
     round: u16,
     ia_report: Option<IaReport>,
-    /// Optional precomputed MtA setup for P2 (Paillier key + Ring-Pedersen
-    /// params), injected via [`Xal21KeygenMachine::new_with_setup`]. When
-    /// present, P2 uses it in round 2 instead of generating fresh material (the
-    /// setup is a one-time step, kept out of the DKG round timing).
     precomputed_setup:
         Option<(tecdsa_paillier::DecryptionKey, tecdsa_paillier::zk::mta_range::NTildeParams)>,
 }
@@ -166,15 +102,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new keygen state machine.
-    ///
-    /// - `Party1` role: immediately samples `x1`, creates a commitment, and
-    ///   queues the Round1 message.
-    /// - `Party2` role: enters the waiting-for-Round1 state.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `my_id == peer_id`.
     pub fn new(
         role: TwoPartyRole,
         my_id: PartyId,
@@ -184,19 +111,6 @@ where
         Self::new_with_setup(role, my_id, peer_id, None, rng)
     }
 
-    /// Like [`Xal21KeygenMachine::new`], but lets the caller inject P2's
-    /// **precomputed** MtA setup (Paillier decryption key + Ring-Pedersen
-    /// parameters).
-    ///
-    /// XAL+21's MtA setup is a one-time, message-independent step. By generating
-    /// it up front (see [`super::generate_setup`]) and passing it here, callers
-    /// (e.g. benchmark harnesses) keep the (multi-second) safe-prime generation
-    /// out of the measured DKG rounds. `precomputed_setup` is only consumed by
-    /// `Party2` (in round 2); for `Party1` it is ignored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `my_id == peer_id`.
     pub fn new_with_setup(
         role: TwoPartyRole,
         my_id: PartyId,
@@ -247,8 +161,6 @@ where
 
         let p1_r1_msg = decode_r1(&payload)?;
 
-        // Use the precomputed MtA setup if one was injected via
-        // `new_with_setup`; otherwise generate fresh material in-round.
         let (r2_msg, p2_state) = match self.precomputed_setup.take() {
             Some((dk, ntilde)) => party2_keygen_round2_with_setup::<C>(dk, ntilde, rng),
             None => party2_keygen_round2::<C>(rng),
@@ -303,8 +215,6 @@ where
             msg: Xal21KeygenMsg::Round3(payload),
         });
 
-        // Zeroize transient secret scalar: p1_state is consumed by
-        // party1_finalize, but x1 is Copy so the local copy persists.
         let mut x1_residual = p1_state.x1;
         let share = party1_finalize::<C>(p1_state, &p2_r2_msg);
         x1_residual.zeroize();
@@ -338,8 +248,6 @@ where
             )));
         }
 
-        // Zeroize transient secret scalar: p2_state is consumed by
-        // party2_finalize, but x2 is Copy so the local copy persists.
         let mut x2_residual = p2_state.x2;
         let share = party2_finalize::<C>(p2_state, &p1_r3_msg);
         x2_residual.zeroize();
@@ -359,14 +267,6 @@ where
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// StateMachine impl
-// ---------------------------------------------------------------------------
-
-// The `handle` method needs an RNG to call `party2_keygen_round2`, but the
-// `StateMachine` trait's `handle` signature does not accept an RNG parameter.
-// We use `OsRng` internally, which is the standard choice for production.
 
 impl<C: TecdsaCurve> StateMachine for Xal21KeygenMachine<C>
 where

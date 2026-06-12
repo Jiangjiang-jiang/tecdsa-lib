@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 pub use tecdsa_bigint as bigint;
 #[cfg(feature = "cggmp20")]
 pub use tecdsa_cggmp20 as cggmp20;

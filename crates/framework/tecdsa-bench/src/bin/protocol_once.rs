@@ -1,27 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! One-shot protocol timing.
-//!
-//! Runs each protocol phase (keygen, presign, sign) once per swept `(n, t)`
-//! configuration and prints TSV rows from the Orchestrator timing
-//! infrastructure: a `/wall` row for the whole orchestrated run plus the active
-//! time of the first participating party (party 1). The protocol always runs
-//! with all `n` parties, but per-party times are near-symmetric so only one is
-//! reported.
-//!
-//! Covers: MtA primitives, multi-party (CGGMP20, DKLs23, GG18),
-//! and two-party (Lin17, KGG24, XAL21, ABC24) protocols.
-//!
-//! The swept `(n, t)` configurations are read from the environment (see
-//! [`tecdsa_bench::config`]): DKG uses `TECDSA_BENCH_DKG_CONFIGS`
-//! (default `3:3,7:7,11:11,15:15,20:20`); presign/sign use `TECDSA_BENCH_SIGN_N`
-//! (default `20`) parties with thresholds `TECDSA_BENCH_SIGN_THRESHOLDS`
-//! (default `2,3,7,11,15,20`), signing quorum parties `1..=t`.
-//!
-//! LN18 and GGN16 have external setup (Shamir re-sharing / threshold Paillier)
-//! timed separately.
-//!
-//! Format: name<TAB>elapsed_ns<TAB>elapsed_human
-
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -37,12 +13,6 @@ use tecdsa_protocol::{DataToSign, PartyId, PartyInfo, SessionConfig, SessionId};
 type C = Secp256k1;
 
 fn time_once<T>(name: &str, f: impl FnOnce() -> T) -> T {
-    // For presign/offline-sign phases, attribute the per-party OFFLINE
-    // communication: the timed-run helpers serialize messages and record the
-    // representative party's bytes_sent under "<proto>/<config>/presign" while
-    // this key is set. Parsed from names like "<proto>/presign/n{n}_t{t}/wall"
-    // or "<proto>/offline_sign/n{n}_t{t}/wall". (Online comm is recorded
-    // explicitly via per_party::record_online_comm.)
     let parts: Vec<&str> = name.split('/').collect();
     let comm_key = if parts.len() >= 3 && (parts[1] == "presign" || parts[1] == "offline_sign") {
         Some(format!("{}/{}/presign", parts[0], parts[2]))
@@ -126,26 +96,17 @@ fn make_data_to_sign(msg: &[u8]) -> DataToSign<C> {
     DataToSign::from_digest(scalar)
 }
 
-/// Wire size (bytes) of a curve point in its compressed SEC1 encoding (33 B on
-/// secp256k1). Two-party round messages store bare `ProjectivePoint`s (not
-/// `Serialize`), so their communication is sized as compressed points plus
-/// `wire_size` of the serializable fields (DlogProof, ciphertexts, scalars).
 fn point_wire_len(p: &k256::ProjectivePoint) -> usize {
     use elliptic_curve::group::GroupEncoding;
     AsRef::<[u8]>::as_ref(&p.to_bytes()).len()
 }
 
-/// Wire size (bytes) of a CL-HSM class-group ciphertext: the two `QFI`
-/// components in their native `to_bytes` encoding. CL/NIM types are not
-/// `serde::Serialize`, so they are sized through the class group's own
-/// serialization rather than the orchestrator's bincode config.
 fn cl_ct_wire_len(ct: &tecdsa_class_group::cl::Ciphertext) -> usize {
     ct.c1().to_bytes().len() + ct.c2().to_bytes().len()
 }
 
 type GroupFn = fn();
 
-/// All protocol groups. Each is independent (its own keygen/presign/sign).
 fn all_groups() -> Vec<(&'static str, GroupFn)> {
     vec![
         ("mta", mta_once),
@@ -172,8 +133,6 @@ fn all_groups() -> Vec<(&'static str, GroupFn)> {
 fn main() {
     println!("name\telapsed_ns\telapsed");
 
-    // Optional subset filter (comma-separated names), e.g.
-    // TECDSA_BENCH_PROTOCOLS=cggmp20,gg18 — avoids hand-editing this list.
     let filter = std::env::var("TECDSA_BENCH_PROTOCOLS").ok();
     let groups: Vec<(&'static str, GroupFn)> = all_groups()
         .into_iter()
@@ -184,10 +143,6 @@ fn main() {
         })
         .collect();
 
-    // Run groups concurrently via a small worker pool. The comm collector is a
-    // global Mutex and the per-phase comm key is thread-local, so parallel groups
-    // don't interfere. Concurrency defaults to the CPU count; override with
-    // TECDSA_BENCH_JOBS (1 = sequential).
     let jobs = std::env::var("TECDSA_BENCH_JOBS")
         .ok()
         .and_then(|s| s.trim().parse::<usize>().ok())
@@ -200,8 +155,6 @@ fn main() {
         .map(|_| {
             let queue = std::sync::Arc::clone(&queue);
             std::thread::spawn(move || loop {
-                // Pop without holding the lock during the (heavy) group run, so a
-                // panicking group can't poison the queue for the other workers.
                 let next = queue.lock().expect("queue lock").pop();
                 match next {
                     Some((name, f)) => run_group(name, f),
@@ -216,9 +169,6 @@ fn main() {
         }
     }
 
-    // Write a PER-PROCESS file into target/comm_online/ so concurrent runs (or
-    // re-runs of subsets) never clobber each other; the table generators merge
-    // every target/comm_online/*.tsv (newest file wins per key).
     let dir = std::path::Path::new("target/comm_online");
     std::fs::create_dir_all(dir).expect("create comm dir");
     let out = dir.join(format!("{}.tsv", std::process::id()));
@@ -230,21 +180,11 @@ fn run_group(name: &str, f: impl FnOnce()) {
     f();
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// MtA primitives (all 6 variants)
-// ═══════════════════════════════════════════════════════════════════════
-
 fn mta_once() {
     use rand_core::OsRng;
     use tecdsa_curve::TecdsaCurve;
     use tecdsa_protocol::MtA;
     use tecdsa_testkit::wire_size;
-
-    // Per-instance MtA communication (bytes) is recorded separately for the
-    // sender and the receiver under "mta/<variant>/{sender,receiver}"; the
-    // table generator sums the two. Serializable messages (Paillier, JL,
-    // RVOLE) are sized via the orchestrator's bincode config (wire_size);
-    // CL/NIM class-group elements via their native to_bytes (cl_ct_wire_len).
 
     let a = Secp256k1::random_scalar(&mut OsRng);
     let b = Secp256k1::random_scalar(&mut OsRng);
@@ -255,7 +195,6 @@ fn mta_once() {
     let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref()) + 1u8;
     let q_bytes = q_int.to_bytes_msf();
 
-    // ── Setup (timed separately) ──
     let paillier_dk = time_once("mta/setup/paillier_keygen", || {
         tecdsa_paillier::keygen(&mut OsRng).expect("keygen")
     });
@@ -281,7 +220,6 @@ fn mta_once() {
         (pk, sk, pk0)
     });
 
-    // ── 1. Paillier MtA (Alice/Bob range proofs with Ring-Pedersen) ──
     {
         use tecdsa_paillier::mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtA, PaillierMtaSetup};
         type M = PaillierMtA<Gg18Proofs>;
@@ -305,7 +243,6 @@ fn mta_once() {
         per_party::record_online_comm("mta/paillier/receiver", wire_size(&rm));
     }
 
-    // ── 2. Paillier MtA with CGGMP20 proofs (pi_enc + pi_aff-g) ──
     {
         use paillier_zk::{
             paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
@@ -314,8 +251,6 @@ fn mta_once() {
             Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup,
         };
         type M = PaillierMtA<Cggmp20Proofs>;
-        // Ring-Pedersen Aux (s, t, N^) reuses the N-tilde fixture: s<-h1,
-        // t<-h2, N^<-N_tilde (same 3072-bit modulus -> same proof sizes).
         let aux = pi_enc::Aux {
             s: ntilde.h1.clone(),
             t: ntilde.h2.clone(),
@@ -355,7 +290,6 @@ fn mta_once() {
         per_party::record_online_comm("mta/cggmp20/receiver", wire_size(&rm));
     }
 
-    // ── 3. CL MtA (with WMY23-style MtAwc consistency check) ──
     {
         use std::cell::RefCell;
 
@@ -390,7 +324,6 @@ fn mta_once() {
         let beta = time_once("mta/cl/sender_decrypt", || {
             M::sender_decrypt(&setup, &ss, &q_bytes, &rm).expect("sd")
         });
-        // g^a is the public auxiliary input for the MtAwc check verification.
         let g_a = {
             use elliptic_curve::group::GroupEncoding;
             AsRef::<[u8]>::as_ref(&(Secp256k1::generator() * a).to_bytes()).to_vec()
@@ -405,7 +338,6 @@ fn mta_once() {
         );
     }
 
-    // ── 4. JL MtA ──
     {
         use tecdsa_joye_libert::mta::{JlMtA, JlMtaSetup};
         type M = JlMtA;
@@ -429,7 +361,6 @@ fn mta_once() {
         per_party::record_online_comm("mta/jl/receiver", wire_size(&rm));
     }
 
-    // ── 5. RVOLE MtA (interactive, 4 steps) ──
     {
         use tecdsa_ot::mta::{RvoleMtA, RvoleSetup};
         use tecdsa_protocol::MtAInteractive;
@@ -450,7 +381,6 @@ fn mta_once() {
         time_once("mta/rvole/receiver_finish", || {
             M::receiver_finish(recv_state, &compute_msg, &q_bytes).expect("finish")
         });
-        // Sender sends init + compute; receiver sends the response.
         per_party::record_online_comm(
             "mta/rvole/sender",
             wire_size(&init_msg) + wire_size(&compute_msg),
@@ -458,7 +388,6 @@ fn mta_once() {
         per_party::record_online_comm("mta/rvole/receiver", wire_size(&resp_msg));
     }
 
-    // ── 6. NIM (non-interactive multiplication, with R_Ped proof) ──
     {
         use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
         let mut nim_setup =
@@ -466,7 +395,6 @@ fn mta_once() {
         let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
         let x_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&a);
         let y_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&b);
-        // V = x * G is the EC commitment bound by R_Ped to the Encode_A output.
         let big_v = {
             use elliptic_curve::group::GroupEncoding;
             AsRef::<[u8]>::as_ref(&(Secp256k1::generator() * a).to_bytes()).to_vec()
@@ -499,8 +427,6 @@ fn mta_once() {
             nim.decode_b(&encode_a_out.pe_a, &encode_b_out.state)
                 .expect("decode_b")
         });
-        // Party A sends Encode_A (a single Qfi) plus the R_Ped proof;
-        // party B sends Encode_B (a CL ciphertext = two Qfi).
         let ped_proof_len = ped_proof.c_tilde.to_bytes().len()
             + ped_proof.v_tilde_bytes.len()
             + ped_proof.s_r.len()
@@ -514,10 +440,6 @@ fn mta_once() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// CGGMP20
-// ═══════════════════════════════════════════════════════════════════════
-
 fn cggmp20_once() {
     use tecdsa_cggmp20::{
         aux_info::AuxInfoMachine, keygen::Cggmp20KeygenMachine, presign::Cggmp20PresignMachine,
@@ -526,7 +448,6 @@ fn cggmp20_once() {
 
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG: sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let keygen_out = time_once(&format!("cggmp20/dkg/n{n}_t{t}/wall"), || {
             let configs = make_session_configs(n, t);
@@ -552,13 +473,11 @@ fn cggmp20_once() {
         }
     }
 
-    // AuxInfo: depends only on n; sweep the distinct DKG party counts.
     let mut aux_ns: Vec<u16> = config::dkg_configs().into_iter().map(|(n, _)| n).collect();
     aux_ns.sort_unstable();
     aux_ns.dedup();
     for n in aux_ns {
         let aux_out = time_once(&format!("cggmp20/aux_info/n{n}/wall"), || {
-            // Threshold is irrelevant to aux info; use a valid value (t = n).
             let configs = make_session_configs(n, n);
             let builders: Vec<_> = configs
                 .iter()
@@ -582,12 +501,10 @@ fn cggmp20_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     for t in config::sign_thresholds() {
         let signers = config::first_signers(t);
 
-        // Untimed setup: key shares + aux info at (n, t) (DKG/aux timed above).
         let core_shares: Vec<_> = {
             let configs = make_session_configs(n, t);
             let builders: Vec<_> = configs
@@ -627,7 +544,6 @@ fn cggmp20_once() {
                 .collect()
         };
 
-        // Presign
         let presign_out = time_once(&format!("cggmp20/presign/n{n}_t{t}/wall"), || {
             let kg_t = core_shares[0].vss_setup.threshold;
             let signer_configs = make_signer_configs(&signers, n, kg_t);
@@ -663,7 +579,6 @@ fn cggmp20_once() {
             );
         }
 
-        // Online sign
         let public_key = &core_shares[0].public_key;
         for (idx, &signer) in signers.iter().enumerate().take(1) {
             let name = format!("cggmp20/online_sign/n{n}_t{t}/party{signer}/partial_sign");
@@ -678,20 +593,12 @@ fn cggmp20_once() {
             PartialSignature::combine(&partials, pub_data, public_key, &message).expect("combine")
         });
 
-        // CGGMP20 online is local (partial_sign + combine): each signer broadcasts
-        // one sigma scalar (32 B on secp256k1) to the other t-1 signers. No
-        // orchestrator messages, so account for it directly, matching the
-        // broadcast convention used elsewhere (payload x #recipients).
         per_party::record_online_comm(
             format!("cggmp20/n{n}_t{t}"),
             32 * (t as usize).saturating_sub(1),
         );
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// DKLs23
-// ═══════════════════════════════════════════════════════════════════════
 
 fn dkls23_once() {
     use tecdsa_dkls23::{
@@ -702,7 +609,6 @@ fn dkls23_once() {
 
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG: sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
         let keygen_out = time_once(&format!("dkls23/dkg/n{n}_t{t}/wall"), || {
@@ -724,14 +630,12 @@ fn dkls23_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     for t in config::sign_thresholds() {
         let signer_indices = config::first_signers(t);
         let signer_parties: Vec<PartyId> = signer_indices.iter().map(|&i| PartyId(i)).collect();
 
-        // Untimed setup: key shares at (n, t).
         let shares: Vec<_> = {
             let all_p = all_parties.clone();
             let builders: Vec<_> = all_p
@@ -751,7 +655,6 @@ fn dkls23_once() {
                 .collect()
         };
 
-        // Presign
         let presign_out = time_once(&format!("dkls23/presign/n{n}_t{t}/wall"), || {
             let builders: Vec<_> = signer_indices
                 .iter()
@@ -780,7 +683,6 @@ fn dkls23_once() {
             );
         }
 
-        // Online sign
         let sign_out = time_once(&format!("dkls23/online_sign/n{n}_t{t}/wall"), || {
             let builders: Vec<_> = presigs
                 .into_iter()
@@ -807,10 +709,6 @@ fn dkls23_once() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// GG18
-// ═══════════════════════════════════════════════════════════════════════
-
 fn gg18_once() {
     use tecdsa_gg18::{
         keygen::Gg18KeygenMachine,
@@ -820,7 +718,6 @@ fn gg18_once() {
 
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG: sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let keygen_out = time_once(&format!("gg18/dkg/n{n}_t{t}/wall"), || {
             let configs = make_session_configs(n, t);
@@ -842,12 +739,10 @@ fn gg18_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     for t in config::sign_thresholds() {
         let signers = config::first_signers(t);
 
-        // Untimed setup: key shares at (n, t).
         let key_shares: Vec<_> = {
             let configs = make_session_configs(n, t);
             let builders: Vec<_> = configs
@@ -868,7 +763,6 @@ fn gg18_once() {
                 .collect()
         };
 
-        // Presign
         let presign_out = time_once(&format!("gg18/presign/n{n}_t{t}/wall"), || {
             let builders: Vec<_> = signers
                 .iter()
@@ -898,7 +792,6 @@ fn gg18_once() {
             );
         }
 
-        // Online sign
         let sign_out = time_once(&format!("gg18/online_sign/n{n}_t{t}/wall"), || {
             let builders: Vec<_> = presigs
                 .into_iter()
@@ -926,13 +819,6 @@ fn gg18_once() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// GGN16
-// ═══════════════════════════════════════════════════════════════════════
-
-/// Trusted-dealer setup for GGN16: threshold Paillier (corruption threshold
-/// `corruption_t`) + Ring-Pedersen parameters. Generates 1536-bit safe primes
-/// (slow). Mirrors the Criterion bench's `fast_trusted_dealer_setup`.
 fn ggn16_dealer_setup(
     n: u16,
     corruption_t: u16,
@@ -994,7 +880,6 @@ fn ggn16_dealer_setup(
         delta,
     };
 
-    // Ring-Pedersen
     let rp = Integer::generate_safe_prime(&mut rng, 1536);
     let rq = Integer::generate_safe_prime(&mut rng, 1536);
     let n_tilde = &rp * &rq;
@@ -1012,8 +897,6 @@ fn ggn16_once() {
 
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG: sweep (n, t). Dealer setup (safe primes, corruption threshold t-1) is
-    // timed per config, then the keygen protocol itself.
     for (n, t) in config::dkg_configs() {
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
         let (threshold_setup, dec_shares, n_tilde, h1, h2) =
@@ -1050,14 +933,12 @@ fn ggn16_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     for t in config::sign_thresholds() {
         let signers = config::first_signers(t);
         let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-        // Untimed setup: dealer setup + key shares at (n, t).
         let (threshold_setup, dec_shares, n_tilde, h1, h2) = ggn16_dealer_setup(n, t - 1);
         let key_shares: Vec<_> = {
             let mut rng = tecdsa_core::Csprng::new();
@@ -1089,7 +970,6 @@ fn ggn16_once() {
                 .collect()
         };
 
-        // Presign
         let presign_out = time_once(&format!("ggn16/presign/n{n}_t{t}/wall"), || {
             let mut rng = tecdsa_core::Csprng::new();
             let machines: Vec<_> = signers
@@ -1118,7 +998,6 @@ fn ggn16_once() {
             );
         }
 
-        // Online sign
         let sign_out = time_once(&format!("ggn16/online_sign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -1143,10 +1022,6 @@ fn ggn16_once() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// LN18 (2-round offline + 6-round online via StateMachine)
-// ═══════════════════════════════════════════════════════════════════════
-
 fn ln18_once() {
     ln18_once_with_backend("ln18-paillier", Ln18MtaBackend::Paillier);
     ln18_once_with_backend("ln18-ot", Ln18MtaBackend::Ot);
@@ -1164,7 +1039,6 @@ fn ln18_once_with_backend(name: &str, backend: Ln18MtaBackend) {
 
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG: sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let keygen_out = time_once(&format!("{name}/dkg/n{n}_t{t}/wall"), || {
             let configs = make_session_configs(n, t);
@@ -1186,13 +1060,11 @@ fn ln18_once_with_backend(name: &str, backend: Ln18MtaBackend) {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     for t in config::sign_thresholds() {
         let signers = config::first_signers(t);
         let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-        // Untimed setup: key shares at (n, t).
         let key_shares: Vec<Ln18KeyShare<C>> = {
             let configs = make_session_configs(n, t);
             let builders: Vec<_> = configs
@@ -1214,13 +1086,11 @@ fn ln18_once_with_backend(name: &str, backend: Ln18MtaBackend) {
         };
         let public_key = key_shares[0].public_key;
 
-        // Per-session signing setup (untimed): Lagrange + Init + Input(w_i) + Paillier
         let mut rng = rand_core::OsRng;
         let sign_params =
             tecdsa_ln18::sign::build_signing_setup::<C>(&key_shares, &signer_parties, &mut rng)
                 .expect("LN18 signing setup");
 
-        // Offline sign (2 rounds, message-independent)
         let mta = Arc::new(Ln18MtaHybrid::<C>::new(signer_parties.clone(), backend));
 
         let offline_out = time_once(&format!("{name}/offline_sign/n{n}_t{t}/wall"), || {
@@ -1256,7 +1126,6 @@ fn ln18_once_with_backend(name: &str, backend: Ln18MtaBackend) {
             );
         }
 
-        // Online sign (6 rounds, message-dependent)
         let m_scalar = *message.digest();
 
         let sign_out = time_once(&format!("{name}/online_sign/n{n}_t{t}/wall"), || {
@@ -1288,10 +1157,6 @@ fn ln18_once_with_backend(name: &str, backend: Ln18MtaBackend) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Lin17
-// ═══════════════════════════════════════════════════════════════════════
-
 fn lin17_once() {
     use tecdsa_lin17::{
         keygen::{Lin17KeygenMachine, TwoPartyRole},
@@ -1300,7 +1165,6 @@ fn lin17_once() {
 
     let specs = [(PartyId(1), PartyId(2)), (PartyId(2), PartyId(1))];
 
-    // DKG
     let keygen_out = time_once("lin17/dkg/n2_t2/wall", || {
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
         let builders: Vec<(PartyId, _)> = specs
@@ -1321,12 +1185,10 @@ fn lin17_once() {
         print_timing("lin17/dkg/n2_t2", pid, timing.total_active());
     }
 
-    // Sign (round-level per-party timing)
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = tecdsa_lin17::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
 
-    // Full sign, measure per-party
     let t0 = Instant::now();
     let (p1_r1_msg, p1_state, p1_decommit) = sign::party1_round1::<C>(&mut rng);
     let p1_r1 = t0.elapsed();
@@ -1361,8 +1223,6 @@ fn lin17_once() {
     print_timing("lin17/full_sign/n2_t2", PartyId(1), p1_total);
     print_timing("lin17/full_sign/n2_t2", PartyId(2), p2_total);
 
-    // Offline (presigning) communication. P1 sends round-1 commitment + round-3
-    // decommit (R_1 + DLog proof + nonce); P2 sends round-2 (R_2 + DLog proof).
     per_party::record_online_comm(
         "lin17/n2_t2/party1/presign",
         tecdsa_testkit::wire_size(&p1_r1_msg)
@@ -1374,18 +1234,12 @@ fn lin17_once() {
         "lin17/n2_t2/party2/presign",
         point_wire_len(&p2_r2_msg.r2) + tecdsa_testkit::wire_size(&p2_r2_msg.dlog_proof),
     );
-    // Online communication: P2 sends one round-4 message; P1 only finalizes
-    // locally (sends nothing online).
     per_party::record_online_comm("lin17/n2_t2/party1", 0);
     per_party::record_online_comm(
         "lin17/n2_t2/party2",
         tecdsa_testkit::wire_size(&p2_r4_msg),
     );
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// KGG24
-// ═══════════════════════════════════════════════════════════════════════
 
 fn kgg24_once() {
     use tecdsa_kgg24::{
@@ -1395,7 +1249,6 @@ fn kgg24_once() {
 
     let specs = [(PartyId(1), PartyId(2)), (PartyId(2), PartyId(1))];
 
-    // DKG
     let keygen_out = time_once("kgg24/dkg/n2_t2/wall", || {
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
         let builders: Vec<(PartyId, _)> = specs
@@ -1416,7 +1269,6 @@ fn kgg24_once() {
         print_timing("kgg24/dkg/n2_t2", pid, timing.total_active());
     }
 
-    // Sign
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = tecdsa_kgg24::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
@@ -1462,7 +1314,6 @@ fn kgg24_once() {
     print_timing("kgg24/full_sign/n2_t2", PartyId(1), p1_total);
     print_timing("kgg24/full_sign/n2_t2", PartyId(2), p2_total);
 
-    // Offline (presigning) communication, same message shapes as Lin17.
     per_party::record_online_comm(
         "kgg24/n2_t2/party1/presign",
         tecdsa_testkit::wire_size(&p1_r1_msg)
@@ -1474,17 +1325,12 @@ fn kgg24_once() {
         "kgg24/n2_t2/party2/presign",
         point_wire_len(&p2_r2_msg.r2) + tecdsa_testkit::wire_size(&p2_r2_msg.dlog_proof),
     );
-    // Online communication: P2 sends one partial-signature message; P1 finalizes.
     per_party::record_online_comm("kgg24/n2_t2/party1", 0);
     per_party::record_online_comm(
         "kgg24/n2_t2/party2",
         tecdsa_testkit::wire_size(&p2_partial),
     );
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// XAL21
-// ═══════════════════════════════════════════════════════════════════════
 
 fn xal21_once() {
     use tecdsa_xal21::{
@@ -1494,7 +1340,6 @@ fn xal21_once() {
 
     let specs = [(PartyId(1), PartyId(2)), (PartyId(2), PartyId(1))];
 
-    // DKG
     let keygen_out = time_once("xal21/dkg/n2_t2/wall", || {
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
         let builders: Vec<(PartyId, _)> = specs
@@ -1515,8 +1360,6 @@ fn xal21_once() {
         print_timing("xal21/dkg/n2_t2", pid, timing.total_active());
     }
 
-    // Offline sign (presign) via the per-step functions (mirrors twoparty.rs), so
-    // each party's offline message can be sized for communication.
     let mut rng = rand_core::OsRng;
     let (p1_key, p2_key) = tecdsa_xal21::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
@@ -1529,21 +1372,21 @@ fn xal21_once() {
         },
     };
 
-    let (step1_msg, step1_state) = offline_sign::step1_p2_commit::<C>(&mut rng); // P2
+    let (step1_msg, step1_state) = offline_sign::step1_p2_commit::<C>(&mut rng);
     let (sender_msg, sender_state) =
         offline_sign::step2_p2_encrypt_k2::<C, offline_sign::DefaultMtA>(
             &mta_setup,
             &step1_state.k2,
             &mut rng,
         )
-        .expect("step2_p2_encrypt_k2"); // P2 (MtA)
+        .expect("step2_p2_encrypt_k2");
     let (step2_msg, step2_state) = offline_sign::step2_p1_compute::<C, offline_sign::DefaultMtA>(
         &p1_key,
         &mta_setup,
         &sender_msg,
         &mut rng,
     )
-    .expect("step2_p1_compute"); // P1 (MtA)
+    .expect("step2_p1_compute");
     let x2_prime = offline_sign::step2_p2_verify::<C, offline_sign::DefaultMtA>(
         &p2_key,
         &mta_setup,
@@ -1551,27 +1394,24 @@ fn xal21_once() {
         &step1_state.k2,
         &step2_msg,
     )
-    .expect("step2_p2_verify"); // P2 (local)
-    let (step3_p1_msg, k1) = offline_sign::step3_p1_send_nonce::<C>(&mut rng); // P1
+    .expect("step2_p2_verify");
+    let (step3_p1_msg, k1) = offline_sign::step3_p1_send_nonce::<C>(&mut rng);
     let (step3_p2_decommit, p2_presig) = offline_sign::step3_p2_decommit_and_compute_R::<C>(
         &step1_state,
         &step3_p1_msg,
         &step2_msg.r1,
         x2_prime,
     )
-    .expect("step3_p2_decommit_and_compute_R"); // P2
+    .expect("step3_p2_decommit_and_compute_R");
     let p1_presig = offline_sign::step3_p1_verify_and_compute_R::<C>(
         &step1_msg,
         &step3_p2_decommit,
         k1,
         &step2_state,
     )
-    .expect("step3_p1_verify_and_compute_R"); // P1 (local)
+    .expect("step3_p1_verify_and_compute_R");
 
-    // Offline communication (presigning):
-    //   P2 -> P1: step1 commit + MtA sender msg + step3 decommit (R_2 + proof + nonce)
-    //   P1 -> P2: step2 (Q1' + r1 + cc + MtA receiver msg) + step3 nonce (R_1 + proof)
-    const SCALAR_LEN: usize = 32; // secp256k1 scalar repr
+    const SCALAR_LEN: usize = 32;
     per_party::record_online_comm(
         "xal21/n2_t2/party2/presign",
         tecdsa_testkit::wire_size(&step1_msg)
@@ -1589,7 +1429,6 @@ fn xal21_once() {
             + tecdsa_testkit::wire_size(&step3_p1_msg.nizk4),
     );
 
-    // Online sign
     time_once("xal21/online_sign/n2_t2/party2", || {
         online_sign::party2_compute_s2::<C>(&p2_presig, &message).expect("s2")
     });
@@ -1599,14 +1438,9 @@ fn xal21_once() {
             .expect("sig")
     });
 
-    // Online communication: P2 sends one s2 message; P1 finalizes locally.
     per_party::record_online_comm("xal21/n2_t2/party1", 0);
     per_party::record_online_comm("xal21/n2_t2/party2", tecdsa_testkit::wire_size(&p2_msg));
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// ABC24
-// ═══════════════════════════════════════════════════════════════════════
 
 fn abc24_once() {
     use tecdsa_abc24::{
@@ -1616,7 +1450,6 @@ fn abc24_once() {
 
     let specs = [(PartyId(1), PartyId(2)), (PartyId(2), PartyId(1))];
 
-    // DKG
     let keygen_out = time_once("abc24/dkg/n2_t2/wall", || {
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
         let builders: Vec<(PartyId, _)> = specs
@@ -1637,7 +1470,6 @@ fn abc24_once() {
         print_timing("abc24/dkg/n2_t2", pid, timing.total_active());
     }
 
-    // Sign
     let mut rng = rand_core::OsRng;
     let (server_key, client_key) = tecdsa_abc24::keygen::trusted_dealer_keygen::<C>(&mut rng);
     let message = make_data_to_sign(b"benchmark message");
@@ -1660,16 +1492,11 @@ fn abc24_once() {
     print_timing("abc24/full_sign/n2_t2", PartyId(1), p1_total);
     print_timing("abc24/full_sign/n2_t2", PartyId(2), p2_r2);
 
-    // Offline (presigning) communication: the server (P1) sends round 1
-    // (R_2 + Y, two compressed points); the client (P2) has no offline round.
     per_party::record_online_comm(
         "abc24/n2_t2/party1/presign",
         point_wire_len(&server_msg.r2) + point_wire_len(&server_msg.y),
     );
     per_party::record_online_comm("abc24/n2_t2/party2/presign", 0);
-    // Online communication: the client (P2) sends one round-2 message; the server
-    // (P1) finalizes locally. ClientRound2Msg isn't Serialize (raw ProjectivePoint
-    // fields), so size its parts: two compressed points + the OLE Paillier ct.
     per_party::record_online_comm("abc24/n2_t2/party1", 0);
     per_party::record_online_comm(
         "abc24/n2_t2/party2",
@@ -1679,15 +1506,6 @@ fn abc24_once() {
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// CL-based helpers (shared ClSetup for TX25, JTX25, WMY23, WMC24, LLZ25, Trout)
-// ═══════════════════════════════════════════════════════════════════════
-
-/// DKG-only sweep for CL-based protocols: times keygen for each
-/// `TECDSA_BENCH_DKG_CONFIGS` `(n, t)` and prints per-party active time.
-///
-/// CL protocols use without_init (machine construction includes a CL setup
-/// clone which is not protocol work); matches the Criterion benchmark.
 fn cl_dkg_sweep<KM>(name: &str, make_keygen: impl Fn(PartyId, Vec<PartyId>, u16) -> KM)
 where
     KM: tecdsa_protocol::StateMachine,
@@ -1709,17 +1527,10 @@ where
     }
 }
 
-/// Presign + online-sign sweep for CL-based protocols: for each threshold in
-/// `TECDSA_BENCH_SIGN_THRESHOLDS` at `TECDSA_BENCH_SIGN_N` parties, silently
-/// regenerates key shares (DKG timing lives in [`cl_dkg_sweep`]) then times
-/// presign and online sign, printing per-party active time. The signing quorum
-/// is parties `1..=t`.
 fn cl_presign_sign_sweep<KM, PM, SM>(
     name: &str,
     msg_bytes: &[u8],
     make_keygen: impl Fn(PartyId, Vec<PartyId>, u16) -> KM,
-    // Post-keygen fixup applied to the collected key shares before presign.
-    // Most protocols pass a no-op since their DKG output is directly usable.
     post_keygen: impl Fn(&mut [<KM as tecdsa_protocol::StateMachine>::Output]),
     make_presign: impl Fn(PartyId, Vec<PartyId>, &<KM as tecdsa_protocol::StateMachine>::Output) -> PM,
     make_sign: impl Fn(
@@ -1747,7 +1558,6 @@ fn cl_presign_sign_sweep<KM, PM, SM>(
         let signers = config::first_signers(t);
         let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-        // Untimed setup: key shares at (n, t).
         let mut key_shares: Vec<_> = {
             let machines: Vec<_> = all_parties
                 .iter()
@@ -1760,12 +1570,9 @@ fn cl_presign_sign_sweep<KM, PM, SM>(
                 .collect()
         };
 
-        // Install the protocol's required key material (e.g. trusted threshold-CL
-        // setup) before presign. No-op for protocols with self-contained DKG output.
         post_keygen(&mut key_shares);
         let public_key = extract_pk(&key_shares[0]);
 
-        // Presign
         let presign_out = time_once(&format!("{name}/presign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -1786,7 +1593,6 @@ fn cl_presign_sign_sweep<KM, PM, SM>(
             );
         }
 
-        // Online sign
         let sign_out = time_once(&format!("{name}/online_sign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -1810,10 +1616,6 @@ fn cl_presign_sign_sweep<KM, PM, SM>(
         }
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// TX25
-// ═══════════════════════════════════════════════════════════════════════
 
 fn tx25_once() {
     use tecdsa_tx25::{
@@ -1848,10 +1650,6 @@ fn tx25_once() {
         |share| share.public_key,
     );
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// JTX25
-// ═══════════════════════════════════════════════════════════════════════
 
 fn jtx25_once() {
     use tecdsa_jtx25::{
@@ -1897,8 +1695,6 @@ fn jtx25_robust_once() {
     let msg = sha2::Sha256::digest(b"benchmark message");
     let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
 
-    // Keygen is shared with the normal variant; only presign/online differ, so we
-    // run just the sign sweep to record the robust online communication.
     cl_presign_sign_sweep(
         "jtx25_robust",
         &msg,
@@ -1919,10 +1715,6 @@ fn jtx25_robust_once() {
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// WMY23
-// ═══════════════════════════════════════════════════════════════════════
-
 fn wmy23_once() {
     use tecdsa_wmy23::{
         keygen::Wmy23KeygenMachine,
@@ -1937,7 +1729,6 @@ fn wmy23_once() {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    // DKG: sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
         let keygen_out = time_once(&format!("wmy23/dkg/n{n}_t{t}/wall"), || {
@@ -1965,14 +1756,12 @@ fn wmy23_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     for t in config::sign_thresholds() {
         let signers = config::first_signers(t);
         let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-        // Untimed setup: key shares at (n, t).
         let key_shares: Vec<_> = {
             let machines: Vec<_> = all_parties
                 .iter()
@@ -1999,7 +1788,6 @@ fn wmy23_once() {
         };
         let public_key = key_shares[0].public_key;
 
-        // Presign
         let presign_out = time_once(&format!("wmy23/presign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -2028,7 +1816,6 @@ fn wmy23_once() {
             );
         }
 
-        // Online sign
         let sign_out = time_once(&format!("wmy23/online_sign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -2060,10 +1847,6 @@ fn wmy23_once() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// WMC24
-// ═══════════════════════════════════════════════════════════════════════
-
 fn wmc24_once() {
     use tecdsa_wmc24::{
         keygen::Wmc24KeygenMachine, presign::Wmc24PresignMachine, sign::Wmc24OnlineSignMachine,
@@ -2087,7 +1870,7 @@ fn wmc24_once() {
             Wmc24KeygenMachine::new_with_setup(pid, all, threshold, seed, true, cl_setup.clone())
                 .expect("wmc24 keygen")
         },
-        |_shares| { /* DKG produces proper Shamir ElGamal shares natively */ },
+        |_shares| {   },
         |pid, all, share| {
             Wmc24PresignMachine::new(pid, all, share, cl_setup.clone()).expect("wmc24 presign")
         },
@@ -2097,10 +1880,6 @@ fn wmc24_once() {
         |share| share.public_key,
     );
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// LLZ25
-// ═══════════════════════════════════════════════════════════════════════
 
 fn llz25_once() {
     use tecdsa_llz25::{
@@ -2115,14 +1894,12 @@ fn llz25_once() {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    // Setup: CL CRS key (shared out-of-band, independent of n/t).
     let pk_crs = {
         let mut tmp = cl_setup.clone();
         let (_, pk) = tmp.keygen().expect("crs keygen");
         pk
     };
 
-    // DKG: sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
         let keygen_out = time_once(&format!("llz25/dkg/n{n}_t{t}/wall"), || {
@@ -2151,7 +1928,6 @@ fn llz25_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     for t in config::sign_thresholds() {
@@ -2159,7 +1935,6 @@ fn llz25_once() {
         let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
         let quorum_indices: Vec<u16> = signers.clone();
 
-        // Untimed setup: key shares at (n, t).
         let key_shares: Vec<_> = {
             let machines: Vec<_> = all_parties
                 .iter()
@@ -2186,7 +1961,6 @@ fn llz25_once() {
                 .collect()
         };
 
-        // Presign
         let presign_out = time_once(&format!("llz25/presign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -2224,7 +1998,6 @@ fn llz25_once() {
             );
         }
 
-        // Sign
         let sign_out = time_once(&format!("llz25/online_sign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -2250,10 +2023,6 @@ fn llz25_once() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Trout
-// ═══════════════════════════════════════════════════════════════════════
-
 fn trout_once() {
     use tecdsa_trout::{
         keygen::TroutKeygenMachine, presign::machine::TroutPresignMachine,
@@ -2267,7 +2036,6 @@ fn trout_once() {
         tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
     });
 
-    // DKG: sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
         let keygen_out = time_once(&format!("trout/dkg/n{n}_t{t}/wall"), || {
@@ -2295,7 +2063,6 @@ fn trout_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     for t in config::sign_thresholds() {
@@ -2303,7 +2070,6 @@ fn trout_once() {
         let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
         let signing_1based: Vec<u16> = signers.clone();
 
-        // Untimed setup: key shares at (n, t).
         let key_shares: Vec<_> = {
             let machines: Vec<_> = all_parties
                 .iter()
@@ -2329,17 +2095,12 @@ fn trout_once() {
                 .collect()
         };
 
-        // Presign (clone key shares)
         let presign_out = time_once(&format!("trout/presign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
                 .map(|&s| {
                     let pid = PartyId(s);
                     let share = key_shares[(s - 1) as usize].clone();
-                    // Reconstruct the *joint* CL public key (Y_cl = product Y_k) that
-                    // keygen encrypted x_i under. Passing a fresh single-party key
-                    // here never matches and breaks scaled decryption — mirror the
-                    // crate's integration test instead.
                     let (pa, pb, pc) = &share.cl_pk_abc;
                     let cl_pk_qfi =
                         tecdsa_trout::error::qfi_from_abc(pa, pb, pc).expect("reconstruct CL pk");
@@ -2371,7 +2132,6 @@ fn trout_once() {
             );
         }
 
-        // Sign via Orchestrator (1-round: broadcast F_i shares, aggregate, compute signature)
         let sign_out = time_once(&format!("trout/online_sign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -2379,7 +2139,6 @@ fn trout_once() {
                 .map(|(&s, presig)| {
                     let pid = PartyId(s);
                     let share = key_shares[(s - 1) as usize].clone();
-                    // Same joint-CL-key reconstruction as presign (see above).
                     let (pa, pb, pc) = &share.cl_pk_abc;
                     let cl_pk_qfi =
                         tecdsa_trout::error::qfi_from_abc(pa, pb, pc).expect("reconstruct CL pk");
@@ -2412,10 +2171,6 @@ fn trout_once() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// XAL23
-// ═══════════════════════════════════════════════════════════════════════
-
 fn xal23_once() {
     use tecdsa_xal23::{
         keygen::Xal23KeygenMachine, presign::Xal23PresignMachine, sign::Xal23SignMachine,
@@ -2423,7 +2178,6 @@ fn xal23_once() {
 
     let message = make_data_to_sign(b"benchmark message");
 
-    // DKG (JL-based, Profile B: p_bits=1680, k=712): sweep (n, t).
     for (n, t) in config::dkg_configs() {
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
         let keygen_out = time_once(&format!("xal23/dkg/n{n}_t{t}/wall"), || {
@@ -2444,14 +2198,12 @@ fn xal23_once() {
         }
     }
 
-    // Presign / Online sign: sweep t at fixed n.
     let n = config::sign_n();
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     for t in config::sign_thresholds() {
         let signers = config::first_signers(t);
         let signer_parties: Vec<PartyId> = signers.iter().map(|&i| PartyId(i)).collect();
 
-        // Untimed setup: key shares at (n, t).
         let mut key_shares: Vec<_> = {
             let machines: Vec<_> = all_parties
                 .iter()
@@ -2470,17 +2222,11 @@ fn xal23_once() {
                 .collect()
         };
 
-        // XAL23's presign/sign assume *additive* signing shares (w_i = secret_share,
-        // summed over the quorum), but Xal23KeygenMachine performs a Feldman DKG and
-        // emits *Shamir* shares. Convert the quorum's Shamir shares to additive shares
-        // via Lagrange weighting (w_i = lambda_i * x_i) so any t subset reconstructs the
-        // key. Each party's Shamir evaluation point equals its 1-based keygen index.
         let lambdas = tecdsa_vss::lagrange::coefficients::<C>(&signers);
         for (pos, &s) in signers.iter().enumerate() {
             key_shares[(s - 1) as usize].secret_share *= lambdas[pos];
         }
 
-        // Presign (interactive 4-round StateMachine via Orchestrator)
         let presign_out = time_once(&format!("xal23/presign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()
@@ -2509,7 +2255,6 @@ fn xal23_once() {
             );
         }
 
-        // Online sign
         let sign_out = time_once(&format!("xal23/online_sign/n{n}_t{t}/wall"), || {
             let machines: Vec<_> = signers
                 .iter()

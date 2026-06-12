@@ -1,59 +1,30 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0//! Scaled Decryption primitive (Protocol 4.1 from Trout).
-//!
-//! Given:
-//! - `{A_j = Enc(alpha_j, a_j)}`: CL encryptions summing to Enc(alpha, a)
-//! - `{B_j = Com(beta_j, b_j)}`: CL commitments summing to Com(beta, b)
-//!
-//! Computes `c = a * b mod q` without revealing `a` or `b`.
-//!
-//! Each party i computes:
-//!   `F_i = b_i * A_2 + beta_i * A_1 - alpha_i * B`
-//!
-//! The combined `F = sum F_i = f^{a*b}` and `c = DLog_F(F)` gives `a*b mod q`.
-
 use crate::{
     cl::{ClCiphertext, ClPublicKey, ClResult, ClSetup, Qfi},
     zk::r_aff_com::RAffComProof,
 };
 
-/// Per-party secret inputs for scaled decryption.
 pub struct ScaledDecryptPartyInput {
-    /// CL encryption randomness alpha_i (big-endian bytes).
     pub alpha_i: Vec<u8>,
-    /// CL commitment randomness beta_i (big-endian bytes).
     pub beta_i: Vec<u8>,
-    /// Commitment value b_i (big-endian bytes, mod q).
     pub b_i: Vec<u8>,
 }
 
-/// Aggregated public ciphertext and commitment.
 pub struct ScaledDecryptPublic {
-    /// First component of aggregated encryption: A_1 = prod(c1_j).
     pub a1: Qfi,
-    /// Second component of aggregated encryption: A_2 = prod(c2_j).
     pub a2: Qfi,
-    /// Aggregated commitment: B = prod(B_j).
     pub b_agg: Qfi,
 }
 
-/// Output of a single party's scaled decryption contribution.
 pub struct ScaledDecryptShare {
-    /// This party's contribution F_i.
     pub f_i: Qfi,
-    /// R_affCom proof for F_i (only in IA variant).
     pub pi_aff_com: Option<RAffComProof>,
 }
 
-/// Compute a single party's contribution F_i.
-///
-/// `F_i = exp(A_2, b_i) * exp(A_1, beta_i) * neg(exp(B, alpha_i))`
 pub fn compute_f_share(
     setup: &ClSetup,
     input: &ScaledDecryptPartyInput,
     public: &ScaledDecryptPublic,
 ) -> ClResult<Qfi> {
-    // F_i = a2^{b_i} · a1^{beta_i} · b_agg^{-alpha_i}, via one shared-squaring
-    // multi-exponentiation instead of three exps + two composes.
     let f_i = setup.multiexp_signed_bytes(
         &[&public.a2, &public.a1, &public.b_agg],
         &[
@@ -65,7 +36,6 @@ pub fn compute_f_share(
     Ok(f_i)
 }
 
-/// Compute F_i with R_affCom proof for identifiable abort.
 pub fn compute_f_share_with_proof(
     setup: &mut ClSetup,
     cl_pk: &ClPublicKey,
@@ -97,7 +67,6 @@ pub fn compute_f_share_with_proof(
     })
 }
 
-/// Aggregate F_i shares and extract the product `a*b mod q`.
 pub fn aggregate_and_solve(setup: &ClSetup, f_shares: &[Qfi]) -> ClResult<Vec<u8>> {
     let id = setup.identity()?;
     let mut f_agg = id;
@@ -107,7 +76,6 @@ pub fn aggregate_and_solve(setup: &ClSetup, f_shares: &[Qfi]) -> ClResult<Vec<u8
     setup.dlog_in_F_bytes(&f_agg)
 }
 
-/// Aggregate ciphertext components from all parties.
 pub fn aggregate_ciphertext_components(
     setup: &ClSetup,
     components: &[(Qfi, Qfi)],
@@ -121,7 +89,6 @@ pub fn aggregate_ciphertext_components(
     Ok((a1, a2))
 }
 
-/// Aggregate commitment elements from all parties.
 pub fn aggregate_commitments(setup: &ClSetup, commitments: &[Qfi]) -> ClResult<Qfi> {
     let id = setup.identity()?;
     let mut b = id;
@@ -131,7 +98,6 @@ pub fn aggregate_commitments(setup: &ClSetup, commitments: &[Qfi]) -> ClResult<Q
     Ok(b)
 }
 
-/// Run complete scaled decryption locally (for testing/simulation).
 pub fn scaled_decrypt_local(
     setup: &ClSetup,
     inputs: &[ScaledDecryptPartyInput],

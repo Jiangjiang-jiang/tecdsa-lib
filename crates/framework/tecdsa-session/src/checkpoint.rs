@@ -1,9 +1,6 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use serde::{Deserialize, Serialize};
 use tecdsa_protocol::StateMachine;
 
-/// Marker trait for state machines that support checkpointing.
-/// Protocol implementors opt in by implementing this.
 pub trait Checkpointable: StateMachine {
     type Snapshot: Serialize + for<'de> Deserialize<'de>;
     fn snapshot(&self) -> Self::Snapshot;

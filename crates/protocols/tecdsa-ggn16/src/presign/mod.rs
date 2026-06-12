@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! GGN16 presigning protocol (Rounds 1-5).
-//!
-//! Produces a message-independent [`Ggn16Presignature`] that can be consumed
-//! by the online signing phase ([`crate::sign::Ggn16OnlineSignMachine`]).
-
 pub mod rounds;
 pub mod types;
 
@@ -17,20 +11,11 @@ pub use types::Ggn16Presignature;
 
 use crate::{key_share::Ggn16KeyShare, sign::msg::Ggn16SignMsg};
 
-/// GGN16 presigning state machine (Rounds 1-5).
-///
-/// Drives a single party through the 5-round message-independent presigning
-/// protocol. Create one instance per party via [`Ggn16PresignMachine::new`],
-/// then feed messages through the [`StateMachine`] trait.
 pub struct Ggn16PresignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     round: PresignRound<C>,
-    /// RNG seeds for generating secrets during round transitions.
-    /// Index 0: Round 1 -> Round 2 (HomoMultProof generation)
-    /// Index 1: Round 2 -> Round 3 (k_i, c_i sampling)
-    /// Index 2: Round 3 -> Round 4 (NonceConsistProof generation)
     rng_seeds: [[u8; 32]; 3],
 }
 
@@ -39,14 +24,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new GGN16 presign state machine.
-    ///
-    /// # Arguments
-    ///
-    /// * `key_share` - This party's key share from keygen.
-    /// * `my_id` - This party's identifier.
-    /// * `signer_parties` - All signing party identifiers (including self).
-    /// * `rng` - Cryptographic RNG.
     pub fn new(
         key_share: Ggn16KeyShare<C>,
         my_id: PartyId,
@@ -219,7 +196,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round(msg: &Ggn16SignMsg) -> u16 {
     match msg {
         Ggn16SignMsg::Round1(_) => 1,

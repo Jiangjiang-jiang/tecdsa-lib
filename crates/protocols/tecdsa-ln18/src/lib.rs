@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
 
 pub mod f_mult;
@@ -11,13 +10,6 @@ pub mod sign;
 use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
 use tecdsa_protocol::Protocol;
 
-/// LN18 threshold ECDSA protocol.
-///
-/// Implements the [`Protocol`] trait to expose metadata, associated types,
-/// and state machines for key generation, presigning, and online signing.
-///
-/// The `Presign` type is `Ln18OfflineSignMachine` (2 rounds, message-independent).
-/// The `Sign` type is `Ln18OnlineSignMachine` (6 rounds, message-dependent).
 pub struct Ln18;
 
 impl Protocol for Ln18

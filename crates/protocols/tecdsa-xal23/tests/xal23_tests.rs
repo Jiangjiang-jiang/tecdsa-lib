@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Integration tests for the XAL23 threshold ECDSA protocol.
-//!
-//! Tests the full flow: keygen (trusted dealer) -> presign -> sign -> verify.
-//!
-//! These tests use reduced statistical security parameters (s=t=8) so that
-//! JL parameters can be smaller and tests run in reasonable time.
-//! Production would use s=t=40.
-
 use sha2::{Digest, Sha256};
 use tecdsa_xal23::{
     key_share::trusted_dealer_keygen,
@@ -16,15 +7,11 @@ use tecdsa_xal23::{
 
 type C = k256::Secp256k1;
 
-/// For secp256k1 (q ~ 256 bits) with s=t=8:
-/// k >= 2*256 + 2*8 + 8 + 2 = 538
-/// Use k = 544 (divisible by 32) and p_bits = 800
 const TEST_JL_K: u32 = 544;
 const TEST_JL_P_BITS: u64 = 800;
 const TEST_S: u32 = 8;
 const TEST_T: u32 = 8;
 
-/// Hash a message to a scalar for signing.
 fn hash_message(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
     let hash = Sha256::digest(msg);
     let mut bytes = k256::FieldBytes::default();
@@ -34,7 +21,6 @@ fn hash_message(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
     tecdsa_protocol::DataToSign::from_digest(scalar)
 }
 
-/// Test the JL MtA correctness in isolation with secp256k1 scalars.
 #[test]
 fn xal23_mta_correctness_secp256k1() {
     use rug::Integer;
@@ -49,7 +35,6 @@ fn xal23_mta_correctness_secp256k1() {
 
     let q = curve_order::<C>();
 
-    // Use actual secp256k1 scalars
     let a_scalar = C::random_scalar(&mut rng);
     let b_scalar = C::random_scalar(&mut rng);
     let ab_scalar = a_scalar * b_scalar;
@@ -74,15 +59,12 @@ fn xal23_mta_correctness_secp256k1() {
 fn xal23_full_protocol_n2_all_signers() {
     let mut rng = rand::thread_rng();
 
-    // n=2, t=2 (reconstruction threshold)
     let key_shares = trusted_dealer_keygen::<C>(2, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
 
     let signer_indices: Vec<usize> = vec![0, 1];
 
-    // Presign with reduced security params for testing
     let presigs = presign_all_with_sec::<C>(&key_shares, &signer_indices, TEST_S, TEST_T, &mut rng);
 
-    // Sign
     let message = b"XAL23 two-party test";
     let data = hash_message(message);
 
@@ -97,26 +79,20 @@ fn xal23_full_protocol_n2_all_signers() {
 fn xal23_full_protocol_n3_all_signers() {
     let mut rng = rand::thread_rng();
 
-    // Key generation: n=3, t=2 (reconstruction threshold)
     let key_shares = trusted_dealer_keygen::<C>(3, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
 
-    // All 3 parties sign
     let signer_indices: Vec<usize> = vec![0, 1, 2];
 
-    // Presign
     let presigs = presign_all_with_sec::<C>(&key_shares, &signer_indices, TEST_S, TEST_T, &mut rng);
     assert_eq!(presigs.len(), 3);
 
-    // Online sign
     let message = b"Hello, XAL23 threshold ECDSA!";
     let data = hash_message(message);
 
     let partials: Vec<_> = presigs.iter().map(|p| partial_sign(p, &data)).collect();
 
-    // Combine
     let sig = combine_signatures(&presigs[0], &partials, &data).expect("signature should verify");
 
-    // Verify with standard ECDSA verification
     let pk = key_shares[0].public_key;
     tecdsa_protocol::verify_ecdsa(&sig, &pk, &data).expect("ECDSA verification should succeed");
 }
@@ -132,7 +108,6 @@ fn presign_sign_via_orchestrator_3of3() {
     let key_shares = trusted_dealer_keygen::<C>(n, 2, TEST_JL_P_BITS, TEST_JL_K, &mut rng);
     let all_parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-    // Presign via Orchestrator
     let presign_machines: Vec<(PartyId, Xal23PresignMachine<C>)> = all_parties
         .iter()
         .map(|&pid| {
@@ -164,7 +139,6 @@ fn presign_sign_via_orchestrator_3of3() {
         assert_eq!(presigs[0].r, presigs[i].r, "all parties must agree on r");
     }
 
-    // Online sign via Orchestrator
     let message = b"orchestrator presign test";
     let data = hash_message(message);
 
@@ -185,13 +159,11 @@ fn presign_sign_via_orchestrator_3of3() {
         .map(|r| r.expect("sign"))
         .collect();
 
-    // All parties produce the same signature
     for i in 1..sigs.len() {
         assert_eq!(sigs[0].r, sigs[i].r);
         assert_eq!(sigs[0].s, sigs[i].s);
     }
 
-    // Verify ECDSA
     tecdsa_protocol::verify_ecdsa(&sigs[0], &key_shares[0].public_key, &data)
         .expect("ECDSA verification should succeed");
 }

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,12 +6,6 @@
     clippy::doc_markdown
 )]
 
-//! `R_dec_dl` — correct CL decryption + discrete-log proof.
-//!
-//! Proves that a partial decryption `pd = c1^{sk}` is correct relative
-//! to the public key `pk = h^{sk}`, where `sk` is the secret key.
-//! This is identical to the `CL_HSMqk_Part_Dec_ZKProof` pattern from BICYCL.
-
 use super::{
     challenge_from_qfi, challenge_from_qfi_with_prefix, response_unbounded, sample_random,
 };
@@ -20,21 +13,14 @@ use crate::cl::{
     Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
 
-/// Proof of correct partial decryption (decryption + DL).
 pub struct RDecDlProof {
-    /// Commitment `t1 = h^a`.
     pub t1: Qfi,
-    /// Commitment `t2 = c1^a`.
     pub t2: Qfi,
-    /// Response `z = a + e * sk` (unbounded integer, big-endian bytes).
     pub z: Vec<u8>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
 }
 
 impl RDecDlProof {
-    /// Generates a proof that `pd = c1^{sk}` for ciphertext `ct` and
-    /// public key `pk = h^{sk}`.
     pub fn prove(
         setup: &mut ClSetup,
         pk: &ClHsmqkPublicKey,
@@ -56,7 +42,6 @@ impl RDecDlProof {
         Ok(Self { t1, t2, z, e })
     }
 
-    /// Verifies the partial-decryption proof.
     pub fn verify(
         &self,
         setup: &ClSetup,
@@ -76,7 +61,6 @@ impl RDecDlProof {
             return Ok(false);
         }
 
-        // Check 1: h^z == pk^e * t1
         let lhs1 = setup.power_of_h_bytes(&self.z)?;
         let pk_e = setup.exp_bytes(pk.elt(), &self.e)?;
         let rhs1 = setup.compose(&pk_e, &self.t1)?;
@@ -84,9 +68,6 @@ impl RDecDlProof {
             return Ok(false);
         }
 
-        // Check 2: c1^z == pd^e * t2
-        // c1^z == pd^e * t2 ⟺ c1^z * pd^{-e} == t2 (shared-squaring multi-exp;
-        // both bases vary per proof).
         if setup.multiexp_signed_bytes(&[&c1, pd], &[(false, &self.z[..]), (true, &self.e)])?
             != self.t2
         {
@@ -96,8 +77,6 @@ impl RDecDlProof {
         Ok(true)
     }
 
-    /// Like [`prove`](Self::prove), but binds the Fiat-Shamir challenge to an
-    /// opaque context prefix (e.g. session/party/round bytes).
     pub fn prove_with_prefix(
         prefix: &[u8],
         setup: &mut ClSetup,
@@ -126,8 +105,6 @@ impl RDecDlProof {
         Ok(Self { t1, t2, z, e })
     }
 
-    /// Like [`verify`](Self::verify), but uses the same context prefix that was
-    /// used during proving.
     pub fn verify_with_prefix(
         &self,
         prefix: &[u8],
@@ -157,8 +134,6 @@ impl RDecDlProof {
             return Ok(false);
         }
 
-        // c1^z == pd^e * t2 ⟺ c1^z * pd^{-e} == t2 (shared-squaring multi-exp;
-        // both bases vary per proof).
         let lhs2 = setup.multiexp_signed_bytes(
             &[&c1, pd],
             &[(false, self.z.clone()), (true, self.e.clone())],
@@ -204,7 +179,6 @@ mod tests {
         let (c1, _) = setup.ct_components(&ct).expect("components");
         let pd = setup.exp(&c1, &sk_dec).expect("partial_dec");
 
-        // Prove with wrong secret key.
         let proof = RDecDlProof::prove(&mut setup, &pk_raw, &ct, &pd, &sk_bytes2).expect("prove");
         assert!(!proof.verify(&setup, &pk_raw, &ct, &pd).expect("verify"));
     }

@@ -1,19 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! DDH exponent VRF (eVRF) for the tecdsa threshold ECDSA library.
-//!
-//! Implements the Chaum-Pedersen DDH-based eVRF construction used in the Trout protocol.
-//!
-//! # Construction
-//!
-//! Given a secret key `sk` and input `x`:
-//!
-//! 1. Hash-to-curve: `H = hash_to_curve(x)` (try-and-increment via SHA-256).
-//! 2. Evaluate: `Y = sk * H`.
-//! 3. Prove via Chaum-Pedersen DLEQ: prove `log_G(PK) = log_H(Y) = sk`.
-//!
-//! The DLEQ proof convinces a verifier that `(G, PK, H, Y)` is a DDH tuple,
-//! i.e., that `Y` was computed honestly from the public key `PK = sk * G`.
-
 pub mod zk;
 
 use elliptic_curve::{
@@ -26,16 +10,6 @@ use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
 pub use zk::EvrfProof;
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Hash-to-curve (try-and-increment via SHA-256)
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Hash an arbitrary byte string to a curve point using the try-and-increment
-/// method with SHA-256.
-///
-/// For each counter `i = 0, 1, 2, ...` we compute `SHA-256(i || input)` and
-/// try to interpret it as a compressed x-coordinate.  The first one that
-/// yields a valid point is returned.
 pub(crate) fn hash_to_curve<C>(input: &[u8]) -> C::AffinePoint
 where
     C: TecdsaCurve,
@@ -49,7 +23,6 @@ where
             .chain_update(input)
             .finalize();
 
-        // SEC1 compressed encoding: 0x02 prefix + field-element-sized x-coordinate.
         let mut compressed = vec![0u8; 1 + field_len];
         compressed[0] = 0x02;
         let copy_len = field_len.min(hash.len());
@@ -62,11 +35,6 @@ where
     unreachable!("hash_to_curve: no valid point found after 2^32 iterations")
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Public types
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Secret key for the DDH eVRF.
 #[derive(Clone)]
 pub struct EvrfSecretKey<C: TecdsaCurve>
 where
@@ -75,7 +43,6 @@ where
     scalar: C::Scalar,
 }
 
-/// Public key for the DDH eVRF: `PK = sk * G`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvrfPublicKey<C: TecdsaCurve>
 where
@@ -84,7 +51,6 @@ where
     pub point: C::AffinePoint,
 }
 
-/// Output of an eVRF evaluation: `Y = sk * H` where `H = hash_to_curve(input)`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvrfOutput<C: TecdsaCurve>
 where
@@ -92,10 +58,6 @@ where
 {
     pub point: C::AffinePoint,
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Zeroize / Drop for EvrfSecretKey
-// ──────────────────────────────────────────────────────────────────────────────
 
 impl<C: TecdsaCurve> Zeroize for EvrfSecretKey<C>
 where
@@ -115,11 +77,6 @@ where
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// EvrfCurve bound alias
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// Combined trait alias for the curve bounds used throughout this crate.
 pub trait EvrfCurve: TecdsaCurve<Scalar: PrimeField<Repr = FieldBytes<Self>>>
 where
     FieldBytesSize<Self>: ModulusSize,
@@ -134,37 +91,22 @@ where
 {
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// EvrfSecretKey implementation
-// ──────────────────────────────────────────────────────────────────────────────
-
 impl<C: EvrfCurve> EvrfSecretKey<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Generate a fresh random secret/public key pair.
     pub fn generate(rng: &mut impl CryptoRngCore) -> (Self, EvrfPublicKey<C>) {
         let scalar = C::random_scalar(rng);
         let point = (C::generator() * scalar).to_affine();
         (Self { scalar }, EvrfPublicKey { point })
     }
 
-    /// Return a reference to the underlying secret scalar.
     #[must_use]
     pub fn scalar(&self) -> &C::Scalar {
         &self.scalar
     }
 
-    /// Evaluate the eVRF on `input`.
-    ///
-    /// Returns `(output, proof)` where the proof certifies that `output` was
-    /// computed honestly using this key.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `hash_to_curve` fails to find a valid point (negligible
-    /// probability).
     pub fn eval(
         &self,
         input: &[u8],
@@ -181,10 +123,6 @@ where
         (output, proof)
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

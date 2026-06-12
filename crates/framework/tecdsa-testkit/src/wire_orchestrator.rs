@@ -1,24 +1,7 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire-aware multi-party orchestrator for integration testing.
-//!
-//! [`WireOrchestrator`] is similar to [`crate::Orchestrator`] but routes every
-//! message through the full wire encode/decode path (via
-//! [`run_multi_party_sync`]).  This verifies that protocol messages survive
-//! serialization round-trips, catching any `serde` or `bincode` regressions
-//! that the direct-delivery `Orchestrator` would miss.
-//!
-//! Key difference from `Orchestrator`: `WireOrchestrator` does **not** require
-//! `Outbound: Into<Inbound>`.  The wire serialization handles the type
-//! round-trip instead.
-
 use tecdsa_protocol::{PartyId, StateMachine};
 use tecdsa_session::{run_multi_party_sync, SessionRunConfig};
 use tecdsa_transport::{InMemoryNetwork, NetworkMetrics};
 
-/// Orchestrator that routes all messages through wire encode/decode.
-///
-/// Wraps [`run_multi_party_sync`] with a simple builder API matching
-/// [`crate::Orchestrator`].
 pub struct WireOrchestrator<M: StateMachine> {
     machines: Vec<(PartyId, M)>,
     max_rounds: u16,
@@ -30,10 +13,6 @@ where
     M::Outbound: serde::Serialize + Clone,
     M::Inbound: serde::de::DeserializeOwned + Clone,
 {
-    /// Create a new wire orchestrator.
-    ///
-    /// * `machines`   -- `(PartyId, StateMachine)` pairs, one per party.
-    /// * `max_rounds` -- hard cap on outer-loop iterations (fail-safe).
     #[must_use]
     pub fn new(machines: Vec<(PartyId, M)>, max_rounds: u16) -> Self {
         Self {
@@ -42,17 +21,12 @@ where
         }
     }
 
-    /// Drive all machines to completion through the wire encode/decode path.
-    ///
-    /// Returns a [`WireOrchestratorResult`] that dereferences to
-    /// `Vec<Result<M::Output>>` for API compatibility with
-    /// [`crate::OrchestratorResult`].
     #[must_use]
     pub fn run(self) -> WireOrchestratorResult<M::Output> {
         let party_ids: Vec<tecdsa_protocol::PartyId> =
             self.machines.iter().map(|(pid, _)| *pid).collect();
         let mut network = InMemoryNetwork::from_party_ids(&party_ids);
-        let session_id = [0u8; 32]; // deterministic for testing
+        let session_id = [0u8; 32];
         let config = SessionRunConfig {
             max_rounds: self.max_rounds,
             ..SessionRunConfig::default()
@@ -66,7 +40,6 @@ where
             self.max_rounds,
         );
 
-        // Convert Vec<Result<M::Output, SessionError>> to Vec<tecdsa_core::Result<M::Output>>
         let outputs = results
             .into_iter()
             .map(|r| r.map_err(|e| tecdsa_core::TecdsaError::Other(e.to_string())))
@@ -78,16 +51,8 @@ where
     }
 }
 
-/// Result of a [`WireOrchestrator`] run.
-///
-/// Dereferences to `Vec<Result<O>>` and implements `IntoIterator` for
-/// compatibility with [`crate::OrchestratorResult`].
-///
-/// Also carries [`NetworkMetrics`] with per-party bytes/messages counts.
 pub struct WireOrchestratorResult<O> {
-    /// Per-party protocol outputs.
     pub outputs: Vec<tecdsa_core::Result<O>>,
-    /// Communication metrics collected during the run.
     pub metrics: NetworkMetrics,
 }
 
@@ -120,7 +85,6 @@ mod tests {
     #[test]
     fn wire_orchestrator_toy_dkg_3_parties() {
         let results = WireOrchestrator::new(make_machines(3), 10).run();
-        // All three parties must succeed.
         for (i, res) in results.iter().enumerate() {
             assert!(
                 res.is_ok(),
@@ -128,7 +92,6 @@ mod tests {
                 res.as_ref().err()
             );
         }
-        // All parties must agree on the same combined key.
         let first = results[0].as_ref().unwrap();
         for (i, res) in results.iter().enumerate().skip(1) {
             assert_eq!(

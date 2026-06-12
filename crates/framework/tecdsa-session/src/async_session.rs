@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Async session that owns both a `SessionRunner` and an [`AsyncTransport`],
-//! driving the protocol to completion with `tokio`-based timeouts and retries.
-
 use tecdsa_protocol::{state_machine::Recipient, PartyId, StateMachine};
 
 use crate::{
@@ -9,15 +5,6 @@ use crate::{
     metrics::SessionMetrics, runner::SessionRunner,
 };
 
-/// An async session that runs a protocol to completion.
-///
-/// `AsyncSession` combines a `SessionRunner` (wire encode/decode + validation)
-/// with an [`AsyncTransport`] (async message delivery) to provide an
-/// `async fn run()` API suitable for production deployment behind tokio.
-///
-/// Round-level timeouts are enforced via [`tokio::time::timeout`].
-/// Transport failures are retried according to [`RetryPolicy`](crate::RetryPolicy)
-/// with exponential backoff.
 pub struct AsyncSession<M, T>
 where
     M: StateMachine,
@@ -37,7 +24,6 @@ where
     M::Inbound: serde::de::DeserializeOwned,
     T: AsyncTransport,
 {
-    /// Create a new `AsyncSession`.
     pub fn new(
         machine: M,
         transport: T,
@@ -54,22 +40,8 @@ where
         }
     }
 
-    /// Drive the protocol to completion asynchronously, returning the final
-    /// output.
-    ///
-    /// Each iteration: drain outgoing messages (encode + send with retry),
-    /// then receive and decode incoming messages (with round-level timeout).
-    /// Loops until the state machine signals completion or the maximum round
-    /// count is exceeded.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SessionError`] on wire errors, header validation failures,
-    /// duplicate messages, round timeouts, transport failures (after retries
-    /// exhausted), or exceeding the maximum round count.
     pub async fn run(mut self) -> Result<M::Output, SessionError> {
         loop {
-            // Encode + send with retry
             let encoded = self.runner.step_encode()?;
             for (recipient, bytes) in encoded {
                 self.send_with_retry(&recipient, bytes).await?;
@@ -85,14 +57,12 @@ where
                 ));
             }
 
-            // Receive with round-level timeout + decode
             let round_timeout = self.runner.config.round_timeout;
             let raw = self.receive_with_timeout(round_timeout).await?;
             self.runner.step_decode(&raw)?;
         }
     }
 
-    /// Send a single message with exponential-backoff retry.
     async fn send_with_retry(
         &mut self,
         recipient: &Recipient,
@@ -129,7 +99,6 @@ where
         )))
     }
 
-    /// Receive incoming messages with a round-level timeout.
     async fn receive_with_timeout(
         &mut self,
         timeout: std::time::Duration,
@@ -143,7 +112,6 @@ where
         }
     }
 
-    /// Access the current session metrics.
     pub fn metrics(&self) -> &SessionMetrics {
         &self.runner.metrics
     }
@@ -160,8 +128,6 @@ mod tests {
     use tecdsa_protocol::{IaReport, PartyId};
 
     use super::*;
-
-    // --- Mock transport that never returns (for timeout test) ---
 
     struct NeverTransport;
 
@@ -187,12 +153,9 @@ mod tests {
             _party: PartyId,
             _timeout: Duration,
         ) -> Result<Vec<(PartyId, Vec<u8>)>, Self::Error> {
-            // Block forever
             std::future::pending().await
         }
     }
-
-    // --- Mock transport that always fails sends (for retry test) ---
 
     #[derive(Debug)]
     struct MockSendError(String);
@@ -236,8 +199,6 @@ mod tests {
             Ok(vec![])
         }
     }
-
-    // --- Minimal state machine for testing ---
 
     struct DoneAfterOneMachine {
         round: u16,
@@ -290,8 +251,6 @@ mod tests {
             None
         }
     }
-
-    // --- The test machine that starts done immediately ---
 
     struct AlreadyDoneMachine;
 
@@ -409,11 +368,9 @@ mod tests {
             other => panic!("expected TransportFailure, got: {other}"),
         }
 
-        // 1 initial + 2 retries = 3 total attempts
         assert_eq!(*attempts.lock().unwrap(), 3);
     }
 
-    /// A machine that is NOT done but emits one broadcast message.
     struct AlreadyDoneSendingMachine;
 
     impl StateMachine for AlreadyDoneSendingMachine {

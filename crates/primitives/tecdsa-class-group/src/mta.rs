@@ -1,26 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! CL-based MtA (Multiplicative-to-Additive) sub-protocol.
-//!
-//! Implements `tecdsa_protocol::MtA` using CL-HSM class-group encryption
-//! following XAL+21 Figure 5 / Castagnos et al.
-//!
-//! The protocol has three steps:
-//!
-//! 1. **Sender encrypt**: P2 encrypts input `b` with CL encryption.
-//! 2. **Receiver compute**: P1 homomorphically computes
-//!    `c_A = hscmul(a, c_B) + encrypt(pk, -alpha')`, sets `alpha = alpha' mod q`.
-//! 3. **Sender decrypt**: P2 decrypts `beta_raw = decrypt(sk, c_A)`,
-//!    sets `beta = beta_raw mod q`.
-//!
-//! After completion: `alpha + beta = a * b mod q`.
-//!
-//! # Interior mutability
-//!
-//! `ClSetup` requires `&mut self` for encryption and homomorphic operations
-//! (because the BICYCL RNG is mutated). Since the `MtA` trait passes
-//! `&Self::Setup`, we use `RefCell<ClSetup>` for interior mutability.
-//! This is safe because protocol execution is single-threaded.
-
 use std::cell::RefCell;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
@@ -36,75 +13,40 @@ use crate::cl::{
     SecretKey as ClHsmqkSecretKey,
 };
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/// CL-based MtA backend.
-///
-/// Uses CL-HSM class-group encryption with homomorphic operations as
-/// described in XAL+21 (Figure 5).
 pub struct ClMtA;
 
-/// Setup material for CL MtA: the CL scheme parameters, public key,
-/// and secret key.
-///
-/// Wraps `ClSetup` in a `RefCell` because the MtA trait passes `&Setup`
-/// but CL operations need `&mut ClSetup`.
 pub struct ClMtaSetup {
-    /// CL-HSM scheme parameters (wrapped for interior mutability).
     pub setup: RefCell<ClSetup>,
-    /// CL public key (owned by the sender, shared with both parties).
     pub pk: ClHsmqkPublicKey,
-    /// CL secret key (owned by the sender).
     pub sk: ClHsmqkSecretKey,
 }
 
 impl Clone for ClMtaSetup {
     fn clone(&self) -> Self {
-        // ClSetup/ClHsmqkPublicKey/ClHsmqkSecretKey do not implement Clone.
-        // The MtA trait requires Setup: Clone, so we implement it but
-        // it should never actually be called in practice. Each party
-        // creates its own setup.
         unimplemented!("ClMtaSetup::clone is not supported; each party should create its own setup")
     }
 }
 
-/// Sender's internal state between encrypt and decrypt.
-///
-/// Stores the original plaintext `b` for potential verification.
 pub struct ClSenderState {
-    /// The sender's input value `b` as big-endian bytes.
     pub b_bytes: Vec<u8>,
 }
 
-/// Message from sender (P2) to receiver (P1): encrypted `b`.
 pub struct ClSenderMsg {
-    /// CL ciphertext: `c_B = Enc(pk, b)`.
     pub ciphertext: ClHsmqkCiphertext,
 }
 
-/// Message from receiver (P1) to sender (P2): affine result ciphertext.
 pub struct ClReceiverMsg {
-    /// CL ciphertext: `c_A = hscmul(a, c_B) + Enc(pk, alpha')`.
     pub ciphertext: ClHsmqkCiphertext,
 }
 
-/// Error type for the CL MtA backend.
 #[derive(Debug, thiserror::Error)]
 pub enum ClMtaError {
-    /// An error from the CL class-group operations.
     #[error("CL error: {0}")]
     Cl(#[from] ClError),
 
-    /// Invalid parameter.
     #[error("invalid parameter: {0}")]
     InvalidParam(String),
 }
-
-// ---------------------------------------------------------------------------
-// MtA trait implementation
-// ---------------------------------------------------------------------------
 
 impl MtA for ClMtA {
     type Setup = ClMtaSetup;
@@ -113,7 +55,6 @@ impl MtA for ClMtA {
     type ReceiverMsg = ClReceiverMsg;
     type Error = ClMtaError;
 
-    /// Step 1: Sender (P2) encrypts input `b` using CL encryption.
     fn sender_encrypt(
         setup: &Self::Setup,
         b_bytes: &[u8],
@@ -131,14 +72,6 @@ impl MtA for ClMtA {
         Ok((msg, state))
     }
 
-    /// Step 2: Receiver (P1) homomorphically computes the affine operation
-    /// and obtains `alpha`.
-    ///
-    /// Computes:
-    ///   `c_scaled = hscmul(a, c_B)` = Enc(a * b)
-    ///   `c_alpha = encrypt(pk, alpha')` (random mask)
-    ///   `c_A = hadd(c_scaled, c_alpha)` = Enc(a * b + alpha')
-    ///   `alpha = q - (alpha' mod q)`
     fn receiver_compute(
         setup: &Self::Setup,
         a_bytes: &[u8],
@@ -150,25 +83,19 @@ impl MtA for ClMtA {
 
         let mut cl_setup = setup.setup.borrow_mut();
 
-        // 1. Homomorphic scalar multiplication: c_scaled = a * c_B = Enc(a * b)
         let c_scaled =
             cl_setup.scal_ciphertext_bytes(&setup.pk, &sender_msg.ciphertext, a_bytes)?;
 
-        // 2. Sample alpha' from [0, q) for masking
-        // Use the CL setup's own keygen to generate randomness, then reduce
         let (sk_tmp, _pk_tmp) = cl_setup.keygen()?;
         let r_bytes = cl_setup.sk_to_bytes(&sk_tmp)?;
         let r_big = Integer::from_digits(&r_bytes, Order::Msf);
         let alpha_prime = r_big % &q;
         let alpha_prime_bytes = alpha_prime.to_digits::<u8>(Order::Msf);
 
-        // 3. Encrypt alpha': c_alpha = Enc(pk, alpha')
         let c_alpha = cl_setup.encrypt_bytes(&setup.pk, &alpha_prime_bytes)?;
 
-        // 4. Homomorphic addition: c_A = c_scaled + c_alpha = Enc(a*b + alpha')
         let c_a = cl_setup.add_ciphertexts(&setup.pk, &c_scaled, &c_alpha)?;
 
-        // 5. Compute receiver's output: alpha = -alpha' mod q = q - (alpha' mod q)
         let alpha_mod_q = Integer::from(&alpha_prime % &q);
         let alpha = if alpha_mod_q == 0 {
             Integer::new()
@@ -182,9 +109,6 @@ impl MtA for ClMtA {
         Ok((msg, alpha_bytes))
     }
 
-    /// Step 3: Sender (P2) decrypts to obtain `beta`.
-    ///
-    /// `beta = decrypt(sk, c_A) mod q`
     fn sender_decrypt(
         setup: &Self::Setup,
         _state: &Self::SenderState,
@@ -195,11 +119,9 @@ impl MtA for ClMtA {
 
         let cl_setup = setup.setup.borrow();
 
-        // Decrypt the affine ciphertext
         let plaintext_bytes = cl_setup.decrypt_bytes(&setup.sk, &receiver_msg.ciphertext)?;
         let plaintext = Integer::from_digits(&plaintext_bytes, Order::Msf);
 
-        // Reduce mod q
         let beta = plaintext % &q;
         let beta_bytes = beta.to_digits::<u8>(Order::Msf);
 
@@ -207,28 +129,7 @@ impl MtA for ClMtA {
     }
 }
 
-// ---------------------------------------------------------------------------
-// MtAWithCheck trait implementation (WMY23-style MtAwc)
-// ---------------------------------------------------------------------------
-
-/// Consistency-check proof for CL MtA (WMY23 MtAwc pattern).
-///
-/// After the receiver computes the affine operation, it also computes
-/// `g^beta` (where `beta` is the receiver's MtA share) and sends it
-/// alongside the ciphertext.  The sender verifies:
-///
-///   `g^{sender_share} * g^{receiver_share} == (g^a)^b`
-///
-/// where `a` is the receiver's input and `b` is the sender's input.
-/// Since `sender_share + receiver_share = a * b mod q`, this checks
-/// that both shares are consistent.
-///
-/// The proof contains `g^alpha` (the receiver's share commitment) as
-/// compressed secp256k1 point bytes.  The verifier also needs `g^a`
-/// (the receiver's public input) as auxiliary data.
 pub struct ClCheckProof {
-    /// `g^alpha` where `alpha` is the receiver's MtA share,
-    /// as compressed secp256k1 point bytes (33 bytes).
     pub g_alpha_bytes: Vec<u8>,
 }
 
@@ -243,14 +144,6 @@ impl std::fmt::Debug for ClCheckProof {
 impl MtAWithCheck for ClMtA {
     type CheckProof = ClCheckProof;
 
-    /// Receiver (P1) computes the affine operation and produces a
-    /// consistency check proof.
-    ///
-    /// In addition to the standard `receiver_compute` output, produces
-    /// `g^alpha` as proof that the receiver's share is computed honestly.
-    ///
-    /// The sender can verify: `g^beta * g^alpha == (g^a)^b`
-    /// where `g^a` is provided as auxiliary data.
     fn receiver_compute_with_check(
         setup: &Self::Setup,
         a_bytes: &[u8],
@@ -258,11 +151,9 @@ impl MtAWithCheck for ClMtA {
         sender_msg: &Self::SenderMsg,
         rng: &mut impl CryptoRngCore,
     ) -> Result<(Self::ReceiverMsg, Vec<u8>, Self::CheckProof), Self::Error> {
-        // Perform the standard receiver computation.
         let (receiver_msg, alpha_bytes) =
             Self::receiver_compute(setup, a_bytes, q_bytes, sender_msg, rng)?;
 
-        // Compute g^alpha as an EC point for the consistency check.
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let q = Integer::from_digits(q_bytes, Order::Msf);
         let alpha_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&alpha % &q));
@@ -275,17 +166,6 @@ impl MtAWithCheck for ClMtA {
         Ok((receiver_msg, alpha_bytes, check_proof))
     }
 
-    /// Verify the consistency check on the sender side.
-    ///
-    /// Checks: `g^beta * g^alpha == (g^a)^b`
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - Sender state containing the original input `b`.
-    /// * `beta_bytes` - The sender's decrypted share (big-endian).
-    /// * `check_proof` - Contains `g^alpha` (receiver's share commitment).
-    /// * `aux_bytes` - `g^a` as compressed secp256k1 point bytes (33 bytes).
-    ///   This is the receiver's public EC point, known to the sender.
     fn verify_check(
         _setup: &Self::Setup,
         state: &Self::SenderState,
@@ -296,30 +176,25 @@ impl MtAWithCheck for ClMtA {
     ) -> Result<bool, Self::Error> {
         let q = Integer::from_digits(q_bytes, Order::Msf);
 
-        // Parse g^alpha from the check proof.
         let g_alpha_repr = k256::CompressedPoint::try_from(check_proof.g_alpha_bytes.as_slice())
             .map_err(|e| ClMtaError::InvalidParam(format!("invalid g_alpha point: {e}")))?;
         let g_alpha =
             Option::<k256::ProjectivePoint>::from(k256::ProjectivePoint::from_bytes(&g_alpha_repr))
                 .ok_or_else(|| ClMtaError::InvalidParam("invalid g_alpha EC point".into()))?;
 
-        // Parse g^a (receiver's public point) from aux_bytes.
         let g_a_repr = k256::CompressedPoint::try_from(aux_bytes)
             .map_err(|e| ClMtaError::InvalidParam(format!("invalid g_a point: {e}")))?;
         let g_a =
             Option::<k256::ProjectivePoint>::from(k256::ProjectivePoint::from_bytes(&g_a_repr))
                 .ok_or_else(|| ClMtaError::InvalidParam("invalid g_a EC point".into()))?;
 
-        // Compute g^beta from beta_bytes.
         let beta = Integer::from_digits(beta_bytes, Order::Msf);
         let beta_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&beta % &q));
         let g_beta = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * beta_scalar;
 
-        // Compute b as scalar.
         let b = Integer::from_digits(&state.b_bytes, Order::Msf);
         let b_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&b % &q));
 
-        // Check: g^alpha * g^beta == (g^a)^b
         let lhs = g_alpha + g_beta;
         let rhs = g_a * b_scalar;
 
@@ -327,17 +202,12 @@ impl MtAWithCheck for ClMtA {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use tecdsa_bigint::mul_mod;
 
     use super::*;
 
-    /// Helper: create a ClMtaSetup for testing with secp256k1 parameters.
     fn test_setup(seed: &str) -> ClMtaSetup {
         let mut cl_setup = ClSetup::new_secp256k1(seed).expect("CL setup should succeed");
         let (sk, pk) = cl_setup.keygen().expect("keygen should succeed");
@@ -349,7 +219,6 @@ mod tests {
         }
     }
 
-    /// Helper: secp256k1 curve order as an integer.
     fn curve_order() -> Integer {
         Integer::from_str_radix(
             "115792089237316195423570985008687907852837564279074904382605163141518161494337",
@@ -365,31 +234,25 @@ mod tests {
         let q = curve_order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
-        // Sender's input b
         let b = Integer::from(12345u32);
         let b_bytes = b.to_digits::<u8>(Order::Msf);
 
-        // Receiver's input a
         let a = Integer::from(67890u32);
         let a_bytes = a.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();
 
-        // Step 1: Sender encrypts
         let (sender_msg, sender_state) =
             ClMtA::sender_encrypt(&setup, &b_bytes, &q_bytes, &mut rng)
                 .expect("sender_encrypt should succeed");
 
-        // Step 2: Receiver computes
         let (receiver_msg, alpha_bytes) =
             ClMtA::receiver_compute(&setup, &a_bytes, &q_bytes, &sender_msg, &mut rng)
                 .expect("receiver_compute should succeed");
 
-        // Step 3: Sender decrypts
         let beta_bytes = ClMtA::sender_decrypt(&setup, &sender_state, &q_bytes, &receiver_msg)
             .expect("sender_decrypt should succeed");
 
-        // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
         let sum = Integer::from(&alpha + &beta) % &q;
@@ -450,7 +313,6 @@ mod tests {
         let q = curve_order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
-        // Use values that are close to (but less than) q
         let a = Integer::from(&q - 1);
         let b = Integer::from(2u32);
 
@@ -487,15 +349,12 @@ mod tests {
         let q = curve_order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
-        // Sender's input b
         let b = Integer::from(12345u32);
         let b_bytes = b.to_digits::<u8>(Order::Msf);
 
-        // Receiver's input a
         let a = Integer::from(67890u32);
         let a_bytes = a.to_digits::<u8>(Order::Msf);
 
-        // Compute g^a for the auxiliary data (receiver's public point).
         let a_mod_q = Integer::from(&a % &q);
         let a_mod_bytes = a_mod_q.to_digits::<u8>(Order::Msf);
         let mut a_padded = [0u8; 32];
@@ -511,21 +370,17 @@ mod tests {
 
         let mut rng = rand::thread_rng();
 
-        // Step 1: Sender encrypts
         let (sender_msg, sender_state) =
             ClMtA::sender_encrypt(&setup, &b_bytes, &q_bytes, &mut rng)
                 .expect("sender_encrypt should succeed");
 
-        // Step 2: Receiver computes with check
         let (receiver_msg, alpha_bytes, check_proof) =
             ClMtA::receiver_compute_with_check(&setup, &a_bytes, &q_bytes, &sender_msg, &mut rng)
                 .expect("receiver_compute_with_check should succeed");
 
-        // Step 3: Sender decrypts
         let beta_bytes = ClMtA::sender_decrypt(&setup, &sender_state, &q_bytes, &receiver_msg)
             .expect("sender_decrypt should succeed");
 
-        // Step 4: Verify check
         let check_ok = ClMtA::verify_check(
             &setup,
             &sender_state,
@@ -537,7 +392,6 @@ mod tests {
         .expect("verify_check should succeed");
         assert!(check_ok, "MtAwc consistency check must pass");
 
-        // Also verify MtA correctness: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
         let sum = Integer::from(&alpha + &beta) % &q;
@@ -560,7 +414,6 @@ mod tests {
             let a = Integer::from(a_val);
             let b = Integer::from(b_val);
 
-            // Compute g^a
             let a_mod_q = Integer::from(&a % &q);
             let a_mod_bytes = a_mod_q.to_digits::<u8>(Order::Msf);
             let mut a_padded = [0u8; 32];
@@ -601,7 +454,6 @@ mod tests {
             .expect("verify_check");
             assert!(check_ok, "MtAwc check must pass for a={a_val}, b={b_val}");
 
-            // Correctness check.
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
             let sum = Integer::from(&alpha + &beta) % &q;

@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Integration tests for the GG18 signing protocol.
-//!
-//! Tests keygen -> presign -> online_sign -> ECDSA verify end-to-end.
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::PrimeField;
@@ -20,10 +15,6 @@ use tecdsa_protocol::{
 };
 
 type C = k256::Secp256k1;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
     let session_id = SessionId([0u8; 32]);
@@ -43,7 +34,6 @@ fn make_session_configs(n: u16, t: u16) -> Vec<SessionConfig> {
 }
 
 fn test_paillier_dk(rng: &mut impl rand_core::CryptoRngCore) -> DecryptionKey {
-    // Use 512-bit primes (N ~ 1024 bits) to ensure MtA correctness.
     let p = Integer::generate_safe_prime(rng, 512);
     let q = Integer::generate_safe_prime(rng, 512);
     DecryptionKey::from_primes(p, q).expect("valid primes")
@@ -56,7 +46,6 @@ fn test_precomputed(rng: &mut impl rand_core::CryptoRngCore) -> PaillierPrecompu
     PaillierPrecomputed { dk, n_tilde_params }
 }
 
-/// Run keygen to produce key shares.
 fn run_keygen(n: u16, t: u16) -> Vec<Gg18KeyShare<C>> {
     let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
@@ -80,7 +69,6 @@ fn run_keygen(n: u16, t: u16) -> Vec<Gg18KeyShare<C>> {
         .collect()
 }
 
-/// Generic round-loop runner for any StateMachine.
 fn run_machines<M: StateMachine>(machines: &mut [(PartyId, M)])
 where
     M::Outbound: Into<M::Inbound> + Clone,
@@ -123,7 +111,6 @@ where
     }
 }
 
-/// Prepare a message digest for signing.
 fn test_message_digest() -> DataToSign<C> {
     let hash = Sha256::digest(b"hello world");
     let mut bytes = [0u8; 32];
@@ -135,7 +122,6 @@ fn test_message_digest() -> DataToSign<C> {
     DataToSign::from_digest(scalar)
 }
 
-/// Run the presigning protocol to completion.
 fn run_presign(shares: &[Gg18KeyShare<C>], signer_indices: &[u16]) -> Vec<Gg18Presignature<C>> {
     let mut rng = Csprng::new();
 
@@ -165,7 +151,6 @@ fn run_presign(shares: &[Gg18KeyShare<C>], signer_indices: &[u16]) -> Vec<Gg18Pr
         .collect()
 }
 
-/// Run the online signing protocol to completion.
 fn run_online_sign(
     presignatures: Vec<Gg18Presignature<C>>,
     message: DataToSign<C>,
@@ -191,13 +176,11 @@ fn run_online_sign(
         "all online sign machines must complete"
     );
 
-    // All machines should produce the same signature
     let sigs: Vec<_> = machines
         .into_iter()
         .map(|(_, m)| m.finish().expect("online sign must succeed"))
         .collect();
 
-    // Verify all signatures are identical
     for i in 1..sigs.len() {
         assert_eq!(sigs[i].r, sigs[0].r, "all signers must agree on r");
         assert_eq!(sigs[i].s, sigs[0].s, "all signers must agree on s");
@@ -206,19 +189,13 @@ fn run_online_sign(
     sigs.into_iter().next().unwrap()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn presign_2of3_produces_valid_presignature() {
     let shares = run_keygen(3, 2);
 
-    // Presign with parties [1, 2]
     let presigs = run_presign(&shares, &[1, 2]);
     assert_eq!(presigs.len(), 2);
 
-    // Verify all presignatures agree on R and r
     assert_eq!(presigs[0].R, presigs[1].R, "all parties must agree on R");
     assert_eq!(presigs[0].r, presigs[1].r, "all parties must agree on r");
 }
@@ -228,13 +205,10 @@ fn sign_2of3_verifies() {
     let shares = run_keygen(3, 2);
     let message = test_message_digest();
 
-    // Presign with parties [1, 2]
     let presigs = run_presign(&shares, &[1, 2]);
 
-    // Online sign with the presignatures + message
     let sig = run_online_sign(presigs, message);
 
-    // ECDSA verify
     verify_ecdsa::<C>(&sig, &shares[0].public_key, &message).expect("signature must verify");
 }
 
@@ -243,20 +217,15 @@ fn sign_3of5_verifies() {
     let shares = run_keygen(5, 3);
     let message = test_message_digest();
 
-    // Presign with parties [1, 2, 3]
     let presigs = run_presign(&shares, &[1, 2, 3]);
 
-    // Online sign with the presignatures + message
     let sig = run_online_sign(presigs, message);
 
-    // ECDSA verify
     verify_ecdsa::<C>(&sig, &shares[0].public_key, &message).expect("signature must verify");
 }
 
 #[test]
 fn presign_reuse_different_messages() {
-    // Verify that the same keygen can produce different presignatures
-    // and sign different messages
     let shares = run_keygen(3, 2);
 
     let msg1 = {
@@ -281,11 +250,9 @@ fn presign_reuse_different_messages() {
         DataToSign::from_digest(scalar)
     };
 
-    // Two independent presigning sessions
     let presigs1 = run_presign(&shares, &[1, 2]);
     let presigs2 = run_presign(&shares, &[1, 2]);
 
-    // Sign different messages with different presignatures
     let sig1 = run_online_sign(presigs1, msg1);
     let sig2 = run_online_sign(presigs2, msg2);
 

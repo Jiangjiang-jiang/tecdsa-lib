@@ -1,15 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Sign `StateMachine` for XAL23 (1 round).
-//!
-//! ## Protocol
-//!
-//! On construction, the machine computes its own partial signature
-//! `s_i = m * k_i + r * sigma_i` and queues it for broadcast.
-//!
-//! After receiving partial signatures from all other signing parties,
-//! the machine combines them into a full ECDSA signature and verifies
-//! it against the public key.
-
 #![allow(
     clippy::doc_markdown,
     clippy::missing_errors_doc,
@@ -29,10 +17,6 @@ use tecdsa_protocol::{
 
 use super::msg::Xal23SignMsg;
 use crate::presign::Xal23Presignature;
-
-// ---------------------------------------------------------------------------
-// Helpers: scalar (de)serialization
-// ---------------------------------------------------------------------------
 
 fn scalar_to_bytes<C: TecdsaCurve>(s: &C::Scalar) -> Vec<u8>
 where
@@ -63,43 +47,18 @@ where
         .ok_or_else(|| TecdsaError::Other("invalid scalar encoding".into()))
 }
 
-// ---------------------------------------------------------------------------
-// Xal23SignMachine
-// ---------------------------------------------------------------------------
-
-/// 1-round signing `StateMachine` for XAL23.
-///
-/// # Construction
-///
-/// Takes a presignature (from `presign_all` or `Xal23PresignMachine`) and
-/// a message digest.  On construction, computes the local partial signature
-/// and queues it for broadcast.
-///
-/// # Round 1
-///
-/// Receives partial signatures from all other signing parties.  Once all
-/// are collected, combines them into a full ECDSA signature, verifies it,
-/// and transitions to "done".
 pub struct Xal23SignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     my_id: PartyId,
-    /// Signing parties (the subset that produced the presignature).
     signer_parties: Vec<PartyId>,
-    /// The presignature from the offline phase.
     presig: Xal23Presignature<C>,
-    /// The message being signed.
     data: DataToSign<C>,
-    /// This party's own partial signature scalar.
     own_partial: C::Scalar,
-    /// Partial signatures received from peers (keyed by sender PartyId).
     received: BTreeMap<PartyId, C::Scalar>,
-    /// Number of peer partial signatures expected (= signers - 1).
     expected: usize,
-    /// Outgoing messages (drained after construction).
     outgoing: Vec<Outgoing<Xal23SignMsg>>,
-    /// The completed signature (set when all partials are collected).
     output: Option<Signature<C>>,
     done: bool,
 }
@@ -109,21 +68,11 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new signing state machine.
-    ///
-    /// Immediately computes the local partial signature and queues it for
-    /// broadcast.
-    ///
-    /// # Arguments
-    ///
-    /// * `presig` - This party's presignature from the offline phase
-    /// * `data`   - The message digest to sign
     pub fn new(presig: Xal23Presignature<C>, data: DataToSign<C>) -> Self {
         let my_id = presig.my_id;
         let signer_parties = presig.signer_parties.clone();
         let expected = signer_parties.len() - 1;
 
-        // Compute own partial signature: s_i = m * k_i + r * sigma_i
         let m = *data.digest();
         let s_i = m * presig.k_i + presig.r * presig.sigma_i;
 
@@ -146,7 +95,6 @@ where
         }
     }
 
-    /// Try to combine partial signatures if we have received enough.
     fn try_combine(&mut self) -> tecdsa_core::Result<()>
     where
         C::ProjectivePoint:
@@ -156,7 +104,6 @@ where
             return Ok(());
         }
 
-        // Collect all partial signatures (own + peers).
         let mut all_partials = Vec::with_capacity(self.signer_parties.len());
         for &pid in &self.signer_parties {
             let s_i = if pid == self.my_id {
@@ -169,7 +116,6 @@ where
             all_partials.push(super::PartialSignature { s_i });
         }
 
-        // Delegate to the existing combine_signatures function.
         let sig = super::combine_signatures(&self.presig, &all_partials, &self.data)?;
         self.output = Some(sig);
         self.done = true;
@@ -239,10 +185,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use sha2::{Digest, Sha256};
@@ -277,7 +219,6 @@ mod tests {
 
         let data = hash_message(b"sign machine test n=2");
 
-        // Create sign machines for both parties
         let mut m0 = Xal23SignMachine::new(presigs[0].clone(), data);
         let mut m1 = Xal23SignMachine::new(presigs[1].clone(), data);
 
@@ -285,13 +226,11 @@ mod tests {
         assert!(!m1.is_done());
         assert_eq!(m0.current_round(), 1);
 
-        // Drain outgoing from both machines
         let out0 = m0.drain_outgoing();
         let out1 = m1.drain_outgoing();
         assert_eq!(out0.len(), 1);
         assert_eq!(out1.len(), 1);
 
-        // Deliver messages: m0's broadcast -> m1, m1's broadcast -> m0
         let pid0 = PartyId(0);
         let pid1 = PartyId(1);
 
@@ -300,18 +239,15 @@ mod tests {
         m0.handle(pid1, out1[0].msg.clone())
             .expect("m0 handle should succeed");
 
-        // Both should be done
         assert!(m0.is_done());
         assert!(m1.is_done());
         assert_eq!(m0.current_round(), 2);
 
-        // Finish and verify signatures match
         let sig0 = m0.finish().expect("finish should succeed");
         let sig1 = m1.finish().expect("finish should succeed");
         assert_eq!(sig0.r, sig1.r);
         assert_eq!(sig0.s, sig1.s);
 
-        // Verify with standard ECDSA
         tecdsa_protocol::verify_ecdsa(&sig0, &key_shares[0].public_key, &data)
             .expect("ECDSA verification should succeed");
     }
@@ -334,11 +270,9 @@ mod tests {
 
         let pids: Vec<PartyId> = signer_indices.iter().map(|&i| PartyId(i as u16)).collect();
 
-        // Drain all outgoing
         let all_out: Vec<Vec<Outgoing<Xal23SignMsg>>> =
             machines.iter_mut().map(|m| m.drain_outgoing()).collect();
 
-        // Deliver broadcasts
         for (sender_idx, outs) in all_out.iter().enumerate() {
             for out in outs {
                 for (recv_idx, machine) in machines.iter_mut().enumerate() {
@@ -351,7 +285,6 @@ mod tests {
             }
         }
 
-        // All should be done
         for m in &machines {
             assert!(m.is_done());
         }
@@ -361,7 +294,6 @@ mod tests {
             .map(|m| m.finish().expect("finish should succeed"))
             .collect();
 
-        // All should produce the same signature
         assert_eq!(sigs[0].r, sigs[1].r);
         assert_eq!(sigs[0].r, sigs[2].r);
         assert_eq!(sigs[0].s, sigs[1].s);

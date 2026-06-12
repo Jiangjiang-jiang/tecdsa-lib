@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,15 +6,6 @@
     clippy::doc_markdown
 )]
 
-//! Batch aggregator for CL-group ZK proofs.
-//!
-//! Combines multiple independent proofs of the same type using random
-//! linear combination.  The verifier picks random weights, and checks
-//! a single aggregated verification equation.
-//!
-//! This module provides a generic batch verification framework for
-//! Schnorr-like Sigma protocols over CL groups.
-
 use rug::{integer::Order, Integer};
 
 use crate::{
@@ -23,39 +13,19 @@ use crate::{
     zk::challenge_from_qfi,
 };
 
-/// A single proof instance for batch verification.
-///
-/// Each instance represents a check of the form:
-///   `base ^ response == commitment * target ^ challenge`
 pub struct BatchInstance {
-    /// The base element (e.g., `h` for key proofs).
     pub base: Qfi,
-    /// The commitment from the proof.
     pub commitment: Qfi,
-    /// The target (public statement, e.g., `pk`).
     pub target: Qfi,
-    /// The response value (big-endian bytes).
     pub response: Vec<u8>,
-    /// The challenge value (big-endian bytes).
     pub challenge: Vec<u8>,
 }
 
-/// Batch verifies `n` proof instances of a Schnorr-like relation.
-///
-/// The verifier picks random weights `w_1, ..., w_n` and checks:
-///
-/// ```text
-/// product(base_i^{w_i * z_i}) == product(commit_i^{w_i} * target_i^{w_i * e_i})
-/// ```
-///
-/// This is sound as long as the weights are sampled independently of
-/// the proofs.
 pub fn batch_verify(setup: &ClSetup, instances: &[BatchInstance]) -> ClResult<bool> {
     if instances.is_empty() {
         return Ok(true);
     }
 
-    // Derive deterministic weights from hashing all instances together.
     let mut weight_qfi_refs: Vec<&Qfi> = Vec::new();
     let mut extra: Vec<Vec<u8>> = Vec::new();
     for inst in instances {
@@ -67,7 +37,6 @@ pub fn batch_verify(setup: &ClSetup, instances: &[BatchInstance]) -> ClResult<bo
     }
     let extra_refs: Vec<&[u8]> = extra.iter().map(Vec::as_slice).collect();
 
-    // For each instance, derive a weight by hashing with an index.
     let mut lhs = setup.identity()?;
     let mut rhs = setup.identity()?;
 
@@ -78,13 +47,11 @@ pub fn batch_verify(setup: &ClSetup, instances: &[BatchInstance]) -> ClResult<bo
         let w_bytes = challenge_from_qfi(setup, b"R_batch", &weight_qfi_refs, &idx_extras)?;
         let w = Integer::from_digits(&w_bytes, Order::Msf);
 
-        // lhs += base^{w * z}
         let resp = Integer::from_digits(&inst.response, Order::Msf);
         let wz = Integer::from(&w * &resp).to_digits::<u8>(Order::Msf);
         let base_wz = setup.exp_bytes(&inst.base, &wz)?;
         lhs = setup.compose(&lhs, &base_wz)?;
 
-        // rhs += commit^w * target^{w*e}
         let commit_w = setup.exp_bytes(&inst.commitment, &w_bytes)?;
         let chal = Integer::from_digits(&inst.challenge, Order::Msf);
         let we = Integer::from(&w * &chal).to_digits::<u8>(Order::Msf);
@@ -105,7 +72,6 @@ mod tests {
     fn batch_aggregator_n_proofs() {
         let mut setup = ClSetup::new_secp256k1("18001").expect("setup");
 
-        // Generate 3 independent key-knowledge proofs and batch verify them.
         let mut instances = Vec::new();
         for _ in 0..3 {
             let (sk_raw, pk_raw) = setup.keygen().expect("keygen");

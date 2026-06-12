@@ -1,11 +1,7 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Integration tests for `tecdsa-class-group`.
-
 use rug::{integer::Order, Integer};
 use tecdsa_bigint::mul_mod;
 use tecdsa_class_group::{cl::ClSetup, nim::Nim};
 
-/// The secp256k1 curve order.
 fn q() -> Integer {
     Integer::from_str_radix(
         "115792089237316195423570985008687907852837564279074904382605163141518161494337",
@@ -19,7 +15,6 @@ fn cl_enc_dec_roundtrip() {
     let mut setup = ClSetup::new_secp256k1("100").expect("setup failed");
     let (sk, pk) = setup.keygen().expect("keygen failed");
 
-    // Encrypt and decrypt a small value.
     let plaintext = Integer::from(42u32);
     let ct = setup
         .encrypt_bytes(&pk, &plaintext.to_digits::<u8>(Order::Msf))
@@ -30,7 +25,6 @@ fn cl_enc_dec_roundtrip() {
     );
     assert_eq!(decrypted, plaintext, "roundtrip failed for plaintext=42");
 
-    // Encrypt and decrypt zero.
     let zero = Integer::from(0u32);
     let ct_zero = setup
         .encrypt_bytes(&pk, &zero.to_digits::<u8>(Order::Msf))
@@ -43,7 +37,6 @@ fn cl_enc_dec_roundtrip() {
     );
     assert_eq!(dec_zero, zero, "roundtrip failed for plaintext=0");
 
-    // Encrypt and decrypt a larger value.
     let large = Integer::from(123_456_789u64);
     let ct_large = setup
         .encrypt_bytes(&pk, &large.to_digits::<u8>(Order::Msf))
@@ -114,7 +107,6 @@ fn cl_homomorphic_scalar_mul() {
 #[allow(clippy::similar_names)]
 fn nim_correctness() {
     let mut setup = ClSetup::new_secp256k1("500").expect("setup failed");
-    // Single CRS key pair shared by both parties.
     let (_sk, pk) = setup.keygen().expect("keygen");
 
     let x_val = Integer::from(1234u32);
@@ -124,23 +116,18 @@ fn nim_correctness() {
 
     let mut nim = Nim::new(&mut setup);
 
-    // Party A encodes
     let encode_a_out = nim.encode_a(&x_bytes, &pk).expect("encode_a");
 
-    // Party B encodes
     let encode_b_out = nim.encode_b(&y_bytes, &pk).expect("encode_b");
 
-    // Party A decodes using pe_B
     let share_a = nim
         .decode_a(&encode_b_out.pe_b, &encode_a_out.state)
         .expect("decode_a");
 
-    // Party B decodes using pe_A
     let share_b = nim
         .decode_b(&encode_a_out.pe_a, &encode_b_out.state)
         .expect("decode_b");
 
-    // Verify correctness: z_A + z_B = x * y mod q
     let q = q();
     let z_a = Integer::from_digits(&share_a, Order::Msf);
     let z_b = Integer::from_digits(&share_b, Order::Msf);

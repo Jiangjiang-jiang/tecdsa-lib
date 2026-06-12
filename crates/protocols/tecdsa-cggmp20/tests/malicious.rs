@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use rand_core::RngCore;
 use sha2::{Digest, Sha256};
 use tecdsa_cggmp20::{
@@ -13,7 +12,6 @@ use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, S
 
 type C = k256::Secp256k1;
 
-/// Test-only security level with small primes for fast tests.
 #[derive(Debug, Clone, Copy)]
 struct TestLevel;
 
@@ -157,12 +155,6 @@ fn run_aux_info(n: u16) -> Vec<AuxInfo> {
         .collect()
 }
 
-/// Test that a tampered Round 2 decommitment nonce causes keygen to abort.
-///
-/// Party 1 sends a broadcast in Round 2 with a garbage decommit_nonce.  When
-/// the other parties try to advance from Round 2 → Round 3 they must verify the
-/// hash commitment against the decommitment data; the wrong nonce fails that
-/// check and `handle()` must return `Err`.
 #[test]
 fn keygen_invalid_commitment_aborts() {
     let n: u16 = 3;
@@ -170,7 +162,6 @@ fn keygen_invalid_commitment_aborts() {
     let configs = make_session_configs(n, t);
     let mut rng = Csprng::new();
 
-    // Create machines for all parties.
     let mut machines: Vec<(PartyId, Cggmp20KeygenMachine<C>)> = configs
         .iter()
         .map(|cfg| {
@@ -181,7 +172,6 @@ fn keygen_invalid_commitment_aborts() {
         })
         .collect();
 
-    // --- Round 1: deliver all Round1 commitments normally. ---
     let mut round1_pending = Vec::new();
     for (pid, machine) in &mut machines {
         for msg in machine.drain_outgoing() {
@@ -209,7 +199,6 @@ fn keygen_invalid_commitment_aborts() {
         }
     }
 
-    // --- Round 2: collect all outgoing, then tamper Party 1's Round2Broad. ---
     let party1 = PartyId(1);
     let mut round2_pending = Vec::new();
     for (pid, machine) in &mut machines {
@@ -218,13 +207,11 @@ fn keygen_invalid_commitment_aborts() {
         }
     }
 
-    // Tamper: replace decommit_nonce in Party 1's Round2Broad with random bytes.
     let round2_pending: Vec<_> = round2_pending
         .into_iter()
         .map(|(from, outgoing)| {
             if from == party1 {
                 if let KeygenMsg::Round2Broad(mut broad) = outgoing.msg {
-                    // Overwrite the decommit nonce with garbage.
                     rng.fill_bytes(&mut broad.decommit_nonce);
                     (
                         from,
@@ -242,10 +229,6 @@ fn keygen_invalid_commitment_aborts() {
         })
         .collect();
 
-    // Deliver Round 2 messages.  The commitment verification runs inside
-    // advance() which is triggered when is_ready() fires (after the last
-    // Round2Broad/Uni pair arrives).  The error surfaces from the handle()
-    // call that triggers the advance — not necessarily from Party 1's message.
     let mut saw_error = false;
     for (from, outgoing) in round2_pending {
         match outgoing.to {
@@ -276,16 +259,8 @@ fn keygen_invalid_commitment_aborts() {
     );
 }
 
-/// Test that a tampered `delta` in Presign Round 3 causes the protocol to abort.
-///
-/// Party 1's Round 3 broadcast has its `delta` field replaced with a random
-/// scalar.  When Party 2 receives this, after collecting all Round 3 messages
-/// it calls `finish()` internally.  The consistency check `delta * G == sum(Delta_i)`
-/// will fail because the tampered delta shifts the scalar sum away from the
-/// committed curve-point sum.
 #[test]
 fn presign_wrong_delta_aborts() {
-    // Run keygen and aux-info normally.
     let core_shares = run_keygen(3, 2);
     let aux_infos = run_aux_info(3);
 
@@ -295,7 +270,6 @@ fn presign_wrong_delta_aborts() {
     let signer_configs = make_signer_configs(&signers, n, t);
     let mut rng = Csprng::new();
 
-    // Create presign machines for the signing subset.
     let mut machines: Vec<(PartyId, Cggmp20PresignMachine<C>)> = signers
         .iter()
         .enumerate()
@@ -313,7 +287,6 @@ fn presign_wrong_delta_aborts() {
         })
         .collect();
 
-    // Run Rounds 1-2 normally.
     for round_num in 1u16..=2 {
         if machines.iter().all(|(_, m)| m.is_done()) {
             break;
@@ -348,7 +321,6 @@ fn presign_wrong_delta_aborts() {
         }
     }
 
-    // --- Round 3: collect, tamper Party 1's delta, then deliver. ---
     let party1 = PartyId(1);
     let mut round3_pending = Vec::new();
     for (pid, machine) in &mut machines {
@@ -357,8 +329,6 @@ fn presign_wrong_delta_aborts() {
         }
     }
 
-    // Generate a random scalar to use as the tampered delta.
-    // Fill random bytes, hash them, convert to a field element (same pattern as sign.rs).
     let mut random_bytes = [0u8; 32];
     rng.fill_bytes(&mut random_bytes);
     let hash_bytes: [u8; 32] = Sha256::digest(random_bytes).into();
@@ -366,7 +336,6 @@ fn presign_wrong_delta_aborts() {
     use elliptic_curve::ops::Reduce;
     let tampered_delta = <k256::Scalar as Reduce<k256::FieldBytes>>::reduce(&fb);
 
-    // Tamper: replace delta in Party 1's Round3 broadcast.
     let round3_pending: Vec<_> = round3_pending
         .into_iter()
         .map(|(from, outgoing)| {
@@ -389,9 +358,6 @@ fn presign_wrong_delta_aborts() {
         })
         .collect();
 
-    // Deliver Round 3 messages. When Party 2 receives Party 1's tampered
-    // message and becomes ready, handle() will call finish() internally.
-    // The delta consistency check must fail and propagate as Err.
     let mut saw_error = false;
     for (from, outgoing) in round3_pending {
         match outgoing.to {

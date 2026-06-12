@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire-safe serializable message types and conversion helpers for the XAL+21
-//! two-party interactive DKG.
-//!
-//! Points are encoded as compressed SEC1 bytes via `GroupEncoding`. Types
-//! containing `C::ProjectivePoint` lack native serde impls, so we encode them
-//! through manual serialization.
-
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -17,21 +9,11 @@ use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
 
 use crate::keygen::interactive::{KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP2Round2Msg};
 
-// ---------------------------------------------------------------------------
-// Wire-safe serializable message types
-// ---------------------------------------------------------------------------
-
-/// Wire-safe Round 1 message (P1 -> P2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR1Msg {
     pub(crate) commitment: HashCommitment,
 }
 
-/// Wire-safe Round 2 message (P2 -> P1).
-///
-/// Points are encoded as compressed SEC1 bytes via `GroupEncoding`.
-/// `DlogProof<C>` contains `ProjectivePoint` fields that lack native serde
-/// impls, so we encode them via their manual serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR2Msg {
     pub(crate) q2_point_bytes: Vec<u8>,
@@ -41,17 +23,12 @@ pub(crate) struct WireR2Msg {
     pub(crate) ntilde: tecdsa_paillier::zk::mta_range::NTildeParams,
 }
 
-/// Wire-safe Round 3 message (P1 -> P2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR3Msg {
     pub(crate) q1_point_bytes: Vec<u8>,
     pub(crate) dlog_proof_json: Vec<u8>,
     pub(crate) nonce: [u8; 32],
 }
-
-// ---------------------------------------------------------------------------
-// Conversion helpers
-// ---------------------------------------------------------------------------
 
 pub(crate) fn encode_point<C: TecdsaCurve>(p: &C::ProjectivePoint) -> Vec<u8>
 where

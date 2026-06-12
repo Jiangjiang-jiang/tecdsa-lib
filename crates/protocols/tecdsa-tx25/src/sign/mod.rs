@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,37 +12,12 @@
     non_snake_case
 )]
 
-//! TX25 online signing protocol (1 round).
-//!
-//! Consumes a [`crate::presign::Tx25Presignature`] and a message to produce a
-//! threshold ECDSA signature in a single broadcast round with
-//! cheater identification for robustness.
-//!
-//! ## Protocol (TX25 Section 4.2, Online Phase)
-//!
-//! Each party P_i:
-//! 1. Picks two random (t-1)-degree polynomials f, f' with f(0) = f'(0) = 0.
-//! 2. Masks delta: delta_{i,j} += f(j); generates chi_{i,j} = m*gamma_i + r*zeta_{i,j} + f'(j).
-//! 3. Computes D_i = gamma_i * R and Gamma_i = gamma_i * (mG + rX).
-//! 4. Generates DDH proof psi_i for (R, D_i, mG+rX, Gamma_i) with witness gamma_i.
-//! 5. Broadcasts all shares + points + proof.
-//!
-//! After collecting all broadcasts, assembles s = numerator / denominator using
-//! Lagrange coefficients.  If ECDSA verification fails, performs cheater
-//! identification using the public B/B_hat points and DDH proofs.
-//!
-//! Reference: Tang & Xue. "Robust Threshold ECDSA." S&P 2025, Section 4.2.
-
 pub mod machine;
 pub mod msg;
 pub mod rounds;
 
 pub use machine::Tx25OnlineSignMachine;
 pub use msg::Tx25OnlineSignMsg;
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -66,7 +40,6 @@ mod tests {
     };
     use crate::presign::Tx25Presignature;
 
-    /// Helper: create a mock presignature for testing.
     fn mock_presignature(
         party_index: u16,
         party_ids: &[u16],

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Full-protocol integration tests: keygen -> presign -> online sign.
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::{group::GroupEncoding, PrimeField};
@@ -16,7 +13,6 @@ use tecdsa_testkit::Orchestrator;
 
 type TestCurve = k256::Secp256k1;
 
-/// Generate Ring-Pedersen parameters (N_tilde, h1, h2) for tests.
 fn generate_ring_pedersen(rng: &mut impl CryptoRngCore) -> (Integer, Integer, Integer) {
     let p = Integer::generate_safe_prime(rng, 256);
     let q = Integer::generate_safe_prime(rng, 256);
@@ -35,9 +31,7 @@ fn generate_ring_pedersen(rng: &mut impl CryptoRngCore) -> (Integer, Integer, In
     (n_tilde, h1, h2)
 }
 
-/// Run keygen for `n` parties with reconstruction threshold `t`.
 fn run_keygen(n: u16, t: u16, rng: &mut impl CryptoRngCore) -> Vec<Ggn16KeyShare<TestCurve>> {
-    // trusted_dealer_setup takes corruption threshold (polynomial degree)
     let corruption_t = t - 1;
     let (setup, dec_shares) =
         trusted_dealer_setup(corruption_t, n, rng).expect("trusted dealer setup should succeed");
@@ -70,7 +64,6 @@ fn run_keygen(n: u16, t: u16, rng: &mut impl CryptoRngCore) -> Vec<Ggn16KeyShare
         .collect()
 }
 
-/// Create a test message hash from a string.
 fn make_message_hash(msg: &str) -> DataToSign<TestCurve> {
     let hash = Sha256::digest(msg.as_bytes());
     let mut scalar_bytes = [0u8; 32];
@@ -83,13 +76,11 @@ fn make_message_hash(msg: &str) -> DataToSign<TestCurve> {
 #[test]
 fn ggn16_full_sign_3_of_3() {
     let mut rng = rand::thread_rng();
-    let t = 3u16; // reconstruction threshold: need all 3 parties
+    let t = 3u16;
     let n = 3u16;
 
-    // Step 1: Keygen
     let shares = run_keygen(n, t, &mut rng);
 
-    // Verify all parties agree on the public key
     let pk0_bytes = shares[0].public_key.to_bytes();
     for share in &shares[1..] {
         assert_eq!(
@@ -99,7 +90,6 @@ fn ggn16_full_sign_3_of_3() {
         );
     }
 
-    // Step 2: Presign (all 3 parties sign)
     let signer_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let mut presign_machines: Vec<(PartyId, Ggn16PresignMachine<TestCurve>)> = Vec::new();
     for share in &shares {
@@ -117,7 +107,6 @@ fn ggn16_full_sign_3_of_3() {
         .map(|r| r.expect("presign should succeed"))
         .collect();
 
-    // Verify all parties agree on R and r
     let R0_bytes = presignatures[0].R.to_bytes();
     let r0 = presignatures[0].r;
     for (i, presig) in presignatures.iter().enumerate().skip(1) {
@@ -125,13 +114,11 @@ fn ggn16_full_sign_3_of_3() {
         assert_eq!(presig.r, r0, "party {i} disagrees on r");
     }
 
-    // Verify all parties agree on psi
     let psi0 = presignatures[0].psi;
     for (i, presig) in presignatures.iter().enumerate().skip(1) {
         assert_eq!(presig.psi, psi0, "party {i} disagrees on psi");
     }
 
-    // Step 3: Online sign
     let message = make_message_hash("hello threshold ECDSA");
 
     let mut sign_machines: Vec<(PartyId, Ggn16OnlineSignMachine<TestCurve>)> = Vec::new();
@@ -150,13 +137,11 @@ fn ggn16_full_sign_3_of_3() {
         .map(|r| r.expect("online sign should succeed"))
         .collect();
 
-    // Step 4: Verify all signatures are identical
     for (i, sig) in signatures.iter().enumerate().skip(1) {
         assert_eq!(sig.r, signatures[0].r, "party {i} has different r");
         assert_eq!(sig.s, signatures[0].s, "party {i} has different s");
     }
 
-    // Step 5: Verify the signature with the standard ECDSA verifier
     verify_ecdsa::<TestCurve>(&signatures[0], &shares[0].public_key, &message)
         .expect("ECDSA verification should pass");
 }
@@ -164,13 +149,11 @@ fn ggn16_full_sign_3_of_3() {
 #[test]
 fn ggn16_full_sign_2_of_2() {
     let mut rng = rand::thread_rng();
-    let t = 2u16; // reconstruction threshold: both parties needed
+    let t = 2u16;
     let n = 2u16;
 
-    // Step 1: Keygen
     let shares = run_keygen(n, t, &mut rng);
 
-    // Step 2: Presign
     let signer_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
     let mut presign_machines: Vec<(PartyId, Ggn16PresignMachine<TestCurve>)> = Vec::new();
     for share in &shares {
@@ -188,7 +171,6 @@ fn ggn16_full_sign_2_of_2() {
         .map(|r| r.expect("presign should succeed"))
         .collect();
 
-    // Step 3: Online sign
     let message = make_message_hash("2-of-2 signing test");
 
     let mut sign_machines: Vec<(PartyId, Ggn16OnlineSignMachine<TestCurve>)> = Vec::new();
@@ -207,11 +189,9 @@ fn ggn16_full_sign_2_of_2() {
         .map(|r| r.expect("online sign should succeed"))
         .collect();
 
-    // Verify signatures are identical
     assert_eq!(signatures[0].r, signatures[1].r, "r values should match");
     assert_eq!(signatures[0].s, signatures[1].s, "s values should match");
 
-    // Verify with standard ECDSA verifier
     verify_ecdsa::<TestCurve>(&signatures[0], &shares[0].public_key, &message)
         .expect("ECDSA verification should pass");
 }
@@ -219,13 +199,11 @@ fn ggn16_full_sign_2_of_2() {
 #[test]
 fn ggn16_full_sign_2_of_3() {
     let mut rng = rand::thread_rng();
-    let t = 2u16; // reconstruction threshold: need 2-of-3
+    let t = 2u16;
     let n = 3u16;
 
-    // Step 1: Keygen (all 3 parties)
     let shares = run_keygen(n, t, &mut rng);
 
-    // Step 2: Presign (only parties 1 and 2 sign)
     let signer_parties: Vec<PartyId> = vec![PartyId(1), PartyId(2)];
     let mut presign_machines: Vec<(PartyId, Ggn16PresignMachine<TestCurve>)> = Vec::new();
     for &pid in &signer_parties {
@@ -243,7 +221,6 @@ fn ggn16_full_sign_2_of_3() {
         .map(|r| r.expect("presign should succeed"))
         .collect();
 
-    // Step 3: Online sign
     let message = make_message_hash("2-of-3 subset signing");
 
     let mut sign_machines: Vec<(PartyId, Ggn16OnlineSignMachine<TestCurve>)> = Vec::new();
@@ -262,11 +239,9 @@ fn ggn16_full_sign_2_of_3() {
         .map(|r| r.expect("online sign should succeed"))
         .collect();
 
-    // Verify signatures are identical
     assert_eq!(signatures[0].r, signatures[1].r, "r values should match");
     assert_eq!(signatures[0].s, signatures[1].s, "s values should match");
 
-    // Verify with standard ECDSA verifier
     verify_ecdsa::<TestCurve>(&signatures[0], &shares[0].public_key, &message)
         .expect("ECDSA verification should pass");
 }
@@ -274,14 +249,13 @@ fn ggn16_full_sign_2_of_3() {
 #[test]
 fn ggn16_two_signatures_differ() {
     let mut rng = rand::thread_rng();
-    let t = 2u16; // reconstruction threshold
+    let t = 2u16;
     let n = 2u16;
 
     let shares = run_keygen(n, t, &mut rng);
 
     let signer_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-    // First presign + sign
     let mut machines1: Vec<(PartyId, Ggn16PresignMachine<TestCurve>)> = Vec::new();
     for share in &shares {
         let pid = PartyId(share.party_index);
@@ -309,7 +283,6 @@ fn ggn16_two_signatures_differ() {
         .map(|r| r.unwrap())
         .collect();
 
-    // Second presign + sign (different message)
     let mut machines2: Vec<(PartyId, Ggn16PresignMachine<TestCurve>)> = Vec::new();
     for share in &shares {
         let pid = PartyId(share.party_index);
@@ -337,13 +310,11 @@ fn ggn16_two_signatures_differ() {
         .map(|r| r.unwrap())
         .collect();
 
-    // Signatures for different messages should differ
     assert!(
         sigs1[0].r != sigs2[0].r || sigs1[0].s != sigs2[0].s,
         "signatures for different messages should differ"
     );
 
-    // Both should verify
     verify_ecdsa::<TestCurve>(&sigs1[0], &shares[0].public_key, &msg1)
         .expect("first signature should verify");
     verify_ecdsa::<TestCurve>(&sigs2[0], &shares[0].public_key, &msg2)

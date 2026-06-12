@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! CGGMP20 full-signing protocol (presign + signing round).
-//!
-//! A convenience wrapper that runs the 3-round presigning protocol to
-//! completion and then executes a 4th round in which parties exchange partial
-//! signatures and combine them into a full ECDSA signature.
-
 pub mod msg;
 
 use std::collections::BTreeMap;
@@ -27,70 +20,40 @@ use crate::{
     sign::types::{DataToSign, PartialSignature, PresignaturePublicData, Signature},
 };
 
-// ---------------------------------------------------------------------------
-// Round 4 state
-// ---------------------------------------------------------------------------
-
-/// State held while collecting partial signatures in round 4.
 pub(crate) struct Round4State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// This party's ID.
     pub my_id: PartyId,
-    /// Partial signature scalars received from peers (keyed by sender PartyId).
     pub received: BTreeMap<PartyId, C::Scalar>,
-    /// This party's own partial signature.
     pub own_partial: PartialSignature<C>,
-    /// Public presignature data (contains R).
     pub presig_public: PresignaturePublicData<C>,
-    /// Joint ECDSA public key.
     pub public_key: C::ProjectivePoint,
-    /// The message digest being signed.
     pub message: DataToSign<C>,
-    /// Outgoing messages queued when entering this state (the own broadcast).
     pub outgoing: Vec<Outgoing<FullSignMsg<C>>>,
-    /// Number of peer partial signatures to wait for (= signers - 1).
     pub expected: usize,
 }
-
-// ---------------------------------------------------------------------------
-// Phase enum (with Gone sentinel for mem::take)
-// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 pub(crate) enum FullSignPhase<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Rounds 1–3: delegated to the inner Cggmp20PresignMachine.
     Presigning(Cggmp20PresignMachine<C>),
-    /// Round 4: collecting partial signatures.
     Signing(Round4State<C>),
-    /// Protocol complete.
     Done(Signature<C>),
-    /// Sentinel so `std::mem::take` can be used for phase transitions.
     #[default]
     Gone,
 }
 
-// ---------------------------------------------------------------------------
-// FullSignMachine
-// ---------------------------------------------------------------------------
-
-/// Full-signing state machine: presign (3 rounds) followed by signing (1 round).
 pub struct FullSignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     phase: FullSignPhase<C>,
-    /// This party's ID.
     my_id: PartyId,
-    /// The message to sign.
     message: DataToSign<C>,
-    /// Joint ECDSA public key.
     public_key: C::ProjectivePoint,
-    /// Total number of signing parties (used to compute expected peer count for round 4).
     signers_count: usize,
 }
 
@@ -100,14 +63,6 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
     C: crate::bridge::BridgeCurve,
 {
-    /// Create a new full-signing state machine with the default 128-bit security level.
-    ///
-    /// * `config`     — session configuration (must contain only the signing subset)
-    /// * `core_share` — this party's key share from key generation
-    /// * `aux`        — this party's auxiliary info (Paillier keys, Pedersen params)
-    /// * `signers`    — 1-based indices of the signing participants
-    /// * `message`    — the message digest to sign
-    /// * `rng`        — cryptographic RNG
     pub fn new(
         config: &SessionConfig,
         core_share: &Cggmp20CoreKeyShare<C>,
@@ -119,7 +74,6 @@ where
         Self::with_security::<SecurityLevel128>(config, core_share, aux, signers, message, rng)
     }
 
-    /// Create a new full-signing state machine with a custom security level.
     pub fn with_security<L: Cggmp20SecurityParams>(
         config: &SessionConfig,
         core_share: &Cggmp20CoreKeyShare<C>,
@@ -158,7 +112,6 @@ where
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
         match &mut self.phase {
             FullSignPhase::Presigning(presign) => {
-                // Only accept Presign-wrapped messages during rounds 1–3.
                 let pmsg = match msg {
                     FullSignMsg::Presign(m) => m,
                     FullSignMsg::Round4(_) => {
@@ -171,22 +124,17 @@ where
 
                 presign.handle(from, pmsg)?;
 
-                // Check if the presign protocol is now complete.
                 if presign.is_done() {
-                    // Take ownership of the presign machine.
                     let old = std::mem::take(&mut self.phase);
                     let presign_machine = match old {
                         FullSignPhase::Presigning(pm) => pm,
                         _ => unreachable!(),
                     };
 
-                    // Finish to get presignature + public data.
                     let (presignature, presig_public) = presign_machine.finish()?;
 
-                    // Compute own partial signature.
                     let own_partial = presignature.partial_sign(&self.message);
 
-                    // Broadcast own partial signature.
                     let outgoing = vec![Outgoing {
                         to: Recipient::Broadcast,
                         msg: FullSignMsg::Round4(MsgRound4 {
@@ -194,7 +142,6 @@ where
                         }),
                     }];
 
-                    // expected = number of peers = signers_count - 1
                     let expected = self.signers_count - 1;
 
                     self.phase = FullSignPhase::Signing(Round4State {
@@ -227,7 +174,6 @@ where
                 }
                 state.received.insert(from, r4msg.sigma);
 
-                // Check if we have all expected partial signatures.
                 if state.received.len() == state.expected {
                     let old = std::mem::take(&mut self.phase);
                     let s4 = match old {
@@ -235,8 +181,6 @@ where
                         _ => unreachable!(),
                     };
 
-                    // Collect all partial signatures sorted by PartyId
-                    // (must match the commitment order from presign finish).
                     let mut all_partials: BTreeMap<PartyId, PartialSignature<C>> = BTreeMap::new();
                     all_partials.insert(s4.my_id, s4.own_partial);
                     for (pid, sigma) in s4.received {
@@ -244,7 +188,6 @@ where
                     }
                     let partials: Vec<_> = all_partials.into_values().collect();
 
-                    // Combine into a full signature.
                     let sig = PartialSignature::combine(
                         &partials,
                         &s4.presig_public,

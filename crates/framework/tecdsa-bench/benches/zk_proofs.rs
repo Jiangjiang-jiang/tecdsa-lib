@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! ZK proof microbenchmarks: prove + verify for every proof relation.
-//!
-//! Every fixture is validated with `assert!` before timing.
-//! Naming follows `docs/superpowers/plans/2026-06-02-zk-proof-benchmarks.md`.
-
 use std::{str::FromStr, sync::LazyLock};
 
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -21,15 +15,10 @@ static PEDERSEN: LazyLock<PedersenFixture> = LazyLock::new(PedersenFixture::gene
 static JL: LazyLock<JlFixture> = LazyLock::new(JlFixture::generate);
 static JL_EXTRA: LazyLock<JlExtraFixture> = LazyLock::new(JlExtraFixture::generate);
 
-// ═══════════════════════════════════════════════════════════════════════
-// 1. Curve ZK
-// ═══════════════════════════════════════════════════════════════════════
-
 fn curve_zk(c: &mut Criterion) {
     let mut g = c.benchmark_group("zk/curve");
     let rng = &mut thread_rng();
 
-    // DlogProof
     {
         use tecdsa_curve::zk::dlog::DlogProof;
         let x = C::random_scalar(rng);
@@ -43,7 +32,6 @@ fn curve_zk(c: &mut Criterion) {
         g.bench_function("dlog/verify", |b| b.iter(|| proof.verify(&p, b"bench")));
     }
 
-    // DdhProof
     {
         use tecdsa_curve::zk::ddh::{DdhProof, DdhStatement, DdhWitness};
         let w = C::random_scalar(rng);
@@ -66,7 +54,6 @@ fn curve_zk(c: &mut Criterion) {
         g.bench_function("ddh/verify", |b| b.iter(|| proof.verify(&stmt)));
     }
 
-    // EgexpProof
     {
         use tecdsa_curve::zk::egexp::{EgexpProof, EgexpStatement, EgexpWitness};
         let dk = C::random_scalar(rng);
@@ -85,7 +72,6 @@ fn curve_zk(c: &mut Criterion) {
         g.bench_function("egexp/verify", |b| b.iter(|| proof.verify(&stmt)));
     }
 
-    // ProdProof — relation: C=tG, D=tP+yG, E=yA+rG, F=yB+rP
     {
         use tecdsa_curve::zk::prod::{ProdProof, ProdStatement, ProdWitness};
         let gen = C::generator();
@@ -119,7 +105,6 @@ fn curve_zk(c: &mut Criterion) {
         g.bench_function("prod/verify", |b| b.iter(|| proof.verify(&stmt)));
     }
 
-    // ReProof — relation: A'=rG+sA, B'=rP+sB
     {
         use tecdsa_curve::zk::rerandom::{ReProof, ReStatement, ReWitness};
         let gen = C::generator();
@@ -156,10 +141,6 @@ fn curve_zk(c: &mut Criterion) {
     g.finish();
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 2. Pedersen-mod ZK (Pi_prm, Pi_mod) — Profile B: 1536-bit primes
-// ═══════════════════════════════════════════════════════════════════════
-
 fn pedersen_mod_zk(c: &mut Criterion) {
     let mut g = c.benchmark_group("zk/pedersen_mod");
     g.sample_size(10);
@@ -190,10 +171,6 @@ fn pedersen_mod_zk(c: &mut Criterion) {
     g.finish();
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 3. Class-group ZK
-// ═══════════════════════════════════════════════════════════════════════
-
 fn class_group_zk(c: &mut Criterion) {
     let mut g = c.benchmark_group("zk/class_group");
     let rng = &mut thread_rng();
@@ -202,7 +179,6 @@ fn class_group_zk(c: &mut Criterion) {
     let sk_bytes = setup.sk_to_bytes(&sk).expect("sk_bytes");
     let m_bytes = 42u32.to_be_bytes().to_vec();
 
-    // R_enc
     {
         use tecdsa_class_group::zk::r_enc::REncProof;
         let (r_sk, _) = setup.keygen().expect("keygen");
@@ -224,7 +200,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_key
     {
         use tecdsa_class_group::zk::r_key::RKeyProof;
         let proof = RKeyProof::prove(&mut setup, &pk, &sk_bytes).expect("r_key prove");
@@ -238,7 +213,6 @@ fn class_group_zk(c: &mut Criterion) {
         g.bench_function("r_key/verify", |b| b.iter(|| proof.verify(&setup, &pk)));
     }
 
-    // R_dl_cl
     {
         use tecdsa_class_group::zk::r_dl_cl::RDlClProof;
         let x_scalar = C::random_scalar(rng);
@@ -263,7 +237,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_enc_pc (cross-domain)
     {
         use elliptic_curve::group::GroupEncoding;
         use tecdsa_class_group::zk::r_enc_pc::REncPcProof;
@@ -272,7 +245,6 @@ fn class_group_zk(c: &mut Criterion) {
         let ct = setup
             .encrypt_with_r_bytes(&pk, &m_bytes, &r_bytes)
             .expect("enc");
-        // EC Pedersen commitment: PC = g^m * h^{m'} (m' = m for simplicity)
         let m_scalar = {
             use elliptic_curve::ops::Reduce;
             let mut buf = [0u8; 32];
@@ -319,7 +291,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_pc_dl
     {
         use tecdsa_class_group::zk::r_pc_dl::RPcDlProof;
         let y = setup.power_of_f_bytes(&m_bytes).expect("f^m");
@@ -334,7 +305,6 @@ fn class_group_zk(c: &mut Criterion) {
         g.bench_function("r_pc_dl/verify", |b| b.iter(|| proof.verify(&setup, &y)));
     }
 
-    // R_dec_dl
     {
         use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
         let (r_sk, _) = setup.keygen().expect("keygen");
@@ -357,7 +327,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_cl_kwlg
     {
         use tecdsa_class_group::zk::r_cl_kwlg::RClKwlgProof;
         let proof = RClKwlgProof::prove(&mut setup, &pk, &sk_bytes).expect("prove");
@@ -371,7 +340,6 @@ fn class_group_zk(c: &mut Criterion) {
         g.bench_function("r_cl_kwlg/verify", |b| b.iter(|| proof.verify(&setup, &pk)));
     }
 
-    // R_bint
     {
         use tecdsa_class_group::zk::r_bint::RBintProof;
         let x_bytes = 42u32.to_be_bytes().to_vec();
@@ -390,7 +358,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_com_kwlg
     {
         use tecdsa_class_group::zk::r_com_kwlg::RComKwlgProof;
         let (r_sk2, _) = setup.keygen().expect("keygen");
@@ -411,7 +378,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_gdec_cl
     {
         use tecdsa_class_group::zk::r_gdec_cl::RGdecClProof;
         let sk_dec = sk.to_string();
@@ -434,7 +400,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_cl_dl — prove knowledge of plaintext + randomness with F-subgroup
     {
         use tecdsa_class_group::zk::r_cl_dl::RClDlProof;
         let x_bytes = 77u32.to_be_bytes().to_vec();
@@ -457,7 +422,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_cl_dl_ec — CL encryption + EC discrete-log
     {
         use elliptic_curve::group::GroupEncoding;
         use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
@@ -487,7 +451,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_ddh_cl — DDH tuple in class group
     {
         use tecdsa_class_group::zk::r_ddh_cl::RDdhClProof;
         let x_bytes = 42u32.to_be_bytes().to_vec();
@@ -514,7 +477,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_el_cl — ElGamal + CL scalar multiply
     {
         use tecdsa_class_group::zk::r_el_cl::RElClProof;
         let gen = <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR;
@@ -576,7 +538,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_ped_ec — Pedersen CL commitment + EC point
     {
         use elliptic_curve::group::GroupEncoding as _;
         use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
@@ -608,7 +569,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_aff_com — affine operation with commitment
     {
         use tecdsa_class_group::zk::r_aff_com::RAffComProof;
         let x_bytes = 5u32.to_be_bytes().to_vec();
@@ -673,7 +633,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_m_aff_dl — MtA affine DL with F-subgroup
     {
         use tecdsa_class_group::zk::r_m_aff_dl::RMAffDlProof;
         let x_bytes = 3u32.to_be_bytes().to_vec();
@@ -719,7 +678,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_m_aff_dl_ec — MtA affine DL with EC checks
     {
         use tecdsa_class_group::zk::r_m_aff_dl_ec::RMAffDlEcProof;
         let gamma_bytes = 42u32.to_be_bytes().to_vec();
@@ -735,7 +693,6 @@ fn class_group_zk(c: &mut Criterion) {
         let q_bytes = setup.q_bytes().expect("q");
         let d1 = setup.exp_bytes(&c1, &k_star).expect("d1");
         let c2_k = setup.exp_bytes(&c2, &k_star).expect("c2k");
-        // negate_mod_q inlined
         let q_bu = Mpz::from_bytes_be(&q_bytes);
         let beta_bu = Mpz::from_bytes_be(&beta_bytes);
         let neg_beta_bu = (&q_bu - &beta_bu.modulo(&q_bu)).modulo(&q_bu);
@@ -786,7 +743,6 @@ fn class_group_zk(c: &mut Criterion) {
         });
     }
 
-    // R_sh — PVSS share consistency
     {
         use tecdsa_class_group::zk::r_sh::RShProof;
         let n = 3u16;
@@ -798,7 +754,6 @@ fn class_group_zk(c: &mut Criterion) {
         }
         let party_ids: Vec<u16> = (1..=n).collect();
         let pk_refs: Vec<&_> = pks.iter().collect();
-        // Inline create_pvss_ciphertexts
         let q_bu = setup.cl().q().clone().into_inner();
         let (rho_sk, _) = setup.keygen().expect("kg");
         let rho_bytes = setup.sk_to_bytes(&rho_sk).expect("rho");
@@ -851,10 +806,6 @@ fn class_group_zk(c: &mut Criterion) {
     g.finish();
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 4. Paillier self-authored ZK
-// ═══════════════════════════════════════════════════════════════════════
-
 fn paillier_zk(c: &mut Criterion) {
     let mut g = c.benchmark_group("zk/paillier");
     g.sample_size(10);
@@ -864,7 +815,6 @@ fn paillier_zk(c: &mut Criterion) {
     let dk = &pf.dk;
     let ek = &pf.ek;
 
-    // correct_key_ni
     {
         use tecdsa_paillier::zk::correct_key_ni::NICorrectKeyProof;
         let proof = NICorrectKeyProof::prove(dk, b"bench");
@@ -880,7 +830,6 @@ fn paillier_zk(c: &mut Criterion) {
         });
     }
 
-    // homo_elgamal — relation: D = xH + rY, E = rG
     {
         use tecdsa_paillier::zk::homo_elgamal::{
             HomoElGamalProof, HomoElGamalStatement, HomoElGamalWitness,
@@ -910,7 +859,6 @@ fn paillier_zk(c: &mut Criterion) {
         g.bench_function("homo_elgamal/verify", |b| b.iter(|| proof.verify(&stmt)));
     }
 
-    // pi_eq
     {
         use tecdsa_paillier::{backend::Integer, zk::pi_eq::PiEqProof};
 
@@ -936,7 +884,6 @@ fn paillier_zk(c: &mut Criterion) {
         });
     }
 
-    // homo_mult — relation: c3 = c2^eta * r_c3^N mod N^2
     {
         use tecdsa_paillier::{
             backend::Integer,
@@ -975,7 +922,6 @@ fn paillier_zk(c: &mut Criterion) {
         g.bench_function("homo_mult/verify", |b| b.iter(|| proof.verify::<C>(&stmt)));
     }
 
-    // alice_range (MtA Alice proof)
     {
         use tecdsa_paillier::zk::mta_range::AliceProof;
         let nt = &*NTILDE;
@@ -995,7 +941,6 @@ fn paillier_zk(c: &mut Criterion) {
         });
     }
 
-    // range_ni
     {
         use tecdsa_paillier::zk::range_ni::RangeProofNi;
         let q = group_order();
@@ -1009,7 +954,6 @@ fn paillier_zk(c: &mut Criterion) {
         g.bench_function("range_ni/verify", |b| b.iter(|| proof.verify(ek, &ct, &q)));
     }
 
-    // pdl_slack
     {
         use tecdsa_paillier::zk::pdl_slack::{PdlSlackProof, PdlSlackStatement, PdlSlackWitness};
         let nt = &*NTILDE;
@@ -1038,7 +982,6 @@ fn paillier_zk(c: &mut Criterion) {
         g.bench_function("pdl_slack/verify", |b| b.iter(|| proof.verify(&stmt)));
     }
 
-    // pib — proves c_B = Enc(pk, b; r)
     {
         use tecdsa_paillier::zk::pia_pib::PiBProof;
         let q = group_order();
@@ -1052,7 +995,6 @@ fn paillier_zk(c: &mut Criterion) {
         g.bench_function("pib/verify", |b| b.iter(|| proof.verify(ek, &c_b, &q)));
     }
 
-    // bob_ext — Bob's extended MtA range proof with EC check
     {
         use tecdsa_paillier::{backend::Integer, zk::mta_range::BobProofExt};
         let nt = &*NTILDE;
@@ -1102,7 +1044,6 @@ fn paillier_zk(c: &mut Criterion) {
         });
     }
 
-    // nonce_consist
     {
         use tecdsa_paillier::{
             backend::Integer,
@@ -1148,7 +1089,6 @@ fn paillier_zk(c: &mut Criterion) {
         g.bench_function("nonce_consist/verify", |b| b.iter(|| proof.verify(&stmt)));
     }
 
-    // pia — proves c_A = c_B^a * Enc(alpha'; r')
     {
         use tecdsa_paillier::{backend::Integer, zk::pia_pib::PiAProof};
         let q = group_order();
@@ -1170,7 +1110,6 @@ fn paillier_zk(c: &mut Criterion) {
         });
     }
 
-    // bob — Bob's MtA range proof (without EC check)
     {
         use tecdsa_paillier::{backend::Integer, zk::mta_range::BobProof};
         let nt = &*NTILDE;
@@ -1220,7 +1159,6 @@ fn paillier_zk(c: &mut Criterion) {
         });
     }
 
-    // pdl_transcript — full interactive PDL verification (5 steps)
     {
         use tecdsa_paillier::{backend::Integer, zk::pdl::pdl_verify};
         let x1 = C::random_scalar(rng);
@@ -1236,10 +1174,6 @@ fn paillier_zk(c: &mut Criterion) {
 
     g.finish();
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// 4b. Upstream paillier-zk facade (CGGMP20 ZK proofs)
-// ═══════════════════════════════════════════════════════════════════════
 
 fn paillier_zk_facade(c: &mut Criterion) {
     use sha2::Sha256;
@@ -1259,7 +1193,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
     let aux = pedersen_to_aux(&ped.params);
     let tag = BenchTag("bench");
 
-    // Pi_enc
     {
         use paillier_zk::paillier_encryption_in_range as pi_enc;
         use tecdsa_paillier::backend::Integer;
@@ -1295,7 +1228,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
         });
     }
 
-    // Pi_fac
     {
         use paillier_zk::no_small_factor as pi_fac;
         let n = dk.n().clone();
@@ -1331,7 +1263,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
         });
     }
 
-    // Pi_mod (upstream paillier_blum_modulus)
     {
         use paillier_zk::paillier_blum_modulus as pi_mod_up;
         let n = dk.n().clone();
@@ -1351,7 +1282,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
         });
     }
 
-    // Pi_aff_g — affine operation in range with group commitment
     {
         use paillier_zk::paillier_affine_operation_in_range as pi_aff;
         use tecdsa_paillier::{backend::Integer, zk::bridge::point_to_ge};
@@ -1361,7 +1291,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
         let y_val = Integer::from(13);
         let (ct_c, _nonce_c) = paillier_encrypt(ek, &Integer::from(100));
         let (ct_y, nonce_y) = paillier_encrypt(ek, &y_val);
-        // D = C^x * Enc(y; rho) where rho is nonce_aff
         let nonce_aff = Integer::sample_in_mult_group_of(rng, ek.n());
         let d_val = {
             let c_x = pow_mod_signed(&ct_c, &x_val, ek.nn());
@@ -1409,7 +1338,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
         });
     }
 
-    // Pi_elog — dlog with El-Gamal commitment
     {
         use paillier_zk::dlog_with_el_gamal_commitment as pi_elog;
         use tecdsa_paillier::zk::bridge::scalar_to_ge;
@@ -1446,7 +1374,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
         });
     }
 
-    // Pi_enc_elg — encryption in range with ElGamal
     {
         use paillier_zk::{
             paillier_encryption_in_range_with_el_gamal as pi_enc_elg, IntegerExt as _,
@@ -1504,10 +1431,6 @@ fn paillier_zk_facade(c: &mut Criterion) {
     g.finish();
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 5. Joye-Libert ZK — Profile B: N=3072-bit, k=256
-// ═══════════════════════════════════════════════════════════════════════
-
 fn joye_libert_zk(c: &mut Criterion) {
     let mut g = c.benchmark_group("zk/joye_libert");
     g.sample_size(10);
@@ -1518,7 +1441,6 @@ fn joye_libert_zk(c: &mut Criterion) {
     let jl_sk = &jl.sk;
     let jl_x = &jl.x;
 
-    // zkjl_enc
     {
         use tecdsa_joye_libert::zk::zkjl_enc::ZkJlEncProof;
         let m = Integer::from(42u64);
@@ -1531,7 +1453,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         g.bench_function("zkjl_enc/verify", |b| b.iter(|| proof.verify(jl_pk, &ct.c)));
     }
 
-    // zkjlmod
     {
         use tecdsa_joye_libert::zk::zkjlmod::ZkJlModProof;
         let proof = ZkJlModProof::prove(jl_pk, jl_sk, jl_x, rng);
@@ -1542,7 +1463,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         g.bench_function("zkjlmod/verify", |b| b.iter(|| proof.verify()));
     }
 
-    // zkjl_com — Pedersen commitment c = y^m * h^r mod N
     {
         use tecdsa_joye_libert::zk::zkjl_com::{jl_commit, ZkJlComProof};
         let m = Integer::from(42u32);
@@ -1556,7 +1476,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         g.bench_function("zkjl_com/verify", |b| b.iter(|| proof.verify(jl_pk, &c)));
     }
 
-    // zkqr2k
     {
         use tecdsa_joye_libert::zk::zkqr2k::ZkQr2kProof;
         let proof = ZkQr2kProof::prove(&jl_pk.n, jl_pk.k, jl_x, &jl_pk.h, rng);
@@ -1567,7 +1486,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         g.bench_function("zkqr2k/verify", |b| b.iter(|| proof.verify()));
     }
 
-    // zkqr2kdl
     {
         use tecdsa_joye_libert::zk::zkqr2kdl::ZkQr2kDlProof;
         let proof = ZkQr2kDlProof::prove(&jl_pk.n, jl_pk.k, &jl_sk.alpha, &jl_pk.h, &jl_pk.y, rng);
@@ -1580,7 +1498,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         g.bench_function("zkqr2kdl/verify", |b| b.iter(|| proof.verify()));
     }
 
-    // zkjl_equ — proves two commitments under different PKs encrypt the same value
     {
         use tecdsa_joye_libert::zk::{zkjl_com::jl_commit, zkjl_equ::ZkJlEquProof};
         let jl_ex = &*JL_EXTRA;
@@ -1603,7 +1520,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         });
     }
 
-    // zkjl_aff — affine relation: c_aff = c^a * y^alpha * h^r mod N
     {
         use tecdsa_joye_libert::zk::zkjl_aff::ZkJlAffProof;
         let b_msg = Integer::from(7u32);
@@ -1634,7 +1550,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         });
     }
 
-    // zkjlv_com — vector Pedersen commitment
     {
         use tecdsa_joye_libert::zk::zkjlv_com::{jl_vec_commit, ZkJlvComProof};
         let ell = 3;
@@ -1665,7 +1580,6 @@ fn joye_libert_zk(c: &mut Criterion) {
         });
     }
 
-    // zkjlv_equ — vector commitment + individual commitment equality
     {
         use tecdsa_joye_libert::zk::{
             zkjl_com::jl_commit, zkjlv_com::jl_vec_commit, zkjlv_equ::ZkJlvEquProof,
@@ -1729,10 +1643,6 @@ fn joye_libert_zk(c: &mut Criterion) {
     g.finish();
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 6. eVRF ZK (DLEQ)
-// ═══════════════════════════════════════════════════════════════════════
-
 fn evrf_zk(c: &mut Criterion) {
     let mut g = c.benchmark_group("zk/evrf");
     let rng = &mut thread_rng();
@@ -1756,8 +1666,6 @@ fn evrf_zk(c: &mut Criterion) {
 
     g.finish();
 }
-
-// ═══════════════════════════════════════════════════════════════════════
 
 criterion_group!(
     benches,

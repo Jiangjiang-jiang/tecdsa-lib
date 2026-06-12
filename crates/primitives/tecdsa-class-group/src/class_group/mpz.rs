@@ -1,9 +1,3 @@
-//! Arbitrary-precision integers backed by GMP through the `rug` crate (LGPL).
-//!
-//! `Mpz` is a thin newtype over [`rug::Integer`]. The wrapper exists so the
-//! public API is independent of the backend and so we can expose exactly the
-//! surface the rest of the crate (and clients) need.
-
 use core::{cmp::Ordering, fmt};
 
 use rug::{
@@ -14,14 +8,11 @@ use rug::{
 
 use super::error::{ClassGroupError, Result};
 
-/// Arbitrary-precision signed integer.
 #[derive(Clone, Debug, Default)]
 pub struct Mpz(pub(crate) Integer);
 
 impl Mpz {
-    // ---- construction / backend access ------------------------------------
 
-    /// Zero.
     pub fn new() -> Self {
         Mpz(Integer::new())
     }
@@ -36,8 +27,6 @@ impl Mpz {
         self.0
     }
 
-    /// Parse with GMP base-0 semantics: `0x`/`0X` hex, `0b`/`0B` binary,
-    /// leading-`0` octal, otherwise decimal. A leading `+`/`-` is accepted.
     pub fn from_str_auto(s: &str) -> Result<Mpz> {
         let t = s.trim();
         if t.is_empty() {
@@ -67,9 +56,6 @@ impl Mpz {
         Ok(Mpz(v))
     }
 
-    // ---- predicates / inspection ------------------------------------------
-
-    /// `-1`, `0`, or `1`.
     pub fn sgn(&self) -> i32 {
         match self.0.cmp0() {
             Ordering::Less => -1,
@@ -89,7 +75,6 @@ impl Mpz {
     pub fn is_even(&self) -> bool {
         self.0.is_even()
     }
-    /// Number of significant bits in the absolute value (0 for zero).
     pub fn nbits(&self) -> usize {
         self.0.significant_bits() as usize
     }
@@ -99,8 +84,6 @@ impl Mpz {
     pub fn cmp_abs(&self, other: &Mpz) -> Ordering {
         self.0.clone().abs().cmp(&other.0.clone().abs())
     }
-
-    // ---- byte (de)serialisation (magnitude, big-endian) -------------------
 
     pub fn to_bytes_be(&self) -> Vec<u8> {
         let n = self.0.significant_digits::<u8>();
@@ -112,8 +95,6 @@ impl Mpz {
         Mpz(Integer::from_digits(b, Order::Msf))
     }
 
-    // ---- basic arithmetic --------------------------------------------------
-
     pub fn abs(&self) -> Mpz {
         Mpz(self.0.clone().abs())
     }
@@ -123,11 +104,9 @@ impl Mpz {
     pub fn double(&self) -> Mpz {
         Mpz(Integer::from(&self.0 << 1))
     }
-    /// `self * 2^n`.
     pub fn mul_2exp(&self, n: u32) -> Mpz {
         Mpz(Integer::from(&self.0 << n))
     }
-    /// `floor(self / 2^n)`.
     pub fn fdiv_2exp(&self, n: u32) -> Mpz {
         Mpz(self.0.clone().div_rem_floor(Integer::from(1) << n).0)
     }
@@ -138,23 +117,17 @@ impl Mpz {
         Mpz(Integer::from(&self.0 * n))
     }
 
-    // ---- division / modular reduction -------------------------------------
-
-    /// Floored quotient and remainder; for positive `d`, `r ∈ [0, d)`.
     pub fn fdiv_qr(&self, d: &Mpz) -> (Mpz, Mpz) {
         let (q, r) = self.0.clone().div_rem_floor(d.0.clone());
         (Mpz(q), Mpz(r))
     }
-    /// Non-negative remainder `self mod m` (requires `m > 0`).
     pub fn modulo(&self, m: &Mpz) -> Mpz {
         let (_, r) = self.0.clone().div_rem_floor(m.0.clone());
         Mpz(r)
     }
-    /// Exact division (caller guarantees divisibility).
     pub fn divexact(&self, d: &Mpz) -> Mpz {
         Mpz(self.0.clone().div_exact(&d.0))
     }
-    /// Exact division, or `None` if `d` is zero or does not divide `self`.
     pub fn divexact_checked(&self, d: &Mpz) -> Option<Mpz> {
         if d.is_zero() || !self.0.is_divisible(&d.0) {
             None
@@ -162,30 +135,23 @@ impl Mpz {
             Some(Mpz(self.0.clone().div_exact(&d.0)))
         }
     }
-    /// Floored quotient.
     pub fn fdiv_q(&self, d: &Mpz) -> Mpz {
         Mpz(self.0.clone().div_rem_floor(d.0.clone()).0)
     }
-    /// `true` iff `self` divides `n`.
     pub fn divides(&self, n: &Mpz) -> bool {
         n.0.is_divisible(&self.0)
     }
 
-    // ---- number theory -----------------------------------------------------
-
     pub fn gcd(&self, other: &Mpz) -> Mpz {
         Mpz(self.0.clone().gcd(&other.0))
     }
-    /// Extended gcd: returns `(g, u, v)` with `g = u*self + v*other`, `g >= 0`.
     pub fn gcdext(&self, other: &Mpz) -> (Mpz, Mpz, Mpz) {
         let (g, u, v) = self.0.clone().extended_gcd(other.0.clone(), Integer::new());
         (Mpz(g), Mpz(u), Mpz(v))
     }
-    /// Modular inverse of `self` mod `m`, or `None` if not invertible.
     pub fn invert(&self, m: &Mpz) -> Option<Mpz> {
         self.0.clone().invert(&m.0).ok().map(Mpz)
     }
-    /// `self^exp mod m` (exp may be negative if `self` is invertible mod `m`).
     pub fn powm(&self, exp: &Mpz, m: &Mpz) -> Mpz {
         Mpz(self
             .0
@@ -193,36 +159,28 @@ impl Mpz {
             .pow_mod(&exp.0, &m.0)
             .expect("pow_mod: base not invertible for negative exponent"))
     }
-    /// Kronecker symbol `(self | n)`.
     pub fn kronecker(&self, n: &Mpz) -> i32 {
         self.0.kronecker(&n.0)
     }
-    /// Floor of the square root (requires `self >= 0`).
     pub fn sqrt(&self) -> Mpz {
         Mpz(self.0.clone().sqrt())
     }
     pub fn is_perfect_square(&self) -> bool {
         self.0.is_perfect_square()
     }
-    /// Floor of the `n`-th root (requires `self >= 0`).
     pub fn root(&self, n: u32) -> Mpz {
         Mpz(self.0.clone().root(n))
     }
-    /// Probabilistic primality test (Miller–Rabin with `reps` rounds).
     pub fn is_probab_prime(&self, reps: u32) -> bool {
         !matches!(self.0.is_probably_prime(reps), IsPrime::No)
     }
-    /// Smallest prime strictly greater than `self`.
     pub fn next_prime(&self) -> Mpz {
         Mpz(self.0.clone().next_prime())
     }
-    /// `self^e` (non-modular).
     pub fn pow_u(&self, e: u32) -> Mpz {
         Mpz(self.0.clone().pow(e))
     }
 }
-
-// ---- trait implementations -------------------------------------------------
 
 impl PartialEq for Mpz {
     fn eq(&self, other: &Self) -> bool {
@@ -260,7 +218,6 @@ impl fmt::Display for Mpz {
 
 impl core::str::FromStr for Mpz {
     type Err = ClassGroupError;
-    /// Parses with GMP base-0 semantics (see [`Mpz::from_str_auto`]).
     fn from_str(s: &str) -> Result<Mpz> {
         Mpz::from_str_auto(s)
     }
@@ -345,7 +302,6 @@ mod tests {
         assert_eq!(&a - &b, Mpz::from(12u64));
         assert_eq!(&a * &b, Mpz::from(85u64));
         assert_eq!(a.modulo(&b), Mpz::from(2u64));
-        // floored mod is non-negative
         assert_eq!(Mpz::from(-3i64).modulo(&Mpz::from(5u64)), Mpz::from(2u64));
         let inv = a.invert(&Mpz::from(101u64)).unwrap();
         assert_eq!((&a * &inv).modulo(&Mpz::from(101u64)), Mpz::from(1u64));
@@ -362,7 +318,6 @@ mod tests {
 
     #[test]
     fn kronecker_symbol() {
-        // (2|7) = 1, (3|7) = -1
         assert_eq!(Mpz::from(2u64).kronecker(&Mpz::from(7u64)), 1);
         assert_eq!(Mpz::from(3u64).kronecker(&Mpz::from(7u64)), -1);
     }

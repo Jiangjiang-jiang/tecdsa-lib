@@ -1,8 +1,6 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_paillier::{add_ciphertexts, backend::Integer, decrypt, encrypt, scalar_mul_ciphertext};
 
 fn test_dk() -> tecdsa_paillier::DecryptionKey {
-    // Use small primes for fast tests.
     let p = Integer::generate_safe_prime(&mut rand::thread_rng(), 256);
     let q = Integer::generate_safe_prime(&mut rand::thread_rng(), 256);
     tecdsa_paillier::DecryptionKey::from_primes(p, q).expect("valid primes")

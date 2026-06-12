@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run each ZK proof benchmark exactly ONCE with wall-clock timing.
-# Uses Criterion's --test mode (runs fixture + one iteration, no stats).
-
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -18,10 +15,8 @@ echo "Machine: $(uname -n) $(uname -m)" | tee -a "$RESULT"
 echo "Rust: $(rustc --version)" | tee -a "$RESULT"
 echo "" | tee -a "$RESULT"
 
-# Build once
 cargo bench -p tecdsa-bench --bench zk_proofs --no-run 2>&1 | tail -1
 
-# Get all benchmark names
 NAMES=$(cargo bench -p tecdsa-bench --bench zk_proofs -- --test --list 2>&1 | grep '^zk/' | sed 's/: benchmark$//')
 
 for name in $NAMES; do

@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Shared fixture builders for ZK proof benchmarks.
-//!
-//! **Profile B** (lambda=128, secp256k1):
-//! - Paillier N = 3072 bit (two 1536-bit safe primes, fast-paillier default)
-//! - CL |DeltaK| ~ 1827 bit (new_secp256k1_128bit)
-//! - JL N = 3360 bit (p_bits=1680, k=712)
-//! - NTilde = 3072 bit (two 1536-bit safe primes)
-//! - Pedersen-mod = 1536-bit primes (3072-bit N)
-
 use k256::Secp256k1;
 use rand_core::OsRng;
 use tecdsa_curve::TecdsaCurve;
@@ -40,7 +30,6 @@ pub fn paillier_encrypt(
         .expect("encrypt")
 }
 
-/// CL setup with 128-bit security (|DeltaK| ~ 1827 bit).
 pub fn cl_setup() -> tecdsa_class_group::cl::ClSetup {
     tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042").expect("cl setup")
 }
@@ -63,8 +52,6 @@ pub fn group_order() -> Integer {
     tecdsa_paillier::conv::group_order_integer::<C>()
 }
 
-/// Ring-Pedersen auxiliary parameters (N_tilde, h1, h2).
-/// Profile B: N_tilde = 3072 bit (two 1536-bit safe primes).
 pub fn ntilde_params() -> (Integer, Integer, Integer) {
     let p = Integer::generate_safe_prime(&mut OsRng, 1536);
     let q = Integer::generate_safe_prime(&mut OsRng, 1536);
@@ -85,9 +72,6 @@ pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integ
     }
 }
 
-/// JL keys: Profile B = N=3360 bit (p_bits=1680), k=712.
-/// Per XAL23 paper: 2 log q + 3s + 2t < k <= 1/4 log N - lambda.
-/// With lambda=128, log q=256, s=t=40: k=712, log N=3360.
 pub fn jl_keys() -> (
     tecdsa_joye_libert::kgen::JlPublicKey,
     tecdsa_joye_libert::kgen::JlSecretKey,
@@ -95,8 +79,6 @@ pub fn jl_keys() -> (
 ) {
     tecdsa_joye_libert::kgen::generate_keypair_with_qnr(1680, 712, &mut OsRng)
 }
-
-// ── Shared fixture structs (avoid redundant keygen) ──────────────
 
 pub struct PaillierFixture {
     pub dk: tecdsa_paillier::DecryptionKey,

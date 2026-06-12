@@ -1,9 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(clippy::module_name_repetitions)]
-
-//! Shared CL serialization types and helpers for JTX25 protocol messages.
-//!
-//! Eliminates duplication across presign, sign, and their robust variants.
 
 use elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
@@ -17,10 +12,6 @@ use tecdsa_class_group::{
 };
 
 use crate::error::Jtx25Error;
-
-// ---------------------------------------------------------------------------
-// Serialized class-group element (compact binary `Qfi::to_bytes`)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerializedQfi {
@@ -37,10 +28,6 @@ impl SerializedQfi {
         Ok(Qfi::from_bytes(&self.data))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Serialized CL ciphertext (pair of Qfi)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerializedClCt {
@@ -62,10 +49,6 @@ impl SerializedClCt {
         Ok(ClCiphertext::new(c1, c2))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Serialized ZK proofs
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerREncProof {
@@ -154,10 +137,6 @@ impl SerRPartDecProof {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
 pub(crate) fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String> {
     let repr = k256::CompressedPoint::try_from(bytes)
         .map_err(|e| format!("invalid point bytes ({label}): {e}"))?;
@@ -194,26 +173,15 @@ pub(crate) fn copy_ct(setup: &ClSetup, ct: &ClCiphertext) -> Result<ClCiphertext
     Ok(setup.ct_from_components(&c1, &c2)?)
 }
 
-// ---------------------------------------------------------------------------
-// DRG proof serialization (robust only)
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "robust")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerREncPcProof {
-    /// Compressed EC Pedersen commitment randomness R_PC (33 bytes).
     pub r_pc_bytes: Vec<u8>,
-    /// CL commitment R_c0 = h^{a3}.
     pub r_c0: SerializedQfi,
-    /// CL commitment R_c1 = f^{a1} * ek^{a3}.
     pub r_c1: SerializedQfi,
-    /// Response z1 for chi (shared between EC and CL checks).
     pub z1: Vec<u8>,
-    /// Response z2 for chi'.
     pub z2: Vec<u8>,
-    /// Response z3 for r (unbounded).
     pub z3: Vec<u8>,
-    /// Fiat-Shamir challenge.
     pub e: Vec<u8>,
 }
 

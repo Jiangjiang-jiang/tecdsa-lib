@@ -1,18 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Presign `StateMachine` for XAL23 (4-round interactive protocol).
-//!
-//! ## Protocol overview
-//!
-//! Round 1: commit to Gamma_i + MtA sender_encrypt for gamma and w.
-//! Round 2: decommit Gamma_i + MtA receiver_compute.
-//! Round 3: MtA sender_decrypt + compute/broadcast delta_i.
-//! Round 4: collect deltas, reconstruct R, output presignature.
-//!
-//! ## Backward compatibility
-//!
-//! The `new_simulation` constructor provides the old simulation-mode behavior:
-//! it runs `presign_all_with_sec` internally and wraps the result.
-
 #![allow(
     clippy::doc_markdown,
     clippy::missing_errors_doc,
@@ -39,16 +24,10 @@ use super::{
 };
 use crate::key_share::Xal23KeyShare;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Number of expected messages from peers (all parties minus self).
 fn n_peers(all_parties: &[PartyId]) -> usize {
     all_parties.len() - 1
 }
 
-/// Get my_id from the current round state.
 fn my_id_of<C: TecdsaCurve>(round: &PresignRound<C>) -> PartyId
 where
     FieldBytesSize<C>: ModulusSize,
@@ -61,24 +40,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Xal23PresignMachine
-// ---------------------------------------------------------------------------
-
-/// 4-round presigning `StateMachine` for XAL23.
-///
-/// Implements the full interactive presign protocol using JL-based MtA.
-/// Driven by the Orchestrator/Session layer via the `StateMachine` trait.
-///
-/// ## Construction
-///
-/// Use `Xal23PresignMachine::new()` to create the machine. Round 1 messages
-/// are immediately queued (drain with `drain_outgoing()`).
-///
-/// ## Simulation mode
-///
-/// Use `Xal23PresignMachine::new_simulation()` for backward-compatible
-/// simulation that runs all rounds internally on construction.
 pub struct Xal23PresignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -91,17 +52,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new interactive presign state machine.
-    ///
-    /// Immediately runs Round 1 (sample k_i, gamma_i, commit,
-    /// sender_encrypt) and queues R1 messages for all peers.
-    ///
-    /// # Arguments
-    ///
-    /// * `my_id` - This party's identifier
-    /// * `all_parties` - All signing party identifiers in consistent order
-    /// * `key_share` - This party's key share from keygen
-    /// * `rng` - Cryptographic RNG
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -125,10 +75,6 @@ where
         })
     }
 
-    /// Create a simulation-mode presign machine (backward compatibility).
-    ///
-    /// Runs `presign_all_with_sec` internally and wraps the local party's
-    /// presignature. The machine starts in "done" state.
     pub fn new_simulation(
         key_shares: &[Xal23KeyShare<C>],
         signer_indices: &[usize],
@@ -145,7 +91,6 @@ where
         }
     }
 
-    /// Handle a Round 1 broadcast message.
     fn handle_r1_broadcast(
         state: &mut Round1State<C>,
         from: PartyId,
@@ -163,7 +108,6 @@ where
         Ok(())
     }
 
-    /// Handle a Round 1 P2P message.
     fn handle_r1_p2p(
         state: &mut Round1State<C>,
         from: PartyId,
@@ -179,14 +123,11 @@ where
         Ok(())
     }
 
-    /// Check if Round 1 has collected all messages and should transition.
     fn r1_complete(state: &Round1State<C>) -> bool {
         let np = n_peers(&state.all_parties);
-        // We need commitment from all peers + own = all_parties.len()
         state.commitments.len() == state.all_parties.len() && state.r1_p2p.len() == np
     }
 
-    /// Handle a Round 2 broadcast message.
     fn handle_r2_broadcast(
         state: &mut Round2State<C>,
         from: PartyId,
@@ -204,7 +145,6 @@ where
         Ok(())
     }
 
-    /// Handle a Round 2 P2P message.
     fn handle_r2_p2p(
         state: &mut Round2State<C>,
         from: PartyId,
@@ -220,13 +160,11 @@ where
         Ok(())
     }
 
-    /// Check if Round 2 has collected all messages and should transition.
     fn r2_complete(state: &Round2State<C>) -> bool {
         let np = n_peers(&state.all_parties);
         state.r2_bcast.len() == np && state.r2_p2p.len() == np
     }
 
-    /// Handle a Round 3 broadcast (delta_j).
     fn handle_r3_broadcast(
         state: &mut Round3State<C>,
         from: PartyId,
@@ -245,15 +183,10 @@ where
         Ok(())
     }
 
-    /// Check if Round 3 has collected all deltas and should finalize.
     fn r3_complete(state: &Round3State<C>) -> bool {
         state.deltas.len() == state.all_parties.len()
     }
 }
-
-// ---------------------------------------------------------------------------
-// StateMachine implementation
-// ---------------------------------------------------------------------------
 
 impl<C: TecdsaCurve> StateMachine for Xal23PresignMachine<C>
 where
@@ -270,7 +203,6 @@ where
             return Err(TecdsaError::Other("received message from self".into()));
         }
 
-        // Take the current round state (replace with Poisoned temporarily).
         let round = std::mem::replace(&mut self.round, PresignRound::Poisoned);
 
         match round {
@@ -301,8 +233,6 @@ where
                     match transition_r1_to_r2(state, &mut rng) {
                         Ok(r2) => self.round = PresignRound::Round2(r2),
                         Err(e) => {
-                            // Cannot restore Round1 state as it was consumed.
-                            // Machine is poisoned.
                             return Err(e);
                         }
                     }

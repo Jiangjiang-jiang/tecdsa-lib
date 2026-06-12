@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_gg18::Gg18;
 use tecdsa_protocol::Protocol;
 

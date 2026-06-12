@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::{
     group::Curve as CurveGroup, ops::LinearCombination, sec1::ModulusSize, CurveArithmetic, Field,
     FieldBytes, FieldBytesSize, PrimeField,
@@ -6,10 +5,6 @@ use elliptic_curve::{
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 
-/// Message digest prepared for signing.
-///
-/// Wraps a scalar that is the hash-to-scalar output of the message to sign.
-/// This type is protocol-agnostic — all threshold ECDSA schemes use it.
 #[derive(Debug, Clone, Copy)]
 pub struct DataToSign<C: TecdsaCurve>
 where
@@ -33,7 +28,6 @@ where
     }
 }
 
-/// A complete ECDSA signature `(r, s)`.
 #[derive(Debug, Clone)]
 pub struct Signature<C: TecdsaCurve>
 where
@@ -43,7 +37,6 @@ where
     pub s: <C as CurveArithmetic>::Scalar,
 }
 
-/// Normalize `s` to low-S form (BIP-146): pick `min(s, -s)` by big-endian byte order.
 #[must_use]
 pub fn low_s_normalize<C: TecdsaCurve>(s: C::Scalar) -> C::Scalar
 where
@@ -62,9 +55,6 @@ where
     }
 }
 
-/// Verify an ECDSA signature `(r, s)` against public key and message digest.
-///
-/// Checks: `s⁻¹ · (m·G + r·PK)` has x-coordinate equal to `r`.
 pub fn verify_ecdsa<C: TecdsaCurve>(
     sig: &Signature<C>,
     public_key: &C::ProjectivePoint,

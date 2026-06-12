@@ -1,24 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! DKLs23 key generation protocol (relaxed DKG, 3 rounds).
-//!
-//! A 3-round protocol where `n` parties produce a shared ECDSA key using
-//! Shamir secret sharing. Unlike CGGMP20/GG18, no ZK proofs are required --
-//! the protocol relies on statistical EC point consistency checks.
-//!
-//! ## Protocol Rounds
-//!
-//! 1. **Commit:** each party broadcasts a hash commitment to share evaluation
-//!    points X_{i,j} = p_i(j) * G for j in \[n\].
-//! 2. **Decommit + Share:** each party broadcasts the decommitment (salt +
-//!    points + P_i^*) and P2P sends Shamir share s_{i,j} = p_i(j) to each
-//!    party j.
-//! 3. **Verify + Compute:** parties verify decommitments and share consistency
-//!    (s_{i,j} * G == X_{i,j}), compute combined Shamir shares and the joint
-//!    public key.
-//!
-//! Reference: Doerner, Kondi, Lee, shelat. "Threshold ECDSA in Three Rounds."
-//! IEEE S&P 2023.
-
 pub mod msg;
 mod rounds;
 
@@ -32,11 +11,6 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
 use crate::key_share::Dkls23KeyShare;
 
-/// DKLs23 key generation state machine.
-///
-/// Drives a single party through the 3-round keygen protocol. Create one
-/// instance per party via [`Dkls23KeygenMachine::new`], then feed messages
-/// through the [`StateMachine`] trait.
 pub struct Dkls23KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -49,14 +23,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new DKLs23 keygen state machine.
-    ///
-    /// # Arguments
-    ///
-    /// * `my_id` - This party's identifier.
-    /// * `all_parties` - All party identifiers (including self), in consistent order.
-    /// * `threshold` - Threshold parameter `t`: at least `t` parties needed to sign.
-    /// * `rng` - Cryptographic RNG for secret generation.
     #[must_use]
     pub fn new(
         my_id: PartyId,
@@ -133,8 +99,6 @@ where
                 }),
             },
             KeygenRound::Round3(_) => {
-                // Round 3 has no incoming messages -- it is purely local
-                // verification. We should not reach here in normal operation.
                 Err(TecdsaError::Other(
                     "round 3 does not accept messages".into(),
                 ))
@@ -180,7 +144,6 @@ where
     }
 }
 
-/// Extract the round number from a message variant (for error reporting).
 fn msg_round(msg: &Dkls23KeygenMsg) -> u16 {
     match msg {
         Dkls23KeygenMsg::Round1Broadcast(_) => 1,
@@ -200,30 +163,26 @@ mod tests {
     #[test]
     fn keygen_2_of_3() {
         let mut rng = rand::thread_rng();
-        let t = 2u16; // reconstruction threshold: 2-of-3 signing
+        let t = 2u16;
         let n = 3u16;
 
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-        // Create keygen machines
         let mut machines: Vec<(PartyId, Dkls23KeygenMachine<TestCurve>)> = Vec::new();
         for &pid in &all_parties {
             let machine = Dkls23KeygenMachine::new(pid, all_parties.clone(), t, &mut rng);
             machines.push((pid, machine));
         }
 
-        // Run the protocol via the orchestrator
         let results = Orchestrator::new(machines, 10)
             .run()
             .expect("orchestrator must succeed");
 
-        // Verify all parties completed successfully
         let shares: Vec<Dkls23KeyShare<TestCurve>> = results
             .into_iter()
             .map(|r| r.expect("keygen should succeed"))
             .collect();
 
-        // 1. All parties agree on public_key
         let pk0_bytes = shares[0].public_key.to_bytes();
         for (i, share) in shares.iter().enumerate().skip(1) {
             assert_eq!(
@@ -234,7 +193,6 @@ mod tests {
             );
         }
 
-        // 2. share_j * G == verification_shares[j] for all j
         for share in &shares {
             let j = (share.party_index - 1) as usize;
             let share_g =
@@ -248,7 +206,6 @@ mod tests {
             );
         }
 
-        // 3. All parties agree on verification_shares
         for (i, share) in shares.iter().enumerate().skip(1) {
             for (j, vs) in share.verification_shares.iter().enumerate() {
                 assert_eq!(
@@ -259,12 +216,9 @@ mod tests {
             }
         }
 
-        // 4. Lagrange reconstruction: any t shares reconstruct the secret key
-        //    sk = sum_i lagrange_i * share_i, and sk * G == pk
         let indices: Vec<u16> = shares.iter().map(|s| s.party_index).collect();
         let reconstruction_shares: Vec<_> = shares.iter().map(|s| s.shamir_share).collect();
 
-        // Reconstruct using first t=2 parties
         let sk = lagrange_interpolate_at_zero::<TestCurve>(
             &indices[..t as usize],
             &reconstruction_shares[..t as usize],
@@ -277,7 +231,6 @@ mod tests {
             "Lagrange reconstruction of first t shares should give the public key"
         );
 
-        // Reconstruct using last t=2 parties
         let sk2 =
             lagrange_interpolate_at_zero::<TestCurve>(&indices[1..], &reconstruction_shares[1..]);
         let pk_reconstructed2 =
@@ -292,7 +245,7 @@ mod tests {
     #[test]
     fn keygen_3_of_5() {
         let mut rng = rand::thread_rng();
-        let t = 3u16; // reconstruction threshold: 3-of-5 signing
+        let t = 3u16;
         let n = 5u16;
 
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
@@ -311,7 +264,6 @@ mod tests {
             .map(|r| r.expect("keygen should succeed"))
             .collect();
 
-        // All parties agree on public key
         let pk0_bytes = shares[0].public_key.to_bytes();
         for (i, share) in shares.iter().enumerate().skip(1) {
             assert_eq!(
@@ -322,7 +274,6 @@ mod tests {
             );
         }
 
-        // Share consistency
         for share in &shares {
             let j = (share.party_index - 1) as usize;
             let share_g =
@@ -336,11 +287,9 @@ mod tests {
             );
         }
 
-        // Lagrange reconstruction with any reconstruction_threshold=3 parties
         let indices: Vec<u16> = shares.iter().map(|s| s.party_index).collect();
         let reconstruction_shares: Vec<_> = shares.iter().map(|s| s.shamir_share).collect();
 
-        // Use parties {1, 3, 5}
         let subset_idx = [indices[0], indices[2], indices[4]];
         let subset_shares = [
             reconstruction_shares[0],
@@ -357,10 +306,6 @@ mod tests {
         );
     }
 
-    /// Lagrange interpolation at x=0 (secret reconstruction).
-    ///
-    /// Given evaluation points (indices) and values (shares), computes:
-    /// f(0) = sum_i share_i * prod_{j != i} (0 - j) / (i - j)
     fn lagrange_interpolate_at_zero<C: TecdsaCurve>(
         indices: &[u16],
         shares: &[C::Scalar],
@@ -382,7 +327,6 @@ mod tests {
                     continue;
                 }
                 let j_scalar = scalar_from_u16::<C>(indices[j]);
-                // lambda *= (0 - j) / (i - j) = (-j) / (i - j)
                 let neg_j = -j_scalar;
                 let i_minus_j = i_scalar - j_scalar;
                 let inv = i_minus_j
@@ -398,7 +342,6 @@ mod tests {
         result
     }
 
-    /// Convert a u16 to a scalar.
     fn scalar_from_u16<C: TecdsaCurve>(val: u16) -> C::Scalar
     where
         FieldBytesSize<C>: ModulusSize,

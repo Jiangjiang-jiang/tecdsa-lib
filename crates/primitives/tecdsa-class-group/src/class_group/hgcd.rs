@@ -1,23 +1,3 @@
-//! Recursive, sub-quadratic **half-GCD** (HGCD) for the partial reduction inside
-//! NUCOMP, plus a Lehmer-windowed base case.
-//!
-//! `hgcd(u, v)` (with `u > v ≥ 0`) returns the 2×2 *reduction matrix* `M` such
-//! that `[u_out; v_out] = M·[u_in; v_in]`, reducing `v` to roughly half the bit
-//! length of `u`. `M` is the product of elementary Euclidean step matrices
-//! `[[0,1],[1,-q]]`, so `det M = ±1` and `M`'s entries are the continued-fraction
-//! cofactors. The recursion does the work on the high halves and applies the
-//! resulting matrix to the full operands — the divide-and-conquer that gives
-//! `O(M(n)·log n)` (the matrix products use GMP's Karatsuba/Toom multiplication).
-//!
-//! Correctness is unconditional: every application of a matrix obtained from the
-//! high halves is *validated* (must yield a legal Euclidean state `u' > v' ≥ 0`),
-//! and on the rare boundary miss we fall back to the schoolbook reduction. The
-//! returned `M` therefore always satisfies the invariant `[u0;v0] = M·[u;v]` with
-//! `det M = ±1` (checked in the tests, and against the plain reduction).
-
-// With `gmp-hgcd` the hgcd2 loop replaces this Lehmer/recursive-HGCD machinery
-// on the hot path; it stays live for the default build, the fallback tail, and
-// the benches, so silence dead-code only in that feature build.
 #![cfg_attr(feature = "gmp-hgcd", allow(dead_code))]
 
 use core::{cell::RefCell, cmp::Ordering};
@@ -26,29 +6,14 @@ use gmp_mpfr_sys::gmp;
 use rug::{Assign, Integer};
 
 thread_local! {
-    /// Reused scratch for the partial-reduction inner loop (one per thread):
-    /// the three `apply_mat2` temporaries plus the head-extraction register.
-    /// Reusing these across calls eliminates the per-call allocation churn that
-    /// otherwise dominates `square`/`compose` in a tight exponentiation loop.
     static PR_SCRATCH: RefCell<(Integer, Integer, Integer)> =
         const { RefCell::new((Integer::new(), Integer::new(), Integer::new())) };
 }
 
-/// 2×2 integer matrix `[[m0,m1],[m2,m3]]` acting on a column `[u; v]`.
 type Mat = [Integer; 4];
 
-/// Operand size (in bits) below which the recursion stops and the
-/// Lehmer-windowed schoolbook reduction is used as the HGCD base case.
 const HGCD_THRESHOLD_BITS: u32 = 1500;
 
-/// Operand size (in bits) at or above which NUCOMP would dispatch to the
-/// recursive HGCD. Benchmarks (`bench_reductions`) show this from-scratch HGCD
-/// is *slower* than the word-batched schoolbook Lehmer at every measured size
-/// (up to 131072-bit operands, where it is still ~2× slower — see README), so
-/// the threshold is set beyond any competitive range: NUCOMP always uses
-/// Lehmer in practice. HGCD is retained as the requested, verified
-/// implementation and remains reachable for very large operands where its
-/// better asymptotic scaling might eventually pay off.
 pub(crate) const NUCOMP_HGCD_DISPATCH_BITS: u32 = 1_000_000;
 
 fn mat_id() -> Mat {
@@ -64,7 +29,6 @@ fn is_id(m: &Mat) -> bool {
     m[0] == 1 && m[1] == 0 && m[2] == 0 && m[3] == 1
 }
 
-/// `a · b` for 2×2 matrices.
 fn mat_mul(a: &Mat, b: &Mat) -> Mat {
     [
         Integer::from(&a[0] * &b[0]) + Integer::from(&a[1] * &b[2]),
@@ -74,12 +38,10 @@ fn mat_mul(a: &Mat, b: &Mat) -> Mat {
     ]
 }
 
-/// `det M < 0` (i.e. an odd number of Euclidean steps).
 fn det_is_neg(m: &Mat) -> bool {
     (Integer::from(&m[0] * &m[3]) - Integer::from(&m[1] * &m[2])).cmp0() == Ordering::Less
 }
 
-/// `[u; v] ← [[a,b],[c,d]]·[u; v]` for a machine-word matrix.
 fn vec_apply_i64(u: &mut Integer, v: &mut Integer, m: [i64; 4]) {
     let nu = Integer::from(&*u * m[0]) + Integer::from(&*v * m[1]);
     let nv = Integer::from(&*u * m[2]) + Integer::from(&*v * m[3]);
@@ -87,7 +49,6 @@ fn vec_apply_i64(u: &mut Integer, v: &mut Integer, m: [i64; 4]) {
     *v = nv;
 }
 
-/// `M ← [[a,b],[c,d]]·M` for a machine-word left factor.
 fn premul_i64(s: [i64; 4], m: &mut Mat) {
     let m0 = Integer::from(&m[0] * s[0]) + Integer::from(&m[2] * s[1]);
     let m1 = Integer::from(&m[1] * s[0]) + Integer::from(&m[3] * s[1]);
@@ -96,9 +57,6 @@ fn premul_i64(s: [i64; 4], m: &mut Mat) {
     *m = [m0, m1, m2, m3];
 }
 
-/// Apply the 2×2 integer matrix `[[m0,m1],[m2,m3]]` to the column `[p; q]`
-/// in place: `p ← m0·p + m1·q`, `q ← m2·p + m3·q`. Uses two scratch integers
-/// and no allocation (the matrix entries fit `i64`).
 fn apply_mat2(
     p: &mut Integer,
     q: &mut Integer,
@@ -107,8 +65,6 @@ fn apply_mat2(
     t1: &mut Integer,
     t2: &mut Integer,
 ) {
-    // Raw `mpz_*` (the matrix entries fit `c_long`): new p = m0·p + m1·q,
-    // new q = m2·p + m3·q, no allocation.
     unsafe {
         let pp = p.as_raw_mut();
         let qq = q.as_raw_mut();
@@ -117,20 +73,15 @@ fn apply_mat2(
         let s2 = t2.as_raw_mut();
         gmp::mpz_mul_si(s0, pp, m[0]);
         gmp::mpz_mul_si(s1, qq, m[1]);
-        gmp::mpz_add(s0, s0, s1); // new p
+        gmp::mpz_add(s0, s0, s1);
         gmp::mpz_mul_si(s1, pp, m[2]);
         gmp::mpz_mul_si(s2, qq, m[3]);
-        gmp::mpz_add(s1, s1, s2); // new q
+        gmp::mpz_add(s1, s1, s2);
         gmp::mpz_swap(pp, s0);
         gmp::mpz_swap(qq, s1);
     }
 }
 
-/// Schoolbook **Lehmer** partial extended Euclidean reduction (Knuth Algorithm
-/// L): continued-fraction steps batched in `i128` machine words, touching the
-/// big integers once per batch. `O(n²)`. Reduces `(u, v) = (by, bx)` until
-/// `bx ≤ l`; returns the cofactors `(y, x)` (the column `M·[0;1]`) and the
-/// parity of the step count.
 pub(crate) fn partial_reduce_lehmer(
     bx: &mut Integer,
     by: &mut Integer,
@@ -139,11 +90,6 @@ pub(crate) fn partial_reduce_lehmer(
     partial_reduce_lehmer_cont(bx, by, l, Integer::from(0), Integer::from(1), false)
 }
 
-/// Like [`partial_reduce_lehmer`], but *continues* an in-progress reduction:
-/// the caller supplies the cofactor column `(cof0, cof1) = M·(0;1)` and parity
-/// already accumulated by an earlier stage (e.g. a GMP `mpn_hgcd` call), and
-/// this finishes the reduction down to `bx ≤ l`, composing the matrices. With
-/// the identity seed `(0, 1, false)` it is the plain partial reduction.
 pub(crate) fn partial_reduce_lehmer_cont(
     bx: &mut Integer,
     by: &mut Integer,
@@ -194,10 +140,6 @@ pub(crate) fn partial_reduce_lehmer_cont(
                 if vc <= 0 || vd <= 0 {
                     break;
                 }
-                // Lehmer's invariant keeps the convergent cofactors ≤ the head
-                // (< 2^63) throughout a valid window, so the *division* operands
-                // fit i64 — use the native 64-bit divide (the i128 path emits a
-                // compiler-rt call). The matrix products `q·m` still need i128.
                 let nc = uh + m[0];
                 let nd = uh + m[1];
                 debug_assert!(
@@ -245,9 +187,6 @@ pub(crate) fn partial_reduce_lehmer_cont(
     (cof0, cof1, parity)
 }
 
-/// Lehmer-windowed schoolbook reduction of `(u, v)` (`u > v ≥ 0`) until
-/// `bits(v) ≤ target`, returning the reduction matrix. This is the HGCD base
-/// case (and boundary fallback).
 fn lehmer_reduce_bits(u: &mut Integer, v: &mut Integer, target: u32) -> Mat {
     let mut m = mat_id();
     while v.cmp0() != Ordering::Equal && v.significant_bits() > target {
@@ -289,7 +228,6 @@ fn lehmer_reduce_bits(u: &mut Integer, v: &mut Integer, target: u32) -> Mat {
             a = na;
         }
         if s[1] == 0 {
-            // Leading bits gave no quotient: one full-precision Euclidean step.
             let (q, r) = u.clone().div_rem_floor(v.clone());
             let step = [
                 Integer::new(),
@@ -298,7 +236,7 @@ fn lehmer_reduce_bits(u: &mut Integer, v: &mut Integer, target: u32) -> Mat {
                 Integer::from(-&q),
             ];
             m = mat_mul(&step, &m);
-            core::mem::swap(u, v); // u ← old v
+            core::mem::swap(u, v);
             *v = r;
         } else {
             let si = [s[0] as i64, s[1] as i64, s[2] as i64, s[3] as i64];
@@ -326,8 +264,6 @@ fn bump(c: &std::sync::atomic::AtomicU64) {
     c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Recursive half-GCD: reduce `(u, v)` (`u > v ≥ 0`) until `bits(v) ≤ ⌈n/2⌉`
-/// (`n = bits(u)`), returning the reduction matrix `M` with `[u0;v0] = M·[u;v]`.
 fn hgcd(u: &mut Integer, v: &mut Integer) -> Mat {
     #[cfg(test)]
     bump(&HGCD_CALLS);
@@ -340,7 +276,6 @@ fn hgcd(u: &mut Integer, v: &mut Integer) -> Mat {
         return lehmer_reduce_bits(u, v, target);
     }
 
-    // --- first recursion on the high halves ---
     let s = n / 2;
     let mut uh = Integer::from(&*u >> s);
     let mut vh = Integer::from(&*v >> s);
@@ -353,8 +288,6 @@ fn hgcd(u: &mut Integer, v: &mut Integer) -> Mat {
         *v = nv;
         r
     } else {
-        // Boundary miss: the high-half matrix is not valid for the full
-        // operands — fall back to schoolbook (u, v untouched).
         #[cfg(test)]
         bump(&HGCD_FALLBACKS);
         return lehmer_reduce_bits(u, v, target);
@@ -363,7 +296,6 @@ fn hgcd(u: &mut Integer, v: &mut Integer) -> Mat {
         return m;
     }
 
-    // --- one Euclidean step across the midpoint ---
     let (q, rr) = u.clone().div_rem_floor(v.clone());
     let step = [
         Integer::new(),
@@ -378,7 +310,6 @@ fn hgcd(u: &mut Integer, v: &mut Integer) -> Mat {
         return m;
     }
 
-    // --- second recursion on the new high halves ---
     let n2 = u.significant_bits();
     let s2 = (2 * target).saturating_sub(n2);
     let mut uh2 = Integer::from(&*u >> s2);
@@ -399,10 +330,6 @@ fn hgcd(u: &mut Integer, v: &mut Integer) -> Mat {
     }
 }
 
-/// Partial reduction of `(bx, by)` (`by > bx ≥ 0`) until `bits(bx) ≤ bits(l)`,
-/// via recursive HGCD. Matches the contract of `qfi::partial_reduce_lehmer`:
-/// returns the cofactors `(y, x)` = second column of the total reduction matrix
-/// and the parity of the step count.
 pub(crate) fn partial_reduce_hgcd(
     bx: &mut Integer,
     by: &mut Integer,
@@ -425,7 +352,6 @@ pub(crate) fn partial_reduce_hgcd(
         }
         m = mat_mul(&mm, &m);
     }
-    // cofactor column M·[0;1] = (m1, m3); parity = (det M < 0)
     (m[1].clone(), m[3].clone(), det_is_neg(&m))
 }
 
@@ -436,9 +362,6 @@ mod tests {
     use super::*;
 
     fn rand_pair(rng: &mut RandState, bits: u32) -> (Integer, Integer) {
-        // Balanced: a has exactly `bits` bits, b exactly `bits-1` (so a > b and
-        // both have the same limb count with nonzero high limbs — required by
-        // GMP's mpn_hgcd). Both odd.
         let mut a = Integer::from(Integer::random_bits(bits, rng));
         a.set_bit(bits - 1, true);
         a.set_bit(0, true);
@@ -449,9 +372,6 @@ mod tests {
         (a, b)
     }
 
-    /// Head-to-head: schoolbook Lehmer vs recursive HGCD partial reduction,
-    /// reducing `bits`-bit operands down to `bits/2` (the NUCOMP target).
-    /// Run with: `cargo test --release -- --ignored --nocapture bench_reductions`
     #[test]
     #[ignore]
     fn bench_reductions() {
@@ -489,7 +409,6 @@ mod tests {
                 0.0
             };
 
-            // GMP's internal recursive HGCD (the genuine sub-quadratic one).
             #[cfg(feature = "gmp-hgcd")]
             let gmp_str = {
                 let t = Instant::now();
@@ -509,11 +428,6 @@ mod tests {
         }
     }
 
-    /// The cofactors returned by `partial_reduce_lehmer` must satisfy the
-    /// continued-fraction invariants (this guards the i64-division inner loop):
-    /// with reduced `(bx, byr)` and `(y, x, parity)`,
-    ///   `|x·byr − y·bx| == by0`   and   `bx ≡ x·bx0 (mod by0)`,
-    /// and `bx ≤ l < byr`.
     #[test]
     fn partial_reduce_lehmer_cofactor_invariant() {
         let mut rng = RandState::new();
@@ -521,10 +435,9 @@ mod tests {
         for &bits in &[256u32, 900, 1796, 4096] {
             let l = Integer::from(1) << (bits / 2);
             for _ in 0..40 {
-                let (by0, bx0) = rand_pair(&mut rng, bits); // by0 > bx0 > 0
+                let (by0, bx0) = rand_pair(&mut rng, bits);
                 let (mut bx, mut by) = (bx0.clone(), by0.clone());
                 let (y, x, parity) = partial_reduce_lehmer(&mut bx, &mut by, &l);
-                // det relation: |x·byr − y·bx| == by0
                 let det_rel = Integer::from(&x * &by) - Integer::from(&y * &bx);
                 assert_eq!(det_rel.clone().abs(), by0, "det invariant ({bits} bits)");
                 assert_eq!(
@@ -532,10 +445,8 @@ mod tests {
                     parity,
                     "parity sign ({bits} bits)"
                 );
-                // bx ≡ x·bx0 (mod by0)
                 let r = (Integer::from(&bx) - Integer::from(&x * &bx0)) % &by0;
                 assert_eq!(r, 0, "bx ≡ x·bx0 (mod by0) ({bits} bits)");
-                // reduced: bx ≤ l (unless it bottomed out)
                 assert!(
                     bx <= l || bx.cmp0() == Ordering::Equal,
                     "bx ≤ l ({bits} bits)"
@@ -546,13 +457,12 @@ mod tests {
 
     #[test]
     fn hgcd_matches_lehmer_full_reduction() {
-        // At l = 0 both reduce to the gcd; cofactors and parity must agree.
         let mut rng = RandState::new();
         rng.seed(&Integer::from(987));
         let l = Integer::from(0);
         for &bits in &[200u32, 1000, 3000, 6000] {
             for _ in 0..15 {
-                let (a0, b0) = rand_pair(&mut rng, bits); // a0 > b0
+                let (a0, b0) = rand_pair(&mut rng, bits);
                 let (mut bx1, mut by1) = (b0.clone(), a0.clone());
                 let r1 = partial_reduce_lehmer(&mut bx1, &mut by1, &l);
                 let (mut bx2, mut by2) = (b0.clone(), a0.clone());
@@ -576,15 +486,12 @@ mod tests {
                 let (a0, b0) = rand_pair(&mut rng, bits);
                 let (mut u, mut v) = (a0.clone(), b0.clone());
                 let m = hgcd(&mut u, &mut v);
-                // M is the reduction matrix: [u; v] = M·[a0; b0].
                 let ru = Integer::from(&m[0] * &a0) + Integer::from(&m[1] * &b0);
                 let rv = Integer::from(&m[2] * &a0) + Integer::from(&m[3] * &b0);
                 assert_eq!(ru, u, "row0 invariant ({bits} bits)");
                 assert_eq!(rv, v, "row1 invariant ({bits} bits)");
-                // det ±1
                 let det = Integer::from(&m[0] * &m[3]) - Integer::from(&m[1] * &m[2]);
                 assert!(det == 1 || det == -1, "det must be ±1");
-                // progress: v reduced to about half the bits (or already small)
                 assert!(v.significant_bits() <= a0.significant_bits().div_ceil(2));
                 assert!(u > v && v.cmp0() != Ordering::Less);
             }

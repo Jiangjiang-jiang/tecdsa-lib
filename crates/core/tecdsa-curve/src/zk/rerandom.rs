@@ -1,57 +1,35 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use sha2::{Digest, Sha256};
 
 use crate::TecdsaCurve;
 
-/// Statement for the rerandomization ZK proof $R_{RE}$.
-///
-/// Asserts the existence of scalars $(r, s)$ such that
-/// $A' = rG + sA$ and $B' = r\mathcal{P} + sB$.
 pub struct ReStatement<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Generator $G$.
     pub g: C::ProjectivePoint,
-    /// Auxiliary base point $\mathcal{P}$.
     pub p: C::ProjectivePoint,
-    /// Original point $A$.
     pub a: C::ProjectivePoint,
-    /// Original point $B$.
     pub b: C::ProjectivePoint,
-    /// Rerandomized point $A' = rG + sA$.
     pub a_prime: C::ProjectivePoint,
-    /// Rerandomized point $B' = r\mathcal{P} + sB$.
     pub b_prime: C::ProjectivePoint,
 }
 
-/// Witness for the rerandomization ZK proof.
 pub struct ReWitness<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Rerandomization scalar $r$.
     pub r: C::Scalar,
-    /// Rerandomization scalar $s$.
     pub s: C::Scalar,
 }
 
-/// Non-interactive Schnorr-style proof for the rerandomization relation $R_{RE}$.
-///
-/// Proves knowledge of $(r, s)$ such that $A' = rG + sA$ and $B' = r\mathcal{P} + sB$
-/// using a sigma protocol made non-interactive via Fiat-Shamir (SHA-256).
 pub struct ReProof<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Commitment $X = \sigma G + \tau A$.
     pub x: C::ProjectivePoint,
-    /// Commitment $Y = \sigma \mathcal{P} + \tau B$.
     pub y: C::ProjectivePoint,
-    /// Response `z1 = sigma + e * r`.
     pub z1: C::Scalar,
-    /// Response `z2 = tau + e * s`.
     pub z2: C::Scalar,
 }
 
@@ -74,8 +52,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Compute the Fiat-Shamir challenge:
-    /// `e = H(G || P || A || B || A' || B' || X || Y)` reduced to a scalar.
     fn challenge(
         stmt: &ReStatement<C>,
         x: &C::ProjectivePoint,
@@ -99,12 +75,6 @@ where
         crate::conv::bytes_to_scalar::<C>(&hash)
     }
 
-    /// Create a rerandomization proof.
-    ///
-    /// - `stmt`: the public statement $(G, \mathcal{P}, A, B, A', B')$
-    /// - `witness`: the secret scalars $(r, s)$
-    /// - `sigma`: random ephemeral scalar $\sigma$
-    /// - `tau`: random ephemeral scalar $\tau$
     #[must_use]
     pub fn prove(
         stmt: &ReStatement<C>,
@@ -112,25 +82,17 @@ where
         sigma: &C::Scalar,
         tau: &C::Scalar,
     ) -> Self {
-        // Commit: X = sigma*G + tau*A, Y = sigma*P + tau*B
         let x = stmt.g * sigma + stmt.a * tau;
         let y = stmt.p * sigma + stmt.b * tau;
 
-        // Challenge
         let e = Self::challenge(stmt, &x, &y);
 
-        // Response: z1 = sigma + e*r, z2 = tau + e*s
         let z1 = *sigma + e * witness.r;
         let z2 = *tau + e * witness.s;
 
         Self { x, y, z1, z2 }
     }
 
-    /// Verify a rerandomization proof against the given statement.
-    ///
-    /// Checks:
-    /// - `z1*G + z2*A == X + e*A'`
-    /// - `z1*P + z2*B == Y + e*B'`
     #[must_use]
     pub fn verify(&self, stmt: &ReStatement<C>) -> bool {
         let e = Self::challenge(stmt, &self.x, &self.y);
@@ -153,22 +115,18 @@ mod tests {
 
     type C = k256::Secp256k1;
 
-    /// Helper: build a valid statement + witness for testing.
     fn setup() -> (ReStatement<C>, ReWitness<C>) {
         let r = <C as TecdsaCurve>::random_scalar(&mut OsRng);
         let s = <C as TecdsaCurve>::random_scalar(&mut OsRng);
 
         let g = C::generator();
-        // Use a NUMS second base point (hash-derived, DL unknown w.r.t. G).
         let p = C::nums_pedersen_h();
 
-        // Random points A, B on the curve.
         let a_sk = <C as TecdsaCurve>::random_scalar(&mut OsRng);
         let b_sk = <C as TecdsaCurve>::random_scalar(&mut OsRng);
         let a = g * a_sk;
         let b = p * b_sk;
 
-        // Rerandomized points.
         let a_prime = g * r + a * s;
         let b_prime = p * r + b * s;
 
@@ -196,7 +154,6 @@ mod tests {
     #[test]
     fn re_wrong_witness_rejects() {
         let (stmt, _witness) = setup();
-        // Use a completely wrong witness.
         let bad_witness = ReWitness {
             r: <C as TecdsaCurve>::random_scalar(&mut OsRng),
             s: <C as TecdsaCurve>::random_scalar(&mut OsRng),

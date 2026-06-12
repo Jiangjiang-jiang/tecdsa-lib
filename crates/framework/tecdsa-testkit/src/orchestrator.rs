@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Deterministic multi-party orchestrator for protocol state machines.
-//!
-//! The [`Orchestrator`] drives a set of [`StateMachine`] instances through
-//! rounds without any network layer — messages are delivered by directly
-//! calling [`StateMachine::handle`] on each recipient machine.
-
 use std::{
     collections::BTreeMap,
     time::{Duration, Instant},
@@ -12,59 +5,35 @@ use std::{
 
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, StateMachine};
 
-/// Per-party communication statistics collected during a protocol run.
 #[derive(Debug, Clone, Default)]
 pub struct CommStats {
-    /// Total bytes sent (serialized message payload via bincode).
     pub bytes_sent: usize,
-    /// Total number of messages sent.
     pub messages_sent: usize,
-    /// Total bytes received.
     pub bytes_received: usize,
-    /// Total number of messages received.
     pub messages_received: usize,
-    /// Bytes sent per round (round index -> bytes).
     pub bytes_per_round: BTreeMap<u16, usize>,
 }
 
-/// Per-party timing measurements collected during a protocol run.
 #[derive(Debug, Clone, Default)]
 pub struct PartyTiming {
-    /// Time spent constructing the machine (set externally via helper).
     pub init: Duration,
-    /// Time spent in [`StateMachine::drain_outgoing`].
     pub drain_outgoing: Duration,
-    /// Time spent in [`StateMachine::handle`].
     pub handle: Duration,
-    /// Time spent in [`StateMachine::finish`].
     pub finish: Duration,
 }
 
 impl PartyTiming {
-    /// Total active computation time (init + drain + handle + finish).
     #[must_use]
     pub fn total_active(&self) -> Duration {
         self.init + self.drain_outgoing + self.handle + self.finish
     }
 
-    /// Active time spent in the interactive protocol rounds only
-    /// (drain + handle + finish), EXCLUDING machine construction (`init`).
-    ///
-    /// Useful when the constructor cost (e.g. local key-material generation) is
-    /// measured separately and should not be double-counted — e.g. CGGMP20
-    /// aux-info, where `init` is the Paillier+Ring-Pedersen keygen and the round
-    /// time is the interactive ZK proving/verification.
     #[must_use]
     pub fn rounds_active(&self) -> Duration {
         self.drain_outgoing + self.handle + self.finish
     }
 }
 
-/// Serialized wire size (bytes) of a message under the [`Orchestrator`]'s bincode
-/// configuration (standard, big-endian, fixed-int) -- the same encoding used for
-/// its communication stats. Use to account for communication that does NOT flow
-/// through the orchestrator, e.g. two-party round messages exchanged by direct
-/// function calls, or a locally-computed partial signature that is broadcast.
 #[must_use]
 pub fn wire_size<T: serde::Serialize>(value: &T) -> usize {
     let cfg = bincode::config::standard()
@@ -75,33 +44,17 @@ pub fn wire_size<T: serde::Serialize>(value: &T) -> usize {
         .unwrap_or(0)
 }
 
-/// Drives a set of [`StateMachine`]s through rounds deterministically.
-///
-/// All message routing is synchronous and in-process.  Use this for unit
-/// tests and KAT runners where determinism and simplicity matter.
-///
-/// After [`run`](Orchestrator::run), call [`comm_stats`](Orchestrator::comm_stats)
-/// to retrieve per-party communication measurements.
 pub struct Orchestrator<M>
 where
     M: StateMachine,
     M::Outbound: Clone + Into<M::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
     M::Inbound: Clone + serde::Serialize + serde::de::DeserializeOwned,
 {
-    /// The party-ID / state-machine pairs managed by this orchestrator.
     pub machines: Vec<(PartyId, M)>,
     max_rounds: u16,
-    /// Per-party communication statistics.
     stats: BTreeMap<PartyId, CommStats>,
-    /// When `false` (the default), skip the `bincode::encode_to_vec` call
-    /// that serializes every message just to count bytes. Set to `true`
-    /// via [`with_stats`](Orchestrator::with_stats) when communication
-    /// measurements are needed.
     collect_stats: bool,
-    /// Per-party timing measurements.
     timings: BTreeMap<PartyId, PartyTiming>,
-    /// When `true`, instrument `drain_outgoing`, `handle`, and `finish`
-    /// calls with [`Instant`] timers.
     collect_timing: bool,
 }
 
@@ -111,8 +64,6 @@ where
     M::Outbound: Clone + Into<M::Inbound> + serde::Serialize + serde::de::DeserializeOwned,
     M::Inbound: Clone + serde::Serialize + serde::de::DeserializeOwned,
 {
-    /// Create a new orchestrator wrapping `machines`, stopping after at most
-    /// `max_rounds` rounds even if some machines have not finished.
     #[must_use]
     pub fn new(machines: Vec<(PartyId, M)>, max_rounds: u16) -> Self {
         let stats = machines
@@ -129,45 +80,23 @@ where
         }
     }
 
-    /// Enable or disable per-message serialization for communication stats.
-    ///
-    /// When `collect` is `true`, every outgoing message is serialized via
-    /// `bincode::encode_to_vec` to measure its byte size. When `false`
-    /// (the default), the serialization is skipped and all byte counts
-    /// remain zero.
     #[must_use]
     pub fn with_stats(mut self, collect: bool) -> Self {
         self.collect_stats = collect;
         self
     }
 
-    /// Enable or disable per-party timing instrumentation.
-    ///
-    /// When `collect` is `true`, every `drain_outgoing`, `handle`, and
-    /// `finish` call is bracketed with [`Instant::now`] / [`Instant::elapsed`]
-    /// and the durations are accumulated per party.
     #[must_use]
     pub fn with_timing(mut self, collect: bool) -> Self {
         self.collect_timing = collect;
         self
     }
 
-    /// Run all machines to completion (or until `max_rounds` is exhausted).
-    ///
-    /// Returns an [`OrchestratorResult`] containing both protocol outputs
-    /// and per-party communication statistics.  The result dereferences to
-    /// `Vec<Result<Output>>` for backward compatibility.
     pub fn run(mut self) -> tecdsa_core::Result<OrchestratorResult<M::Output>> {
         let bincode_config = bincode::config::standard()
             .with_big_endian()
             .with_fixed_int_encoding();
 
-        // Direct-index recipient lookup: `PartyId(u16)` -> position in `machines`.
-        // The orchestrator only ever routes IDs chosen by the (trusted) test/bench
-        // harness, so a plain array keyed by the id is both faster than a linear
-        // `find` (O(1) vs O(n) per point-to-point message, i.e. O(n) vs O(n^2) per
-        // round) and needs no hashing/DoS protection. Membership is fixed for the
-        // whole run, so the table is built once. `usize::MAX` marks "no machine".
         let machine_index: Vec<usize> = {
             let max_id = self
                 .machines
@@ -188,7 +117,6 @@ where
                 break;
             }
 
-            // Collect all outgoing messages from every machine in this round.
             let mut pending: Vec<(PartyId, Outgoing<M::Outbound>)> = Vec::new();
             for (pid, machine) in &mut self.machines {
                 let t0 = if self.collect_timing {
@@ -205,7 +133,6 @@ where
                 }
             }
 
-            // Route each message to its intended recipient(s).
             for (from, outgoing) in &pending {
                 let msg_bytes = if self.collect_stats {
                     bincode::serde::encode_to_vec(&outgoing.msg, bincode_config)
@@ -235,9 +162,6 @@ where
                             .copied()
                             .unwrap_or(usize::MAX);
                         if let Some((_, machine)) = self.machines.get_mut(idx) {
-                            // Build the recipient's owned inbound *before* starting
-                            // the timer so message cloning is not charged to handle
-                            // time (it is delivery/transport cost, not compute).
                             let inbound: M::Inbound = outgoing.msg.clone().into();
                             let t0 = if self.collect_timing {
                                 Some(Instant::now())
@@ -268,8 +192,6 @@ where
                                         s.messages_received += 1;
                                     }
                                 }
-                                // Clone this recipient's payload *before* the timer so
-                                // cloning is not charged to handle time (see above).
                                 let inbound: M::Inbound = outgoing.msg.clone().into();
                                 let t0 = if self.collect_timing {
                                     Some(Instant::now())
@@ -312,21 +234,15 @@ where
         })
     }
 
-    /// Returns the per-party communication statistics (only meaningful after `run`).
     #[must_use]
     pub fn comm_stats(&self) -> &BTreeMap<PartyId, CommStats> {
         &self.stats
     }
 }
 
-/// Result of an orchestrator run, containing both protocol outputs and
-/// communication statistics.
 pub struct OrchestratorResult<O> {
-    /// Protocol outputs, one per party.
     pub outputs: Vec<tecdsa_core::Result<O>>,
-    /// Per-party communication statistics.
     pub stats: BTreeMap<PartyId, CommStats>,
-    /// Per-party timing measurements.
     pub timings: BTreeMap<PartyId, PartyTiming>,
 }
 
@@ -346,19 +262,16 @@ impl<O> IntoIterator for OrchestratorResult<O> {
 }
 
 impl<O> OrchestratorResult<O> {
-    /// Per-party communication statistics.
     #[must_use]
     pub fn comm_stats(&self) -> &BTreeMap<PartyId, CommStats> {
         &self.stats
     }
 
-    /// Total bytes sent across all parties.
     #[must_use]
     pub fn total_bytes_sent(&self) -> usize {
         self.stats.values().map(|s| s.bytes_sent).sum()
     }
 
-    /// Average bytes sent per party.
     #[must_use]
     pub fn avg_bytes_per_party(&self) -> usize {
         let n = self.stats.len();
@@ -368,7 +281,6 @@ impl<O> OrchestratorResult<O> {
         self.total_bytes_sent() / n
     }
 
-    /// Per-party timing for the given party, if timing was collected.
     #[must_use]
     pub fn party_timing(&self, pid: PartyId) -> Option<&PartyTiming> {
         self.timings.get(&pid)

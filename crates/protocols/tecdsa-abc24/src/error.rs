@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Error types for the ABC+24 two-party ECDSA protocol.
-
 use thiserror::Error;
 
 #[derive(Debug, Error)]

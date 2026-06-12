@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
 
@@ -10,12 +9,6 @@ fn bincode_config() -> impl bincode::config::Config {
         .with_fixed_int_encoding()
 }
 
-/// Encode a header and payload into a wire-format byte vector.
-///
-/// # Errors
-///
-/// Returns [`tecdsa_core::TecdsaError::Serialization`] if bincode encoding fails
-/// or if the serialized header exceeds `u32::MAX` bytes.
 pub fn encode<T: Serialize>(header: &Header, payload: &T) -> tecdsa_core::Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.extend_from_slice(PREAMBLE);
@@ -35,21 +28,6 @@ pub fn encode<T: Serialize>(header: &Header, payload: &T) -> tecdsa_core::Result
     Ok(buf)
 }
 
-/// Decode a wire-format byte slice into a header and payload.
-///
-/// # Errors
-///
-/// Returns [`tecdsa_core::TecdsaError::Serialization`] if:
-/// - the input is too short,
-/// - the preamble is invalid,
-/// - the wire version is not [`WIRE_VERSION`],
-/// - header or payload data is truncated, or
-/// - bincode decoding fails.
-///
-/// # Panics
-///
-/// Does not panic in practice; the internal `expect` calls are on fixed-width
-/// slices whose lengths are verified by the preceding guards.
 pub fn decode<T: for<'de> Deserialize<'de>>(data: &[u8]) -> tecdsa_core::Result<(Header, T)> {
     if data.len() < 8 {
         return Err(TecdsaError::Serialization("too short".into()));
@@ -57,7 +35,6 @@ pub fn decode<T: for<'de> Deserialize<'de>>(data: &[u8]) -> tecdsa_core::Result<
     if &data[..4] != PREAMBLE {
         return Err(TecdsaError::Serialization("invalid preamble".into()));
     }
-    // SAFETY: length checked above; slice is exactly 4 bytes, infallible.
     let version = u32::from_le_bytes(data[4..8].try_into().expect("4-byte slice"));
     if version != WIRE_VERSION {
         return Err(TecdsaError::Serialization(format!(
@@ -69,7 +46,6 @@ pub fn decode<T: for<'de> Deserialize<'de>>(data: &[u8]) -> tecdsa_core::Result<
     if rest.len() < 4 {
         return Err(TecdsaError::Serialization("missing header length".into()));
     }
-    // SAFETY: slice is exactly 4 bytes, infallible.
     let header_len = u32::from_be_bytes(rest[..4].try_into().expect("4-byte slice")) as usize;
     if rest.len() < 4 + header_len {
         return Err(TecdsaError::Serialization("header data truncated".into()));

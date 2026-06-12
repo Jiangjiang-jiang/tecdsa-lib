@@ -1,27 +1,14 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![forbid(unsafe_code)]
-//! EC ElGamal encryption over secp256k1 with threshold decryption (additive notation).
-//!
-//! Currently hardcoded to `k256::Secp256k1`. Future versions may be generic
-//! over `C: TecdsaCurve`.
-//!
-//! - `Enc(pk, M; r) = (r*G, M + r*pk)`
-//! - `PartDec(c, dk_i) = dk_i * c.0`
-//! - `FinDec(c, [(lambda_j, pd_j)]) = c.1 - sum(lambda_j * pd_j)`
-//!
-//! Homomorphic addition: component-wise EC point addition.
 
 use elliptic_curve::CurveArithmetic;
 use k256::{ProjectivePoint, Scalar};
 
-/// ElGamal ciphertext: `(c0, c1)` where `c0 = r*G`, `c1 = M + r*pk`.
 #[derive(Debug, Clone, Copy)]
 pub struct Ciphertext {
     pub c0: ProjectivePoint,
     pub c1: ProjectivePoint,
 }
 
-/// Encrypt a point `m` under public key `pk` with randomness `r`.
 pub fn encrypt(pk: &ProjectivePoint, m: &ProjectivePoint, r: &Scalar) -> Ciphertext {
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
     Ciphertext {
@@ -30,14 +17,10 @@ pub fn encrypt(pk: &ProjectivePoint, m: &ProjectivePoint, r: &Scalar) -> Ciphert
     }
 }
 
-/// Compute a partial decryption share: `pd_i = dk_i * c0`.
 pub fn partial_decrypt(ct: &Ciphertext, dk_i: &Scalar) -> ProjectivePoint {
     ct.c0 * dk_i
 }
 
-/// Combine partial decryptions with Lagrange coefficients to recover plaintext.
-///
-/// `M = c1 - sum(lambda_j * pd_j)`
 pub fn combine_partials(
     ct: &Ciphertext,
     partials: &[(Scalar, ProjectivePoint)],
@@ -49,7 +32,6 @@ pub fn combine_partials(
     ct.c1 - combined
 }
 
-/// Homomorphic addition of two ciphertexts (component-wise point addition).
 pub fn add(a: &Ciphertext, b: &Ciphertext) -> Ciphertext {
     Ciphertext {
         c0: a.c0 + b.c0,

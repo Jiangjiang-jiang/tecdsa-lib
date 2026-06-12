@@ -14,7 +14,6 @@ fuzz_target!(|data: &[u8]| {
         from: u16::from_be_bytes([data[36], data[37]]),
         to: u16::from_be_bytes([data[38], data[39]]),
     };
-    // Exercise equality, debug, clone
     let _ = header.clone();
     let _ = format!("{:?}", header);
     let _ = header == header;

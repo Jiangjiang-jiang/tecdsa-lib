@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! TX25 presign state machine implementation.
-
 use std::collections::BTreeMap;
 
 use tecdsa_class_group::cl::{ClPublicKey, ClSetup, Qfi};
@@ -24,18 +21,6 @@ use crate::{
     error::Tx25Error, key_share::Tx25KeyShare, mpmta::mpmta_round1, pvss::pvss_distribute,
 };
 
-// ---------------------------------------------------------------------------
-// TX25 presigning state machine
-// ---------------------------------------------------------------------------
-
-/// TX25 presigning state machine (2 rounds + offline output computation).
-///
-/// Implements the presign protocol from TX25 Section 4.2 using CL-based
-/// public-checked MtA (MPMtA) for multiplicative-to-additive conversion
-/// and PVSS for distributed randomness generation.
-///
-/// Since bicycl-rs v0.2.2, `ClSetup` is `Send`, so it is stored directly
-/// in the machine and reused across round transitions.
 pub struct Tx25PresignMachine {
     pub(crate) round: PresignRound,
     pub(crate) setup: ClSetup,
@@ -43,25 +28,6 @@ pub struct Tx25PresignMachine {
 }
 
 impl Tx25PresignMachine {
-    /// Create a new TX25 presign state machine.
-    ///
-    /// Immediately runs presign Round 1:
-    /// 1. Sample gamma_i
-    /// 2. MPMtA1 for gamma_i (encrypt + R_Enc proof)
-    /// 3. PVSS ShareDist for k_i shares
-    /// 4. Queue Round 1 broadcast
-    ///
-    /// # Arguments
-    ///
-    /// * `my_id` - This party's identifier.
-    /// * `all_parties` - All signing party identifiers (must be sorted).
-    /// * `key_share` - Key share from keygen.
-    /// * `setup` - CL-HSM setup context.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if this party is not in `all_parties` or if
-    /// CL operations fail.
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -78,23 +44,10 @@ impl Tx25PresignMachine {
             .ok_or_else(|| Tx25Error::InvalidInput("my_id not in all_parties".into()))?;
         let threshold = key_share.threshold;
 
-        // TX25 requires honest majority: n >= 2t - 1.
-        // let n_parties = all_parties.len() as u16;
-        // if n_parties < 2 * threshold - 1 {
-        //     return Err(Tx25Error::InvalidInput(format!(
-        //         "TX25 requires n >= 2t-1 for honest majority: n={n_parties}, t={threshold}"
-        //     )));
-        // }
-
-        // Extract key material (ClSecretKey -> decimal, ClPublicKey -> inner).
         let sk_decimal = setup
             .sk_to_bytes(&key_share.cl_sk)
             .map_err(|e| Tx25Error::InvalidInput(format!("sk_to_bytes: {e}")))?;
 
-        // Key shares are produced for the full DKG committee, while presign may
-        // run with a signer subset. Keep per-party public material ordered by
-        // this presign session's active party list because later rounds index it
-        // with positions in `all_parties`.
         let active_indices: Vec<usize> = all_parties
             .iter()
             .map(|party| {
@@ -143,15 +96,12 @@ impl Tx25PresignMachine {
 
         let mut rng = rand::thread_rng();
 
-        // --- Step 1: Sample gamma_i ---
         let gamma_i = k256::Secp256k1::random_scalar(&mut rng);
 
-        // --- Step 2: MPMtA Round 1 for gamma_i ---
         let gamma_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&gamma_i);
         let my_pk = &key_mat.raw_pks[my_idx_val];
         let mpmta_r1 = mpmta_round1(&mut setup, my_pk, &gamma_bytes)?;
 
-        // --- Step 3: PVSS ShareDist for k_i ---
         let party_ids_u16: Vec<u16> = all_parties.iter().map(|p| p.0).collect();
 
         let pvss_out = pvss_distribute(
@@ -163,7 +113,6 @@ impl Tx25PresignMachine {
             &mut rng,
         )?;
 
-        // --- Step 4: Build Round 1 message ---
         let c_gamma_ser = SerializedClCt::from_bicycl_ct(&mpmta_r1.ciphertext)
             .map_err(|e| Tx25Error::InvalidInput(format!("serialize c_gamma: {e}")))?;
 
@@ -195,7 +144,6 @@ impl Tx25PresignMachine {
         let payload_bytes = bincode::serde::encode_to_vec(&r1_payload, bincode::config::standard())
             .map_err(|e| Tx25Error::InvalidInput(format!("serialize R1 payload: {e}")))?;
 
-        // Queue Round 1 broadcast to all other parties.
         let mut outgoing = Vec::new();
         for &party in &all_parties {
             if party != my_id {
@@ -206,7 +154,6 @@ impl Tx25PresignMachine {
             }
         }
 
-        // Store our own Round 1 data. The CL objects are moved here.
         let own_pvss_share = pvss_out.secret_share;
         let mut received = BTreeMap::new();
         received.insert(
@@ -237,17 +184,12 @@ impl Tx25PresignMachine {
     }
 }
 
-// ---------------------------------------------------------------------------
-// StateMachine implementation
-// ---------------------------------------------------------------------------
-
 impl StateMachine for Tx25PresignMachine {
     type Output = Tx25Presignature;
     type Inbound = Tx25PresignMsg;
     type Outbound = Tx25PresignMsg;
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
-        // Reject messages from self.
         let my_id = match &self.round {
             PresignRound::Round1(s) => s.my_id,
             PresignRound::Round2(s) => s.my_id,
@@ -274,7 +216,6 @@ impl StateMachine for Tx25PresignMachine {
                         )));
                     }
 
-                    // Deserialise R1 payload.
                     let (payload, _): (R1Payload, _) =
                         bincode::serde::decode_from_slice(&data, bincode::config::standard())
                             .map_err(|e| {
@@ -282,7 +223,6 @@ impl StateMachine for Tx25PresignMachine {
                                 TecdsaError::Other(format!("deserialize R1 payload: {e}"))
                             })?;
 
-                    // Reconstruct CL objects.
                     let c_gamma = payload.c_gamma.to_bicycl_ct().map_err(|e| {
                         TecdsaError::Other(format!("reconstruct c_gamma from party {from}: {e}"))
                     })?;
@@ -322,7 +262,6 @@ impl StateMachine for Tx25PresignMachine {
                         },
                     );
 
-                    // Check if all Round 1 messages collected.
                     if state.received.len() == state.all_parties.len() {
                         let r2_state = transition_r1_to_r2(state, &mut self.setup, &self.key_mat)?;
                         self.round = PresignRound::Round2(r2_state);
@@ -351,7 +290,6 @@ impl StateMachine for Tx25PresignMachine {
                         )));
                     }
 
-                    // Deserialise R2 payload.
                     let (payload, _): (R2Payload, _) =
                         bincode::serde::decode_from_slice(&data, bincode::config::standard())
                             .map_err(|e| {
@@ -367,7 +305,6 @@ impl StateMachine for Tx25PresignMachine {
                         )));
                     }
 
-                    // Reconstruct per-party MtA ciphertexts and points.
                     let mut kg_c_alphas = Vec::with_capacity(n);
                     let mut xg_c_alphas = Vec::with_capacity(n);
                     let mut b_pts = Vec::with_capacity(n);
@@ -441,10 +378,8 @@ impl StateMachine for Tx25PresignMachine {
                         },
                     );
 
-                    // Check if all Round 2 messages from other parties collected.
                     if state.received.len() == n_others(&state.all_parties) {
                         let presignature = finalize(&state, &self.setup, &self.key_mat)?;
-                        // Zeroize secrets before dropping Round2State
                         state.gamma_i.zeroize();
                         state.k_i.zeroize();
                         self.round = PresignRound::Done(presignature);

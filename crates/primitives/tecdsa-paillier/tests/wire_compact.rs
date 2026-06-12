@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire-size regression tests for the compact big-integer serde format.
-//!
-//! `rug`'s default serde encodes integers as radix-16 strings, costing two
-//! bytes of wire per byte of integer. The vendored `fast-paillier` backend and
-//! `tecdsa_bigint::int_wire` instead encode `(sign, magnitude-bytes)`, so a
-//! b-bit integer must serialize under bincode to about `b/8` bytes plus a few
-//! bytes of framing. These tests pin that property so a serde regression
-//! cannot silently double every ciphertext on the wire again.
-
 use fast_paillier::backend::Integer;
 
 fn wire_size<T: serde::Serialize>(value: &T) -> usize {
@@ -16,12 +6,10 @@ fn wire_size<T: serde::Serialize>(value: &T) -> usize {
         .len()
 }
 
-/// Allowed framing overhead (sign byte + length varint + container framing).
 const SLACK: usize = 16;
 
 #[test]
 fn paillier_ciphertext_is_compact() {
-    // A Paillier ciphertext for a 3072-bit modulus lives in Z_{N^2}: 6144 bits.
     let ct: fast_paillier::Ciphertext = (Integer::one() << 6144_u32) - Integer::one();
     let size = wire_size(&ct);
     assert!(size >= 768, "6144-bit ciphertext cannot fit in {size} B");

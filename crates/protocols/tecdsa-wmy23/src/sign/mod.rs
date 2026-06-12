@@ -1,22 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMY23 *identifiable* online signing protocol (1 broadcast round).
-//!
-//! Consumes a [`Wmy23Presignature`] and a message digest to produce a
-//! threshold ECDSA signature, faithfully following WMY23 Figures 7-9.
-//!
-//! Each party broadcasts its additive partial signature
-//! `s_i = m * hat_k_i + r * sigma_i` together with, for every counterparty,
-//! the MtAwc shares-in-exponent `M_{ij}`, `N_{ij}` and a NIZKDL-2PC proof
-//! (`R_DL-2PC`, Fig. 13). After collecting all broadcasts, every party
-//! verifies each peer's proofs and the share-consistency equation
-//! (WMY23 Equation (3)); only then is `s = sum_i s_i` assembled. A peer
-//! whose proofs or equation fail is reported as a cheater via [`IaReport`],
-//! so the online phase achieves identifiable abort instead of a silent
-//! failure (the previous implementation summed shares with no verification).
-//!
-//! Reference: Wong, Ma, Yin, Chow. "Real Threshold ECDSA." NDSS 2023,
-//! Section V (Figures 7-9) and Section V-D (cheater identification).
-
 pub mod msg;
 pub mod rounds;
 
@@ -33,14 +14,12 @@ use tecdsa_protocol::{
 
 use crate::presign::Wmy23Presignature;
 
-/// WMY23 identifiable online signing state machine (1 broadcast round).
 pub struct Wmy23OnlineSignMachine {
     my_id: PartyId,
     all_parties: Vec<PartyId>,
     presignature: Wmy23Presignature,
     message: DataToSign<k256::Secp256k1>,
     public_key: k256::ProjectivePoint,
-    /// Collected contributions, indexed by quorum-local position.
     contribs: Vec<Option<SignContribution>>,
     outgoing: Vec<Outgoing<Wmy23SignMsg>>,
     output: Option<Signature<k256::Secp256k1>>,
@@ -49,18 +28,6 @@ pub struct Wmy23OnlineSignMachine {
 }
 
 impl Wmy23OnlineSignMachine {
-    /// Create a new WMY23 identifiable online signing state machine.
-    ///
-    /// Immediately computes this party's contribution (partial signature +
-    /// MtAwc shares-in-exponent + NIZKDL-2PC proofs) and queues it for
-    /// broadcast.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if this party is not in `all_parties`, or if the
-    /// presignature's recorded index does not match this party's position
-    /// in `all_parties` (the presign and sign quorums must be identical and
-    /// in the same order).
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -124,8 +91,6 @@ impl Wmy23OnlineSignMachine {
         self.contribs.iter().all(Option::is_some)
     }
 
-    /// Verify every party's contribution and either assemble the signature
-    /// or record an [`IaReport`] blaming the parties that failed.
     fn verify_and_finish(&mut self) -> tecdsa_core::Result<()> {
         let n = self.all_parties.len();
         let contribs: Vec<SignContribution> = self
@@ -134,14 +99,6 @@ impl Wmy23OnlineSignMachine {
             .map(|c| c.clone().expect("all contributions present"))
             .collect();
 
-        // WMY23 Fig. 8 cheater identification, two-phase for correct
-        // attribution:
-        //   (1) Each M_{ij} is bound to party i by its NIZKDL-2PC proof, so a
-        //       proof failure is unambiguously party i's fault. A bad M_{ij}
-        //       would also poison party j's equation, so if any proof fails we
-        //       blame only the proof owners and stop.
-        //   (2) With every M well-formed, an equation failure can only be due
-        //       to an inconsistent partial signature s_i (party i's fault).
         let mut blamed: Vec<PartyId> = Vec::new();
         for i in 0..n {
             if !verify_contribution_proofs(&self.presignature, &contribs, i) {
@@ -170,7 +127,6 @@ impl Wmy23OnlineSignMachine {
             ));
         }
 
-        // WMY23 Fig. 9: s = sum_i s_i, then standard ECDSA verification.
         let sig = combine_signatures(
             &self.presignature,
             &contribs,
@@ -257,11 +213,6 @@ mod tests {
 
     use super::*;
 
-    /// Create a minimal WMY23 sign machine for message-guard tests.
-    ///
-    /// The presignature is synthetic, so it will not assemble a valid
-    /// signature; the machine never reaches verification in these tests
-    /// (which only exercise self/duplicate/unknown message rejection).
     fn make_test_machine(my_pid: u16, party_pids: &[u16]) -> Wmy23OnlineSignMachine {
         let mut rng = rand::thread_rng();
         let all_parties: Vec<PartyId> = party_pids.iter().map(|&p| PartyId(p)).collect();

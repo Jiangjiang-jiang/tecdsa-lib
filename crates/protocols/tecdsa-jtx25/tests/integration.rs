@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -12,23 +11,11 @@
     non_snake_case
 )]
 
-//! End-to-end integration tests for JTX25 threshold ECDSA.
-//!
-//! Tests: keygen -> presign -> online sign -> verify.
-//! Robust tests require `--features robust`.
-
 use elliptic_curve::CurveArithmetic;
 use tecdsa_class_group::cl::ClSetup;
 use tecdsa_jtx25::{key_share::Jtx25KeyShare, keygen::Jtx25KeygenMachine};
 use tecdsa_protocol::PartyId;
 
-// ---------------------------------------------------------------------------
-// Helper: run keygen state machine
-// ---------------------------------------------------------------------------
-
-/// Run keygen for `n` parties with reconstruction threshold `t`.
-///
-/// `t` parties are needed to sign.
 fn run_keygen(n: usize, t: u16) -> Vec<Jtx25KeyShare> {
     run_keygen_with_seed(n, t, "50001", false)
 }
@@ -60,10 +47,6 @@ fn run_keygen_with_seed(
         .map(|(i, r)| r.unwrap_or_else(|e| panic!("party {i} keygen finish() failed: {e}")))
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// Helper: run Robust presign state machine
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "robust")]
 use tecdsa_jtx25::presign::robust::{Jtx25RobustPresignMachine, Jtx25RobustPresignature};
@@ -111,10 +94,6 @@ fn run_robust_presign(
         })
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// Helper: run Robust online sign state machine
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "robust")]
 fn run_robust_online_sign(
@@ -164,15 +143,10 @@ fn run_robust_online_sign(
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn test_keygen_5_of_2() {
-    let shares = run_keygen(5, 2); // reconstruction threshold=2, need 2 to sign
+    let shares = run_keygen(5, 2);
 
-    // All parties agree on joint public key.
     let pk0 = shares[0].public_key;
     for share in &shares[1..] {
         assert_eq!(
@@ -181,7 +155,6 @@ fn test_keygen_5_of_2() {
         );
     }
 
-    // Each party has a distinct secret share.
     for i in 0..shares.len() {
         for j in (i + 1)..shares.len() {
             assert_ne!(
@@ -192,7 +165,6 @@ fn test_keygen_5_of_2() {
         }
     }
 
-    // Verify public_shares[i] = secret_share_i * G.
     for share in &shares {
         let expected =
             <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * share.secret_share;
@@ -204,7 +176,6 @@ fn test_keygen_5_of_2() {
         );
     }
 
-    // Verify Lagrange reconstruction.
     let indices: Vec<u16> = (1..=5).collect();
     let lambdas = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
     let reconstructed_pk = shares[0].public_shares.iter().zip(lambdas.iter()).fold(
@@ -219,14 +190,13 @@ fn test_keygen_5_of_2() {
 
 #[test]
 fn test_keygen_3_of_2() {
-    let shares = run_keygen(3, 2); // reconstruction threshold=2, need 2 to sign
+    let shares = run_keygen(3, 2);
 
     let pk0 = shares[0].public_key;
     for share in &shares[1..] {
         assert_eq!(pk0, share.public_key);
     }
 
-    // Subset reconstruction with 2 out of 3.
     let subset: Vec<u16> = vec![1, 3];
     let lambdas = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&subset);
     let subset_shares: Vec<k256::ProjectivePoint> = subset
@@ -254,7 +224,7 @@ fn test_keygen_128bit_3_of_2() {
 #[cfg(feature = "robust")]
 fn test_robust_full_protocol() {
     let n = 5;
-    let t = 2u16; // reconstruction threshold
+    let t = 2u16;
 
     let key_shares = run_keygen(n, t);
 
@@ -271,14 +241,12 @@ fn test_robust_full_protocol() {
     let message = b"Hello JTX25 threshold ECDSA!";
     let signatures = run_robust_online_sign(&key_shares, presignatures, &signer_indices, message);
 
-    // All parties produce the same signature.
     let sig0 = &signatures[0];
     for sig in &signatures[1..] {
         assert_eq!(sig0.r, sig.r, "r values must match");
         assert_eq!(sig0.s, sig.s, "s values must match");
     }
 
-    // Verify the signature independently.
     let public_key = key_shares[0].public_key;
     let m = {
         use elliptic_curve::PrimeField;
@@ -303,7 +271,7 @@ fn test_robust_full_protocol() {
 #[cfg(feature = "robust")]
 fn test_robust_threshold_subset_signing() {
     let n = 5;
-    let t = 2u16; // reconstruction threshold
+    let t = 2u16;
 
     let key_shares = run_keygen(n, t);
 
@@ -313,14 +281,12 @@ fn test_robust_threshold_subset_signing() {
     let message = b"threshold subset signing test";
     let signatures = run_robust_online_sign(&key_shares, presignatures, &signer_indices, message);
 
-    // All parties produce the same signature.
     let sig0 = &signatures[0];
     for sig in &signatures[1..] {
         assert_eq!(sig0.r, sig.r);
         assert_eq!(sig0.s, sig.s);
     }
 
-    // Verify against the joint public key.
     let public_key = key_shares[0].public_key;
     let m = {
         use elliptic_curve::PrimeField;
@@ -340,10 +306,6 @@ fn test_robust_threshold_subset_signing() {
     tecdsa_protocol::ecdsa::verify_ecdsa::<k256::Secp256k1>(sig0, &public_key, &msg_data)
         .expect("ECDSA verification must pass for threshold subset");
 }
-
-// ===========================================================================
-// Default (Normal) tests
-// ===========================================================================
 
 use tecdsa_jtx25::{
     presign::{Jtx25PresignMachine, Jtx25Presignature},
@@ -438,7 +400,7 @@ fn run_online_sign(
 #[test]
 fn test_full_protocol() {
     let n = 5;
-    let t = 2u16; // reconstruction threshold
+    let t = 2u16;
 
     let key_shares = run_keygen(n, t);
 
@@ -484,7 +446,7 @@ fn test_full_protocol() {
 #[test]
 fn test_threshold_subset_signing() {
     let n = 5;
-    let t = 2u16; // reconstruction threshold
+    let t = 2u16;
 
     let key_shares = run_keygen(n, t);
 
@@ -520,11 +482,6 @@ fn test_threshold_subset_signing() {
         .expect("ECDSA verification must pass for threshold subset");
 }
 
-// ===========================================================================
-// CL homomorphic math test
-// ===========================================================================
-
-/// Minimal inline test to verify the CL homomorphic math.
 #[test]
 fn test_cl_homomorphic_math() {
     use rug::{integer::Order, Integer};
@@ -539,26 +496,21 @@ fn test_cl_homomorphic_math() {
     let n = 3usize;
     let t = 2usize;
 
-    // Share the SK for threshold decryption.
     let sk_shares = tecdsa_jtx25::keygen::shamir_share_delta(&mut setup, &sk_bytes, n, t).unwrap();
 
-    // Sample phi and k as small test values.
     let phi = "7";
     let k = "11";
     let m_val = "13";
     let _x = "17";
-    let _r_x = "19"; // dummy r_x for test
+    let _r_x = "19";
 
-    // Encrypt phi under pk.
     let ct_phi = setup.encrypt(&pk_raw, phi).unwrap();
 
-    // Scalar multiply by k: ct_phi_k = ct_phi^k
     let (c1_phi, c2_phi) = setup.ct_components(&ct_phi).unwrap();
     let c1_k = setup.exp(&c1_phi, k).unwrap();
     let c2_k = setup.exp(&c2_phi, k).unwrap();
     let ct_phi_k = setup.ct_from_components(&c1_k, &c2_k).unwrap();
 
-    // Partial decrypt ct_phi_k using threshold CL.
     let pd1 = t_cl::partial_decrypt(&setup, &ct_phi_k, 1, &sk_shares[0]).unwrap();
     let pd2 = t_cl::partial_decrypt(&setup, &ct_phi_k, 2, &sk_shares[1]).unwrap();
     let p0 = t_cl::final_decrypt(&setup, &ct_phi_k, n, &[pd1, pd2]).unwrap();
@@ -569,19 +521,16 @@ fn test_cl_homomorphic_math() {
         p0_bu.to_string_radix(10)
     );
 
-    // Also test addition: Enc(phi*m) = Enc(phi)^m
     let (c1_m, c2_m) = (
         setup.exp(&c1_phi, m_val).unwrap(),
         setup.exp(&c2_phi, m_val).unwrap(),
     );
-    // Enc(phi*x*r_x)
-    let xr = "323"; // 17 * 19
+    let xr = "323";
     let (c1_xr, c2_xr) = (
         setup.exp(&c1_phi, xr).unwrap(),
         setup.exp(&c2_phi, xr).unwrap(),
     );
 
-    // Add: Enc(phi*m + phi*x*r_x) = Enc(phi*(m + x*r_x))
     let c1_sum = setup.compose(&c1_m, &c1_xr).unwrap();
     let c2_sum = setup.compose(&c2_m, &c2_xr).unwrap();
     let ct_sum = setup.ct_from_components(&c1_sum, &c2_sum).unwrap();
@@ -590,29 +539,20 @@ fn test_cl_homomorphic_math() {
     let pd2_sum = t_cl::partial_decrypt(&setup, &ct_sum, 2, &sk_shares[1]).unwrap();
     let p1 = t_cl::final_decrypt(&setup, &ct_sum, n, &[pd1_sum, pd2_sum]).unwrap();
 
-    // Expected: phi * (m + x * r_x) = 7 * (13 + 17*19) = 7 * (13 + 323) = 7 * 336 = 2352
     let p1_bu = Integer::from_digits(&p1, Order::Msf);
     eprintln!(
         "[test_cl_homo] p1 (should be 2352) = {}",
         p1_bu.to_string_radix(10)
     );
 
-    // s = p1 / p0 mod q = 2352 / 77 mod q
     let q_bytes = setup.q_bytes().unwrap();
     let q = Integer::from_digits(&q_bytes, Order::Msf);
     let q_minus_2 = Integer::from(&q - 2);
     let p0_inv = pow_mod(&p0_bu, &q_minus_2, &q);
     let s = mul_mod(&p1_bu, &p0_inv, &q);
 
-    // Expected: 2352 / 77 = 2352 * 77^(-1) mod q
-    // 2352 / 77 = 30.545... but mod q: 77^{-1} mod q * 2352 mod q
-    // Actually 2352 = 77 * 30 + 42, so 2352/77 != integer.
-    // Wait: phi*k = 7*11 = 77, phi*(m+x*r) = 7*(13+323) = 7*336 = 2352
-    // s = 2352/77 = (m+x*r)/k = (13+323)/11 = 336/11 = 30.545...
-    // This is NOT an integer! So s mod q = 336 * 11^(-1) mod q.
     eprintln!("[test_cl_homo] s = {}", s.to_string_radix(10));
 
-    // The correct s should be: (m + x * r_x) * k^{-1} mod q
     let m_bu = Integer::from(13u32);
     let x_bu = Integer::from(17u32);
     let rx_bu = Integer::from(19u32);

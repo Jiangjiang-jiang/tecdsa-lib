@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -15,40 +14,6 @@
     non_snake_case
 )]
 
-//! WMC24 key generation protocol (3 rounds).
-//!
-//! Runs three concurrent DKGs:
-//! 1. **DKG-CL**: threshold CL key pair (pk, {pk_share_i, sk_share_i}) using
-//!    the paper-compliant `dkg_cl` module (Gen/GenVf/Reveal/RevealVf/Aggregate)
-//!    with chunk encryption, Pedersen commitments, and Z_Blnt / Z_GDec-CL proofs.
-//! 2. **DKG-Sig**: ECDSA signing key (X, {X_i, x_i}) using PVSS.
-//! 3. **DKG-DL**: threshold ElGamal key (elek, {elek_share_j, eldk_share_j})
-//!    using the paper-compliant `dkg_dl` module (Gen/GenVf/Reveal/RevealVf/Aggregate)
-//!    with EC Pedersen commitments, CL encryption, and R_Enc-PC / R_Dec-DL proofs.
-//!
-//! ## Rounds
-//!
-//! 1. **Round 1**: each party generates CL keypair (sk_i, pk_i), broadcasts
-//!    `(pk_i, pi_key)`.
-//! 2. **Round 2**: after verifying R_key proofs, each party:
-//!    - DKG-Sig: distributes PVSS shares for the ECDSA signing key (broadcast).
-//!    - DKG-CL Gen: calls `dkg_cl_gen_with_secret()`, broadcasts PCs + chunk_cts
-//!      + agg_cts + Z_Blnt proofs.
-//!    - DKG-DL Gen: calls `dkg_dl_gen()`, broadcasts Pedersen commitments +
-//!      R_Enc-PC proofs. Sends per-recipient CL ciphertexts via P2P.
-//! 3. **Round 3**: after verifying proofs, each party:
-//!    - DKG-Sig: decrypts PVSS shares, combines into x_i, proves R_Dec_DL.
-//!    - DKG-CL Reveal: calls `dkg_cl_reveal()`, broadcasts CL pk share +
-//!      Z_GDec-CL proof.
-//!    - DKG-DL Reveal: calls `dkg_dl_reveal()`, broadcasts X_i (ElGamal PK share)
-//!      + R_Dec-DL proof.
-//!
-//! After verifying Round 3 proofs, each party:
-//! - Computes joint ECDSA PK via Lagrange interpolation.
-//! - Aggregates CL pk via `dkg_cl_aggregate()`.
-//! - Aggregates ElGamal pk via `dkg_dl_aggregate()`.
-//! - Stores the `Wmc24KeyShare`.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
@@ -64,23 +29,13 @@ use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, Sta
 
 use crate::{error::Wmc24Error, key_share::Wmc24KeyShare};
 
-// ---------------------------------------------------------------------------
-// Message type
-// ---------------------------------------------------------------------------
-
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum Wmc24KeygenMsg {
     Round1(Vec<u8>),
     Round2(Vec<u8>),
-    /// Deprecated: DKG-DL ciphertexts are now included in the broadcast to
-    /// prevent broadcast/P2P mismatch attacks. Kept for serde compatibility.
     Round2P2p(Vec<u8>),
     Round3(Vec<u8>),
 }
-
-// ---------------------------------------------------------------------------
-// Internal round states
-// ---------------------------------------------------------------------------
 
 struct Round1State {
     my_id: PartyId,
@@ -110,25 +65,17 @@ struct Round2State {
     cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     my_pvss: tecdsa_class_group::pvss_share::PvssShareOutput,
     received: BTreeMap<PartyId, Round2Msg>,
-    /// DKG-CL Gen output (kept for Reveal phase).
     dkg_cl_gen_output: DkgClGenOutput,
-    /// Received DKG-CL Gen per-recipient data from peers.
     dkg_cl_received: BTreeMap<PartyId, DkgClGenPerRecipient>,
-    /// DKG-DL Gen output (kept for Reveal phase).
     dkg_dl_gen_output: DkgDlGenOutput,
-    /// Received DKG-DL Gen per-recipient data from peers (from broadcast).
-    /// Ciphertexts are extracted from verified broadcast data, not separate P2P.
     dkg_dl_received: BTreeMap<PartyId, DkgDlReceivedBroadcast>,
     outgoing: Vec<Outgoing<Wmc24KeygenMsg>>,
     cl_setup_seed: String,
     use_128bit_security: bool,
 }
 
-/// Broadcast data from one dealer for DKG-DL.
 struct DkgDlReceivedBroadcast {
-    /// Pedersen VSS polynomial commitments.
     commitments: Vec<k256::ProjectivePoint>,
-    /// Per-recipient R_Enc-PC proof (only the one for us).
     per_recipient: DkgDlGenPerRecipient,
 }
 
@@ -147,13 +94,9 @@ struct Round3State {
     outgoing: Vec<Outgoing<Wmc24KeygenMsg>>,
     cl_setup_seed: String,
     use_128bit_security: bool,
-    /// DKG-CL combined secret share (from `dkg_cl_reveal`).
     dkg_cl_combined_share: Vec<u8>,
-    /// Own DKG-CL public key share `h^{combined_share}`.
     my_dkg_cl_lifted_share: Qfi,
-    /// Own DKG-CL combined ciphertext.
     _my_dkg_cl_combined_ct: ClCiphertext,
-    /// DKG-DL Reveal output.
     dkg_dl_reveal_output: DkgDlRevealOutput,
     cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     pvss_c1_qfis: BTreeMap<PartyId, Qfi>,
@@ -161,15 +104,11 @@ struct Round3State {
 
 struct Round3Msg {
     public_share: k256::ProjectivePoint,
-    /// DKG-CL public key share from Reveal phase.
     dkg_cl_lifted_share: Qfi,
-    /// DKG-DL public share: X_i = g^{x_i}.
     dkg_dl_public_share: k256::ProjectivePoint,
 }
 
-/// Wire-friendly representation of DKG-CL Reveal data.
 struct DkgClRevealWire {
-    /// The CL public key share `h^{x_i}`.
     lifted_share: Qfi,
     proof_t1: Qfi,
     proof_t2: Qfi,
@@ -180,10 +119,8 @@ struct DkgClRevealWire {
     combined_ct_c2: Qfi,
 }
 
-/// Wire-friendly representation of DKG-DL Reveal data.
 struct DkgDlRevealWire {
     public_share: k256::ProjectivePoint,
-    /// Partial decryption: pd = c1^{sk_i}.
     pd: Qfi,
     proof_t1: Qfi,
     proof_t2: Qfi,
@@ -205,10 +142,6 @@ use tecdsa_class_group::pvss_share::{
     pvss_share_decrypt, pvss_share_distribute, pvss_share_verify, PvssShareOutput,
 };
 
-// ---------------------------------------------------------------------------
-// Public machine
-// ---------------------------------------------------------------------------
-
 pub struct Wmc24KeygenMachine {
     round: KeygenRound,
     setup: ClSetup,
@@ -216,13 +149,6 @@ pub struct Wmc24KeygenMachine {
 }
 
 impl Wmc24KeygenMachine {
-    /// Create a new WMC24 keygen state machine from a pre-built `ClSetup`.
-    ///
-    /// This avoids recreating the expensive CL setup per party,
-    /// which is useful in benchmarks where all parties share the same
-    /// discriminant parameters.
-    ///
-    /// See [`Self::new`] for the full documentation.
     pub fn new_with_setup(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -231,9 +157,6 @@ impl Wmc24KeygenMachine {
         use_128bit_security: bool,
         mut setup: ClSetup,
     ) -> tecdsa_core::Result<Self> {
-        // Generate the per-party long-term CL keypair, then delegate. Benches time
-        // this (n,t)-independent keygen separately (see `setup_benchmarks`) and call
-        // `new_with_keypair` so DKG measures only the interactive sharing.
         let (cl_sk_raw, cl_pk_raw) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("CL keygen failed: {e}")))?;
@@ -249,8 +172,6 @@ impl Wmc24KeygenMachine {
         )
     }
 
-    /// Like [`new_with_setup`](Self::new_with_setup) but reuses a pre-generated
-    /// per-party CL keypair instead of generating it inside the constructor.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_keypair(
         my_id: PartyId,
@@ -272,18 +193,15 @@ impl Wmc24KeygenMachine {
             )));
         }
 
-        // Per-party CL keypair is provided by the caller.
         let cl_sk_bytes = setup
             .sk_to_bytes(&cl_sk_raw)
             .map_err(|e| TecdsaError::Other(format!("sk_to_bytes: {e}")))?;
 
         let cl_pk_qfi = cl_pk_raw.elt().clone();
 
-        // Generate R_key proof.
         let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_bytes)
             .map_err(|e| TecdsaError::Other(format!("R_key prove: {e}")))?;
 
-        // Serialize and queue Round 1 broadcast.
         let r1_payload = serialize_round1(&cl_pk_qfi, &proof)
             .map_err(|e| TecdsaError::Other(format!("R1 serialize: {e}")))?;
 
@@ -348,7 +266,6 @@ impl StateMachine for Wmc24KeygenMachine {
     type Outbound = Wmc24KeygenMsg;
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
-        // Reject messages from self.
         let my_id = match &self.round {
             KeygenRound::Round1(s) => s.my_id,
             KeygenRound::Round2(s) => s.my_id,
@@ -368,7 +285,6 @@ impl StateMachine for Wmc24KeygenMachine {
         let round = std::mem::replace(&mut self.round, KeygenRound::Poisoned);
 
         match (round, msg) {
-            // -- Round 1: collect CL public keys + R_key proofs --
             (KeygenRound::Round1(mut state), Wmc24KeygenMsg::Round1(data)) => {
                 if state.received.contains_key(&from) {
                     self.round = KeygenRound::Round1(state);
@@ -408,7 +324,6 @@ impl StateMachine for Wmc24KeygenMachine {
                 Ok(())
             }
 
-            // -- Round 2 broadcast: PVSS + DKG-CL Gen + DKG-DL Gen (broadcast part) --
             (KeygenRound::Round2(mut state), Wmc24KeygenMsg::Round2(data)) => {
                 if state.received.contains_key(&from) {
                     self.round = KeygenRound::Round2(state);
@@ -443,7 +358,6 @@ impl StateMachine for Wmc24KeygenMachine {
                     ordered_pks.push(pk);
                 }
 
-                // Verify PVSS R_Sh proof.
                 let valid = pvss_share_verify(
                     &self.setup,
                     &party_ids,
@@ -461,7 +375,6 @@ impl StateMachine for Wmc24KeygenMachine {
                     )));
                 }
 
-                // Verify DKG-CL GenVf (R_Blnt proof).
                 let from_idx = state
                     .all_parties
                     .iter()
@@ -485,43 +398,14 @@ impl StateMachine for Wmc24KeygenMachine {
                     )));
                 }
 
-                // Verify DKG-DL GenVf (R_Enc-PC proof).
-                // Reconstruct the Pedersen VSS share for verification.
                 let my_share_index = (my_idx + 1) as u16;
                 let dkg_dl_share = dkg_dl::DkgDlPedersenShare {
                     index: my_share_index,
-                    // The share values are not transmitted on the wire -- we use
-                    // the commitment check via `pedersen_vss_verify_dl` which
-                    // checks PC == prod F_d^{index^d}. For GenVf we skip the
-                    // share value check and only verify the R_Enc-PC proof since
-                    // the actual value share is encrypted and not revealed.
-                    //
-                    // Actually, `dkg_dl_gen_verify` checks both the PC against
-                    // commitments AND the R_Enc-PC proof. But the Pedersen share
-                    // values are not on the wire; the PC itself is. We need to
-                    // verify that per_recipient.pc matches the commitment polynomial
-                    // evaluated at the recipient's index. This is handled internally
-                    // by verifying g^{value} * h^{randomness} == prod F_d^{j^d},
-                    // but we don't have value/randomness on the wire.
-                    //
-                    // Looking at `dkg_dl_gen_verify`: it calls `pedersen_vss_verify_dl`
-                    // with the share. But the share is only known to the dealer!
-                    // The verifier only sees: commitments, PC (which equals the
-                    // evaluated commitment poly), ct, Y, proof.
-                    //
-                    // The correct approach: skip the Pedersen share consistency
-                    // check (the PC is already the evaluated commitment) and only
-                    // verify R_Enc-PC. This matches the paper: GenVf verifies
-                    // (1) PC = prod F_d^{j^d} (from commitments) and (2) R_Enc-PC.
-                    //
-                    // We'll verify PC against commitments manually, then verify
-                    // R_Enc-PC.
-                    value: k256::Scalar::ZERO,      // placeholder
-                    randomness: k256::Scalar::ZERO, // placeholder
+                    value: k256::Scalar::ZERO,
+                    randomness: k256::Scalar::ZERO,
                 };
-                let _ = dkg_dl_share; // unused -- we verify manually below
+                let _ = dkg_dl_share;
 
-                // (1) Verify PC = prod F_d^{j^d}
                 let dkg_dl_per = &dkg_dl_broadcast.per_recipient;
                 let dkg_dl_coms = &dkg_dl_broadcast.commitments;
                 let x = k256::Scalar::from(u64::from(my_share_index));
@@ -538,9 +422,6 @@ impl StateMachine for Wmc24KeygenMachine {
                     )));
                 }
 
-                // (2) Verify R_Enc-PC proof (cross-domain, WMC24 Figure 1 Z_Enc-PC).
-                // The proof binds the CL ciphertext plaintext to the EC Pedersen
-                // commitment PC, ensuring the same chi_ij.
                 let pc_bytes = dkg_dl_per.pc.to_bytes();
                 let enc_pc_ok = dkg_dl_per
                     .proof
@@ -558,9 +439,6 @@ impl StateMachine for Wmc24KeygenMachine {
                 state.dkg_cl_received.insert(from, dkg_cl_gen_per_recipient);
                 state.dkg_dl_received.insert(from, dkg_dl_broadcast);
 
-                // Transition when broadcast received from all peers.
-                // DKG-DL ciphertexts come from the verified broadcast data (no
-                // separate P2P), preventing broadcast/P2P mismatch attacks.
                 let expected = self.expected_count();
                 if state.received.len() == expected && state.dkg_cl_received.len() == expected {
                     let new_state = self.transition_r2_to_r3(state)?;
@@ -571,7 +449,6 @@ impl StateMachine for Wmc24KeygenMachine {
                 Ok(())
             }
 
-            // -- Round 3: collect PVSS public shares + DKG-CL Reveal + DKG-DL Reveal --
             (KeygenRound::Round3(mut state), Wmc24KeygenMsg::Round3(data)) => {
                 if state.received.contains_key(&from) {
                     self.round = KeygenRound::Round3(state);
@@ -583,7 +460,6 @@ impl StateMachine for Wmc24KeygenMachine {
                         TecdsaError::Other(format!("R3 deserialize from {from}: {e}"))
                     })?;
 
-                // Verify R_Dec_DL for PVSS.
                 let from_pk_qfi = state
                     .cl_pk_qfis
                     .get(&from)
@@ -616,7 +492,6 @@ impl StateMachine for Wmc24KeygenMachine {
                     )));
                 }
 
-                // Verify DKG-CL RevealVf (R_GDec-CL proof).
                 let from_reveal_ct = self
                     .setup
                     .ct_from_components(
@@ -651,8 +526,6 @@ impl StateMachine for Wmc24KeygenMachine {
                     )));
                 }
 
-                // Verify DKG-DL RevealVf (R_Dec-DL proof for ElGamal).
-                // Verify the R_Dec-DL proof directly using the transmitted pd.
                 let dkg_dl_combined_ct = self
                     .setup
                     .ct_from_components(
@@ -753,10 +626,6 @@ impl StateMachine for Wmc24KeygenMachine {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round transitions
-// ---------------------------------------------------------------------------
-
 impl Wmc24KeygenMachine {
     fn transition_r1_to_r2(&mut self, state: Round1State) -> tecdsa_core::Result<Round2State> {
         let n = state.all_parties.len();
@@ -793,7 +662,6 @@ impl Wmc24KeygenMachine {
             }
         }
 
-        // Run PVSS ShareDist for ECDSA signing key.
         let party_ids: Vec<u16> = (1..=n as u16).collect();
 
         let pvss_output = pvss_share_distribute(
@@ -805,7 +673,6 @@ impl Wmc24KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("pvss_distribute: {e}")))?;
 
-        // --- DKG-CL Gen: paper-compliant chunk encryption + R_Blnt ---
         let dkg_cl_gen_output = dkg_cl::dkg_cl_gen_with_secret(
             &mut self.setup,
             &ordered_pks,
@@ -816,7 +683,6 @@ impl Wmc24KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("DKG-CL Gen failed: {e}")))?;
 
-        // --- DKG-DL Gen: paper-compliant Pedersen VSS + CL encryption + R_Enc-PC ---
         let dkg_dl_gen_output = dkg_dl::dkg_dl_gen(
             &mut self.setup,
             &ordered_pks,
@@ -827,7 +693,6 @@ impl Wmc24KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("DKG-DL Gen failed: {e}")))?;
 
-        // Serialize Round 2 broadcast: PVSS + DKG-CL Gen (all recipients) + DKG-DL Gen (commitments + per-recipient proofs).
         let r2_payload = serialize_round2_full(
             &pvss_output,
             &dkg_cl_gen_output,
@@ -837,11 +702,6 @@ impl Wmc24KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("R2 serialize: {e}")))?;
 
-        // Build outgoing: broadcast only.
-        // DKG-DL ciphertexts are included in the broadcast (and verified with
-        // R_Enc-PC proofs), so no separate P2P message is needed. This prevents
-        // an attacker from broadcasting a valid proof+ciphertext pair but P2P
-        // sending a different malicious ciphertext.
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Wmc24KeygenMsg::Round2(r2_payload),
@@ -882,8 +742,6 @@ impl Wmc24KeygenMachine {
             .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
         let n = state.all_parties.len();
 
-        // ---- DKG-Sig: PVSS decrypt and combine ----
-
         let mut x_i = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
             &state.my_pvss.secret_share_bytes,
         );
@@ -912,8 +770,6 @@ impl Wmc24KeygenMachine {
         let big_x_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_i;
         let big_x_i_bytes = big_x_i.to_bytes().to_vec();
 
-        // ---- DKG-CL Reveal ----
-        // Collect chunk ciphertexts addressed to this party from all dealers.
         let mut received_chunks: Vec<Vec<(Qfi, Qfi)>> = Vec::with_capacity(n);
         for pid in &state.all_parties {
             if *pid == my_id {
@@ -942,15 +798,9 @@ impl Wmc24KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("DKG-CL Reveal failed: {e}")))?;
 
-        // ---- DKG-DL Reveal ----
-        // Collect CL ciphertexts addressed to this party from all dealers.
-        // We use the broadcast-verified ciphertexts (not separate P2P) to prevent
-        // an attacker from broadcasting a valid proof+ct pair but P2P sending a
-        // different malicious ciphertext.
         let mut dkg_dl_received_cts: Vec<ClCiphertext> = Vec::with_capacity(n);
         for pid in &state.all_parties {
             if *pid == my_id {
-                // Own ciphertext: from own gen output.
                 dkg_dl_received_cts.push(state.dkg_dl_gen_output.per_recipient[my_idx].ct.clone());
             } else {
                 let broadcast = state.dkg_dl_received.get(pid).ok_or_else(|| {
@@ -969,7 +819,6 @@ impl Wmc24KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("DKG-DL Reveal failed: {e}")))?;
 
-        // ---- Generate PVSS R_Dec_DL proof ----
         let c1_ref = &state.my_pvss.c1;
         let c2_my_ref = &state.my_pvss.c2s[my_idx];
         let ct_ref = self
@@ -991,21 +840,17 @@ impl Wmc24KeygenMachine {
         )
         .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove: {e}")))?;
 
-        // ---- Serialize Round 3 ----
-        // Extract DKG-CL Reveal proof parts for serialization.
         let (cl_proof_t1, cl_proof_t2, cl_proof_z, cl_proof_e) = dkg_cl_reveal.proof.to_parts();
         let (cl_combined_ct_c1, cl_combined_ct_c2) = self
             .setup
             .ct_components(&dkg_cl_reveal.combined_ct)
             .map_err(|e| TecdsaError::Other(format!("ct_components for CL reveal ct: {e}")))?;
 
-        // Extract DKG-DL Reveal proof parts.
         let (dl_combined_ct_c1, dl_combined_ct_c2) = self
             .setup
             .ct_components(&dkg_dl_reveal.combined_ct)
             .map_err(|e| TecdsaError::Other(format!("ct_components for DL reveal ct: {e}")))?;
 
-        // Compute DKG-DL partial decryption: pd = c1^{sk}.
         let dl_pd = self
             .setup
             .exp_bytes(&dl_combined_ct_c1, &state.cl_sk_bytes)
@@ -1036,7 +881,6 @@ impl Wmc24KeygenMachine {
             msg: Wmc24KeygenMsg::Round3(r3_payload),
         }];
 
-        // Carry forward PVSS c1 values for R_Dec_DL verification.
         let mut pvss_c1_qfis: BTreeMap<PartyId, Qfi> = BTreeMap::new();
         pvss_c1_qfis.insert(my_id, state.my_pvss.c1.clone());
         for (pid, r2_msg) in &state.received {
@@ -1063,8 +907,6 @@ impl Wmc24KeygenMachine {
     }
 }
 
-/// Finalize keygen: collect public shares, compute joint ECDSA public key,
-/// aggregate CL public keys via DKG-CL, aggregate ElGamal via DKG-DL.
 fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<Wmc24KeyShare> {
     let n = state.all_parties.len();
     let my_id = state.my_id;
@@ -1074,7 +916,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<W
         .position(|p| *p == my_id)
         .ok_or_else(|| TecdsaError::Other("my_id not in all_parties".into()))?;
 
-    // Collect ECDSA public shares in party order.
     let mut public_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
     for pid in &state.all_parties {
         if *pid == my_id {
@@ -1088,7 +929,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<W
         }
     }
 
-    // Joint ECDSA public key via Lagrange interpolation.
     let indices: Vec<u16> = (1..=n as u16).collect();
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
 
@@ -1099,7 +939,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<W
 
     let party_index = (my_idx + 1) as u16;
 
-    // --- Aggregate CL public key: pk = compose(pk_1, ..., pk_n) = h^{sum(sk_i)} ---
     let mut agg_pk_qfi = setup
         .identity()
         .map_err(|e| TecdsaError::Other(format!("CL identity: {e}")))?;
@@ -1116,7 +955,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<W
         .pk_from_qfi(&agg_pk_qfi)
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi agg: {e}")))?;
 
-    // Collect per-party CL public key shares (h^{combined_integer_share_j}).
     let mut cl_pk_shares: Vec<Qfi> = Vec::with_capacity(n);
     for pid in &state.all_parties {
         if *pid == my_id {
@@ -1130,7 +968,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<W
         }
     }
 
-    // --- Aggregate ElGamal public key via DKG-DL ---
     let mut elg_public_shares: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
     for pid in &state.all_parties {
         if *pid == my_id {
@@ -1165,13 +1002,6 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<W
     })
 }
 
-// ---------------------------------------------------------------------------
-// Threshold CL key sharing (delta-scaled Shamir) -- utility for tests
-// ---------------------------------------------------------------------------
-
-/// Generates threshold CL key shares using the delta-scaled Shamir scheme.
-/// Used by the threshold CL partial/final decrypt tests (not by the paper-
-/// compliant DKG-CL protocol flow which uses `dkg_cl` module instead).
 pub fn shamir_share_delta(
     setup: &mut ClSetup,
     sk_bytes: &[u8],
@@ -1210,10 +1040,6 @@ pub fn shamir_share_delta(
     Ok(shares)
 }
 
-// ---------------------------------------------------------------------------
-// Wire-format serialization
-// ---------------------------------------------------------------------------
-
 fn write_field(buf: &mut Vec<u8>, data: &[u8]) {
     buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
     buf.extend_from_slice(data);
@@ -1236,13 +1062,11 @@ fn read_field(data: &[u8], pos: usize) -> Result<(&[u8], usize), Wmc24Error> {
     Ok((&data[start..end], end))
 }
 
-/// Write a Qfi as binary (length-prefixed to_bytes()).
 fn write_qfi_bin(buf: &mut Vec<u8>, qfi: &Qfi) {
     let bytes = qfi.to_bytes();
     write_field(buf, &bytes);
 }
 
-/// Read a Qfi from binary (length-prefixed from_bytes()).
 fn read_qfi_bin(data: &[u8], pos: usize) -> Result<(Qfi, usize), Wmc24Error> {
     let (bytes, new_pos) = read_field(data, pos)?;
     Ok((Qfi::from_bytes(bytes), new_pos))
@@ -1286,7 +1110,6 @@ fn deserialize_round1(data: &[u8]) -> Result<(Qfi, RKeyProof), Wmc24Error> {
     Ok((pk, proof))
 }
 
-/// Serialize Round 2 broadcast: PVSS + DKG-CL Gen + DKG-DL Gen.
 fn serialize_round2_full(
     pvss: &PvssShareOutput,
     dkg_cl_gen: &DkgClGenOutput,
@@ -1296,7 +1119,6 @@ fn serialize_round2_full(
 ) -> Result<Vec<u8>, Wmc24Error> {
     let mut buf = Vec::new();
 
-    // ---- PVSS section ----
     buf.extend_from_slice(&(pvss.c2s.len() as u32).to_le_bytes());
     write_qfi_bin(&mut buf, &pvss.c1);
     for c2 in &pvss.c2s {
@@ -1305,43 +1127,34 @@ fn serialize_round2_full(
     write_field(&mut buf, &pvss.proof.k);
     write_field(&mut buf, &pvss.proof.rho_response);
 
-    // ---- DKG-CL Gen section (same as JTX25) ----
     buf.extend_from_slice(&(n as u32).to_le_bytes());
 
     for recipient_idx in 0..n {
         let per = &dkg_cl_gen.per_recipient[recipient_idx];
 
-        // PC (Pedersen commitment)
         write_qfi_bin(&mut buf, &per.pc);
 
-        // Number of chunk ciphertexts
         buf.extend_from_slice(&(per.chunk_cts.len() as u32).to_le_bytes());
         for (c0, c1) in &per.chunk_cts {
             write_qfi_bin(&mut buf, c0);
             write_qfi_bin(&mut buf, c1);
         }
 
-        // Aggregated ciphertext (c0, c1)
         write_qfi_bin(&mut buf, &per.agg_ct.0);
         write_qfi_bin(&mut buf, &per.agg_ct.1);
 
-        // R_Blnt proof
         serialize_r_blnt_proof(&mut buf, &per.proof);
     }
 
-    // ---- DKG-DL Gen section ----
-    // Commitments: polynomial degree = threshold - 1, so threshold commitments.
     buf.extend_from_slice(&(dkg_dl_gen.commitments.len() as u32).to_le_bytes());
     for com in &dkg_dl_gen.commitments {
         write_point(&mut buf, com);
     }
 
-    // Per-recipient data (n entries): PC, proof, CT for each
     buf.extend_from_slice(&(n as u32).to_le_bytes());
     for recipient_idx in 0..n {
         let per = &dkg_dl_gen.per_recipient[recipient_idx];
         write_point(&mut buf, &per.pc);
-        // R_Enc-PC proof (cross-domain): r_pc_bytes, r_c0, r_c1, z1, z2, z3, e
         write_field(&mut buf, &per.proof.r_pc_bytes);
         write_qfi_bin(&mut buf, &per.proof.r_c0);
         write_qfi_bin(&mut buf, &per.proof.r_c1);
@@ -1349,7 +1162,6 @@ fn serialize_round2_full(
         write_field(&mut buf, &per.proof.z2);
         write_field(&mut buf, &per.proof.z3);
         write_field(&mut buf, &per.proof.e);
-        // CL ciphertext (for verification on broadcast)
         let (ct_c1, ct_c2) = setup.ct_components(&per.ct).map_err(Wmc24Error::ClError)?;
         write_qfi_bin(&mut buf, &ct_c1);
         write_qfi_bin(&mut buf, &ct_c2);
@@ -1477,8 +1289,6 @@ fn deserialize_r_blnt_proof(
     ))
 }
 
-/// Deserialize Round 2 broadcast: PVSS + DKG-CL Gen + DKG-DL Gen.
-/// Returns raw DKG-DL data (without ClCiphertext) since we need setup for reconstruction.
 #[allow(clippy::type_complexity)]
 fn deserialize_round2_full(
     data: &[u8],
@@ -1497,7 +1307,6 @@ fn deserialize_round2_full(
         return Err(Wmc24Error::InvalidInput("R2 data too short".into()));
     }
 
-    // ---- PVSS section ----
     let n_pvss = u32::from_le_bytes(
         data[0..4]
             .try_into()
@@ -1521,7 +1330,6 @@ fn deserialize_round2_full(
         rho_response: rho_response_bytes.to_vec(),
     };
 
-    // ---- DKG-CL Gen section ----
     if pos + 4 > data.len() {
         return Err(Wmc24Error::InvalidInput("truncated DKG-CL count".into()));
     }
@@ -1581,7 +1389,6 @@ fn deserialize_round2_full(
         ))
     })?;
 
-    // ---- DKG-DL Gen section ----
     if pos + 4 > data.len() {
         return Err(Wmc24Error::InvalidInput(
             "truncated DKG-DL commitments count".into(),
@@ -1618,7 +1425,6 @@ fn deserialize_round2_full(
     for recipient_idx in 0..n_dl_per {
         let (pc_pt, new_pos) = read_point(data, pos, "DKG-DL PC")?;
         pos = new_pos;
-        // R_Enc-PC proof (cross-domain): r_pc_bytes, r_c0, r_c1, z1, z2, z3, e
         let (r_pc_bytes, new_pos) = read_field(data, pos)?;
         pos = new_pos;
         let (proof_r_c0, new_pos) = read_qfi_bin(data, pos)?;
@@ -1633,7 +1439,6 @@ fn deserialize_round2_full(
         pos = new_pos;
         let (e_bytes, new_pos) = read_field(data, pos)?;
         pos = new_pos;
-        // CL ciphertext
         let (ct_c1, new_pos) = read_qfi_bin(data, pos)?;
         pos = new_pos;
         let (ct_c2, new_pos) = read_qfi_bin(data, pos)?;
@@ -1673,7 +1478,6 @@ fn deserialize_round2_full(
     Ok((c1, c2s, proof, cl_per_recipient, dl_broadcast))
 }
 
-/// Intermediate deserialized data for DKG-DL per-recipient (before ClCiphertext reconstruction).
 struct DkgDlGenPerRecipientRaw {
     pc: k256::ProjectivePoint,
     proof: REncPcProof,
@@ -1681,28 +1485,11 @@ struct DkgDlGenPerRecipientRaw {
     ct_c2: Qfi,
 }
 
-/// Intermediate deserialized data for DKG-DL broadcast.
 struct DkgDlReceivedBroadcastRaw {
     commitments: Vec<k256::ProjectivePoint>,
     per_recipient_raw: DkgDlGenPerRecipientRaw,
 }
 
-// We need to adjust the return type of deserialize_round2_full.
-// Let me also adjust the handle() method to use the raw type and reconstruct.
-
-// OVERRIDE: Let me redo the approach. Since the deserialization and handle()
-// are tightly coupled, I'll:
-// 1. Change `DkgDlReceivedBroadcast` to store raw Qfi pairs instead of ClCiphertext.
-// 2. Reconstruct ClCiphertext only when needed for verification.
-//
-// But wait - looking at the handle() code above, it manually verifies
-// PC and R_Enc-PC. For R_Enc-PC.verify(), we need &ClCiphertext. We have
-// self.setup in handle(). So we can reconstruct there.
-//
-// Actually the simplest fix is: change deserialize_round2_full to also take &ClSetup.
-// Let me redo this.
-
-// Re-define the full deserialize to take setup:
 #[allow(clippy::type_complexity)]
 fn deserialize_round2_with_setup(
     data: &[u8],
@@ -1720,7 +1507,6 @@ fn deserialize_round2_with_setup(
 > {
     let (c1, c2s, proof, cl_per, dl_raw) = deserialize_round2_full(data, my_idx)?;
 
-    // Reconstruct ClCiphertext from Qfi components.
     let ct = setup
         .ct_from_components(
             &dl_raw.per_recipient_raw.ct_c1,
@@ -1746,7 +1532,6 @@ fn serialize_round3(
     public_share_bytes: &[u8],
     pd: &Qfi,
     pvss_proof: &RDecDlProof,
-    // DKG-CL Reveal
     dkg_cl_lifted_share: &Qfi,
     dkg_cl_proof_t1: &Qfi,
     dkg_cl_proof_t2: &Qfi,
@@ -1755,7 +1540,6 @@ fn serialize_round3(
     dkg_cl_combined_share: &[u8],
     dkg_cl_combined_ct_c1: &Qfi,
     dkg_cl_combined_ct_c2: &Qfi,
-    // DKG-DL Reveal
     dkg_dl_public_share: &k256::ProjectivePoint,
     dkg_dl_pd: &Qfi,
     dkg_dl_proof: &RDecDlProof,
@@ -1764,7 +1548,6 @@ fn serialize_round3(
 ) -> Result<Vec<u8>, Wmc24Error> {
     let mut buf = Vec::new();
 
-    // PVSS section
     write_field(&mut buf, public_share_bytes);
     write_qfi_bin(&mut buf, pd);
     write_qfi_bin(&mut buf, &pvss_proof.t1);
@@ -1772,7 +1555,6 @@ fn serialize_round3(
     write_field(&mut buf, &pvss_proof.z);
     write_field(&mut buf, &pvss_proof.e);
 
-    // DKG-CL Reveal section
     write_qfi_bin(&mut buf, dkg_cl_lifted_share);
     write_qfi_bin(&mut buf, dkg_cl_proof_t1);
     write_qfi_bin(&mut buf, dkg_cl_proof_t2);
@@ -1782,7 +1564,6 @@ fn serialize_round3(
     write_qfi_bin(&mut buf, dkg_cl_combined_ct_c1);
     write_qfi_bin(&mut buf, dkg_cl_combined_ct_c2);
 
-    // DKG-DL Reveal section
     write_point(&mut buf, dkg_dl_public_share);
     write_qfi_bin(&mut buf, dkg_dl_pd);
     write_qfi_bin(&mut buf, &dkg_dl_proof.t1);
@@ -1808,7 +1589,6 @@ fn deserialize_round3(
     ),
     Wmc24Error,
 > {
-    // PVSS section
     let (point_bytes, pos) = read_field(data, 0)?;
     let point = crate::curve_wire::point_from_bytes(point_bytes, "public_share")
         .map_err(Wmc24Error::InvalidInput)?;
@@ -1824,7 +1604,6 @@ fn deserialize_round3(
         e: e_bytes.to_vec(),
     };
 
-    // DKG-CL Reveal section
     let (dkg_cl_lifted_share, pos) = read_qfi_bin(data, pos)?;
     let (dkg_cl_proof_t1, pos) = read_qfi_bin(data, pos)?;
     let (dkg_cl_proof_t2, pos) = read_qfi_bin(data, pos)?;
@@ -1845,7 +1624,6 @@ fn deserialize_round3(
         combined_ct_c2: dkg_cl_combined_ct_c2,
     };
 
-    // DKG-DL Reveal section
     let (dkg_dl_public_share, pos) = read_point(data, pos, "DKG-DL public_share")?;
     let (dkg_dl_pd, pos) = read_qfi_bin(data, pos)?;
     let (dkg_dl_proof_t1, pos) = read_qfi_bin(data, pos)?;

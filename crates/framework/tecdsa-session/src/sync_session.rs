@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Blocking session that owns both a `SessionRunner` and a [`Transport`],
-//! driving the protocol to completion in a single `run()` call.
-
 use tecdsa_protocol::{state_machine::Recipient, PartyId, StateMachine};
 use tecdsa_transport::Transport;
 
@@ -9,11 +5,6 @@ use crate::{
     config::SessionRunConfig, error::SessionError, metrics::SessionMetrics, runner::SessionRunner,
 };
 
-/// A synchronous, blocking session that runs a protocol to completion.
-///
-/// `SyncSession` combines a `SessionRunner` (wire encode/decode + validation)
-/// with a [`Transport`] (message delivery) to provide a simple `run()` API
-/// suitable for testing and single-threaded deployment.
 pub struct SyncSession<M, T>
 where
     M: StateMachine,
@@ -33,7 +24,6 @@ where
     M::Inbound: serde::de::DeserializeOwned,
     T: Transport,
 {
-    /// Create a new `SyncSession`.
     pub fn new(
         machine: M,
         transport: T,
@@ -50,20 +40,8 @@ where
         }
     }
 
-    /// Drive the protocol to completion, returning the final output.
-    ///
-    /// Each iteration: drain outgoing messages (encode + send), then receive
-    /// and decode incoming messages.  Loops until the state machine signals
-    /// completion or the maximum round count is exceeded.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SessionError`] if wire encoding/decoding fails, header
-    /// validation fails, a duplicate message is received, or the maximum
-    /// number of rounds is exceeded.
     pub fn run(mut self) -> Result<M::Output, SessionError> {
         loop {
-            // Encode + send
             let encoded = self.runner.step_encode()?;
             for (recipient, bytes) in encoded {
                 match recipient {
@@ -85,36 +63,16 @@ where
                 ));
             }
 
-            // Receive + decode
             let raw = self.transport.receive(self.my_id);
             self.runner.step_decode(&raw)?;
         }
     }
 
-    /// Access the current session metrics.
     pub fn metrics(&self) -> &SessionMetrics {
         &self.runner.metrics
     }
 }
 
-/// Run N parties round-robin on a single thread, sharing one
-/// [`InMemoryNetwork`](tecdsa_transport::InMemoryNetwork).
-///
-/// This is the canonical way to test the `SessionRunner` encode/decode wire
-/// path without needing per-party transport instances or threading.
-///
-/// # Arguments
-///
-/// * `machines`   -- `(PartyId, StateMachine)` pairs, one per party.
-/// * `network`    -- a mutable reference to a shared `InMemoryNetwork`.
-/// * `session_id` -- 32-byte session identifier shared by all parties.
-/// * `config`     -- session run configuration (protocol_id, max_rounds, etc.).
-/// * `max_rounds` -- hard cap on outer loop iterations (fail-safe).
-///
-/// # Returns
-///
-/// One `Result<M::Output, SessionError>` per party, in the same order as
-/// `machines`.
 pub fn run_multi_party_sync<M>(
     machines: Vec<(PartyId, M)>,
     network: &mut tecdsa_transport::InMemoryNetwork,
@@ -157,12 +115,10 @@ where
     let mut results: Vec<Option<Result<M::Output, SessionError>>> = (0..n).map(|_| None).collect();
 
     for _round in 0..max_rounds {
-        // Check if all are done or errored.
         if results.iter().all(|r| r.is_some()) {
             break;
         }
 
-        // Phase 1: for each runner, step_encode -> send via network.
         for i in 0..n {
             if results[i].is_some() {
                 continue;
@@ -188,7 +144,6 @@ where
             }
         }
 
-        // Phase 2: for each runner, receive from network -> step_decode.
         for i in 0..n {
             if results[i].is_some() {
                 continue;
@@ -206,7 +161,6 @@ where
             }
         }
 
-        // Phase 3: check for newly-done runners after decode.
         for i in 0..n {
             if results[i].is_some() {
                 continue;
@@ -238,7 +192,6 @@ where
         }
     }
 
-    // Any runners still not done => MaxRoundsExceeded.
     for i in 0..n {
         if results[i].is_none() {
             results[i] = Some(Err(SessionError::MaxRoundsExceeded(max_rounds)));

@@ -1,21 +1,7 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Key generation for the XAL+21 two-party ECDSA protocol.
-//!
-//! This module provides both trusted-dealer key generation and interactive
-//! (3-round) distributed key generation.
-//!
-//! - [`trusted_dealer_keygen`]: simplified keygen via a trusted dealer.
-//! - [`interactive`]: pure round functions for the interactive DKG protocol.
-//! - `machine`: [`StateMachine`](tecdsa_protocol::StateMachine) wrapper
-//!   for the interactive DKG, with wire serialization.
-
 pub mod interactive;
 pub(crate) mod machine;
 pub(crate) mod wire;
 
-// ---------------------------------------------------------------------------
-// Trusted dealer key generation (formerly keygen.rs content)
-// ---------------------------------------------------------------------------
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     interactive_keygen, party1_finalize, party1_keygen_round1, party1_keygen_round3,
@@ -43,18 +29,6 @@ fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
     }
 }
 
-/// Generate XAL+21's one-time MtA setup material: P2's Paillier keypair and the
-/// Ring-Pedersen (`N~`) auxiliary parameters used by the MtA range proofs.
-///
-/// Both are message-independent, one-time setup (Paillier `keygen` and a
-/// Ring-Pedersen modulus each need a pair of safe primes). Exposing them lets
-/// callers (e.g. benchmarks) generate the material up front and inject it via
-/// [`Xal21KeygenMachine::new_with_setup`], keeping safe-prime generation out of
-/// the measured DKG rounds.
-///
-/// # Panics
-///
-/// Panics if Paillier key generation fails (should not happen with a valid RNG).
 pub fn generate_setup(
     rng: &mut impl CryptoRngCore,
 ) -> (tecdsa_paillier::DecryptionKey, NTildeParams) {
@@ -63,15 +37,6 @@ pub fn generate_setup(
     (dk, ntilde)
 }
 
-/// Generate key shares for the XAL+21 two-party ECDSA protocol via a trusted dealer.
-///
-/// Produces additive key shares: `x = x_1 + x_2` where `Q = x * G`.
-///
-/// P_1 receives `(x_1, Q, Q_1, ek)` and P_2 receives `(x_2, Q, Q_1, dk, ek)`.
-///
-/// # Panics
-///
-/// Panics if Paillier key generation fails (should not happen with valid RNG).
 pub fn trusted_dealer_keygen<C: TecdsaCurve>(
     rng: &mut impl CryptoRngCore,
 ) -> (Xal21Party1KeyShare<C>, Xal21Party2KeyShare<C>)
@@ -79,22 +44,17 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    // Sample random non-zero secret shares x_1, x_2
     let x1 = C::random_scalar(rng);
     let x2 = C::random_scalar(rng);
 
-    // Compute joint secret key x = x_1 + x_2 and public key Q = x * G
     let x = x1 + x2;
     let public_key = C::generator() * x;
 
-    // Compute P_1's public share Q_1 = x_1 * G
     let q1 = C::generator() * x1;
 
-    // Generate Paillier key pair for P_2 (P_2 owns the decryption key)
     let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
-    // Generate Ring-Pedersen auxiliary parameters for MtA range proofs
     let ntilde = generate_ntilde_params(rng);
 
     let p1_share = Xal21Party1KeyShare {
@@ -117,14 +77,12 @@ where
     (p1_share, p2_share)
 }
 
-/// Compute the curve order q as a big integer.
 pub(crate) fn curve_order<C: TecdsaCurve>() -> tecdsa_paillier::backend::Integer
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     use elliptic_curve::Field;
-    // q - 1 is the repr of -1 in the scalar field
     let neg_one = -C::Scalar::ONE;
     let neg_one_bytes = neg_one.to_repr();
     let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
@@ -161,10 +119,8 @@ mod tests {
         let mut rng = rand_core::OsRng;
         let (p1, p2) = trusted_dealer_keygen::<Secp256k1>(&mut rng);
 
-        // Both parties should have the same public key
         assert_eq!(p1.public_key, p2.public_key);
 
-        // Q = (x_1 + x_2) * G (additive sharing)
         let x = p1.secret_share + p2.secret_share;
         let expected_pk = Secp256k1::generator() * x;
         assert_eq!(p1.public_key, expected_pk);
@@ -175,11 +131,9 @@ mod tests {
         let mut rng = rand_core::OsRng;
         let (p1, p2) = trusted_dealer_keygen::<Secp256k1>(&mut rng);
 
-        // Q_1 = x_1 * G
         let expected_q1 = Secp256k1::generator() * p1.secret_share;
         assert_eq!(p1.public_share, expected_q1);
 
-        // P_2 also has Q_1
         assert_eq!(p2.public_share_p1, expected_q1);
     }
 }

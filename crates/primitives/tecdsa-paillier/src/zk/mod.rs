@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 pub mod bridge;
 pub mod correct_key_ni;
 pub mod homo_elgamal;

@@ -1,11 +1,5 @@
-//! Number-theoretic algorithms layered on top of [`Mpz`].
-
 use super::mpz::Mpz;
 
-/// Tonelli–Shanks square root modulo an odd prime `p`.
-///
-/// Returns some `x` with `x^2 ≡ a (mod p)`, or `None` if `a` is a non-residue.
-/// (When several roots exist, the canonical one returned is in `[0, p)`.)
 pub fn sqrt_mod_prime(a: &Mpz, p: &Mpz) -> Option<Mpz> {
     let one = Mpz::from(1u64);
     let am = a.modulo(p);
@@ -16,13 +10,11 @@ pub fn sqrt_mod_prime(a: &Mpz, p: &Mpz) -> Option<Mpz> {
         return None;
     }
 
-    // Fast path: p ≡ 3 (mod 4) ⇒ x = a^((p+1)/4).
     if p.modulo(&Mpz::from(4u64)) == 3u64 {
-        let e = p.add_ui(1).fdiv_2exp(2); // (p+1)/4
+        let e = p.add_ui(1).fdiv_2exp(2);
         return Some(am.powm(&e, p));
     }
 
-    // General Tonelli–Shanks. Write p-1 = Q * 2^S with Q odd.
     let pm1 = p - &one;
     let mut s: u32 = 0;
     let mut q = pm1.clone();
@@ -31,7 +23,6 @@ pub fn sqrt_mod_prime(a: &Mpz, p: &Mpz) -> Option<Mpz> {
         s += 1;
     }
 
-    // A quadratic non-residue z.
     let mut z = Mpz::from(2u64);
     while z.kronecker(p) != -1 {
         z = z.add_ui(1);
@@ -40,23 +31,21 @@ pub fn sqrt_mod_prime(a: &Mpz, p: &Mpz) -> Option<Mpz> {
     let mut m = s;
     let mut c = z.powm(&q, p);
     let mut t = am.powm(&q, p);
-    let mut r = am.powm(&q.add_ui(1).fdiv_2exp(1), p); // a^((Q+1)/2)
+    let mut r = am.powm(&q.add_ui(1).fdiv_2exp(1), p);
 
     loop {
         if t == one {
             return Some(r);
         }
-        // Least i in (0, m) with t^(2^i) == 1.
         let mut i: u32 = 0;
         let mut t2 = t.clone();
         while t2 != one {
             t2 = t2.powm(&Mpz::from(2u64), p);
             i += 1;
             if i == m {
-                return None; // a was not actually a residue
+                return None;
             }
         }
-        // b = c^(2^(m-i-1)).
         let mut b = c.clone();
         for _ in 0..(m - i - 1) {
             b = b.powm(&Mpz::from(2u64), p);
@@ -74,7 +63,6 @@ mod tests {
 
     #[test]
     fn sqrt_mod_small_primes() {
-        // p ≡ 1 mod 4 case (uses full Tonelli–Shanks): p = 13
         let p = Mpz::from(13u64);
         for a in 1u64..13 {
             let am = Mpz::from(a);
@@ -87,7 +75,7 @@ mod tests {
 
     #[test]
     fn sqrt_mod_p3mod4() {
-        let p = Mpz::from(103u64); // 103 ≡ 3 mod 4
+        let p = Mpz::from(103u64);
         let a = Mpz::from(7u64);
         if let Some(x) = sqrt_mod_prime(&a, &p) {
             assert_eq!((&x * &x).modulo(&p), a);
@@ -99,7 +87,6 @@ mod tests {
     #[test]
     fn sqrt_mod_large_prime() {
         let p = Mpz::from_str_auto("0xfffffffffffffffffffffffffffffffeffffffffffffffff").unwrap();
-        // p256-ish? just ensure roundtrip for residues
         let a = Mpz::from(123456789u64);
         if let Some(x) = sqrt_mod_prime(&a, &p) {
             assert_eq!((&x * &x).modulo(&p), a.modulo(&p));

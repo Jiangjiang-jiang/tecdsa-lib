@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Integration tests for the Joye-Libert encryption scheme.
-//!
-//! Uses small (256-bit) modulus for fast testing. Full-size key generation
-//! tests are marked `#[ignore]` due to their runtime.
-
 use rug::Integer;
 use tecdsa_joye_libert::{
     enc_dec::{decrypt, encrypt},
@@ -12,7 +6,6 @@ use tecdsa_joye_libert::{
     zk::zkjl_enc::ZkJlEncProof,
 };
 
-/// Helper to create a small test key pair (256-bit primes, k=32).
 fn small_keypair() -> (
     tecdsa_joye_libert::kgen::JlPublicKey,
     tecdsa_joye_libert::kgen::JlSecretKey,
@@ -25,13 +18,9 @@ fn small_keypair() -> (
 fn jl_kgen_produces_valid_key() {
     let (pk, sk) = small_keypair();
 
-    // N should be non-zero and composite
     assert!(pk.n != 0);
-    // p should divide N
     assert!(pk.n.is_divisible(&sk.p));
-    // k should match
     assert_eq!(pk.k, 32);
-    // y, h should be non-zero and less than N
     assert!(pk.y != 0);
     assert!(pk.h != 0);
     assert!(pk.y < pk.n);
@@ -43,7 +32,6 @@ fn jl_enc_dec_roundtrip() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
 
-    // Test several values including 0, 1, and a larger value
     for m_val in [0u64, 1, 42, 255, 1000, (1u64 << 31) - 1] {
         let m = Integer::from(m_val);
         let (ct, _r) = encrypt(&pk, &m, &mut rng);
@@ -80,10 +68,9 @@ fn jl_hadd_wraps_mod_2k() {
     let mut rng = rand::thread_rng();
     let two_pow_k = Integer::from(1) << pk.k;
 
-    // Choose values that will overflow 2^k when added
     let a = Integer::from(&two_pow_k - 10);
     let b = Integer::from(20u32);
-    let expected = Integer::from(&a + &b) % &two_pow_k; // Should be 10
+    let expected = Integer::from(&a + &b) % &two_pow_k;
 
     let (ct_a, _) = encrypt(&pk, &a, &mut rng);
     let (ct_b, _) = encrypt(&pk, &b, &mut rng);
@@ -150,7 +137,6 @@ fn jl_keygen_128bit_security() {
     assert!(pk.n.is_divisible(&sk.p));
     assert_eq!(pk.k, 256);
 
-    // Enc/Dec roundtrip with production-size keys
     let m = Integer::from(12345u32);
     let (ct, _) = encrypt(&pk, &m, &mut rng);
     let recovered = decrypt(&sk, &pk, &ct);

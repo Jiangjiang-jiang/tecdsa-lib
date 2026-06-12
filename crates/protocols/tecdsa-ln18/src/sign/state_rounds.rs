@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transitions for the LN18 2+6 StateMachine signing path.
-//!
-//! **Offline (2 rounds):** `Input(k) || Input(rho)` in parallel.
-//! **Online (6 rounds):** `Element-out(k) || Mult1(k,rho)` interleaved with `Mult2(rho,alpha)`.
-//!
-//! The shared MtA provider (`Ln18MtaHybrid`) runs internally within transitions;
-//! MtA messages are not routed through the outer Orchestrator.
-
 #![allow(non_snake_case)]
 
 use std::{collections::BTreeMap, sync::Arc};
@@ -45,26 +36,14 @@ use crate::{
     sign::rounds::Ln18PresignParams,
 };
 
-// ===========================================================================
-// Offline params
-// ===========================================================================
-
-/// Parameters for constructing an `Ln18OfflineSignMachine`.
 pub struct Ln18OfflineSignParams<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Base presign parameters (key share, Paillier keys, init output, stored x input).
     pub base: Ln18PresignParams<C>,
-    /// The signer subset for this signing session.
     pub signer_parties: Vec<PartyId>,
-    /// Shared MtA provider for this signing session.
     pub mta: Arc<Ln18MtaHybrid<C>>,
 }
-
-// ===========================================================================
-// Offline round enum
-// ===========================================================================
 
 #[derive(Default)]
 pub(crate) enum OfflineRound<C: TecdsaCurve>
@@ -77,10 +56,6 @@ where
     #[default]
     Gone,
 }
-
-// ===========================================================================
-// Offline Round 1 state
-// ===========================================================================
 
 pub(crate) struct OfflineInputRound1<C: TecdsaCurve>
 where
@@ -111,15 +86,10 @@ where
     ) -> tecdsa_core::Result<Self> {
         let signer_parties = params.signer_parties.clone();
 
-        // Validate my_id is in signer_parties.
         if !signer_parties.contains(&my_id) {
             return Err(TecdsaError::Other("my_id not in signer_parties".into()));
         }
 
-        // stored_x_input must already be Lagrange-weighted for the signer
-        // subset. The caller runs Input(w_i) where w_i = λ_i · f(party_id)
-        // BEFORE constructing Ln18OfflineSignParams. See
-        // `sign::build_signing_setup` for the canonical setup path.
         let stored_x = &params.base.stored_x_input;
         let weighted_x_input = InputOutput {
             ciphertext: stored_x.ciphertext.clone(),
@@ -128,19 +98,16 @@ where
             per_party_cts: stored_x.per_party_cts.clone(),
         };
 
-        // Sample k_i and rho_i.
         let k_i = C::random_scalar(rng);
         let rho_i = C::random_scalar(rng);
 
         let elgamal_pk = params.base.init_output.elgamal_pk;
 
-        // Create two InputStates in parallel.
         let (input_k_state, input_k_r1) =
             InputState::<C>::new(my_id, signer_parties.clone(), elgamal_pk, k_i, rng);
         let (input_rho_state, input_rho_r1) =
             InputState::<C>::new(my_id, signer_parties.clone(), elgamal_pk, rho_i, rng);
 
-        // Queue Round 1 broadcast.
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Ln18OfflineSignMsg::Round1Input {
@@ -187,7 +154,6 @@ where
     }
 
     pub fn advance(mut self) -> tecdsa_core::Result<OfflineInputRound2<C>> {
-        // Collect peer messages for each input.
         let peer_k_r1: Vec<InputRound1Msg> =
             self.received.values().map(|(k, _)| k.clone()).collect();
         let peer_rho_r1: Vec<InputRound1Msg> =
@@ -224,10 +190,6 @@ where
         })
     }
 }
-
-// ===========================================================================
-// Offline Round 2 state
-// ===========================================================================
 
 pub(crate) struct OfflineInputRound2<C: TecdsaCurve>
 where
@@ -307,80 +269,46 @@ where
     }
 }
 
-// ===========================================================================
-// Online params
-// ===========================================================================
-
-/// Parameters for constructing an `Ln18OnlineSignMachine`.
 pub struct Ln18OnlineSignParams<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Completed offline state from rounds 1-2.
     pub offline_state: Ln18OfflineSignState<C>,
-    /// Message digest (hash of the message to sign).
     pub message_digest: C::Scalar,
 }
-
-// ===========================================================================
-// Online round enum
-// ===========================================================================
 
 #[derive(Default)]
 pub(crate) enum OnlineRound<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Waiting for Round 3 messages from peers (or pending MtA for tau).
     Round3(OnlineRound3<C>),
-    /// Beta MtA submitted but not yet resolved (waiting for other parties).
     PendingBeta(PendingBetaState<C>),
-    /// Waiting for Round 4 messages from peers.
     Round4(OnlineRound4<C>),
-    /// Waiting for Round 5 messages.
     Round5(OnlineRound5<C>),
-    /// Waiting for Round 6 messages.
     Round6(OnlineRound6<C>),
-    /// Waiting for Round 7 messages.
     Round7(OnlineRound7<C>),
-    /// Waiting for Round 8 messages.
     Round8(OnlineRound8<C>),
-    /// Finished with signature.
     Done(Signature<C>),
     #[default]
     Gone,
 }
-
-// ---------------------------------------------------------------------------
-// PendingMta: used when MtA result is not yet available
-// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 pub(crate) enum PendingOnlineStart<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Waiting for tau MtA to complete before we can create mult1 and element-out.
-    /// Buffered Round 3 messages from peers are replayed once tau resolves.
     WaitingForTau {
         offline: Ln18OfflineSignState<C>,
         message_digest: C::Scalar,
-        /// Round 3 messages received while waiting for the tau MtA.
         buffered: Vec<(PartyId, ElementOutMsg<C>, MultRound1Msg<C>)>,
     },
-    /// Tau MtA completed, Round 3 message queued and we are receiving peer messages.
     Active(OnlineRound3Active<C>),
-    /// Sentinel for std::mem::take.
     #[default]
     Taken,
 }
 
-// ===========================================================================
-// PendingBeta: waiting for beta MtA result
-// ===========================================================================
-
-/// Holds intermediate state between Round 3 completion and Round 4 start,
-/// when the beta MtA has been submitted but not all parties have submitted yet.
 pub(crate) struct PendingBetaState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -394,8 +322,6 @@ where
     pub own_mult1_r1: MultRound1Msg<C>,
     pub received: BTreeMap<PartyId, (ElementOutMsg<C>, MultRound1Msg<C>)>,
     pub outgoing: Vec<Outgoing<Ln18OnlineSignMsg<C>>>,
-    /// Round 4 messages received while waiting for the beta MtA to resolve.
-    /// Replayed into the Round4 state once beta completes.
     pub buffered_r4: Vec<(
         PartyId,
         crate::f_mult::mult::MultRound2Msg<C>,
@@ -409,8 +335,6 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
     C::ProjectivePoint: GroupEncoding,
 {
-    /// Try to resolve the beta MtA. Returns `Ok(Some(round4))` if the MtA is
-    /// ready, `Ok(None)` if not all parties have submitted yet.
     pub fn try_resolve(
         mut self,
         rng: &mut impl CryptoRngCore,
@@ -439,7 +363,6 @@ where
             None => return Ok(Err(self)),
         };
 
-        // Process mult1 Round 1 messages.
         let peer_mult1_r1: Vec<MultRound1Msg<C>> =
             self.received.values().map(|(_, m)| m.clone()).collect();
         let (mult1_r2, mult1_r1_result) = self
@@ -447,7 +370,6 @@ where
             .handle_round1(&peer_mult1_r1, &self.own_mult1_r1, rng)
             .map_err(|e| TecdsaError::Other(format!("mult1 R1: {e}")))?;
 
-        // Create mult2 state.
         let (mult2_state, mult2_r1) = MultState::<C>::new(
             self.my_id,
             self.signer_parties.clone(),
@@ -480,7 +402,6 @@ where
             received: BTreeMap::new(),
         };
 
-        // Replay Round 4 messages that arrived while beta MtA was pending.
         for (from, mult1_r2, mult2_r1) in self.buffered_r4 {
             let _ = round4.handle(from, mult1_r2, mult2_r1);
         }
@@ -488,10 +409,6 @@ where
         Ok(Ok(round4))
     }
 }
-
-// ===========================================================================
-// Online Round 3 state
-// ===========================================================================
 
 pub(crate) struct OnlineRound3<C: TecdsaCurve>
 where
@@ -527,7 +444,6 @@ where
         let offline = params.offline_state;
         let message_digest = params.message_digest;
 
-        // Try to submit tau = k * rho to MtA immediately.
         let k_i = offline.input_k.a_i;
         let rho_i = offline.input_rho.a_i;
 
@@ -549,7 +465,6 @@ where
 
         match tau_result {
             Ok(Some(tau_i)) => {
-                // MtA completed immediately -- create element-out and mult1.
                 let (active, outgoing) = Self::create_active(offline, message_digest, tau_i, rng);
                 Self {
                     state: PendingOnlineStart::Active(active),
@@ -557,7 +472,6 @@ where
                 }
             }
             _ => {
-                // Not ready yet (or error) -- store pending state.
                 Self {
                     state: PendingOnlineStart::WaitingForTau {
                         offline,
@@ -570,9 +484,7 @@ where
         }
     }
 
-    /// Try to resolve pending MtA. Called from drain_outgoing().
     pub fn try_resolve_pending(&mut self, rng: &mut impl CryptoRngCore) {
-        // Check if we are in WaitingForTau state and if MtA is now ready.
         let should_resolve =
             if let PendingOnlineStart::WaitingForTau { ref offline, .. } = self.state {
                 let k_i = offline.input_k.a_i;
@@ -603,7 +515,6 @@ where
             };
 
         if let Some(tau_i) = should_resolve {
-            // Take out the old state using Default (Gone-like) swap pattern.
             let old = std::mem::take(&mut self.state);
             if let PendingOnlineStart::WaitingForTau {
                 offline,
@@ -613,11 +524,7 @@ where
             {
                 let (mut active, outgoing) =
                     Self::create_active(offline, message_digest, tau_i, rng);
-                // Replay buffered Round 3 messages that arrived while waiting.
                 for (from, eo_msg, mult1_r1) in buffered {
-                    // Ignore errors from replay (e.g., duplicate); the message
-                    // was validated on receipt so structural failures are
-                    // unexpected.
                     let _ = active.handle(from, eo_msg, mult1_r1);
                 }
                 self.state = PendingOnlineStart::Active(active);
@@ -635,7 +542,6 @@ where
         let my_id = offline.my_id;
         let signer_parties = offline.signer_parties.clone();
 
-        // Create ElementOutState for input_k.
         let (eo_state, eo_msg) = ElementOutState::<C>::new(
             my_id,
             signer_parties.clone(),
@@ -646,7 +552,6 @@ where
             rng,
         );
 
-        // Create MultState for mult1(k, rho) with tau_i MtA share.
         let (mult1_state, mult1_r1) = MultState::<C>::new(
             my_id,
             signer_parties.clone(),
@@ -712,17 +617,10 @@ where
         self.received.len() == self.signer_parties.len() - 1
     }
 
-    /// Advance toward Round 4.
-    ///
-    /// If the beta MtA result is immediately available, returns
-    /// `Ok(Ok(OnlineRound4))`. If not all parties have submitted beta yet,
-    /// returns `Ok(Err(PendingBetaState))` so the caller can store it and
-    /// retry on the next drain_outgoing cycle.
     pub fn advance(
         mut self,
         rng: &mut impl CryptoRngCore,
     ) -> tecdsa_core::Result<Result<OnlineRound4<C>, PendingBetaState<C>>> {
-        // Finish element-out to get R.
         let peer_eo_msgs: Vec<ElementOutMsg<C>> =
             self.received.values().map(|(e, _)| e.clone()).collect();
         let eo_output = self
@@ -737,7 +635,6 @@ where
             ));
         }
 
-        // Compute alpha = affine(weighted_x_input, r, m')
         let stored_wx = &self.offline.weighted_x_input;
         let aff_input = AffineInput::<C> {
             ciphertext: stored_wx.ciphertext.clone(),
@@ -754,7 +651,6 @@ where
             per_party_cts: alpha_out.per_party_cts,
         };
 
-        // Submit beta = rho * alpha to MtA.
         let rho_i = self.offline.input_rho.a_i;
         let alpha_i = alpha_as_input.a_i;
         let mta_params = Ln18MtaLocalParams::<C> {
@@ -775,8 +671,6 @@ where
         let beta_i = match beta_result {
             Some(b) => b,
             None => {
-                // Not all parties have submitted beta yet. Store intermediate
-                // state so the caller can retry on the next drain_outgoing.
                 return Ok(Err(PendingBetaState {
                     my_id: self.my_id,
                     signer_parties: self.signer_parties,
@@ -792,7 +686,6 @@ where
             }
         };
 
-        // Process mult1 Round 1: collect peer R1 messages.
         let peer_mult1_r1: Vec<MultRound1Msg<C>> =
             self.received.values().map(|(_, m)| m.clone()).collect();
         let (mult1_r2, mult1_r1_result) = self
@@ -800,7 +693,6 @@ where
             .handle_round1(&peer_mult1_r1, &self.own_mult1_r1, rng)
             .map_err(|e| TecdsaError::Other(format!("mult1 R1: {e}")))?;
 
-        // Create mult2(rho, alpha) state.
         let (mult2_state, mult2_r1) = MultState::<C>::new(
             self.my_id,
             self.signer_parties.clone(),
@@ -834,10 +726,6 @@ where
         }))
     }
 }
-
-// ===========================================================================
-// Online Round 4 state
-// ===========================================================================
 
 pub(crate) struct OnlineRound4<C: TecdsaCurve>
 where
@@ -917,10 +805,6 @@ where
         })
     }
 }
-
-// ===========================================================================
-// Online Round 5 state
-// ===========================================================================
 
 pub(crate) struct OnlineRound5<C: TecdsaCurve>
 where
@@ -1013,10 +897,6 @@ where
         })
     }
 }
-
-// ===========================================================================
-// Online Round 6 state
-// ===========================================================================
 
 pub(crate) struct OnlineRound6<C: TecdsaCurve>
 where
@@ -1115,10 +995,6 @@ where
     }
 }
 
-// ===========================================================================
-// Online Round 7 state
-// ===========================================================================
-
 pub(crate) struct OnlineRound7<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -1173,13 +1049,11 @@ where
         let peer_mult1_r5: Vec<_> = self.received.values().map(|(m, _)| m.clone()).collect();
         let peer_mult2_r4: Vec<_> = self.received.values().map(|(_, m)| m.clone()).collect();
 
-        // Finish mult1: get tau_output.
         let tau_output = self
             .mult1_state
             .finish_round5(&peer_mult1_r5, &self.mult1_r4_result)
             .map_err(|e| TecdsaError::Other(format!("mult1 R5: {e}")))?;
 
-        // Process mult2 Round 4 -> produce mult2_r5.
         let (mult2_r5, mult2_r4_result) = self
             .mult2_state
             .handle_round4(
@@ -1209,10 +1083,6 @@ where
         })
     }
 }
-
-// ===========================================================================
-// Online Round 8 state
-// ===========================================================================
 
 pub(crate) struct OnlineRound8<C: TecdsaCurve>
 where
@@ -1263,9 +1133,6 @@ where
             .finish_round5(&peer_mult2_r5, &self.mult2_r4_result)
             .map_err(|e| TecdsaError::Other(format!("mult2 R5: {e}")))?;
 
-        // Compute s = tau^{-1} * beta.
-        // tau_output.c is the full product sum(c_i) = k*rho from mult1.
-        // beta_output.c is the full product sum(c_i) = rho*alpha from mult2.
         let tau = self.tau_output.c;
         let beta = beta_output.c;
         let tau_inv = tau

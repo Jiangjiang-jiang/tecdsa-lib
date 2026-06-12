@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -13,8 +12,6 @@
     clippy::too_many_lines,
     non_snake_case
 )]
-
-//! StateMachine implementation for XAL23 interactive DKG.
 
 use std::collections::BTreeMap;
 
@@ -34,15 +31,6 @@ use super::{
 };
 use crate::key_share::Xal23KeyShare;
 
-// ---------------------------------------------------------------------------
-// Xal23KeygenMachine
-// ---------------------------------------------------------------------------
-
-/// StateMachine for the XAL23 2-round interactive DKG.
-///
-/// On construction, Round 1 logic executes immediately and a 32-byte hash
-/// commitment is queued for broadcast. Subsequent rounds are driven by
-/// `handle` as messages arrive from other parties.
 pub struct Xal23KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -84,21 +72,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new XAL23 DKG state machine.
-    ///
-    /// Immediately executes Round 1 logic:
-    /// - Generate JL keypair
-    /// - Run Feldman VSS on a random secret
-    /// - Prove DLog for the constant coefficient
-    /// - Hash-commit to all public data
-    /// - Queue the commitment for broadcast
-    ///
-    /// # Arguments
-    /// - `my_id`: this party's identifier
-    /// - `all_parties`: sorted list of all participating party identifiers
-    /// - `threshold`: reconstruction threshold `t` (t parties needed to sign)
-    /// - `jl_p_bits`: bit length parameter for JL key generation
-    /// - `jl_k`: message-space parameter for JL key generation
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -106,9 +79,6 @@ where
         jl_p_bits: u64,
         jl_k: u32,
     ) -> tecdsa_core::Result<Self> {
-        // Generate the per-party long-term JL keypair, then delegate. Benches time
-        // this (n,t)-independent keygen separately (see `setup_benchmarks`) and call
-        // `new_with_jl_keypair` so DKG measures only the interactive sharing.
         let mut rng = rand::rngs::OsRng;
         let (jl_pk, jl_sk, jl_qnr) =
             tecdsa_joye_libert::kgen::generate_keypair_with_qnr(jl_p_bits, jl_k, &mut rng);
@@ -124,8 +94,6 @@ where
         )
     }
 
-    /// Like [`new`](Self::new) but reuses a pre-generated JL keypair (the per-party
-    /// long-term key material) instead of generating it inside the constructor.
     pub fn new_with_jl_keypair(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
@@ -152,15 +120,12 @@ where
         let n = all_parties.len() as u16;
         let mut rng = rand::rngs::OsRng;
 
-        // 1b. Generate ZkJlModProof (proves N is well-formed for JL encryption)
         let jl_mod_proof = ZkJlModProof::prove(&jl_pk, &jl_sk, &jl_qnr, &mut rng);
 
-        // 2. Feldman VSS: split random secret with threshold t-of-n
         let x_i = C::random_scalar(&mut rng);
         let (vss_shares, vss_commitments) =
             tecdsa_vss::feldman::split::<C>(&x_i, threshold, n, &mut rng);
 
-        // 3. DlogProof for A_{i,0} = x_i * G
         let a_i_0 = vss_commitments[0];
         let ephemeral = C::random_scalar(&mut rng);
         let dlog_proof = tecdsa_curve::zk::dlog::DlogProof::<C>::prove(
@@ -170,11 +135,9 @@ where
             b"xal23-dkg-dlog",
         );
 
-        // 4. Serialize JL public key for commitment
         let jl_pk_json = bincode::serde::encode_to_vec(&jl_pk, bincode::config::standard())
             .map_err(|e| TecdsaError::Other(format!("serialize JL pk: {e}")))?;
 
-        // 5. Compute hash commitment
         let mut nonce = [0u8; 32];
         rng.fill_bytes(&mut nonce);
 
@@ -190,11 +153,9 @@ where
             &jl_mod_proof_json,
         );
 
-        // Store our own R1 commitment
         let mut r1_commitments = BTreeMap::new();
         r1_commitments.insert(my_id, commitment);
 
-        // Queue R1 broadcast
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Xal23KeygenMsg::Round1(commitment.to_vec()),
@@ -232,7 +193,6 @@ where
         self.all_parties.len()
     }
 
-    /// Return the 1-based index of our party in the sorted party list.
     fn my_1based_index(&self) -> u16 {
         self.all_parties
             .iter()
@@ -241,7 +201,6 @@ where
             + 1
     }
 
-    /// Return the 1-based index of a party in the sorted party list.
     fn party_1based_index(&self, party: PartyId) -> Option<u16> {
         self.all_parties
             .iter()
@@ -249,11 +208,6 @@ where
             .map(|i| i as u16 + 1)
     }
 
-    // -----------------------------------------------------------------------
-    // Round transitions
-    // -----------------------------------------------------------------------
-
-    /// Transition from R1 -> R2: broadcast decommitment and send P2P shares.
     fn transition_to_r2(&mut self) -> tecdsa_core::Result<()> {
         let r1 = self
             .r1_state
@@ -277,7 +231,6 @@ where
         let r2_bytes = bincode::serde::encode_to_vec(&r2_payload, bincode::config::standard())
             .map_err(|e| TecdsaError::Other(format!("serialize R2 bcast: {e}")))?;
 
-        // Store our own R2 bcast
         self.r2_bcasts.insert(
             self.my_id,
             R2ReceivedBcast {
@@ -289,7 +242,6 @@ where
             },
         );
 
-        // Store our own VSS share to self
         let my_1based = self.my_1based_index();
         let my_share_value = r1
             .vss_shares
@@ -299,13 +251,11 @@ where
             .value;
         self.r2_shares.insert(self.my_id, my_share_value);
 
-        // Broadcast R2
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: Xal23KeygenMsg::Round2Bcast(r2_bytes),
         });
 
-        // P2P: send VSS share s_{my, j} to each party j
         for &party in &self.all_parties {
             if party == self.my_id {
                 continue;
@@ -329,7 +279,6 @@ where
         Ok(())
     }
 
-    /// Finalize: delegates to rounds::finalize.
     fn finalize(&mut self) -> tecdsa_core::Result<()> {
         let mut r1_state = self
             .r1_state
@@ -354,7 +303,6 @@ where
         Ok(())
     }
 
-    /// Check whether all R2 broadcasts and P2P shares have been received.
     fn check_r2_complete(&mut self) -> tecdsa_core::Result<()> {
         if self.r2_bcasts.len() == self.n() && self.r2_shares.len() == self.n() {
             self.finalize()?;
@@ -501,10 +449,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use tecdsa_protocol::state_machine::Outgoing;
@@ -513,15 +457,12 @@ mod tests {
 
     type C = k256::Secp256k1;
 
-    /// Small JL params for fast tests (not cryptographically secure).
     const TEST_JL_P_BITS: u64 = 256;
     const TEST_JL_K: u32 = 128;
 
-    /// Simulate the 2-round DKG for n parties by driving all state machines.
     fn run_dkg(n: u16, t: u16) -> Vec<Xal23KeyShare<C>> {
         let parties: Vec<PartyId> = (0..n).map(PartyId).collect();
 
-        // Create all machines (R1 executes on construction)
         let mut machines: Vec<Xal23KeygenMachine<C>> = parties
             .iter()
             .map(|&pid| {
@@ -530,14 +471,12 @@ mod tests {
             })
             .collect();
 
-        // Drain R1 outgoing (commitments) and deliver to all
         let mut r1_messages: Vec<(PartyId, Vec<Outgoing<Xal23KeygenMsg>>)> = Vec::new();
         for (i, machine) in machines.iter_mut().enumerate() {
             let msgs = machine.drain_outgoing();
             r1_messages.push((parties[i], msgs));
         }
 
-        // Deliver R1 broadcasts to all other parties
         for (sender, msgs) in &r1_messages {
             for outgoing in msgs {
                 match &outgoing.to {
@@ -560,8 +499,6 @@ mod tests {
             }
         }
 
-        // After R1 complete, each machine transitions to R2 and queues messages
-        // Drain R2 outgoing and deliver
         let mut r2_messages: Vec<(PartyId, Vec<Outgoing<Xal23KeygenMsg>>)> = Vec::new();
         for (i, machine) in machines.iter_mut().enumerate() {
             let msgs = machine.drain_outgoing();
@@ -590,7 +527,6 @@ mod tests {
             }
         }
 
-        // All machines should be done
         for machine in &machines {
             assert!(machine.is_done(), "machine should be done after R2");
         }
@@ -606,19 +542,14 @@ mod tests {
         let shares = run_dkg(2, 2);
 
         assert_eq!(shares.len(), 2);
-        // All parties should have the same public key
         assert_eq!(shares[0].public_key, shares[1].public_key);
-        // Party indices should be 0-based
         assert_eq!(shares[0].party_index, 0);
         assert_eq!(shares[1].party_index, 1);
-        // Both should have 2 JL public keys
         assert_eq!(shares[0].jl_pks.len(), 2);
         assert_eq!(shares[1].jl_pks.len(), 2);
-        // JL pks should match between parties
         assert_eq!(shares[0].jl_pks[0].n, shares[1].jl_pks[0].n);
         assert_eq!(shares[0].jl_pks[1].n, shares[1].jl_pks[1].n);
 
-        // Verify public shares: Y_j = x_j * G
         for (i, share) in shares.iter().enumerate() {
             let expected = k256::ProjectivePoint::GENERATOR * share.secret_share;
             assert_eq!(
@@ -627,7 +558,6 @@ mod tests {
             );
         }
 
-        // Reconstruct x via Lagrange with both shares:
         let vss_shares = vec![
             tecdsa_vss::shamir::Share::<k256::Secp256k1> {
                 index: 1,
@@ -652,21 +582,17 @@ mod tests {
 
         assert_eq!(shares.len(), 3);
 
-        // All parties should have the same public key
         assert_eq!(shares[0].public_key, shares[1].public_key);
         assert_eq!(shares[1].public_key, shares[2].public_key);
 
-        // Party indices 0-based
         assert_eq!(shares[0].party_index, 0);
         assert_eq!(shares[1].party_index, 1);
         assert_eq!(shares[2].party_index, 2);
 
-        // All should have 3 JL public keys
         for share in &shares {
             assert_eq!(share.jl_pks.len(), 3);
         }
 
-        // Reconstruct with any 2 of 3 shares (threshold t=2 => need t=2 shares)
         let any_two = vec![
             tecdsa_vss::shamir::Share::<k256::Secp256k1> {
                 index: 1,
@@ -691,11 +617,9 @@ mod tests {
 
         assert_eq!(shares.len(), 3);
 
-        // All parties should have the same public key
         assert_eq!(shares[0].public_key, shares[1].public_key);
         assert_eq!(shares[1].public_key, shares[2].public_key);
 
-        // Reconstruct with all 3 shares (threshold t=3 => need t=3 shares)
         let all_three = vec![
             tecdsa_vss::shamir::Share::<k256::Secp256k1> {
                 index: 1,

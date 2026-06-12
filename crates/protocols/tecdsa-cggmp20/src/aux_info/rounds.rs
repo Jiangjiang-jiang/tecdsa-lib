@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for CGGMP20 auxiliary-info generation.
-
 use std::collections::BTreeMap;
 
 use rand_core::CryptoRngCore;
@@ -14,16 +11,11 @@ use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3};
 use crate::{bridge::pedersen_to_aux, key_share::AuxInfo, security_level::Cggmp20SecurityParams};
 
-/// Fiat-Shamir domain separation tag for aux-info ZK proofs.
 #[derive(udigest::Digestable)]
 struct AuxInfoProofTag {
     context: &'static str,
     prover: u16,
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn integer_to_bytes(val: &Integer) -> Vec<u8> {
     let n = val.significant_digits::<u8>();
@@ -32,24 +24,14 @@ fn integer_to_bytes(val: &Integer) -> Vec<u8> {
     bytes
 }
 
-/// Serialise the commitment payload: ek || pedersen_params || pi_prm || rho.
-///
-/// We concatenate deterministic byte representations of the public data.
-/// The PiPrm proof is hashed via SHA-256 of its bincode encoding to avoid
-/// needing serde_json.
 fn commitment_data(msg: &MsgRound2) -> Vec<u8> {
     use sha2::{Digest, Sha256};
 
     let mut data = Vec::new();
-    // EncryptionKey → serialise N as big-endian bytes
     data.extend_from_slice(&msg.paillier_ek.n().to_bytes_msf());
-    // PedersenModParams → serialise n, s, t
     data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.n));
     data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.s));
     data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.t));
-    // PiPrm → hash the debug representation as a deterministic fingerprint.
-    // Both prover and verifier call this function with the same data, so
-    // determinism is all that matters.
     let pi_prm_hash = {
         let mut h = Sha256::new();
         h.update(format!("{:?}", msg.pi_prm).as_bytes());
@@ -60,32 +42,21 @@ fn commitment_data(msg: &MsgRound2) -> Vec<u8> {
     data
 }
 
-// ---------------------------------------------------------------------------
-// Round enum
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 pub(crate) enum AuxInfoRound<L: Cggmp20SecurityParams> {
     Round1(Round1State<L>),
     Round2(Round2State<L>),
     Round3(Round3State),
     Done(AuxInfo),
-    /// Sentinel so we can `std::mem::take` without leaving an invalid state.
     #[default]
     Gone,
 }
 
-// ---------------------------------------------------------------------------
-// Round 1 state
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round1State<L: Cggmp20SecurityParams> {
-    // Configuration
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub party_index: u16,
 
-    // Own secrets generated at construction
     pub dk: DecryptionKey,
     pub ek: EncryptionKey,
     pub pedersen_params: PedersenModParams,
@@ -93,51 +64,42 @@ pub(crate) struct Round1State<L: Cggmp20SecurityParams> {
     pub rho: [u8; 32],
     pub decommit_nonce: [u8; 32],
 
-    // Outgoing messages queued at construction
     pub outgoing: Vec<Outgoing<AuxInfoMsg>>,
 
-    // Received messages
     pub round1_msgs: BTreeMap<PartyId, MsgRound1>,
 
     pub _level: std::marker::PhantomData<L>,
 }
 
 impl<L: Cggmp20SecurityParams> Round1State<L> {
-    /// Create the initial Round1 state: generate secrets and queue Round1 broadcast.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
         let my_id = config.local_party.id;
         let parties = config.parties.clone();
         let party_index = config.local_party.index;
 
-        // 1. Generate Paillier key pair with primes of the configured size
         let p = tecdsa_paillier::backend::Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
         let q = tecdsa_paillier::backend::Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
         let dk = DecryptionKey::from_primes(p, q).expect("valid paillier key");
         let ek = dk.encryption_key().clone();
 
-        // 2. Generate ring-Pedersen parameters
         let (pedersen_params, pedersen_secret) =
             PedersenModParams::generate(L::RSA_PRIME_BITS as u64, rng);
 
-        // 3. Generate PiPrm proof
         let pi_prm = PiPrm::prove(&pedersen_params, &pedersen_secret, rng);
 
-        // 4. Sample rho (32 random bytes)
         let mut rho = [0u8; 32];
         rng.fill_bytes(&mut rho);
 
-        // 5. Compute hash commitment over (ek || pedersen_params || pi_prm || rho)
         let round2_preview = MsgRound2 {
             paillier_ek: ek.clone(),
             pedersen_params: pedersen_params.clone(),
             pi_prm: pi_prm.clone(),
             rho,
-            decommit_nonce: [0u8; 32], // placeholder, not included in commitment
+            decommit_nonce: [0u8; 32],
         };
         let commit_data = commitment_data(&round2_preview);
         let (hash_commitment, decommit_nonce) = HashCommitment::commit(&commit_data, rng);
 
-        // 6. Queue broadcast of MsgRound1
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: AuxInfoMsg::Round1(MsgRound1 {
@@ -161,12 +123,10 @@ impl<L: Cggmp20SecurityParams> Round1State<L> {
         }
     }
 
-    /// Number of messages we expect to receive (from all other parties).
     fn expected_count(&self) -> usize {
         self.parties.len() - 1
     }
 
-    /// Handle a Round1 message from another party.
     pub fn handle(&mut self, from: PartyId, msg: MsgRound1) -> tecdsa_core::Result<()> {
         if from == self.my_id {
             return Err(TecdsaError::Other("received message from self".into()));
@@ -181,12 +141,10 @@ impl<L: Cggmp20SecurityParams> Round1State<L> {
         Ok(())
     }
 
-    /// Check if all expected Round1 messages have been received.
     pub fn is_ready(&self) -> bool {
         self.round1_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round2: queue decommitment broadcast.
     pub fn advance(self) -> Round2State<L> {
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
@@ -215,29 +173,20 @@ impl<L: Cggmp20SecurityParams> Round1State<L> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 2 state
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round2State<L: Cggmp20SecurityParams> {
-    // Config
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub party_index: u16,
 
-    // Own secrets
     pub dk: DecryptionKey,
     pub ek: EncryptionKey,
     pub pedersen_params: PedersenModParams,
     pub rho: [u8; 32],
 
-    // Round 1 data
     pub round1_commitments: BTreeMap<PartyId, MsgRound1>,
 
-    // Outgoing
     pub outgoing: Vec<Outgoing<AuxInfoMsg>>,
 
-    // Received
     pub round2_msgs: BTreeMap<PartyId, MsgRound2>,
 
     pub _level: std::marker::PhantomData<L>,
@@ -266,9 +215,7 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
         self.round2_msgs.len() == self.expected_count()
     }
 
-    /// Verify all hash commitments and PiPrm proofs, then transition to Round 3.
     pub fn advance(self) -> tecdsa_core::Result<Round3State> {
-        // 1. Verify hash commitments against decommitted data.
         for (&pid, round2) in &self.round2_msgs {
             let round1 = self
                 .round1_commitments
@@ -286,7 +233,6 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
             }
         }
 
-        // 2. Verify all PiPrm proofs.
         for (&pid, round2) in &self.round2_msgs {
             if !round2.pi_prm.verify(&round2.pedersen_params) {
                 return Err(TecdsaError::InvalidProof(format!(
@@ -295,7 +241,6 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
             }
         }
 
-        // 3. Compute combined rho = XOR(all rhos).
         let mut combined_rho = self.rho;
         for round2 in self.round2_msgs.values() {
             for (i, b) in round2.rho.iter().enumerate() {
@@ -303,7 +248,6 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
             }
         }
 
-        // 4. Generate π_mod proof (same for all peers — only depends on own N).
         let mut rng = tecdsa_core::Csprng::new();
         let paillier_n = Integer::from_digits(&self.dk.n().to_bytes_msf(), Order::Msf);
         let paillier_p = Integer::from_digits(&self.dk.p().to_bytes_msf(), Order::Msf);
@@ -311,7 +255,6 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
         let pi_mod_proof = PiMod::prove_modulus(&paillier_n, &paillier_p, &paillier_q, &mut rng)
             .ok_or_else(|| TecdsaError::Other("pi_mod proof generation failed".into()))?;
 
-        // 5. Generate per-peer π_fac proofs and queue P2P MsgRound3 messages.
         let own_n = self.dk.n().clone();
         let n_root = own_n
             .sqrt_ref()
@@ -379,34 +322,24 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 3 state
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round3State {
-    // Config
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub party_index: u16,
 
-    // Own data
     pub dk: DecryptionKey,
     pub ek: EncryptionKey,
     pub pedersen_params: PedersenModParams,
     #[allow(dead_code)]
     pub combined_rho: [u8; 32],
 
-    // Security parameters for π_fac verification
     pub ell: usize,
     pub epsilon: usize,
 
-    // Round 2 data (needed for collecting all parties' ek/params)
     pub round2_msgs: BTreeMap<PartyId, MsgRound2>,
 
-    // Outgoing
     pub outgoing: Vec<Outgoing<AuxInfoMsg>>,
 
-    // Received
     pub round3_msgs: BTreeMap<PartyId, MsgRound3>,
 }
 
@@ -433,25 +366,21 @@ impl Round3State {
         self.round3_msgs.len() == self.expected_count()
     }
 
-    /// Verify all π_mod and π_fac proofs, then produce the final `AuxInfo`.
     pub fn finish(self) -> tecdsa_core::Result<AuxInfo> {
         let mut rng = tecdsa_core::Csprng::new();
 
-        // Use own ring-Pedersen params as verifier for π_fac.
         let own_aux = pedersen_to_aux(&self.pedersen_params);
         let security_params = pi_fac::SecurityParams {
             l: self.ell,
             epsilon: self.epsilon,
         };
 
-        // 1. Verify all π_mod and π_fac proofs.
         for (&pid, round3) in &self.round3_msgs {
             let round2 = self
                 .round2_msgs
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing round2 from {pid}")))?;
 
-            // Verify π_mod (Paillier-Blum modulus proof).
             let peer_n_rug =
                 Integer::from_digits(&round2.paillier_ek.n().to_bytes_msf(), Order::Msf);
             if !round3.pi_mod.verify_modulus(&peer_n_rug, &mut rng) {
@@ -460,7 +389,6 @@ impl Round3State {
                 )));
             }
 
-            // Verify π_fac (no-small-factor proof).
             let pi_fac_tag = AuxInfoProofTag {
                 context: "pi_fac",
                 prover: pid.0,
@@ -483,7 +411,6 @@ impl Round3State {
             .map_err(|e| TecdsaError::InvalidProof(format!("party {pid} pi_fac: {e}")))?;
         }
 
-        // 2. Collect all parties' EncryptionKeys and PedersenModParams, ordered by party id.
         let n = self.parties.len();
         let mut paillier_eks = Vec::with_capacity(n);
         let mut pedersen_params_vec = Vec::with_capacity(n);
@@ -502,7 +429,6 @@ impl Round3State {
             }
         }
 
-        // party_index is 0-based in AuxInfo.
         let party_index = self.party_index - 1;
 
         Ok(AuxInfo {

@@ -1,32 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Shared hybrid MtA provider for the LN18 StateMachine signing path.
-//!
-//! This module provides a crate-private shared provider that collects
-//! multiplication inputs from independently-constructed StateMachines and
-//! computes additive shares when all parties have submitted. It wraps the
-//! existing Paillier (and optionally OT) MtA logic.
-//!
-//! The provider is shared via `Arc<Ln18MtaHybrid<C>>` across all party
-//! machines in a single signing session. Each machine calls
-//! `submit_and_try_get()` during its round transition.
-//!
-//! ## Distributed computation model
-//!
-//! To avoid timing asymmetry (where the last submitter pays all MtA cost),
-//! the computation is distributed across three phases:
-//!
-//! - **Phase 1 (submit):** Party i stores its inputs and creates its
-//!   `PaillierMtaState` (performing sender_encrypt). Returns `None`.
-//! - **Phase 2 (try_get, round1->round2):** Once all parties have submitted,
-//!   party i processes R1 messages from others and produces R2 messages.
-//!   Returns `None` if not all R2 messages are ready yet.
-//! - **Phase 3 (try_get, finish):** Once all parties have produced R2 messages,
-//!   party i collects R2 messages addressed to it and calls `finish()`.
-//!   Returns `Some(c_i)`.
-//!
-//! The existing `PendingMta` retry mechanism in `state_rounds.rs` and
-//! `machine.rs` handles the extra `None` returns naturally.
-
 use std::{collections::BTreeMap, sync::Mutex};
 
 use elliptic_curve::{
@@ -37,38 +8,19 @@ use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::{zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey};
 use tecdsa_protocol::PartyId;
 
-// ---------------------------------------------------------------------------
-// MtA operation label
-// ---------------------------------------------------------------------------
-
-/// Labels for distinct multiplication operations within a signing session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Ln18MtaOp {
-    /// tau = k * rho (offline MtA)
     Tau,
-    /// beta = rho * alpha (online MtA)
     Beta,
 }
 
-// ---------------------------------------------------------------------------
-// MtA backend selection
-// ---------------------------------------------------------------------------
-
-/// Which MtA backend to use for the hybrid provider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ln18MtaBackend {
-    /// Paillier-based MtA (default).
     Paillier,
-    /// OT-based MtA.
     #[cfg(feature = "mta-ot")]
     Ot,
 }
 
-// ---------------------------------------------------------------------------
-// Per-party local parameters needed for MtA
-// ---------------------------------------------------------------------------
-
-/// Paillier parameters for a single party, used by the hybrid provider.
 pub struct Ln18MtaLocalParams<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -79,32 +31,22 @@ where
     pub _marker: core::marker::PhantomData<C>,
 }
 
-// ---------------------------------------------------------------------------
-// Internal state: Paillier backend
-// ---------------------------------------------------------------------------
-
 type MtaSubmission<C> = (
     <C as elliptic_curve::CurveArithmetic>::Scalar,
     <C as elliptic_curve::CurveArithmetic>::Scalar,
     Ln18MtaLocalParams<C>,
 );
 
-/// Per-party phase tracking for the distributed Paillier MtA.
 enum PaillierPartyPhase<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// State created, R1 messages produced. Waiting for all parties to submit
-    /// so we can process R1 -> R2.
     WaitingForAllSubmissions {
         state: crate::mta::paillier::PaillierMtaState<C>,
     },
-    /// R2 messages produced. Waiting for all parties to produce R2 so we can
-    /// call finish().
     WaitingForAllR2 {
         state: crate::mta::paillier::PaillierMtaState<C>,
     },
-    /// finish() called, result cached.
     Done,
 }
 
@@ -112,36 +54,21 @@ struct PaillierOpState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Submitted (a_i, b_i, params) per party (kept for OT fallback / reference).
     submissions: BTreeMap<PartyId, MtaSubmission<C>>,
-    /// Per-party phase tracking.
     phases: BTreeMap<PartyId, PaillierPartyPhase<C>>,
-    /// Per-party R1 messages: r1_msgs[sender] = Vec<(dest, msg)>
     r1_msgs: BTreeMap<PartyId, Vec<(PartyId, crate::mta::paillier::MtaRound1Msg)>>,
-    /// Per-party R2 messages: r2_msgs[sender] = Vec<(dest, msg)>
     r2_msgs: BTreeMap<PartyId, Vec<(PartyId, crate::mta::paillier::MtaRound2Msg<C>)>>,
-    /// Cached final results.
     results: BTreeMap<PartyId, C::Scalar>,
 }
-
-// ---------------------------------------------------------------------------
-// Internal state: OT backend
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "mta-ot")]
 struct OtOpState<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// Submitted (a_i, b_i, params) per party.
     submissions: BTreeMap<PartyId, MtaSubmission<C>>,
-    /// Cached result once computed (batch all-at-once for OT).
     results: Option<BTreeMap<PartyId, C::Scalar>>,
 }
-
-// ---------------------------------------------------------------------------
-// Unified OpState enum
-// ---------------------------------------------------------------------------
 
 enum OpState<C: TecdsaCurve>
 where
@@ -159,14 +86,6 @@ where
     ops: BTreeMap<Ln18MtaOp, OpState<C>>,
 }
 
-// ---------------------------------------------------------------------------
-// Public provider
-// ---------------------------------------------------------------------------
-
-/// Shared hybrid MtA provider for LN18 signing StateMachines.
-///
-/// Thread-safe via internal `Mutex`. All party machines in a signing session
-/// share a single `Arc<Ln18MtaHybrid<C>>`.
 pub struct Ln18MtaHybrid<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
@@ -181,7 +100,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create a new hybrid MtA provider for the given party set.
     pub fn new(parties: Vec<PartyId>, backend: Ln18MtaBackend) -> Self {
         Self {
             parties,
@@ -192,19 +110,6 @@ where
         }
     }
 
-    /// Submit this party's multiplication inputs for the given operation and
-    /// try to get the result.
-    ///
-    /// Returns `Ok(Some(c_i))` if the party's MtA result is ready.
-    /// Returns `Ok(None)` if more calls are needed (not all parties have
-    /// submitted, or not all R2 messages are ready yet).
-    /// On subsequent calls after computation, returns the cached result.
-    ///
-    /// For the Paillier backend, this may need up to 3 calls per party:
-    /// 1. Submit -> create state + R1 messages -> None
-    /// 2. After all submitted -> process R1 -> produce R2 -> None (if others
-    ///    haven't produced R2 yet)
-    /// 3. After all R2 ready -> finish -> Some(c_i)
     pub(crate) fn submit_and_try_get(
         &self,
         op: Ln18MtaOp,
@@ -241,16 +146,13 @@ where
 
         match op_state {
             OpState::Paillier(pstate) => {
-                // Check cached result first.
                 if let Some(&c_i) = pstate.results.get(&my_id) {
                     return Ok(Some(c_i));
                 }
 
-                // Phase 1: Submit if not already submitted.
                 if let std::collections::btree_map::Entry::Vacant(entry) =
                     pstate.submissions.entry(my_id)
                 {
-                    // Create PaillierMtaState and produce R1 messages.
                     let (state, r1_msgs) = crate::mta::paillier::PaillierMtaState::<C>::new(
                         my_id,
                         self.parties.clone(),
@@ -270,25 +172,20 @@ where
                     return Ok(None);
                 }
 
-                // Not all submitted yet -- nothing more to do.
                 if pstate.submissions.len() < n {
                     return Ok(None);
                 }
 
-                // Phase 2: All submitted. If this party hasn't done R1->R2 yet,
-                // do it now.
                 if matches!(
                     pstate.phases.get(&my_id),
                     Some(PaillierPartyPhase::WaitingForAllSubmissions { .. })
                 ) {
-                    // Take the state out of the phase enum.
                     let old_phase = pstate.phases.remove(&my_id).unwrap();
                     let mut state = match old_phase {
                         PaillierPartyPhase::WaitingForAllSubmissions { state } => state,
                         _ => unreachable!(),
                     };
 
-                    // Collect R1 messages from other parties directed to my_id.
                     let mut msgs_for_me = Vec::new();
                     for (&sender, r1_list) in &pstate.r1_msgs {
                         if sender == my_id {
@@ -310,12 +207,10 @@ where
                         .insert(my_id, PaillierPartyPhase::WaitingForAllR2 { state });
                 }
 
-                // Phase 3: Check if all parties have produced R2 messages.
                 if pstate.r2_msgs.len() < n {
                     return Ok(None);
                 }
 
-                // All R2 ready. If this party hasn't finished yet, do it now.
                 if matches!(
                     pstate.phases.get(&my_id),
                     Some(PaillierPartyPhase::WaitingForAllR2 { .. })
@@ -326,7 +221,6 @@ where
                         _ => unreachable!(),
                     };
 
-                    // Collect R2 messages from other parties directed to my_id.
                     let mut msgs_for_me = Vec::new();
                     for (&sender, r2_list) in &pstate.r2_msgs {
                         if sender == my_id {
@@ -349,13 +243,10 @@ where
                     return Ok(Some(c_i));
                 }
 
-                // Already done (shouldn't reach here due to cached check above).
                 Ok(pstate.results.get(&my_id).copied())
             }
             #[cfg(feature = "mta-ot")]
             OpState::Ot(ostate) => {
-                // OT backend: keep batch computation (OT has 4 rounds with
-                // init/phase1 coupling that makes per-party splitting complex).
                 if let Some(ref results) = ostate.results {
                     let c_i = results.get(&my_id).ok_or_else(|| {
                         tecdsa_core::TecdsaError::Other(format!(
@@ -386,7 +277,6 @@ where
         }
     }
 
-    /// Run OT MtA over all submitted parties (behind feature gate).
     #[cfg(feature = "mta-ot")]
     fn run_ot_mta(
         &self,
@@ -411,7 +301,6 @@ where
             b_shares.push(*b);
         }
 
-        // Init
         let mut states = Vec::with_capacity(n);
         let mut all_init_msgs = Vec::with_capacity(n);
         for i in 0..n {
@@ -438,7 +327,6 @@ where
                 .map_err(|e| tecdsa_core::TecdsaError::Other(format!("OT init: {e}")))?;
         }
 
-        // Round 1
         let mut all_r1_msgs = Vec::with_capacity(n);
         for i in 0..n {
             let r1 = states[i]
@@ -447,7 +335,6 @@ where
             all_r1_msgs.push(r1);
         }
 
-        // Round 2
         let mut all_r2_msgs = Vec::with_capacity(n);
         for i in 0..n {
             let mut msgs_for_i = Vec::new();
@@ -467,7 +354,6 @@ where
             all_r2_msgs.push(r2);
         }
 
-        // Finish
         let mut results = BTreeMap::new();
         for i in 0..n {
             let mut msgs_for_i = Vec::new();
@@ -525,14 +411,6 @@ mod tests {
         }
     }
 
-    /// Test the distributed Paillier MtA with two parties.
-    ///
-    /// Exercises the multi-phase flow:
-    /// 1. P0 submits -> None (not all submitted)
-    /// 2. P1 submits -> None (all submitted but P1 needs R1->R2 processing)
-    /// 3. P1 try_get -> None or Some (depending on P0's R2 progress)
-    /// 4. P0 try_get -> processes R1->R2 for P0
-    /// 5. Both parties eventually get their results
     #[test]
     #[cfg(feature = "secp256k1")]
     fn paillier_mta_two_parties() {
@@ -548,7 +426,6 @@ mod tests {
         let rho_0 = <C as TecdsaCurve>::random_scalar(&mut rng);
         let rho_1 = <C as TecdsaCurve>::random_scalar(&mut rng);
 
-        // Generate Paillier keys
         let dk0 = test_paillier_dk(&mut rng);
         let dk1 = test_paillier_dk(&mut rng);
         let mut eks = BTreeMap::new();
@@ -559,7 +436,6 @@ mod tests {
         ntilde_map.insert(PartyId(0), test_ntilde(&mut rng));
         ntilde_map.insert(PartyId(1), test_ntilde(&mut rng));
 
-        // Party 0 submits -- should return None (not all submitted).
         let params0 = Ln18MtaLocalParams::<C> {
             paillier_dk: dk0.clone(),
             paillier_eks: eks.clone(),
@@ -571,7 +447,6 @@ mod tests {
             .expect("submit should succeed");
         assert!(r0.is_none(), "not all parties submitted yet");
 
-        // Party 1 submits -- should return None (submit phase only).
         let params1 = Ln18MtaLocalParams::<C> {
             paillier_dk: dk1.clone(),
             paillier_eks: eks.clone(),
@@ -581,13 +456,7 @@ mod tests {
         let r1 = mta
             .submit_and_try_get(Ln18MtaOp::Tau, PartyId(1), params1, k_1, rho_1, &mut rng)
             .expect("submit should succeed");
-        // With distributed model, submit phase returns None; result comes on
-        // subsequent try_get calls.
-        // It could be None or Some depending on whether the internal phases
-        // complete in one call.
 
-        // Now repeatedly call try_get for each party until both get results.
-        // We use dummy params since the party is already submitted.
         let make_dummy_params = |dk: &DecryptionKey| Ln18MtaLocalParams::<C> {
             paillier_dk: dk.clone(),
             paillier_eks: eks.clone(),
@@ -598,8 +467,6 @@ mod tests {
         let mut result_0 = None;
         let mut result_1 = r1;
 
-        // Drive both parties through the phases. In the worst case we need
-        // 3 calls per party (submit + R1->R2 + finish).
         for _ in 0..5 {
             if result_0.is_none() {
                 result_0 = mta
@@ -633,14 +500,11 @@ mod tests {
         assert!(result_0.is_some(), "party 0 should have result");
         assert!(result_1.is_some(), "party 1 should have result");
 
-        // Verify: share_0 + share_1 == (k_0 + k_1) * (rho_0 + rho_1)
         let tau = result_0.unwrap() + result_1.unwrap();
         let expected = (k_0 + k_1) * (rho_0 + rho_1);
         assert_eq!(tau, expected, "sum of MtA shares must equal k * rho");
     }
 
-    /// Test that the distributed model works correctly with 3 parties
-    /// and produces symmetric per-party computation.
     #[test]
     #[cfg(feature = "secp256k1")]
     fn paillier_mta_three_parties_distributed() {
@@ -658,7 +522,6 @@ mod tests {
             .map(|_| <C as TecdsaCurve>::random_scalar(&mut rng))
             .collect();
 
-        // Generate Paillier keys
         let dks: Vec<_> = (0..3).map(|_| test_paillier_dk(&mut rng)).collect();
         let mut eks = BTreeMap::new();
         let mut ntilde_map = BTreeMap::new();
@@ -667,7 +530,6 @@ mod tests {
             ntilde_map.insert(*pid, test_ntilde(&mut rng));
         }
 
-        // All three parties submit.
         for i in 0..3 {
             let params = Ln18MtaLocalParams::<C> {
                 paillier_dk: dks[i].clone(),
@@ -681,7 +543,6 @@ mod tests {
             assert!(r.is_none(), "submit phase should return None");
         }
 
-        // Drive all parties to completion.
         let mut results: [Option<<C as elliptic_curve::CurveArithmetic>::Scalar>; 3] =
             [None, None, None];
 
@@ -715,7 +576,6 @@ mod tests {
             assert!(r.is_some(), "party {i} should have result");
         }
 
-        // Verify: sum(c_i) == (sum a_i) * (sum b_i)
         let sum_c: <C as elliptic_curve::CurveArithmetic>::Scalar =
             results.iter().map(|r| r.unwrap()).fold(
                 <C as elliptic_curve::CurveArithmetic>::Scalar::ZERO,

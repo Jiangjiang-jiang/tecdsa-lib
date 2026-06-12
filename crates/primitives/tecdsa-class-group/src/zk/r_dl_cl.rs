@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,17 +6,6 @@
     clippy::doc_markdown
 )]
 
-//! `R_dl_cl` -- CL Ciphertext Scalar Multiply + EC Discrete Log.
-//!
-//! From JTX25.  Proves knowledge of `x` such that:
-//!   - `X = x * G`  (EC discrete log on secp256k1)
-//!   - `c_{11} = c_{01}^x`  (CL group exponentiation, first ciphertext component)
-//!   - `c_{12} = c_{02}^x`  (CL group exponentiation, second ciphertext component)
-//!
-//! In other words, the output ciphertext `c_1 = (c_{11}, c_{12})` is the
-//! deterministic scalar multiplication of input ciphertext `c_0 = (c_{01}, c_{02})`
-//! by the same secret `x` that is committed on the elliptic curve as `X = x * G`.
-
 use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
 use tecdsa_curve::conv;
@@ -25,17 +13,11 @@ use tecdsa_curve::conv;
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
 
-/// CL ciphertext scalar multiply + EC discrete log proof (R\_dl-cl).
 pub struct RDlClProof {
-    /// Commitment t1 = c_{01}^a (CL group).
     pub t1: Qfi,
-    /// Commitment t2 = c_{02}^a (CL group).
     pub t2: Qfi,
-    /// Commitment T = (a mod q) * G (compressed EC point, 33 bytes).
     pub t_ec_bytes: Vec<u8>,
-    /// Response z = a + e * x (unbounded integer, big-endian bytes).
     pub z: Vec<u8>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
 }
 
@@ -71,7 +53,6 @@ fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
 }
 
 impl RDlClProof {
-    /// Generates an R\_dl-cl proof.
     pub fn prove(
         setup: &mut ClSetup,
         x_point: &ProjectivePoint,
@@ -82,17 +63,14 @@ impl RDlClProof {
         let (c01, c02) = setup.ct_components(ct_in)?;
         let (c11, c12) = setup.ct_components(ct_out)?;
 
-        // 1. Sample random commitment value a from [0, sk_bound).
         let a = sample_random(setup)?;
 
-        // 2. Compute commitments.
         let t1 = setup.exp_bytes(&c01, &a)?;
         let t2 = setup.exp_bytes(&c02, &a)?;
         let a_scalar = bytes_to_scalar(&a)?;
         let t_ec = ProjectivePoint::GENERATOR * a_scalar;
         let t_ec_bytes = point_to_bytes(&t_ec);
 
-        // 3. Fiat-Shamir challenge.
         let x_pt_bytes = point_to_bytes(x_point);
 
         let e = challenge_from_qfi(
@@ -102,7 +80,6 @@ impl RDlClProof {
             &[&x_pt_bytes, &t_ec_bytes],
         )?;
 
-        // 4. Response: z = a + e * x (unbounded).
         let z = response_unbounded(&a, &e, x_bytes)?;
 
         Ok(Self {
@@ -114,7 +91,6 @@ impl RDlClProof {
         })
     }
 
-    /// Verifies the R\_dl-cl proof.
     pub fn verify(
         &self,
         setup: &ClSetup,
@@ -127,7 +103,6 @@ impl RDlClProof {
 
         let t_ec = decode_point(&self.t_ec_bytes)?;
 
-        // Recompute Fiat-Shamir challenge.
         let x_pt_bytes = point_to_bytes(x_point);
 
         let e_check = challenge_from_qfi(
@@ -140,9 +115,6 @@ impl RDlClProof {
             return Ok(false);
         }
 
-        // Check 1: c_{01}^z == t1 * c_{11}^e ⟺ c_{01}^z * c_{11}^{-e} == t1.
-        // Both bases vary per proof, so one shared-squaring multi-exp beats two
-        // separate exps.
         let lhs1 = setup.multiexp_signed_bytes(
             &[&c01, &c11],
             &[(false, self.z.clone()), (true, self.e.clone())],
@@ -151,7 +123,6 @@ impl RDlClProof {
             return Ok(false);
         }
 
-        // Check 2: c_{02}^z == t2 * c_{12}^e ⟺ c_{02}^z * c_{12}^{-e} == t2.
         let lhs2 = setup.multiexp_signed_bytes(
             &[&c02, &c12],
             &[(false, self.z.clone()), (true, self.e.clone())],
@@ -160,7 +131,6 @@ impl RDlClProof {
             return Ok(false);
         }
 
-        // Check 3: (z mod q) * G == T + e * X
         let z_scalar = bytes_to_scalar(&self.z)?;
         let lhs3 = ProjectivePoint::GENERATOR * z_scalar;
         let e_scalar = bytes_to_scalar(&self.e)?;

@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Round state structs and transition logic for LN18 Feldman VSS DKG.
-//!
-//! 3 rounds:
-//! 1. Broadcast hash commitment over (rid, Feldman commitments, Schnorr nonce).
-//! 2. Decommit (broadcast) + P2P VSS shares.
-//! 3. Verify + broadcast Schnorr proof of combined share.
-//!
-//! Output: `Ln18KeyShare` with Shamir secret share.
-
 use std::collections::BTreeMap;
 
 use elliptic_curve::{
@@ -26,10 +16,6 @@ use zeroize::Zeroize;
 use super::msg::{Ln18KeygenMsg, MsgRound1, MsgRound2Broad, MsgRound2Uni, MsgRound3};
 use crate::key_share::Ln18KeyShare;
 
-// ---------------------------------------------------------------------------
-// Round enum
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 pub(crate) enum KeygenRound<C: TecdsaCurve>
 where
@@ -39,26 +25,19 @@ where
     Round2(Round2State<C>),
     Round3(Round3State<C>),
     Done(Ln18KeyShare<C>),
-    /// Sentinel so we can `std::mem::take` without leaving an invalid state.
     #[default]
     Gone,
 }
-
-// ---------------------------------------------------------------------------
-// Round 1 state
-// ---------------------------------------------------------------------------
 
 pub(crate) struct Round1State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    // Configuration
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
 
-    // Own secrets generated at construction
     pub vss_shares: Vec<tecdsa_vss::shamir::Share<C>>,
     pub feldman_commitments: Vec<C::ProjectivePoint>,
     pub rid: [u8; 32],
@@ -66,10 +45,8 @@ where
     pub schnorr_ephemeral: C::Scalar,
     pub schnorr_commitment: C::ProjectivePoint,
 
-    // Outgoing messages queued at construction
     pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
 
-    // Received messages
     pub round1_msgs: BTreeMap<PartyId, MsgRound1>,
 }
 
@@ -78,29 +55,23 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    /// Create the initial Round1 state: generate secrets and queue Round1 broadcast.
     pub fn new(config: &SessionConfig, rng: &mut impl CryptoRngCore) -> Self {
         let my_id = config.local_party.id;
         let parties = config.parties.clone();
-        let threshold = config.reconstruct_threshold(); // VSS reconstruction threshold
+        let threshold = config.reconstruct_threshold();
         let total = config.local_party.total;
 
-        // 1. Generate random secret u_i
         let secret_u = C::random_scalar(rng);
 
-        // 2. Feldman VSS split
         let (vss_shares, feldman_commitments) =
             feldman::split::<C>(&secret_u, threshold, total, rng);
 
-        // 3. Sample rid
         let mut rid = [0u8; 32];
         rng.fill_bytes(&mut rid);
 
-        // 4. Sample Schnorr ephemeral r_i, compute R_i = r_i * G
         let schnorr_ephemeral = C::random_scalar(rng);
         let schnorr_commitment = C::generator() * schnorr_ephemeral;
 
-        // 5. Compute hash commitment over (rid || feldman_commitments || schnorr_commitment).
         let commit_msg = {
             let mut data = Vec::new();
             data.extend_from_slice(&rid);
@@ -112,7 +83,6 @@ where
         };
         let (hash_commitment, decommit_nonce) = HashCommitment::commit(&commit_msg, rng);
 
-        // 6. Queue broadcast of MsgRound1
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Ln18KeygenMsg::Round1(MsgRound1 {
@@ -136,12 +106,10 @@ where
         }
     }
 
-    /// Number of messages we expect to receive (from all other parties).
     fn expected_count(&self) -> usize {
         self.parties.len() - 1
     }
 
-    /// Handle a Round1 message from another party.
     pub fn handle(&mut self, from: PartyId, msg: MsgRound1) -> tecdsa_core::Result<()> {
         if from == self.my_id {
             return Err(TecdsaError::Other("received message from self".into()));
@@ -156,16 +124,13 @@ where
         Ok(())
     }
 
-    /// Check if all expected Round1 messages have been received.
     pub fn is_ready(&self) -> bool {
         self.round1_msgs.len() == self.expected_count()
     }
 
-    /// Transition to Round2: queue decommitment broadcast + VSS shares (p2p).
     pub fn advance(self) -> Round2State<C> {
         let mut outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>> = Vec::new();
 
-        // Broadcast decommitment data
         outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: Ln18KeygenMsg::Round2Broad(MsgRound2Broad {
@@ -176,13 +141,10 @@ where
             }),
         });
 
-        // Send VSS shares to each other party
         for &pid in &self.parties {
             if pid == self.my_id {
                 continue;
             }
-            // VSS shares are 1-based: shares[j].index = j+1.
-            // PartyId is 1-based. We need the share whose index == pid.0.
             let share = self
                 .vss_shares
                 .iter()
@@ -213,33 +175,24 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 2 state
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round2State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    // Config
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
 
-    // Own secrets
     pub own_vss_shares: Vec<tecdsa_vss::shamir::Share<C>>,
     pub feldman_commitments: Vec<C::ProjectivePoint>,
     pub rid: [u8; 32],
     pub schnorr_ephemeral: C::Scalar,
 
-    // Round 1 data
     pub round1_commitments: BTreeMap<PartyId, MsgRound1>,
 
-    // Outgoing
     pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
 
-    // Received
     pub round2_broad: BTreeMap<PartyId, MsgRound2Broad<C>>,
     pub round2_uni: BTreeMap<PartyId, MsgRound2Uni<C>>,
 }
@@ -290,9 +243,7 @@ where
             && self.round2_uni.len() == self.expected_count()
     }
 
-    /// Verify all hash commitments and Feldman share consistency.
     fn verify_round2_data(&self) -> tecdsa_core::Result<()> {
-        // Verify each party's hash commitment against their decommitted data.
         for (&pid, broad) in &self.round2_broad {
             let round1 = self
                 .round1_commitments
@@ -316,7 +267,6 @@ where
             }
         }
 
-        // Verify Feldman consistency for each received VSS share.
         let my_index = self.my_id.0;
         for (&pid, uni) in &self.round2_uni {
             let broad = self
@@ -334,21 +284,18 @@ where
         Ok(())
     }
 
-    /// Compute public verification shares `X_j` for each party j.
     fn compute_public_shares(&self) -> Vec<C::ProjectivePoint> {
         let mut public_shares = Vec::with_capacity(self.total as usize);
         for j in 1..=self.total {
             let x = C::Scalar::from(u64::from(j));
             let mut point = C::ProjectivePoint::identity();
 
-            // Own polynomial evaluation at j
             let mut x_pow = C::Scalar::ONE;
             for com in &self.feldman_commitments {
                 point += *com * x_pow;
                 x_pow *= x;
             }
 
-            // Add all other parties' polynomial evaluations at j
             for broad in self.round2_broad.values() {
                 let mut x_pow = C::Scalar::ONE;
                 for com in &broad.feldman_commitments {
@@ -362,14 +309,11 @@ where
         public_shares
     }
 
-    /// Transition to Round3: verify commitments + Feldman consistency, compute
-    /// secret share, generate Schnorr proof.
     pub fn advance(mut self) -> tecdsa_core::Result<Round3State<C>> {
         self.verify_round2_data()?;
 
         let my_index = self.my_id.0;
 
-        // Compute combined rid = XOR(all rids).
         let mut combined_rid = self.rid;
         for broad in self.round2_broad.values() {
             for (i, b) in broad.rid.iter().enumerate() {
@@ -377,7 +321,6 @@ where
             }
         }
 
-        // Compute secret share x_i = sum of all received vss_shares + own_share.
         let own_share_value = self
             .own_vss_shares
             .iter()
@@ -389,7 +332,6 @@ where
             x_i += uni.vss_share;
         }
 
-        // Compute public key Q = sum of all feldman_commitments[0] (constant terms).
         let mut public_key = self.feldman_commitments[0];
         for broad in self.round2_broad.values() {
             public_key += broad.feldman_commitments[0];
@@ -397,7 +339,6 @@ where
 
         let public_shares = self.compute_public_shares();
 
-        // Generate Schnorr proof of x_i with combined rid as aux data.
         let own_public_share = public_shares[(my_index - 1) as usize];
         let schnorr_proof = DlogProof::<C>::prove(
             &x_i,
@@ -411,7 +352,6 @@ where
             msg: Ln18KeygenMsg::Round3(MsgRound3 { schnorr_proof }),
         }];
 
-        // Zeroize secrets not carried to the next round
         self.schnorr_ephemeral.zeroize();
         for share in &mut self.own_vss_shares {
             share.value.zeroize();
@@ -432,30 +372,22 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Round 3 state
-// ---------------------------------------------------------------------------
-
 pub(crate) struct Round3State<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    // Config
     pub my_id: PartyId,
     pub parties: Vec<PartyId>,
     pub threshold: u16,
     pub total: u16,
 
-    // Computed values
     pub secret_share: C::Scalar,
     pub public_key: C::ProjectivePoint,
     pub public_shares: Vec<C::ProjectivePoint>,
     pub combined_rid: [u8; 32],
 
-    // Outgoing
     pub outgoing: Vec<Outgoing<Ln18KeygenMsg<C>>>,
 
-    // Received
     pub round3_msgs: BTreeMap<PartyId, MsgRound3<C>>,
 }
 
@@ -486,9 +418,7 @@ where
         self.round3_msgs.len() == self.expected_count()
     }
 
-    /// Verify all Schnorr proofs and produce the final `Ln18KeyShare`.
     pub fn finish(self) -> tecdsa_core::Result<Ln18KeyShare<C>> {
-        // Verify every other party's Schnorr proof.
         for (&pid, msg) in &self.round3_msgs {
             let party_public_share = self.public_shares[(pid.0 - 1) as usize];
             if !msg
@@ -501,7 +431,6 @@ where
             }
         }
 
-        // Party index is 1-based (matches PartyId).
         let party_index = self.my_id.0;
 
         Ok(Ln18KeyShare {

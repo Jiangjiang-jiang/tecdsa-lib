@@ -1,19 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! WMY23 keygen round functions (DRG-based, paper-compliant).
-//!
-//! Implements TKeygen from WMY23 (Wang, Mei, Yu. "Real Threshold ECDSA."
-//! NDSS 2023, Figure 3) using the DRG primitive (Figure 2).
-//!
-//! ## Protocol Rounds
-//!
-//! 1. **Commit:** CL keygen + R_Key proof + DRG.Gen (Pedersen VSS + CL
-//!    encrypt + R_Enc-PC). Broadcast hash commitment.
-//! 2. **Decommit:** Reveal all Phase 1+2a data. P2P Pedersen VSS shares.
-//!    Receivers verify R_Key, R_Enc-PC, and Pedersen VSS (GenVf).
-//! 3. **Combine:** DRG.Comb + RevealExp. Broadcast combined share proof.
-//!    Receivers verify CombVf + ExpVf.
-//! 4. **Finalize:** Compute public key via Lagrange interpolation on X_j.
-
 #![allow(non_snake_case)]
 
 use elliptic_curve::{group::GroupEncoding, ops::Reduce, CurveArithmetic, PrimeField};
@@ -27,10 +11,6 @@ use tecdsa_class_group::{
 };
 
 use crate::key_share::Wmy23KeyShare;
-
-// ---------------------------------------------------------------------------
-// Serialization helpers
-// ---------------------------------------------------------------------------
 
 fn write_var(buf: &mut Vec<u8>, data: &[u8]) {
     buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
@@ -70,10 +50,6 @@ fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, 
     Option::from(k256::ProjectivePoint::from_bytes(&repr))
         .ok_or_else(|| format!("invalid EC point: {label}"))
 }
-
-// ---------------------------------------------------------------------------
-// Proof serialization
-// ---------------------------------------------------------------------------
 
 fn serialize_r_key_proof(p: &RKeyProof) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -138,18 +114,6 @@ fn deserialize_r_enc_pc_proof(data: &[u8]) -> Result<REncPcProof, String> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// R_DL-PC: proves same scalar in both EC DLog and EC Pedersen commitment.
-//
-// R_DL-PC = {((PC, Q), (m, r)) : Q = G*m  AND  PC = G*m + H*r}
-//
-// Sigma protocol (Fiat-Shamir):
-//   commit:  R_Q = G*a1,  R_PC = G*a1 + H*a2
-//   challenge: e = H(PC || Q || R_Q || R_PC)
-//   response: z1 = a1 + e*m,  z2 = a2 + e*r
-// Verify:   G*z1 == R_Q + Q*e,  G*z1 + H*z2 == R_PC + PC*e
-// ---------------------------------------------------------------------------
-
 #[derive(Clone)]
 pub struct RDlPcProof {
     pub r_q_bytes: Vec<u8>,
@@ -203,22 +167,15 @@ impl RDlPcProof {
 
         let e = rdlpc_challenge(pc, q_point, &self.r_q_bytes, &self.r_pc_bytes);
 
-        // Check 1: G * z1 == R_Q + Q * e
         if g * self.z1 != r_q + *q_point * e {
             return Ok(false);
         }
-        // Check 2: G * z1 + H * z2 == R_PC + PC * e
         if g * self.z1 + h * self.z2 != r_pc + *pc * e {
             return Ok(false);
         }
         Ok(true)
     }
 
-    /// Like [`prove`](Self::prove) but proves `Q = g0^m` to an arbitrary base
-    /// `g0` (instead of the curve generator), while `PC = g^m h^r` still uses
-    /// `(g, h)`. This is WMY23's `R_DL-PC` (Committed Exponent, Fig. 12) with
-    /// the base parameter `g0`, used to bind `D_i = Gamma^{hat_k_i}` to the
-    /// committed nonce share in the pre-signing share-revelation phase.
     pub fn prove_with_base(
         g0: &k256::ProjectivePoint,
         m: &k256::Scalar,
@@ -251,8 +208,6 @@ impl RDlPcProof {
         }
     }
 
-    /// Verify a [`prove_with_base`](Self::prove_with_base) proof: `Q = g0^m`
-    /// (base `g0`) and `PC = g^m h^r` (bases `g, h`) for the same `m`.
     pub fn verify_with_base(
         &self,
         g0: &k256::ProjectivePoint,
@@ -267,11 +222,9 @@ impl RDlPcProof {
 
         let e = rdlpc_challenge_base(g0, pc, q_point, &self.r_q_bytes, &self.r_pc_bytes);
 
-        // Check 1: g0 * z1 == R_Q + Q * e
         if *g0 * self.z1 != r_q + *q_point * e {
             return Ok(false);
         }
-        // Check 2: G * z1 + H * z2 == R_PC + PC * e
         if g * self.z1 + h * self.z2 != r_pc + *pc * e {
             return Ok(false);
         }
@@ -297,8 +250,6 @@ fn rdlpc_challenge(
     k256::Scalar::reduce(&k256::U256::from_be_slice(&buf))
 }
 
-/// Challenge for [`RDlPcProof::prove_with_base`], binding the explicit base
-/// `g0` (and a distinct domain tag) so proofs are non-malleable across bases.
 fn rdlpc_challenge_base(
     g0: &k256::ProjectivePoint,
     pc: &k256::ProjectivePoint,
@@ -357,17 +308,11 @@ fn deserialize_r_dl_pc_proof(data: &[u8]) -> Result<RDlPcProof, String> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Round 1: CL keygen + R_Key + DRG.Gen + commit
-// ---------------------------------------------------------------------------
-
-/// Per-party state after Round 1.
 pub struct KeygenR1State {
     pub index: usize,
     pub n: u16,
     pub threshold: u16,
     pub cl_sk: Option<ClSecretKey>,
-    /// This party's CL public key element, serialised via `Qfi::to_bytes`.
     pub cl_pk_bytes: Vec<u8>,
     pub sk_bytes: Vec<u8>,
     pub drg_gen: DrgGenOutput,
@@ -393,13 +338,11 @@ impl Drop for KeygenR1State {
     }
 }
 
-/// Round 1 broadcast (commitment hash).
 #[derive(Clone, Debug)]
 pub struct KeygenR1Bcast {
     pub commitment: [u8; 32],
 }
 
-/// Build the commitment message from all R2 broadcast content.
 fn commitment_message(
     pedersen_commitments: &[Vec<u8>],
     cl_pk_bytes: &[u8],
@@ -421,7 +364,6 @@ fn commitment_message(
     msg
 }
 
-/// Round 1: CL keygen + R_Key proof + DRG.Gen + commitment.
 #[allow(clippy::too_many_arguments)]
 pub fn keygen_round1(
     setup: &mut ClSetup,
@@ -438,16 +380,13 @@ pub fn keygen_round1(
         return Err(format!("invalid threshold {threshold} for n={n}").into());
     }
 
-    // Phase 1: R_Key proof over the caller-provided per-party CL keypair.
     let sk_bytes = setup.sk_to_bytes(&cl_sk)?;
     let r_key_proof = RKeyProof::prove(setup, &cl_pk, &sk_bytes)?;
 
     let cl_pk_bytes = cl_pk.elt().to_bytes();
 
-    // Phase 2a: DRG.Gen (Pedersen VSS + CL encrypt + R_Enc-PC)
     let drg_gen = drg_gen(setup, &cl_pk, threshold, n, rng)?;
 
-    // Serialize components for commitment
     let pc_com_bytes: Vec<Vec<u8>> = drg_gen.commitments.iter().map(point_to_bytes).collect();
     let r_key_data = serialize_r_key_proof(&r_key_proof);
     let ct_data = serialize_ciphertext(setup, &drg_gen.ciphertext)?;
@@ -488,16 +427,10 @@ pub fn keygen_round1(
     Ok((state, KeygenR1Bcast { commitment }))
 }
 
-// ---------------------------------------------------------------------------
-// Round 2: decommit + P2P shares
-// ---------------------------------------------------------------------------
-
-/// Round 2 broadcast data (decommitment).
 #[derive(Clone, Debug)]
 pub struct KeygenR2Bcast {
     pub nonce: [u8; 32],
     pub pedersen_commitments: Vec<Vec<u8>>,
-    /// CL public key element, serialised via `Qfi::to_bytes`.
     pub cl_pk_bytes: Vec<u8>,
     pub r_key_data: Vec<u8>,
     pub ct_data: Vec<u8>,
@@ -505,7 +438,6 @@ pub struct KeygenR2Bcast {
     pub pc_bytes: Vec<u8>,
 }
 
-/// Create the Round 2 broadcast (decommit).
 #[must_use]
 pub fn keygen_round2_bcast(state: &KeygenR1State, setup: &ClSetup) -> KeygenR2Bcast {
     let pedersen_commitments = state
@@ -529,7 +461,6 @@ pub fn keygen_round2_bcast(state: &KeygenR1State, setup: &ClSetup) -> KeygenR2Bc
     }
 }
 
-/// Return the Pedersen VSS share for a specific recipient (0-based index).
 #[must_use]
 pub fn keygen_round2_share(
     state: &KeygenR1State,
@@ -539,7 +470,6 @@ pub fn keygen_round2_share(
     (share.value, share.randomness)
 }
 
-/// Serialize a [`KeygenR2Bcast`] to bytes.
 pub fn serialize_r2(r2: &KeygenR2Bcast) -> Vec<u8> {
     let msg_data = commitment_message(
         &r2.pedersen_commitments,
@@ -555,7 +485,6 @@ pub fn serialize_r2(r2: &KeygenR2Bcast) -> Vec<u8> {
     buf
 }
 
-/// Deserialize a [`KeygenR2Bcast`] from bytes.
 pub fn deserialize_r2(data: &[u8]) -> Result<KeygenR2Bcast, String> {
     if data.len() < 32 {
         return Err("R2 data too short".into());
@@ -598,22 +527,18 @@ pub fn deserialize_r2(data: &[u8]) -> Result<KeygenR2Bcast, String> {
     })
 }
 
-/// Verified data extracted from an R2 broadcast.
 #[derive(Clone)]
 pub struct VerifiedR2 {
     pub commitments: Vec<k256::ProjectivePoint>,
-    /// CL public key element, serialised via `Qfi::to_bytes`.
     pub cl_pk_bytes: Vec<u8>,
 }
 
-/// Verify an R2 broadcast: commitment, R_Key, R_Enc-PC, Pedersen VSS.
 pub fn verify_r2(
     setup: &ClSetup,
     r1_commitment: &[u8; 32],
     r2: &KeygenR2Bcast,
     my_share: &PedersenVssShare,
 ) -> Result<VerifiedR2, String> {
-    // 1. Verify commitment opening
     let msg = commitment_message(
         &r2.pedersen_commitments,
         &r2.cl_pk_bytes,
@@ -631,7 +556,6 @@ pub fn verify_r2(
         return Err("commitment verification failed".into());
     }
 
-    // 2. Deserialize Pedersen commitments
     let commitments: Vec<k256::ProjectivePoint> = r2
         .pedersen_commitments
         .iter()
@@ -639,10 +563,8 @@ pub fn verify_r2(
         .map(|(i, b)| point_from_bytes(b, &format!("commitment[{i}]")))
         .collect::<Result<_, _>>()?;
 
-    // 3. Reconstruct CL public key
     let cl_pk = reconstruct_cl_pk(setup, &r2.cl_pk_bytes)?;
 
-    // 4. Verify R_Key proof
     let r_key_proof = deserialize_r_key_proof(&r2.r_key_data)?;
     if !r_key_proof
         .verify(setup, &cl_pk)
@@ -651,7 +573,6 @@ pub fn verify_r2(
         return Err("R_Key proof verification failed".into());
     }
 
-    // 5. Verify R_Enc-PC + Pedersen VSS (GenVf)
     let mut ct_pos = 0;
     let ciphertext = deserialize_ciphertext(setup, &r2.ct_data, &mut ct_pos)?;
     let enc_pc_proof = deserialize_r_enc_pc_proof(&r2.enc_pc_data)?;
@@ -676,17 +597,11 @@ pub fn verify_r2(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Round 3: DRG.Comb + RevealExp
-// ---------------------------------------------------------------------------
-
-/// State after Round 3 computation (combine phase).
 pub struct KeygenR3State {
     pub combined_share: k256::Scalar,
     pub x_point: k256::ProjectivePoint,
 }
 
-/// Round 3 broadcast data (combine + reveal).
 #[derive(Clone, Debug)]
 pub struct KeygenR3Bcast {
     pub combined_pc_bytes: Vec<u8>,
@@ -696,7 +611,6 @@ pub struct KeygenR3Bcast {
     pub r_dl_pc_data: Vec<u8>,
 }
 
-/// Run DRG.Comb + RevealExp with explicit shares and commitments.
 pub fn keygen_round3_with_shares(
     setup: &mut ClSetup,
     cl_pk_bytes: &[u8],
@@ -706,7 +620,6 @@ pub fn keygen_round3_with_shares(
 ) -> Result<(KeygenR3State, KeygenR3Bcast), Box<dyn std::error::Error>> {
     let cl_pk = reconstruct_cl_pk(setup, cl_pk_bytes)?;
 
-    // DRG.Comb: combine shares + CL encrypt + R_Enc-PC proof
     let comb = drg_comb(
         setup,
         &cl_pk,
@@ -715,7 +628,6 @@ pub fn keygen_round3_with_shares(
         all_commitments,
     )?;
 
-    // RevealExp: X_i = G * x_i, prove R_DL-PC binding X_i to PC_xi
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
     let x_point = g * comb.combined_share;
     let mut rng = rand::thread_rng();
@@ -727,7 +639,6 @@ pub fn keygen_round3_with_shares(
         &mut rng,
     );
 
-    // Serialize for broadcast
     let combined_ct_data = serialize_ciphertext(setup, &comb.ciphertext)?;
     let combined_enc_pc_data = serialize_r_enc_pc_proof(&comb.proof);
 
@@ -747,7 +658,6 @@ pub fn keygen_round3_with_shares(
     Ok((r3_state, r3_bcast))
 }
 
-/// Serialize a [`KeygenR3Bcast`] to bytes.
 pub fn serialize_r3(r3: &KeygenR3Bcast) -> Vec<u8> {
     let mut buf = Vec::new();
     write_var(&mut buf, &r3.combined_pc_bytes);
@@ -758,7 +668,6 @@ pub fn serialize_r3(r3: &KeygenR3Bcast) -> Vec<u8> {
     buf
 }
 
-/// Deserialize a [`KeygenR3Bcast`] from bytes.
 pub fn deserialize_r3(data: &[u8]) -> Result<KeygenR3Bcast, String> {
     let mut pos = 0;
     let result = KeygenR3Bcast {
@@ -774,7 +683,6 @@ pub fn deserialize_r3(data: &[u8]) -> Result<KeygenR3Bcast, String> {
     Ok(result)
 }
 
-/// Verify an R3 broadcast: CombVf + ExpVf.
 pub fn verify_r3(
     setup: &ClSetup,
     sender_cl_pk_bytes: &[u8],
@@ -782,7 +690,6 @@ pub fn verify_r3(
     all_commitments: &[(u16, Vec<k256::ProjectivePoint>)],
     r3: &KeygenR3Bcast,
 ) -> Result<k256::ProjectivePoint, String> {
-    // 1. Recompute expected combined Pedersen commitment at sender's index
     let x = k256::Scalar::from(u64::from(sender_index_1based));
     let mut expected_pc = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
     for (_sender, coms) in all_commitments {
@@ -793,13 +700,11 @@ pub fn verify_r3(
         }
     }
 
-    // 2. Check broadcast PC matches expected
     let broadcast_pc = point_from_bytes(&r3.combined_pc_bytes, "combined_pc")?;
     if broadcast_pc != expected_pc {
         return Err("CombVf: combined Pedersen commitment mismatch".into());
     }
 
-    // 3. Verify combined R_Enc-PC proof
     let cl_pk = reconstruct_cl_pk(setup, sender_cl_pk_bytes)?;
     let mut ct_pos = 0;
     let combined_ct = deserialize_ciphertext(setup, &r3.combined_ct_data, &mut ct_pos)?;
@@ -811,7 +716,6 @@ pub fn verify_r3(
         return Err("CombVf: R_Enc-PC proof verification failed".into());
     }
 
-    // 4. Verify R_DL-PC proof (ExpVf): binds X_i to PC_xi
     let x_point = point_from_bytes(&r3.x_point_bytes, "X_i")?;
     let r_dl_pc = deserialize_r_dl_pc_proof(&r3.r_dl_pc_data)?;
     let exp_ok = r_dl_pc
@@ -824,11 +728,6 @@ pub fn verify_r3(
     Ok(x_point)
 }
 
-// ---------------------------------------------------------------------------
-// Finalize: compute key share
-// ---------------------------------------------------------------------------
-
-/// Construct the final key share from verified data.
 pub fn keygen_finalize(
     mut state: KeygenR1State,
     r3_state: KeygenR3State,
@@ -838,10 +737,8 @@ pub fn keygen_finalize(
 ) -> Result<Wmy23KeyShare, Box<dyn std::error::Error>> {
     let my_1based = (state.index + 1) as u16;
 
-    // Public verification shares = {X_j} (the revealed points)
     let public_shares = x_points.to_vec();
 
-    // Public key: Lagrange interpolation on {X_j} at x=0
     let indices: Vec<u16> = (1..=state.n).collect();
     let coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&indices);
     let public_key = x_points.iter().zip(coeffs.iter()).fold(
@@ -849,7 +746,6 @@ pub fn keygen_finalize(
         |acc, (p, c)| acc + *p * c,
     );
 
-    // Reconstruct all CL public keys
     let cl_pks: Vec<ClPublicKey> = all_cl_pk_bytes
         .iter()
         .map(|bytes| reconstruct_cl_pk(setup, bytes))
@@ -875,10 +771,6 @@ pub fn keygen_finalize(
         total,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn reconstruct_cl_pk(setup: &ClSetup, bytes: &[u8]) -> Result<ClPublicKey, String> {
     let qfi = Qfi::from_bytes(bytes);

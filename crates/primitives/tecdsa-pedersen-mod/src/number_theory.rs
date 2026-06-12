@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! Number-theoretic helpers for `PiMod` (Paillier-Blum modulus proof).
-
 use rand_core::CryptoRngCore;
 use rug::Integer;
 
@@ -12,19 +9,12 @@ fn blum_sqrt(y: &Integer, p: &Integer, q: &Integer, n: &Integer) -> Integer {
     y.clone().pow_mod(&e, n).unwrap()
 }
 
-/// Compute Blum fourth root: x such that x^4 = y mod N.
-///
-/// Applies `blum_sqrt` twice: sqrt(sqrt(y)).
 #[allow(clippy::many_single_char_names)]
 pub fn blum_fourth_root(y: &Integer, p: &Integer, q: &Integer, n: &Integer) -> Integer {
     let sqrt = blum_sqrt(y, p, q, n);
     blum_sqrt(&sqrt, p, q, n)
 }
 
-/// Find (a, b) in {0,1}^2 such that (-1)^a * w^b * y is a QR mod N.
-///
-/// Returns (a, b, y') where y' = (-1)^a * w^b * y mod N.
-/// Requires: w has Jacobi symbol -1 mod N, and p,q are Blum primes.
 #[allow(clippy::many_single_char_names)]
 pub fn find_residue(
     y: &Integer,
@@ -63,7 +53,6 @@ pub fn find_residue(
     }
 }
 
-/// Sample w in Z*_N with Jacobi symbol (w/N) = -1.
 pub fn sample_neg_jacobi(n: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
     use tecdsa_bigint::SyncRng;
     let mut sync_rng = SyncRng(rng);
@@ -82,16 +71,10 @@ pub fn sample_neg_jacobi(n: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
     }
 }
 
-/// Compute modular inverse: a^{-1} mod m, using extended GCD.
-///
-/// Returns `None` if gcd(a, m) != 1.
 pub fn mod_inverse(a: &Integer, m: &Integer) -> Option<Integer> {
     a.clone().invert(m).ok()
 }
 
-/// Check if N is probably composite using Miller-Rabin.
-///
-/// Returns true if N is composite (not prime).
 #[allow(clippy::many_single_char_names)]
 pub fn is_probably_composite(n: &Integer, iterations: u32, _rng: &mut impl CryptoRngCore) -> bool {
     n.is_probably_prime(iterations) == rug::integer::IsPrime::No

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(
     clippy::similar_names,
     clippy::many_single_char_names,
@@ -7,45 +6,22 @@
     clippy::doc_markdown
 )]
 
-//! Matrix-relation engine for class-group ZK proofs.
-//!
-//! A "matrix relation" describes a system of group equations:
-//!
-//! ```text
-//! For each row i:
-//!   product_j (base_{i,j} ^ witness_j) = target_i
-//! ```
-//!
-//! The engine generates and verifies Sigma-protocol proofs for such
-//! matrix relations.
-
 use crate::{
     cl::{ClResult, ClSetup, Qfi},
     zk::{challenge_from_qfi, response_unbounded, sample_random},
 };
 
-/// A single row in the matrix relation: `product(bases[j]^witnesses[j]) = target`.
 pub struct MatrixRow {
-    /// Bases for this row (one per witness).
     pub bases: Vec<Qfi>,
-    /// Expected product target.
     pub target: Qfi,
 }
 
-/// A matrix-relation proof.
 pub struct MatrixRelationProof {
-    /// Commitments: one per row, `t_i = product(bases[i,j]^{alpha_j})`.
     commitments: Vec<Qfi>,
-    /// Responses: one per witness, `z_j = alpha_j + e * w_j` (big-endian bytes).
     responses: Vec<Vec<u8>>,
-    /// Fiat-Shamir challenge (big-endian bytes).
     e: Vec<u8>,
 }
 
-/// Generates a matrix-relation proof.
-///
-/// - `rows`: the matrix of bases and targets.
-/// - `witnesses`: the witness values (big-endian bytes), one per column.
 pub fn prove_matrix(
     setup: &mut ClSetup,
     rows: &[MatrixRow],
@@ -53,13 +29,11 @@ pub fn prove_matrix(
 ) -> ClResult<MatrixRelationProof> {
     let num_witnesses = witnesses.len();
 
-    // Sample random alpha_j for each witness.
     let mut alphas = Vec::with_capacity(num_witnesses);
     for _ in 0..num_witnesses {
         alphas.push(sample_random(setup)?);
     }
 
-    // Compute commitments: t_i = product(bases[i,j]^{alpha_j}).
     let mut commitments = Vec::with_capacity(rows.len());
     for row in rows {
         if row.bases.len() != num_witnesses {
@@ -73,7 +47,6 @@ pub fn prove_matrix(
         commitments.push(t);
     }
 
-    // Build challenge hash input: all targets + all commitments.
     let mut qfi_refs: Vec<&Qfi> = Vec::new();
     for row in rows {
         qfi_refs.push(&row.target);
@@ -83,7 +56,6 @@ pub fn prove_matrix(
     }
     let e = challenge_from_qfi(setup, b"R_matrix", &qfi_refs, &[])?;
 
-    // Compute responses: z_j = alpha_j + e * w_j.
     let mut responses = Vec::with_capacity(num_witnesses);
     for (j, alpha) in alphas.iter().enumerate() {
         let z = response_unbounded(alpha, &e, witnesses[j])?;
@@ -97,7 +69,6 @@ pub fn prove_matrix(
     })
 }
 
-/// Verifies a matrix-relation proof.
 pub fn verify_matrix(
     setup: &ClSetup,
     rows: &[MatrixRow],
@@ -107,7 +78,6 @@ pub fn verify_matrix(
         return Ok(false);
     }
 
-    // Recompute challenge.
     let mut qfi_refs: Vec<&Qfi> = Vec::new();
     for row in rows {
         qfi_refs.push(&row.target);
@@ -120,7 +90,6 @@ pub fn verify_matrix(
         return Ok(false);
     }
 
-    // For each row, check: product(bases[i,j]^{z_j}) == t_i * target_i^e.
     for (i, row) in rows.iter().enumerate() {
         let lhs = setup.multiexp_bytes(&row.bases, &proof.responses)?;
 
@@ -146,7 +115,6 @@ mod tests {
     fn matrix_relation_single_row() {
         let mut setup = ClSetup::new_secp256k1("17001").expect("setup");
 
-        // Single row: h^w = target, where w = 42.
         let w = Integer::from(42u32).to_digits::<u8>(Order::Msf);
         let h = setup.cl().h().clone();
         let target = setup.exp(&h, "42").expect("h^w");

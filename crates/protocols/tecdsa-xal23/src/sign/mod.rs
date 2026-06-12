@@ -1,17 +1,3 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//! XAL23 online signing (1 round).
-//!
-//! Each party computes a partial signature `s_i = m * k_i + r * sigma_i`
-//! and broadcasts it. The final signature is `s = sum(s_i)`.
-//!
-//! ## API
-//!
-//! Two interfaces are available:
-//! - **Free functions**: [`partial_sign`] and [`combine_signatures`] for
-//!   orchestrated/simulation usage.
-//! - **StateMachine**: [`Xal23SignMachine`] for interactive 1-round signing
-//!   with proper message exchange.
-
 #![allow(non_snake_case)]
 
 pub mod machine;
@@ -25,19 +11,14 @@ use tecdsa_protocol::{low_s_normalize, DataToSign, Signature};
 
 use crate::presign::Xal23Presignature;
 
-/// A partial signature from a single party.
 #[derive(Clone, Debug)]
 pub struct PartialSignature<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    /// The partial signature value: s_i = m * k_i + r * sigma_i.
     pub s_i: <C as CurveArithmetic>::Scalar,
 }
 
-/// Compute a partial signature from a presignature and message.
-///
-/// Each party computes: `s_i = m * k_i + r * sigma_i`
 pub fn partial_sign<C: TecdsaCurve>(
     presig: &Xal23Presignature<C>,
     data: &DataToSign<C>,
@@ -51,14 +32,6 @@ where
     PartialSignature { s_i }
 }
 
-/// Combine partial signatures into a full ECDSA signature.
-///
-/// Computes `s = sum(s_i)` and normalizes to low-S form.
-///
-/// # Errors
-///
-/// Returns an error if the combined signature fails verification against
-/// the public key and message (which indicates a malicious party).
 pub fn combine_signatures<C: TecdsaCurve>(
     presig: &Xal23Presignature<C>,
     partials: &[PartialSignature<C>],
@@ -77,7 +50,6 @@ where
 
     let sig = Signature { r: presig.r, s };
 
-    // Verify the combined signature
     tecdsa_protocol::verify_ecdsa(&sig, &presig.public_key, data)?;
 
     Ok(sig)
