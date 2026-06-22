@@ -377,8 +377,9 @@ fn xal21_benchmarks(c: &mut Criterion) {
         // Untimed one-time setup: P2's MtA material (Paillier key + Ring-Pedersen
         // params), generated outside the timed builder so the DKG rounds exclude
         // it (measured by `setup/xal21`).
-        let mut p2_setup =
-            Some(tecdsa_xal21::keygen::generate_setup(&mut tecdsa_core::Csprng::new()));
+        let mut p2_setup = Some(tecdsa_xal21::keygen::generate_setup(
+            &mut tecdsa_core::Csprng::new(),
+        ));
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
         let builders: Vec<(PartyId, _)> = specs
             .iter()
@@ -434,92 +435,89 @@ fn xal21_benchmarks(c: &mut Criterion) {
         },
     };
 
-    let (presign_runs, online_runs) = per_party::precompute_runs_2(SAMPLES, || {
-        let mut rng = rand_core::OsRng;
+    let (presign_runs, online_runs) =
+        per_party::precompute_runs_2(SAMPLES, || {
+            let mut rng = rand_core::OsRng;
 
-        // P2 step1: commit nonce (offline)
-        let t0 = Instant::now();
-        let (step1_msg, step1_state) = offline_sign::step1_p2_commit::<C>(&mut rng);
-        let mut p2_off = t0.elapsed();
+            // P2 step1: commit nonce (offline)
+            let t0 = Instant::now();
+            let (step1_msg, step1_state) = offline_sign::step1_p2_commit::<C>(&mut rng);
+            let mut p2_off = t0.elapsed();
 
-        // P2 step2a: encrypt k2 for MtA (offline)
-        let t0 = Instant::now();
-        let (sender_msg, sender_state) =
-            offline_sign::step2_p2_encrypt_k2::<C, offline_sign::DefaultMtA>(
-                &mta_setup,
-                &step1_state.k2,
-                &mut rng,
-            )
+            // P2 step2a: encrypt k2 for MtA (offline)
+            let t0 = Instant::now();
+            let (sender_msg, sender_state) = offline_sign::step2_p2_encrypt_k2::<
+                C,
+                offline_sign::DefaultMtA,
+            >(&mta_setup, &step1_state.k2, &mut rng)
             .expect("step2_p2_encrypt_k2");
-        p2_off += t0.elapsed();
+            p2_off += t0.elapsed();
 
-        // P1 step2b: compute re-sharing data (offline)
-        let t0 = Instant::now();
-        let (step2_msg, step2_state) =
-            offline_sign::step2_p1_compute::<C, offline_sign::DefaultMtA>(
-                &p1_key,
-                &mta_setup,
-                &sender_msg,
-                &mut rng,
-            )
+            // P1 step2b: compute re-sharing data (offline)
+            let t0 = Instant::now();
+            let (step2_msg, step2_state) = offline_sign::step2_p1_compute::<
+                C,
+                offline_sign::DefaultMtA,
+            >(&p1_key, &mta_setup, &sender_msg, &mut rng)
             .expect("step2_p1_compute");
-        let mut p1_off = t0.elapsed();
+            let mut p1_off = t0.elapsed();
 
-        // P2 step2c: verify + compute x2' (offline)
-        let t0 = Instant::now();
-        let x2_prime = offline_sign::step2_p2_verify::<C, offline_sign::DefaultMtA>(
-            &p2_key,
-            &mta_setup,
-            &sender_state,
-            &step1_state.k2,
-            &step2_msg,
-        )
-        .expect("step2_p2_verify");
-        p2_off += t0.elapsed();
+            // P2 step2c: verify + compute x2' (offline)
+            let t0 = Instant::now();
+            let x2_prime = offline_sign::step2_p2_verify::<C, offline_sign::DefaultMtA>(
+                &p2_key,
+                &mta_setup,
+                &sender_state,
+                &step1_state.k2,
+                &step2_msg,
+            )
+            .expect("step2_p2_verify");
+            p2_off += t0.elapsed();
 
-        // P1 step3a: send nonce (offline)
-        let t0 = Instant::now();
-        let (step3_p1_msg, k1) = offline_sign::step3_p1_send_nonce::<C>(&mut rng);
-        p1_off += t0.elapsed();
+            // P1 step3a: send nonce (offline)
+            let t0 = Instant::now();
+            let (step3_p1_msg, k1) = offline_sign::step3_p1_send_nonce::<C>(&mut rng);
+            p1_off += t0.elapsed();
 
-        // P2 step3b: decommit + compute R (offline)
-        let t0 = Instant::now();
-        let (step3_p2_decommit, p2_presig) = offline_sign::step3_p2_decommit_and_compute_R::<C>(
-            &step1_state,
-            &step3_p1_msg,
-            &step2_msg.r1,
-            x2_prime,
-        )
-        .expect("step3_p2_decommit_and_compute_R");
-        p2_off += t0.elapsed();
+            // P2 step3b: decommit + compute R (offline)
+            let t0 = Instant::now();
+            let (step3_p2_decommit, p2_presig) =
+                offline_sign::step3_p2_decommit_and_compute_R::<C>(
+                    &step1_state,
+                    &step3_p1_msg,
+                    &step2_msg.r1,
+                    x2_prime,
+                )
+                .expect("step3_p2_decommit_and_compute_R");
+            p2_off += t0.elapsed();
 
-        // P1 step3c: verify + compute R (offline)
-        let t0 = Instant::now();
-        let p1_presig = offline_sign::step3_p1_verify_and_compute_R::<C>(
-            &step1_msg,
-            &step3_p2_decommit,
-            k1,
-            &step2_state,
-        )
-        .expect("step3_p1_verify_and_compute_R");
-        p1_off += t0.elapsed();
+            // P1 step3c: verify + compute R (offline)
+            let t0 = Instant::now();
+            let p1_presig = offline_sign::step3_p1_verify_and_compute_R::<C>(
+                &step1_msg,
+                &step3_p2_decommit,
+                k1,
+                &step2_state,
+            )
+            .expect("step3_p1_verify_and_compute_R");
+            p1_off += t0.elapsed();
 
-        // P2 online: compute s2 (takes the message)
-        let t0 = Instant::now();
-        let p2_msg = online_sign::party2_compute_s2::<C>(&p2_presig, &message).expect("s2");
-        let p2_on = t0.elapsed();
+            // P2 online: compute s2 (takes the message)
+            let t0 = Instant::now();
+            let p2_msg = online_sign::party2_compute_s2::<C>(&p2_presig, &message).expect("s2");
+            let p2_on = t0.elapsed();
 
-        // P1 online: combine + verify (takes the message)
-        let t0 = Instant::now();
-        online_sign::party1_compute_signature::<C>(&p1_key, &p1_presig, &p2_msg, &message)
-            .expect("sig");
-        let p1_on = t0.elapsed();
+            // P1 online: combine + verify (takes the message)
+            let t0 = Instant::now();
+            online_sign::party1_compute_signature::<C>(&p1_key, &p1_presig, &p2_msg, &message)
+                .expect("sig");
+            let p1_on = t0.elapsed();
 
-        (
-            BTreeMap::from([(PartyId(1), p1_off), (PartyId(2), p2_off)]),
-            BTreeMap::from([(PartyId(1), p1_on), (PartyId(2), p2_on)]),
-        )
-    });
+            (
+                BTreeMap::from([(PartyId(1), p1_off), (PartyId(2), p2_off)]),
+                BTreeMap::from([(PartyId(1), p1_on), (PartyId(2), p2_on)]),
+            )
+        });
     for party_idx in 1..=2u16 {
         per_party::bench_party_replay_single(
             &mut group,

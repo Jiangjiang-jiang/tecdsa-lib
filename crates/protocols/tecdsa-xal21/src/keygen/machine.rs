@@ -157,8 +157,10 @@ where
     /// params), injected via [`Xal21KeygenMachine::new_with_setup`]. When
     /// present, P2 uses it in round 2 instead of generating fresh material (the
     /// setup is a one-time step, kept out of the DKG round timing).
-    precomputed_setup:
-        Option<(tecdsa_paillier::DecryptionKey, tecdsa_paillier::zk::mta_range::NTildeParams)>,
+    precomputed_setup: Option<(
+        tecdsa_paillier::DecryptionKey,
+        tecdsa_paillier::zk::mta_range::NTildeParams,
+    )>,
 }
 
 impl<C: TecdsaCurve> Xal21KeygenMachine<C>

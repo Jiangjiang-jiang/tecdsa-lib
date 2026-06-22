@@ -30,7 +30,8 @@ use crate::{
         interactive::{
             client_finalize_keygen, client_keygen_step2, client_verify_step3,
             server_finalize_keygen, server_keygen_step1, server_keygen_step1_with_dk,
-            server_keygen_step3, ClientStep2Msg, ClientStep2State, ServerStep1State, ServerStep3Msg,
+            server_keygen_step3, ClientStep2Msg, ClientStep2State, ServerStep1State,
+            ServerStep3Msg,
         },
         wire::{
             decode_step1, decode_step2, decode_step3, encode_step1, encode_step2, encode_step3,

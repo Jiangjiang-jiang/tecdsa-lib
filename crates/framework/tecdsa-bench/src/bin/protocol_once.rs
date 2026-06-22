@@ -481,8 +481,15 @@ fn mta_once() {
         });
         let r_bytes = encode_a_out.state.r_bytes.clone();
         let ped_proof = time_once("mta/nim/r_ped_prove", || {
-            RPedEcProof::prove(&mut nim_setup, &nim_pk, &encode_a_out.pe_a, &big_v, &x_bytes, &r_bytes)
-                .expect("r_ped prove")
+            RPedEcProof::prove(
+                &mut nim_setup,
+                &nim_pk,
+                &encode_a_out.pe_a,
+                &big_v,
+                &x_bytes,
+                &r_bytes,
+            )
+            .expect("r_ped prove")
         });
         time_once("mta/nim/r_ped_verify", || {
             ped_proof
@@ -1377,10 +1384,7 @@ fn lin17_once() {
     // Online communication: P2 sends one round-4 message; P1 only finalizes
     // locally (sends nothing online).
     per_party::record_online_comm("lin17/n2_t2/party1", 0);
-    per_party::record_online_comm(
-        "lin17/n2_t2/party2",
-        tecdsa_testkit::wire_size(&p2_r4_msg),
-    );
+    per_party::record_online_comm("lin17/n2_t2/party2", tecdsa_testkit::wire_size(&p2_r4_msg));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1476,10 +1480,7 @@ fn kgg24_once() {
     );
     // Online communication: P2 sends one partial-signature message; P1 finalizes.
     per_party::record_online_comm("kgg24/n2_t2/party1", 0);
-    per_party::record_online_comm(
-        "kgg24/n2_t2/party2",
-        tecdsa_testkit::wire_size(&p2_partial),
-    );
+    per_party::record_online_comm("kgg24/n2_t2/party2", tecdsa_testkit::wire_size(&p2_partial));
 }
 
 // ═══════════════════════════════════════════════════════════════════════

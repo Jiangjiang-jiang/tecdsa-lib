@@ -123,6 +123,10 @@ mod tests {
         let n = (Integer::from(1) << 3072u32) - 1u8;
         let w = Wire { x: n, v: vec![] };
         let bytes = bincode::serde::encode_to_vec(&w, bincode::config::standard()).unwrap();
-        assert!(bytes.len() < 384 + 16, "wire size {} too large", bytes.len());
+        assert!(
+            bytes.len() < 384 + 16,
+            "wire size {} too large",
+            bytes.len()
+        );
     }
 }

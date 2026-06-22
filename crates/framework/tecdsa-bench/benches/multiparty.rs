@@ -205,11 +205,7 @@ mod cggmp20_helpers {
 // ===========================================================================
 
 mod dkls23_helpers {
-    use tecdsa_dkls23::{
-        key_share::Dkls23KeyShare,
-        keygen::Dkls23KeygenMachine,
-        presign::{Dkls23PresignMachine, Dkls23Presignature, PresignConfig},
-    };
+    use tecdsa_dkls23::{key_share::Dkls23KeyShare, keygen::Dkls23KeygenMachine};
 
     use super::*;
 
@@ -233,35 +229,6 @@ mod dkls23_helpers {
             .map(|r| r.expect("keygen must succeed"))
             .collect()
     }
-
-    pub fn run_presign(
-        shares: &[Dkls23KeyShare<C>],
-        signer_indices: &[u16],
-    ) -> Vec<Dkls23Presignature<C>> {
-        let signer_parties: Vec<PartyId> = signer_indices.iter().map(|&i| PartyId(i)).collect();
-
-        let machines: Vec<(PartyId, Dkls23PresignMachine<C>)> = signer_indices
-            .iter()
-            .map(|&idx| {
-                let share = shares[(idx - 1) as usize].clone();
-                let pid = PartyId(idx);
-                let config = PresignConfig {
-                    key_share: share,
-                    my_id: pid,
-                    signer_parties: signer_parties.clone(),
-                };
-                (pid, Dkls23PresignMachine::new(config, rand_core::OsRng))
-            })
-            .collect();
-
-        let results = Orchestrator::new(machines, 20)
-            .run()
-            .expect("orchestrator must succeed");
-        results
-            .into_iter()
-            .map(|r| r.expect("presign must succeed"))
-            .collect()
-    }
 }
 
 // ===========================================================================
@@ -269,11 +236,7 @@ mod dkls23_helpers {
 // ===========================================================================
 
 mod gg18_helpers {
-    use tecdsa_gg18::{
-        key_share::Gg18KeyShare,
-        keygen::Gg18KeygenMachine,
-        presign::{Gg18PresignMachine, Gg18Presignature, PresignConfig},
-    };
+    use tecdsa_gg18::{key_share::Gg18KeyShare, keygen::Gg18KeygenMachine};
 
     use super::*;
 
@@ -297,34 +260,6 @@ mod gg18_helpers {
         results
             .into_iter()
             .map(|r| r.expect("keygen must succeed"))
-            .collect()
-    }
-
-    pub fn run_presign(
-        key_shares: &[Gg18KeyShare<C>],
-        signers: &[u16],
-    ) -> Vec<Gg18Presignature<C>> {
-        let mut rng = tecdsa_core::Csprng::new();
-
-        let machines: Vec<(PartyId, Gg18PresignMachine<C>)> = signers
-            .iter()
-            .map(|&signer_1based| {
-                let party_0based = (signer_1based - 1) as usize;
-                let pid = PartyId(signer_1based);
-                let config = PresignConfig {
-                    key_share: key_shares[party_0based].clone(),
-                    signers: signers.to_vec(),
-                };
-                (pid, Gg18PresignMachine::new(config, &mut rng))
-            })
-            .collect();
-
-        let results = Orchestrator::new(machines, 10)
-            .run()
-            .expect("orchestrator must succeed");
-        results
-            .into_iter()
-            .map(|r| r.expect("presign must succeed"))
             .collect()
     }
 }
@@ -1216,7 +1151,12 @@ fn ln18_benchmarks(c: &mut Criterion) {
             let mut rng = tecdsa_core::Csprng::new();
             let machines: Vec<_> = configs
                 .iter()
-                .map(|cfg| (cfg.local_party.id, Ln18KeygenMachine::<C>::new(cfg, &mut rng)))
+                .map(|cfg| {
+                    (
+                        cfg.local_party.id,
+                        Ln18KeygenMachine::<C>::new(cfg, &mut rng),
+                    )
+                })
                 .collect();
             Orchestrator::new(machines, 10)
                 .run()

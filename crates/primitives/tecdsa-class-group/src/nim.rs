@@ -111,7 +111,7 @@ impl<'a> Nim<'a> {
 
         // Compute pe_A = h^r * pk^x
         let h_r = self.setup.power_of_h_bytes(&r_bytes)?;
-        let pk_x = self.setup.pk_pow_bytes(&pk, x_bytes)?;
+        let pk_x = self.setup.pk_pow_bytes(pk, x_bytes)?;
         let pe_a = self.setup.compose(&h_r, &pk_x)?;
 
         Ok(NimEncodeAOutput {

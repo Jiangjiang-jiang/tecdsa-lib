@@ -54,19 +54,15 @@ impl RDdhClProof {
         }
 
         // Check 1: g^z == t1 * A^e ⟺ g^z * A^{-e} == t1 (shared-squaring multi-exp).
-        let lhs1 = setup.multiexp_signed_bytes(
-            &[g, a],
-            &[(false, self.z.clone()), (true, self.e.clone())],
-        )?;
+        let lhs1 = setup
+            .multiexp_signed_bytes(&[g, a], &[(false, self.z.clone()), (true, self.e.clone())])?;
         if lhs1 != self.t1 {
             return Ok(false);
         }
 
         // Check 2: B^z == t2 * C^e ⟺ B^z * C^{-e} == t2.
-        let lhs2 = setup.multiexp_signed_bytes(
-            &[b, c],
-            &[(false, self.z.clone()), (true, self.e.clone())],
-        )?;
+        let lhs2 = setup
+            .multiexp_signed_bytes(&[b, c], &[(false, self.z.clone()), (true, self.e.clone())])?;
         if lhs2 != self.t2 {
             return Ok(false);
         }

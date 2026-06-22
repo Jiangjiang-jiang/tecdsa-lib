@@ -679,8 +679,10 @@ pub fn drg_presign_round4_compute(
     // the combined ciphertexts and the R_DL-PC proof binding Gamma_j.
     let k_coms_all: Vec<Vec<k256::ProjectivePoint>> =
         r1_bcasts.iter().map(|b| b.k_commitments.clone()).collect();
-    let gamma_coms_all: Vec<Vec<k256::ProjectivePoint>> =
-        r1_bcasts.iter().map(|b| b.gamma_commitments.clone()).collect();
+    let gamma_coms_all: Vec<Vec<k256::ProjectivePoint>> = r1_bcasts
+        .iter()
+        .map(|b| b.gamma_commitments.clone())
+        .collect();
     let mut k_comb_pcs: Vec<k256::ProjectivePoint> = Vec::with_capacity(n);
     for j in 0..n {
         let idx_1based = (j + 1) as u16;
@@ -873,9 +875,8 @@ pub fn drg_presign_round4_compute(
 
     // Per-party online-signing statement elements:
     //   PC_{hat_k_j} = lambda_j * PC_{k_j};  hat_X_j = X_j^{global_lambda_j}.
-    let pc_hat_k: Vec<k256::ProjectivePoint> = (0..n)
-        .map(|j| k_comb_pcs[j] * local_lambdas[j])
-        .collect();
+    let pc_hat_k: Vec<k256::ProjectivePoint> =
+        (0..n).map(|j| k_comb_pcs[j] * local_lambdas[j]).collect();
     let xhat_points: Vec<k256::ProjectivePoint> = (0..n)
         .map(|j| key_share.public_shares[global_idx(signer_ids, j)] * global_lambdas[j])
         .collect();
@@ -895,8 +896,7 @@ pub fn drg_presign_round4_compute(
     // Assemble the full gamma-MtAwc beta-in-exponent matrix from the broadcast
     // Round-3 data: gamma_beta[bob][alice] = B that `bob` produced for `alice`.
     // Available for every (bob, alice) pair because Round 3 is now broadcast.
-    let mut gamma_beta: Vec<Vec<Option<k256::ProjectivePoint>>> =
-        vec![vec![None; n]; n];
+    let mut gamma_beta: Vec<Vec<Option<k256::ProjectivePoint>>> = vec![vec![None; n]; n];
     for bob in 0..n {
         for alice in 0..n {
             if bob == alice {

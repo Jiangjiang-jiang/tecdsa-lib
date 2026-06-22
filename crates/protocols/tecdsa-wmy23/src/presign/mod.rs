@@ -186,10 +186,7 @@ fn points_to_bytes(points: &[k256::ProjectivePoint]) -> Vec<Vec<u8>> {
     points.iter().map(|p| p.to_bytes().to_vec()).collect()
 }
 
-fn points_from_bytes(
-    bytes: &[Vec<u8>],
-    label: &str,
-) -> Result<Vec<k256::ProjectivePoint>, String> {
+fn points_from_bytes(bytes: &[Vec<u8>], label: &str) -> Result<Vec<k256::ProjectivePoint>, String> {
     bytes
         .iter()
         .enumerate()
@@ -508,9 +505,8 @@ impl Wmy23PresignMachine {
             mut cl_setup,
         } = config;
 
-        let my_idx = local_pos(&signer_parties, my_id).ok_or_else(|| {
-            TecdsaError::Other("my_id not found in signer_parties".into())
-        })?;
+        let my_idx = local_pos(&signer_parties, my_id)
+            .ok_or_else(|| TecdsaError::Other("my_id not found in signer_parties".into()))?;
         let n = signer_parties.len();
         let threshold = key_share.threshold;
         if usize::from(threshold) > n {
@@ -606,9 +602,10 @@ impl Wmy23PresignMachine {
                 let b = state.bcasts.get(party).ok_or_else(|| {
                     TecdsaError::Other(format!("missing R1 broadcast from {party}"))
                 })?;
-                let p = state.p2ps.get(party).ok_or_else(|| {
-                    TecdsaError::Other(format!("missing R1 shares from {party}"))
-                })?;
+                let p = state
+                    .p2ps
+                    .get(party)
+                    .ok_or_else(|| TecdsaError::Other(format!("missing R1 shares from {party}")))?;
                 r1_bcasts.push(b.clone());
                 received_p2p.push(Some(p.clone()));
             }
@@ -1130,13 +1127,9 @@ impl StateMachine for Wmy23PresignMachine {
                     let payload: R4Payload = decode(&data, "R4 payload")?;
                     let delta_i = scalar_from_bytes(&payload.delta_i, "delta_i")
                         .map_err(TecdsaError::Other)?;
-                    let big_d_i =
-                        point_from_bytes(&payload.big_d_i, &format!("D_i from {from}"))
-                            .map_err(TecdsaError::Other)?;
-                    let d_proof = payload
-                        .d_proof
-                        .to_proof()
+                    let big_d_i = point_from_bytes(&payload.big_d_i, &format!("D_i from {from}"))
                         .map_err(TecdsaError::Other)?;
+                    let d_proof = payload.d_proof.to_proof().map_err(TecdsaError::Other)?;
                     state.received.insert(
                         from,
                         ReceivedR4 {

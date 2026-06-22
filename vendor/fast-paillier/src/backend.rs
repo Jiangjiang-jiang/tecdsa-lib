@@ -249,21 +249,6 @@ impl quickcheck::Arbitrary for Sign {
 mod serialize {
     use alloc::vec::Vec;
     use crate::backend::Sign;
-    /// Currently rug serializes the numbers into a format like
-    /// ```json
-    /// {
-    ///   "radix": 16,
-    ///   "value": "995d245c8ec97f55e23a1dff88684269b8678297f2659b4b02fde7db4128e9987e9838a93f6dba6591b14bae1a96145bab391214abad56e73ecebc67f37396c4813b2cd34aedb4b6bf532e452a1f43646b2bfe07a34ff791746941e27712d405128c929b416e036674dbe58abff1ae0dd886f9b5262c1bf477bab09fe06d167e0a4b05b5b80195baf77e51946b20408cc6f8d581db5bf0d32f93fd247c119347d4819730862141b315b9a14a9b01d3216013dd22e18cdcfbbae4c2af790dbbeb"
-    /// }
-    /// ```
-    /// A number is represented as a dict with a radix and alphanumeric digits
-    /// with most significant first. The radix is always 16. We keep our format
-    /// compatible
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct DictFormat<'a> {
-        radix: u16,
-        value: alloc::borrow::Cow<'a, str>,
-    }
 
     macro_rules! make_serde {
         ($integer:ty) => {

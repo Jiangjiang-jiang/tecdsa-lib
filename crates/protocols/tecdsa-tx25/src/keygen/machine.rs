@@ -370,7 +370,7 @@ impl StateMachine for Tx25KeygenMachine {
                     .map_err(|e| TecdsaError::Other(format!("identity: {e}")))?;
                 let ct_for_verify = self
                     .setup
-                    .ct_from_components(&from_c1, &dummy_c2)
+                    .ct_from_components(from_c1, &dummy_c2)
                     .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
 
                 // Verify the R_Dec_DL proof.

@@ -78,7 +78,11 @@ where
 
     let collect_comm = comm_key_is_set();
     let orch = Orchestrator::new(machines, max_rounds).with_timing(true);
-    let orch = if collect_comm { orch.with_stats(true) } else { orch };
+    let orch = if collect_comm {
+        orch.with_stats(true)
+    } else {
+        orch
+    };
     let result = orch.run().expect("orchestrator must succeed");
     if collect_comm {
         record_keyed_comm(&result.stats);
@@ -111,7 +115,11 @@ where
 {
     let collect_comm = comm_key_is_set();
     let orch = Orchestrator::new(machines, max_rounds).with_timing(true);
-    let orch = if collect_comm { orch.with_stats(true) } else { orch };
+    let orch = if collect_comm {
+        orch.with_stats(true)
+    } else {
+        orch
+    };
     let result = orch.run().expect("orchestrator must succeed");
     if collect_comm {
         record_keyed_comm(&result.stats);
@@ -147,7 +155,12 @@ where
         .with_stats(true)
         .run()
         .expect("orchestrator must succeed");
-    let bytes = result.stats.values().next().map(|c| c.bytes_sent).unwrap_or(0);
+    let bytes = result
+        .stats
+        .values()
+        .next()
+        .map(|c| c.bytes_sent)
+        .unwrap_or(0);
     ONLINE_COMM.lock().unwrap().push((comm_key.into(), bytes));
     (result.outputs, result.timings.clone())
 }
@@ -189,7 +202,12 @@ where
     for (pid, init_dur) in init_timings {
         timings.entry(pid).or_default().init = init_dur;
     }
-    let bytes = result.stats.values().next().map(|c| c.bytes_sent).unwrap_or(0);
+    let bytes = result
+        .stats
+        .values()
+        .next()
+        .map(|c| c.bytes_sent)
+        .unwrap_or(0);
     ONLINE_COMM.lock().unwrap().push((comm_key.into(), bytes));
     (result.outputs, timings)
 }
@@ -198,7 +216,10 @@ where
 /// for protocols whose online phase sends no orchestrator-routed messages (e.g.
 /// CGGMP20, where each signer broadcasts one partial-signature scalar).
 pub fn record_online_comm(comm_key: impl Into<String>, bytes_sent: usize) {
-    ONLINE_COMM.lock().unwrap().push((comm_key.into(), bytes_sent));
+    ONLINE_COMM
+        .lock()
+        .unwrap()
+        .push((comm_key.into(), bytes_sent));
 }
 
 /// Flush all recorded online-communication rows to `path` as `<key>\t<bytes>`

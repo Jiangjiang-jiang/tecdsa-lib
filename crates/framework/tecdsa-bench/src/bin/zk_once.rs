@@ -38,7 +38,10 @@ static SIZES: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
 /// `<id>/size<TAB><bytes><TAB>bytes` row and stash `(<id>, bytes)` for the TSV.
 fn record_size(id: &str, bytes: usize) {
     println!("{id}/size\t{bytes}\tbytes");
-    SIZES.lock().expect("sizes lock").push((id.to_string(), bytes));
+    SIZES
+        .lock()
+        .expect("sizes lock")
+        .push((id.to_string(), bytes));
 }
 
 /// Record the serialized wire size of a `serde`-serializable proof under the

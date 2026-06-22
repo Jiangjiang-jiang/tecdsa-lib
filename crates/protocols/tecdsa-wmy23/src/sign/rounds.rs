@@ -98,8 +98,7 @@ pub fn compute_contribution(
             r: big_r,
             m: m_ij,
         };
-        let proof =
-            RDl2PcProof::prove(&st, &presig.k_i, &presig.hat_k_randomness, &mu_ij, rng);
+        let proof = RDl2PcProof::prove(&st, &presig.k_i, &presig.hat_k_randomness, &mu_ij, rng);
         m_row[j] = Some(m_ij);
         n_row[j] = Some(n_ij);
         proofs[j] = Some(proof);
@@ -232,10 +231,7 @@ pub fn combine_signatures(
 ) -> Result<Signature<k256::Secp256k1>, Box<dyn std::error::Error>> {
     let s_raw: Scalar = contribs.iter().map(|c| c.s_i).sum();
     let s = low_s_normalize::<k256::Secp256k1>(s_raw);
-    let sig = Signature {
-        r: presig.r_x,
-        s,
-    };
+    let sig = Signature { r: presig.r_x, s };
     verify_ecdsa::<k256::Secp256k1>(&sig, public_key, message)?;
     Ok(sig)
 }

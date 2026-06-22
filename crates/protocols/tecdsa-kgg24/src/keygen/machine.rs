@@ -30,8 +30,9 @@ use crate::{
     keygen::{
         interactive::{
             party1_finalize_keygen, party1_keygen_round2, party1_keygen_round2_with_dk,
-            party1_verify_round3, party2_finalize_keygen, party2_keygen_round1, party2_keygen_round3,
-            KeyGenP1Round2Msg, KeyGenP1State, KeyGenP2Round1Msg, KeyGenP2Round3Msg, KeyGenP2State,
+            party1_verify_round3, party2_finalize_keygen, party2_keygen_round1,
+            party2_keygen_round3, KeyGenP1Round2Msg, KeyGenP1State, KeyGenP2Round1Msg,
+            KeyGenP2Round3Msg, KeyGenP2State,
         },
         wire::{decode_r1, decode_r2, decode_r3, encode_r1, encode_r2, encode_r3},
     },

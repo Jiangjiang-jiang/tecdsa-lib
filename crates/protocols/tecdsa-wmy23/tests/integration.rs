@@ -270,14 +270,8 @@ fn test_wmy23_machine_3party_e2e() {
         .map(|(&pid, presig)| {
             (
                 pid,
-                Wmy23OnlineSignMachine::new(
-                    pid,
-                    all_parties.clone(),
-                    presig,
-                    msg_data,
-                    public_key,
-                )
-                .expect("sign machine"),
+                Wmy23OnlineSignMachine::new(pid, all_parties.clone(), presig, msg_data, public_key)
+                    .expect("sign machine"),
             )
         })
         .collect();
@@ -673,7 +667,13 @@ fn test_wmy23_presign_identifies_bad_big_d() {
     // Honest parties still verify.
     for j in [0usize, 1] {
         assert!(
-            verify_phase3_party(&r4s[0], j, &r4s[j].delta_i, &r4s[j].big_d_i, &r4s[j].d_proof),
+            verify_phase3_party(
+                &r4s[0],
+                j,
+                &r4s[j].delta_i,
+                &r4s[j].big_d_i,
+                &r4s[j].d_proof
+            ),
             "honest party {j} must still verify"
         );
     }

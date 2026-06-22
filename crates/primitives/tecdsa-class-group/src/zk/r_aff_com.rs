@@ -131,19 +131,19 @@ impl RAffComProof {
         }
 
         // Check 1: ci1^z3 * h^z1 == t1 * co1^e
-        if &setup.compose(
+        if setup.compose(
             &setup.multiexp_signed_bytes(
                 &[&ci1, &co1],
                 &[(false, self.z3.clone()), (true, self.e.clone())],
             )?,
             &setup.power_of_h_bytes(&self.z1)?,
-        )? != &self.t1
+        )? != self.t1
         {
             return Ok(false);
         }
 
         // Check 2: pk^z1 * f^z2 * ci2^z3 == t2 * co2^e
-        if &setup.compose(
+        if setup.compose(
             &setup.pk_pow_bytes(pk, &self.z1)?,
             &setup.compose(
                 &setup.power_of_f_bytes(&self.z2)?,
@@ -152,7 +152,7 @@ impl RAffComProof {
                     &[(false, self.z3.clone()), (true, self.e.clone())],
                 )?,
             )?,
-        )? != &self.t2
+        )? != self.t2
         {
             return Ok(false);
         }
