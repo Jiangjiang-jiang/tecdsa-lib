@@ -30,7 +30,7 @@ fn time_once<T>(name: &str, f: impl FnOnce() -> T) -> T {
 }
 
 /// Collected proof sizes (`proof-id -> bytes`), flushed to a per-process TSV at
-/// the end of `main` for `build_zk_table.py` to consume (mirrors how
+/// the end of `main` for `scripts/build_zk_table.py` to consume (mirrors how
 /// `protocol_once` persists comm under `target/comm_online/`).
 static SIZES: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
 
@@ -101,7 +101,7 @@ fn main() {
     run_group("zk/joye_libert", || joye_libert_zk_once(&jl, &jl_extra));
     run_group("zk/evrf", evrf_zk_once);
 
-    // Persist the collected proof sizes for build_zk_table.py.
+    // Persist the collected proof sizes for scripts/build_zk_table.py.
     write_sizes();
 }
 
@@ -252,7 +252,7 @@ fn class_group_zk_once(
         // REncProof holds Qfi commitments (not serde-serializable); size it
         // natively via to_bytes + the response byte-vectors, exactly as the
         // r_ped_ec proof and the MtA comm column do. Consumed by
-        // build_mta_table.py for the CL row's R_{CL-Enc} contribution.
+        // scripts/build_mta_table.py for the CL row's R_{CL-Enc} contribution.
         record_size(
             "zk/class_group/r_enc",
             proof.t1.to_bytes().len()

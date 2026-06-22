@@ -25,7 +25,7 @@ Run order to (re)populate the artifacts:
     cargo bench -p tecdsa-bench --bench primitives      # not needed here
     cargo bench -p tecdsa-bench --bench zk_proofs       # Prove/Verify (slow)
     cargo run  -p tecdsa-bench --bin   zk_once          # Size (fast, one-shot)
-    python3 build_zk_table.py
+    python3 scripts/build_zk_table.py
 """
 
 import json
