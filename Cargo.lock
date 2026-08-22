@@ -1644,6 +1644,7 @@ dependencies = [
  "tecdsa-joye-libert",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
+ "tecdsa-ku25",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",
@@ -1712,6 +1713,7 @@ dependencies = [
  "tecdsa-joye-libert",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
+ "tecdsa-ku25",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",
@@ -2020,6 +2022,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tecdsa-ku25"
+version = "0.1.0"
+dependencies = [
+ "elliptic-curve 0.14.0-rc.32",
+ "hmac",
+ "k256 0.14.0-rc.9",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "subtle",
+ "tecdsa-core",
+ "tecdsa-curve",
+ "tecdsa-protocol",
+ "tecdsa-testkit",
+ "tecdsa-vss",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
 name = "tecdsa-lin17"
 version = "0.1.0"
 dependencies = [
@@ -2198,6 +2221,7 @@ dependencies = [
  "tecdsa-ggn16",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
+ "tecdsa-ku25",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",

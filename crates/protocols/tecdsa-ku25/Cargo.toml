@@ -1,0 +1,39 @@
+[package]
+name = "tecdsa-ku25"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "KU25 honest-majority threshold ECDSA with batch generation of key-independent presignatures (Katz-Urban)"
+
+[features]
+default = ["secp256k1"]
+secp256k1 = ["tecdsa-curve/secp256k1"]
+
+[dependencies]
+tecdsa-core = { workspace = true, features = ["std"] }
+tecdsa-curve = { workspace = true, features = ["std"] }
+tecdsa-protocol = { workspace = true, features = ["std"] }
+tecdsa-vss.workspace = true
+elliptic-curve.workspace = true
+k256.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+rand_core.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+subtle.workspace = true
+serde = { workspace = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+tecdsa-testkit.workspace = true
+tecdsa-vss.workspace = true
+elliptic-curve.workspace = true
+k256.workspace = true
+rand.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true
