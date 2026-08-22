@@ -31,6 +31,7 @@ jtx25 = ["dep:tecdsa-jtx25"]
 wmc24 = ["dep:tecdsa-wmc24"]
 llz25 = ["dep:tecdsa-llz25"]
 trout = ["dep:tecdsa-trout"]
+ku25 = ["dep:tecdsa-ku25"]
 xal21-cl = ["xal21", "dep:tecdsa-class-group"]
 
 [dependencies]
@@ -53,6 +54,7 @@ tecdsa-jtx25 = { workspace = true, optional = true }
 tecdsa-wmc24 = { workspace = true, optional = true }
 tecdsa-llz25 = { workspace = true, optional = true }
 tecdsa-trout = { workspace = true, optional = true }
+tecdsa-ku25 = { workspace = true, optional = true }
 tecdsa-xal23 = { workspace = true, optional = true }
 tecdsa-lin17 = { workspace = true, optional = true }
 tecdsa-kgg24 = { workspace = true, optional = true }

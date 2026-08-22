@@ -102,6 +102,7 @@ tecdsa-lin17 = { path = "crates/protocols/tecdsa-lin17" }
 tecdsa-kgg24 = { path = "crates/protocols/tecdsa-kgg24" }
 tecdsa-xal21 = { path = "crates/protocols/tecdsa-xal21" }
 tecdsa-abc24 = { path = "crates/protocols/tecdsa-abc24" }
+tecdsa-ku25 = { path = "crates/protocols/tecdsa-ku25" }
 
 # External Paillier ecosystem (LFDT-Lockness, MIT/Apache-2.0)
 # Vendored: crates.io 0.3.2 broken (glass_pumpkin 1.10 rand_core 0.10 mismatch, upstream issue #23)
