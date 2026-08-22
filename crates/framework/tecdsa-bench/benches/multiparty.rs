@@ -13,6 +13,7 @@
 //! - **LLZ25**: NIM over class groups, 3-round keygen + 1-round presign + 1-round sign
 //! - **Trout**: eVRF + CL scaled decryption, 3-round keygen + 1-round presign + 1-round sign
 //! - **XAL23**: JL-based MtA, 2-round keygen + 4-round presign + 1-round sign
+//! - **KU25**: honest-majority PRSS, 1-round keygen + 4-round *batch* presign + 1-round sign
 //!
 //! Each protocol is measured for keygen, presign, and sign phases with per-party
 //! timing via the Orchestrator. The protocol always runs with all `n` parties
@@ -2670,6 +2671,423 @@ fn xal23_benchmarks(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// KU25 -- honest majority, PRSS, key-independent batch presignatures
+// ---------------------------------------------------------------------------
+
+/// Party counts benchmarked for KU25.
+///
+/// KU25 fixes the corruption threshold from the party count (`n >= 2t + 1`), so
+/// there is no independent `t` to sweep: each `n` is paired with the largest
+/// admissible reconstruction threshold `t + 1 = floor(n/2) + 1`.
+///
+/// The sweep is read from `TECDSA_BENCH_KU25_PARTIES` (comma-separated `n`
+/// values, default `3,5,7,11`) rather than the shared
+/// `TECDSA_BENCH_DKG_CONFIGS`, because KU25's cost profile is unrelated to the
+/// other protocols': PRSS needs `binomial(n, t)` replicated keys, so both setup
+/// and every derived share are exponential in `n`.  Values below 3 or above
+/// `tecdsa_ku25::prss::MAX_PARTIES` are dropped; note that the default stops at
+/// 11 (252 keys per party) because `n = 15` already means 3432.
+fn ku25_configs() -> Vec<(u16, u16)> {
+    let mut ns: Vec<u16> = std::env::var("TECDSA_BENCH_KU25_PARTIES")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .filter_map(|part| part.trim().parse::<u16>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![3, 5, 7, 11]);
+    ns.retain(|&n| (3..=tecdsa_ku25::prss::MAX_PARTIES).contains(&n));
+    ns.sort_unstable();
+    ns.dedup();
+    if ns.is_empty() {
+        ns = vec![3, 5, 7, 11];
+    }
+    ns.into_iter().map(|n| (n, n / 2 + 1)).collect()
+}
+
+/// Batch sizes used to show the amortization the paper is built around.
+///
+/// Reported *per presignature*, so these points trace Table 1's headline curve.
+/// Note that with a zero-latency in-process network the curve is nearly flat --
+/// as the paper also observes, batching pays off against round-trip latency,
+/// which this harness does not simulate.
+///
+/// Override with `TECDSA_BENCH_KU25_BATCHES` (comma-separated).
+fn ku25_batch_sizes() -> Vec<usize> {
+    std::env::var("TECDSA_BENCH_KU25_BATCHES")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .filter_map(|part| part.trim().parse::<usize>().ok())
+                .filter(|&m| m > 0)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v: &Vec<usize>| !v.is_empty())
+        .unwrap_or_else(|| vec![1, 16, 128])
+}
+
+fn ku25_benchmarks(c: &mut Criterion) {
+    use tecdsa_ku25::{
+        keygen::Ku25KeygenMachine, presign::Ku25PresignMachine, prss::PrssKeys,
+        setup::Ku25SetupMachine, sign::Ku25SignMachine,
+    };
+
+    let configs = ku25_configs();
+    let batch_sizes = ku25_batch_sizes();
+    let digest = make_data_to_sign(b"benchmark message");
+
+    // --- One-time, key-independent PRSS setup (F_rss.Init), swept over n. ---
+    {
+        let mut setup_group = c.benchmark_group("multiparty/ku25");
+        per_party::configure_replay_group(&mut setup_group, SAMPLES);
+        for &(n, t) in &configs {
+            let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+            let runs = per_party::precompute_runs(SAMPLES, || {
+                let builders: Vec<_> = all_parties
+                    .iter()
+                    .map(|&pid| {
+                        let all_parties = all_parties.clone();
+                        (pid, move || {
+                            Ku25SetupMachine::<C>::new(pid, all_parties, t).expect("ku25 setup")
+                        })
+                    })
+                    .collect();
+                per_party::active_with_init(builders, 4)
+            });
+            per_party::bench_party_replay(
+                &mut setup_group,
+                format!("setup/ku25/n{n}_t{t}/party1"),
+                &runs,
+                PartyId(1),
+            );
+        }
+        setup_group.finish();
+    }
+
+    let mut group = c.benchmark_group("multiparty/ku25");
+    per_party::configure_replay_group(&mut group, SAMPLES);
+
+    for &(n, t) in &configs {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+
+        // Untimed: the PRSS material, which a real deployment sets up once and
+        // reuses for every key and every batch.
+        let prss: Vec<PrssKeys<C>> = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
+                        pid,
+                        Ku25SetupMachine::<C>::new(pid, all_parties.clone(), t)
+                            .expect("ku25 setup"),
+                    )
+                })
+                .collect();
+            Orchestrator::new(machines, 4)
+                .run()
+                .expect("orch")
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        // --- DKG: one broadcast round on top of PRSS. ---
+        let dkg_runs = per_party::precompute_runs(SAMPLES, || {
+            let builders: Vec<_> = all_parties
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    let all_parties = all_parties.clone();
+                    let keys = keys.clone();
+                    (pid, move || {
+                        Ku25KeygenMachine::new(pid, all_parties, &keys, &[0u8; 32])
+                            .expect("ku25 keygen")
+                    })
+                })
+                .collect();
+            per_party::active_with_init(builders, 4)
+        });
+        per_party::bench_party_replay(
+            &mut group,
+            format!("dkg/ku25/n{n}_t{t}/party1"),
+            &dkg_runs,
+            PartyId(1),
+        );
+
+        // Untimed: key shares for the signing benchmark.
+        let key_shares = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    (
+                        pid,
+                        Ku25KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
+                            .expect("ku25 keygen"),
+                    )
+                })
+                .collect();
+            Orchestrator::new(machines, 4)
+                .run()
+                .expect("orch")
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect::<Vec<_>>()
+        };
+
+        // --- Presign, swept over the batch size, reported *per presignature*. ---
+        //
+        // This is Table 1 of the paper: the four rounds are paid once per batch,
+        // so the amortized cost per presignature falls as m grows.
+        let mut session = 0u8;
+        for &m in &batch_sizes {
+            session = session.wrapping_add(1);
+            let session_id = [session; 32];
+            let presign_runs = per_party::precompute_runs(SAMPLES, || {
+                let builders: Vec<_> = all_parties
+                    .iter()
+                    .zip(&prss)
+                    .map(|(&pid, keys)| {
+                        let all_parties = all_parties.clone();
+                        let keys = keys.clone();
+                        (pid, move || {
+                            Ku25PresignMachine::new_with_session(
+                                pid,
+                                all_parties,
+                                &keys,
+                                m,
+                                &session_id,
+                            )
+                            .expect("ku25 presign")
+                        })
+                    })
+                    .collect();
+                // Amortize: report the cost of ONE presignature.
+                per_party::active_with_init(builders, 8)
+                    .into_iter()
+                    .map(|(pid, d)| (pid, d / u32::try_from(m).expect("batch size fits in u32")))
+                    .collect()
+            });
+            // m = 1 keeps the id shape the table scripts expect.
+            let id = if m == 1 {
+                format!("presign/ku25/n{n}_t{t}/party1")
+            } else {
+                format!("presign/ku25/n{n}_t{t}_m{m}/party1")
+            };
+            per_party::bench_party_replay(&mut group, id, &presign_runs, PartyId(1));
+        }
+
+        // --- Online sign: one broadcast round, key-dependent. ---
+        let sign_runs = per_party::precompute_runs(SAMPLES, || {
+            // Untimed: a fresh batch to spend.
+            let machines: Vec<_> = all_parties
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    (
+                        pid,
+                        Ku25PresignMachine::new_with_session(
+                            pid,
+                            all_parties.clone(),
+                            keys,
+                            1,
+                            &[0xFEu8; 32],
+                        )
+                        .expect("ku25 presign"),
+                    )
+                })
+                .collect();
+            let batches: Vec<_> = Orchestrator::new(machines, 8)
+                .run()
+                .expect("orch")
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect();
+
+            let builders: Vec<_> = all_parties
+                .iter()
+                .zip(key_shares.iter().zip(batches))
+                .map(|(&pid, (share, batch))| {
+                    let all_parties = all_parties.clone();
+                    let share = share.clone();
+                    let presig = batch.into_vec().remove(0);
+                    (pid, move || {
+                        Ku25SignMachine::new(pid, all_parties, &share, presig, digest)
+                            .expect("ku25 sign")
+                    })
+                })
+                .collect();
+            per_party::active_with_init(builders, 4)
+        });
+        per_party::bench_party_replay(
+            &mut group,
+            format!("online_sign/ku25/n{n}_t{t}/party1"),
+            &sign_runs,
+            PartyId(1),
+        );
+    }
+    group.finish();
+}
+
+/// End-to-end wall-clock benchmarks for KU25, directly comparable to the
+/// paper's Table 1.
+///
+/// The `multiparty/ku25` group above reports *per-party active time*, this
+/// workspace's convention.  That is not what the paper measures: Section 6
+/// simulates all `n` parties plus a coordinator on a single machine and reports
+/// the wall clock of the joint protocol divided by the batch size.  This group
+/// reproduces that metric -- the whole system, all `n` parties driven to
+/// completion on one thread, divided by `m`.
+///
+/// What is inside the timer: machine construction (where all the local `F_rss`
+/// derivation happens), every round, and the orchestrator's message routing.
+/// What is outside: the one-time, key-independent PRSS setup, and -- for the
+/// signing measurement -- generating the presignature that gets spent.
+///
+/// Communication statistics are deliberately left off (`Orchestrator::new`
+/// defaults to `collect_stats = false`), so no bincode serialization is charged
+/// to these numbers beyond the protocol's own wire encoding.
+fn ku25_e2e_benchmarks(c: &mut Criterion) {
+    use std::time::{Duration, Instant};
+
+    use tecdsa_ku25::{
+        keygen::Ku25KeygenMachine, presign::Ku25PresignMachine, prss::PrssKeys,
+        setup::Ku25SetupMachine, sign::Ku25SignMachine,
+    };
+
+    let configs = ku25_configs();
+    let batch_sizes = ku25_batch_sizes();
+    let digest = make_data_to_sign(b"benchmark message");
+
+    let mut group = c.benchmark_group("multiparty/ku25_e2e");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_millis(200));
+    group.measurement_time(Duration::from_secs(1));
+
+    for &(n, t) in &configs {
+        let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
+
+        // Untimed: the one-time PRSS setup, reused across every key and batch.
+        let prss: Vec<PrssKeys<C>> = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .map(|&pid| {
+                    (
+                        pid,
+                        Ku25SetupMachine::<C>::new(pid, all_parties.clone(), t)
+                            .expect("ku25 setup"),
+                    )
+                })
+                .collect();
+            Orchestrator::new(machines, 4)
+                .run()
+                .expect("orch")
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        // Untimed: key shares for the signing measurement.
+        let key_shares = {
+            let machines: Vec<_> = all_parties
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    (
+                        pid,
+                        Ku25KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
+                            .expect("ku25 keygen"),
+                    )
+                })
+                .collect();
+            Orchestrator::new(machines, 4)
+                .run()
+                .expect("orch")
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect::<Vec<_>>()
+        };
+
+        let run_presign = |m: usize, seed: u64| {
+            let mut session = [0u8; 32];
+            session[..8].copy_from_slice(&seed.to_be_bytes());
+            let machines: Vec<_> = all_parties
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    (
+                        pid,
+                        Ku25PresignMachine::new_with_session(
+                            pid,
+                            all_parties.clone(),
+                            keys,
+                            m,
+                            &session,
+                        )
+                        .expect("ku25 presign"),
+                    )
+                })
+                .collect();
+            Orchestrator::new(machines, 8).run().expect("orch")
+        };
+
+        // --- Presigning: whole-system wall clock, amortized per presignature. ---
+        for &m in &batch_sizes {
+            group.bench_function(format!("presign/ku25/n{n}_t{t}_m{m}"), |b| {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+                    for it in 0..iters {
+                        let start = Instant::now();
+                        let out = run_presign(m, it);
+                        total += start.elapsed();
+                        criterion::black_box(out.outputs.len());
+                    }
+                    total / u32::try_from(m).expect("batch size fits in u32")
+                });
+            });
+        }
+
+        // --- Online signing: whole-system wall clock for one signature. ---
+        group.bench_function(format!("online_sign/ku25/n{n}_t{t}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for it in 0..iters {
+                    // Untimed: mint a presignature to spend.
+                    let presigs: Vec<_> = run_presign(1, 0xFFFF_0000 + it)
+                        .into_iter()
+                        .map(|r| r.unwrap().into_vec().remove(0))
+                        .collect();
+
+                    let start = Instant::now();
+                    let machines: Vec<_> = all_parties
+                        .iter()
+                        .zip(key_shares.iter().zip(presigs))
+                        .map(|(&pid, (share, presig))| {
+                            (
+                                pid,
+                                Ku25SignMachine::new(
+                                    pid,
+                                    all_parties.clone(),
+                                    share,
+                                    presig,
+                                    digest,
+                                )
+                                .expect("ku25 sign"),
+                            )
+                        })
+                        .collect();
+                    let out = Orchestrator::new(machines, 4).run().expect("orch");
+                    total += start.elapsed();
+                    criterion::black_box(out.outputs.len());
+                }
+                total
+            });
+        });
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion groups and main
 // ---------------------------------------------------------------------------
 
@@ -2687,6 +3105,8 @@ criterion_group!(
     wmc24_benchmarks,
     llz25_benchmarks,
     trout_benchmarks,
-    xal23_benchmarks
+    xal23_benchmarks,
+    ku25_benchmarks,
+    ku25_e2e_benchmarks
 );
 criterion_main!(benches);

@@ -6,7 +6,7 @@ A Rust library for threshold ECDSA and two-party ECDSA.
 
 The workspace currently includes these protocol crates:
 
-- **Multi-party Threshold Protocols**: GGN16, GG18, LN18, CGGMP20, DKLs23, XAL23, WMY23, TX25, JTX25, WMC24, LLZ25, DNP25(Trout)
+- **Multi-party Threshold Protocols**: GGN16, GG18, LN18, CGGMP20, DKLs23, XAL23, WMY23, TX25, JTX25, WMC24, LLZ25, DNP25(Trout), KU25
 - **Two-Party Protocols**: Lin17, KGG24, XAL21, ABC24
 
 ## Layout
