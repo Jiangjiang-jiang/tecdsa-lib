@@ -552,7 +552,7 @@ pub fn drg_presign_round3_bob(
 
         // Scale Alice j's bound DRG.Comb ciphertext c_{k_j} by Alice's public
         // Lagrange coefficient: c_{hat_k_j} = lambda_j (x) c_{k_j}.
-        let lambda_j_bytes = scalar_to_bytes::<k256::Secp256k1>(&local_lambdas[j]);
+        let lambda_j_bytes = scalar_to_bytes(&local_lambdas[j]);
         let c_hat_k_j =
             setup.scal_ciphertext_bytes(pk_j, &r2_bcasts[j].k_comb_ct, &lambda_j_bytes)?;
 

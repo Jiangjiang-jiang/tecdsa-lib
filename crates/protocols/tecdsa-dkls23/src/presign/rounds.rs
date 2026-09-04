@@ -191,7 +191,7 @@ where
 
             // Sample a nonce for the public gadget (always fresh per session)
             let nonce = C::random_scalar(rng);
-            let nonce_bytes = scalar_to_bytes::<C>(&nonce);
+            let nonce_bytes = scalar_to_bytes(&nonce);
 
             // Always run fresh base OT for now.
             let (mul_sender, ote_init_msg) = MulSender::init::<C>(&session_id, &nonce, rng);

@@ -170,10 +170,10 @@ impl Jtx25RobustOnlineSignMachine {
         }
 
         let m = hash_message_to_scalar(message);
-        let m_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&m);
+        let m_bytes = tecdsa_curve::conv::scalar_to_bytes(&m);
         let message_data = DataToSign::from_digest(m);
         let r_x = presignature.r_x;
-        let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_x);
+        let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_x);
 
         // Reconstruct phi_bar ciphertext.
         let pb_c1 = Qfi::from_bytes(&presignature.phi_bar_c1_bytes);
@@ -222,7 +222,7 @@ impl Jtx25RobustOnlineSignMachine {
                 .ok_or_else(|| TecdsaError::Other(format!("missing phi_bar_k c2 for {pid}")))?;
             kc1s.push(Qfi::from_bytes(kc1_bytes));
             kc2s.push(Qfi::from_bytes(kc2_bytes));
-            lambdas.push(tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(lambda_j).to_vec());
+            lambdas.push(tecdsa_curve::conv::scalar_to_bytes(lambda_j).to_vec());
         }
         let c0_c1 = setup
             .multiexp_bytes(&kc1s.iter().collect::<Vec<_>>(), &lambdas)

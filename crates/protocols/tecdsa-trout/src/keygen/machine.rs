@@ -22,7 +22,7 @@ use elliptic_curve::PrimeField;
 use rand::RngCore;
 use tecdsa_class_group::cl::ClSetup;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
@@ -30,8 +30,8 @@ use zeroize::Zeroize;
 use super::{
     msg::TroutKeygenMsg,
     rounds::{
-        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_to_bytes, R1LocalState,
-        R2BcastPayload, R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof, SerQfi,
+        compute_commitment, proj_from_bytes, proj_to_bytes, R1LocalState, R2BcastPayload,
+        R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof, SerQfi,
     },
 };
 use crate::{error::qfi_to_abc, key_share::TroutKeyShare};

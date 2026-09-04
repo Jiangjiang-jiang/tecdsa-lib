@@ -239,7 +239,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let k2_bytes = crate::keygen::scalar_to_bytes::<C>(k2);
+    let k2_bytes = crate::keygen::scalar_to_bytes(k2);
     let q_bytes = q_bytes::<C>();
 
     M::sender_encrypt(setup, &k2_bytes, &q_bytes, rng)
@@ -266,7 +266,7 @@ where
     let x1_prime = C::random_scalar(rng);
     let Q1_prime = C::generator() * x1_prime;
 
-    let x1p_bytes = crate::keygen::scalar_to_bytes::<C>(&x1_prime);
+    let x1p_bytes = crate::keygen::scalar_to_bytes(&x1_prime);
     let q_bytes = q_bytes::<C>();
 
     // MtA receiver step: homomorphically compute on the sender's ciphertext

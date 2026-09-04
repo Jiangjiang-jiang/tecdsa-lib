@@ -22,15 +22,15 @@ use elliptic_curve::PrimeField;
 use rand::RngCore;
 use tecdsa_class_group::cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
 
 use super::{
     msg::Llz25KeygenMsg,
     rounds::{
-        compute_commitment, proj_from_bytes, scalar_to_bytes, R1LocalState, R2BcastPayload,
-        R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof,
+        compute_commitment, proj_from_bytes, R1LocalState, R2BcastPayload, R2ReceivedBcast,
+        R3Payload, R3ReceivedData, SerDlogProof,
     },
 };
 use crate::key_share::Llz25KeyShare;

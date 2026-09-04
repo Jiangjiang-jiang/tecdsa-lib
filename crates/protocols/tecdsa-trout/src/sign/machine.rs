@@ -155,8 +155,8 @@ impl TroutSignMachine {
         }
 
         let r_scalar = my_presign.r_scalar;
-        let r_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_scalar);
-        let m_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(message.digest());
+        let r_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_scalar);
+        let m_bytes = tecdsa_curve::conv::scalar_to_bytes(message.digest());
         let broadcasts = &my_presign.all_broadcasts;
 
         // -----------------------------------------------------------
@@ -298,7 +298,7 @@ impl TroutSignMachine {
         let sd1_input = ScaledDecryptPartyInput {
             alpha_i: my_presign.alpha_i.clone(),
             beta_i: my_presign.beta_i.clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&my_presign.u_i),
+            b_i: tecdsa_curve::conv::scalar_to_bytes(&my_presign.u_i),
         };
         let f_i_1 = compute_f_share(&setup, &sd1_input, &sd1_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD1: {e}")))?;
@@ -312,7 +312,7 @@ impl TroutSignMachine {
         let sd2_input = ScaledDecryptPartyInput {
             alpha_i: alpha_z,
             beta_i: my_presign.beta_i.clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&my_presign.u_i),
+            b_i: tecdsa_curve::conv::scalar_to_bytes(&my_presign.u_i),
         };
         let f_i_2 = compute_f_share(&setup, &sd2_input, &sd2_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD2: {e}")))?;

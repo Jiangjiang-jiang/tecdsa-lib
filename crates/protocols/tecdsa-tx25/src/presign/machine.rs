@@ -147,7 +147,7 @@ impl Tx25PresignMachine {
         let gamma_i = k256::Secp256k1::random_scalar(&mut rng);
 
         // --- Step 2: MPMtA Round 1 for gamma_i ---
-        let gamma_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&gamma_i);
+        let gamma_bytes = tecdsa_curve::conv::scalar_to_bytes(&gamma_i);
         let my_pk = &key_mat.raw_pks[my_idx_val];
         let mpmta_r1 = mpmta_round1(&mut setup, my_pk, &gamma_bytes)?;
 

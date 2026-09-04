@@ -87,8 +87,8 @@ pub fn sign_round2(
 ) -> TroutResult<Signature<k256::Secp256k1>> {
     let _n = all_presigns.len();
     let r_scalar = all_presigns[0].r_scalar;
-    let r_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_scalar);
-    let m_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(message.digest());
+    let r_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_scalar);
+    let m_bytes = tecdsa_curve::conv::scalar_to_bytes(message.digest());
 
     // ---------------------------------------------------------------
     // Reconstruct per-party components from broadcasts
@@ -204,7 +204,7 @@ pub fn sign_round2(
         .map(|p| ScaledDecryptPartyInput {
             alpha_i: p.alpha_i.clone(),
             beta_i: p.beta_i.clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&p.u_i),
+            b_i: tecdsa_curve::conv::scalar_to_bytes(&p.u_i),
         })
         .collect();
 
@@ -238,7 +238,7 @@ pub fn sign_round2(
         .iter()
         .map(|p| {
             let r_val = Integer::from_digits(
-                &tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_scalar),
+                &tecdsa_curve::conv::scalar_to_bytes(&r_scalar),
                 Order::Msf,
             );
             let lid_val = Integer::from_digits(&p.l_i_delta_i, Order::Msf);
@@ -247,7 +247,7 @@ pub fn sign_round2(
             ScaledDecryptPartyInput {
                 alpha_i: alpha_z,
                 beta_i: p.beta_i.clone(),
-                b_i: tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&p.u_i),
+                b_i: tecdsa_curve::conv::scalar_to_bytes(&p.u_i),
             }
         })
         .collect();

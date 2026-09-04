@@ -120,8 +120,8 @@ pub fn presign_round1(
     let big_k = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_i;
     let big_gamma = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * gamma_i;
 
-    let k_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&k_i);
-    let gamma_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&gamma_i);
+    let k_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
+    let gamma_bytes = tecdsa_curve::conv::scalar_to_bytes(&gamma_i);
 
     // 3a. NIM.Encode_B(crs, k_i) -- CL encryption.
     let mut nim = Nim::new(setup);

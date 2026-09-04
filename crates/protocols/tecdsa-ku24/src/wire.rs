@@ -12,7 +12,7 @@ use elliptic_curve::{
     sec1::ModulusSize,
     FieldBytes, FieldBytesSize, PrimeField,
 };
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
 
 use crate::error::{Ku24Error, Ku24Result};
 
@@ -24,26 +24,15 @@ where
     C::point_to_bytes(&C::generator().to_affine()).len()
 }
 
-/// Pack a scalar into `C::SCALAR_BYTES` big-endian bytes.
-#[must_use]
-pub fn encode_scalar<C: TecdsaCurve>(s: &C::Scalar) -> Vec<u8>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    tecdsa_curve::conv::scalar_to_bytes::<C>(s)
-}
-
 /// Pack a slice of scalars into a flat blob.
 #[must_use]
 pub fn encode_scalars<C: TecdsaCurve>(values: &[C::Scalar]) -> Vec<u8>
 where
     FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     let mut out = Vec::with_capacity(values.len() * C::SCALAR_BYTES);
     for v in values {
-        out.extend_from_slice(&tecdsa_curve::conv::scalar_to_bytes::<C>(v));
+        out.extend_from_slice(&scalar_to_bytes(v));
     }
     out
 }

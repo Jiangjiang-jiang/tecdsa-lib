@@ -289,7 +289,7 @@ pub fn drg_gen_with_secret(
     let vss_output = pedersen_vss_share(secret, threshold, n, rng);
 
     // Step 3: Encrypt chi_i under own CL key with explicit randomness
-    let chi_bytes = scalar_to_bytes::<k256::Secp256k1>(secret);
+    let chi_bytes = scalar_to_bytes(secret);
 
     // Generate encryption randomness by sampling a CL secret key
     // (which lives in the correct range for CL randomness)
@@ -303,7 +303,7 @@ pub fn drg_gen_with_secret(
     // PC = commitments[0] = g^{a_0} * h^{a'_0} = g^{chi_i} * h^{chi'_i}.
     let pc = vss_output.commitments[0];
     let pc_bytes = pc.to_bytes().to_vec();
-    let chi_prime_bytes = scalar_to_bytes::<k256::Secp256k1>(&vss_output.secret_randomness);
+    let chi_prime_bytes = scalar_to_bytes(&vss_output.secret_randomness);
     let proof = REncPcProof::prove(
         setup,
         pk,
@@ -457,7 +457,7 @@ pub fn drg_comb(
     }
 
     // Step 4: Encrypt combined share under own CL key
-    let x_i_bytes = scalar_to_bytes::<k256::Secp256k1>(&combined_share);
+    let x_i_bytes = scalar_to_bytes(&combined_share);
     let (r_sk, _r_pk) = setup.keygen()?;
     let r_bytes = setup.sk_to_bytes(&r_sk)?;
     let ciphertext = setup.encrypt_with_r_bytes(pk, &x_i_bytes, &r_bytes)?;
@@ -465,7 +465,7 @@ pub fn drg_comb(
     // Step 5: Prove R_Enc-PC (cross-domain)
     // PC = pedersen_commitment = g^{x_i} * h^{x'_i}
     let pc_bytes = pedersen_commitment.to_bytes().to_vec();
-    let x_prime_i_bytes = scalar_to_bytes::<k256::Secp256k1>(&combined_randomness);
+    let x_prime_i_bytes = scalar_to_bytes(&combined_randomness);
     let proof = REncPcProof::prove(
         setup,
         pk,
@@ -508,7 +508,7 @@ pub fn drg_reveal_exp(
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
     let point = g * combined_share;
 
-    let x_bytes = scalar_to_bytes::<k256::Secp256k1>(combined_share);
+    let x_bytes = scalar_to_bytes(combined_share);
 
     // R_PC-DL proof: proves knowledge of x such that f^x = Y
     // The verifier checks that dlog_in_F(Y) matches the committed value.

@@ -371,7 +371,7 @@ impl Jtx25PresignMachine {
         }
 
         let x_i_bytes =
-            tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&key_share.secret_share);
+            tecdsa_curve::conv::scalar_to_bytes(&key_share.secret_share);
 
         let key_mat = KeyMaterial {
             x_i: key_share.secret_share,
@@ -398,7 +398,7 @@ impl Jtx25PresignMachine {
             let reduced = bu % &q;
             tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
         };
-        let phi_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&phi_i);
+        let phi_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&phi_i);
 
         // --- Step 2: Sample k_i ---
         let k_i = {
@@ -534,7 +534,7 @@ impl Jtx25PresignMachine {
             tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
         let lambda_i = lagrange_coeffs[my_idx];
         let lambda_x_i = lambda_i * key_mat.x_i;
-        let lambda_x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&lambda_x_i);
+        let lambda_x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&lambda_x_i);
 
         let phi_bar_x_i = scalar_mul_ct(setup, &phi_bar, &lambda_x_i_bytes)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_x_i: {e}")))?;
@@ -552,7 +552,7 @@ impl Jtx25PresignMachine {
         .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
 
         // --- Step 3: Compute phi_bar_k_i = phi_bar * k_i ---
-        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&state.k_i);
+        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&state.k_i);
         let phi_bar_k_i = scalar_mul_ct(setup, &phi_bar, &k_i_bytes)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_k_i: {e}")))?;
 

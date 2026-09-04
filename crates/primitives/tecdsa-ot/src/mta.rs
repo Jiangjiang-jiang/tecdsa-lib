@@ -33,12 +33,13 @@ use elliptic_curve::{CurveArithmetic, FieldBytes, PrimeField};
 use k256::Secp256k1;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
+use tecdsa_curve::conv::scalar_to_bytes;
 use tecdsa_protocol::MtAInteractive;
 
 use crate::{
     base_ot::OtError,
     rvole::{MulDataToKeep, MulDataToReceiver, MulReceiver, MulSender, L},
-    soft_spoken::{random_scalar, scalar_to_bytes, OteDataToSender, OteInitSenderMsg},
+    soft_spoken::{random_scalar, OteDataToSender, OteInitSenderMsg},
 };
 
 // ---------------------------------------------------------------------------
@@ -150,11 +151,6 @@ fn bytes_to_scalar(bytes: &[u8]) -> Result<Scalar, RvoleMtaError> {
         .ok_or_else(|| RvoleMtaError::InvalidScalar("bytes do not represent a valid scalar".into()))
 }
 
-/// Serialize a secp256k1 scalar to big-endian bytes.
-fn scalar_to_be_bytes(s: &Scalar) -> Vec<u8> {
-    scalar_to_bytes::<Secp256k1>(s)
-}
-
 // ---------------------------------------------------------------------------
 // MtAInteractive implementation
 // ---------------------------------------------------------------------------
@@ -178,7 +174,7 @@ impl MtAInteractive for RvoleMtA {
         rng: &mut impl CryptoRngCore,
     ) -> Result<(Self::InitMsg, Self::SenderState), Self::Error> {
         let nonce = random_scalar::<Secp256k1>(rng);
-        let nonce_bytes = scalar_to_bytes::<Secp256k1>(&nonce);
+        let nonce_bytes = scalar_to_bytes(&nonce);
 
         let (mul_sender, ote_init_msg) =
             MulSender::init::<Secp256k1>(&setup.session_id, &nonce, rng);
@@ -227,7 +223,7 @@ impl MtAInteractive for RvoleMtA {
 
         // Compute correction: delta = b_input - b_rvole
         let delta = b_input - b_rvole;
-        let delta_bytes = scalar_to_be_bytes(&delta);
+        let delta_bytes = scalar_to_bytes(&delta);
 
         let response_msg = RvoleResponseMsg {
             ote_data,
@@ -285,7 +281,7 @@ impl MtAInteractive for RvoleMtA {
 
         // Correct sender output: alpha = sender_out[0] + a * delta
         let alpha = sender_output[0] + a * delta;
-        let alpha_bytes = scalar_to_be_bytes(&alpha);
+        let alpha_bytes = scalar_to_bytes(&alpha);
 
         let compute_msg = RvoleComputeMsg { mul_data };
 
@@ -326,7 +322,7 @@ impl MtAInteractive for RvoleMtA {
         //                             = a*b_input
         // Therefore: beta = receiver_out[0]
         let beta = receiver_output[0];
-        let beta_bytes = scalar_to_be_bytes(&beta);
+        let beta_bytes = scalar_to_bytes(&beta);
 
         Ok(beta_bytes)
     }
@@ -364,11 +360,11 @@ mod tests {
 
         // Sender's input: a
         let a = random_scalar::<Secp256k1>(&mut rng);
-        let a_bytes = scalar_to_be_bytes(&a);
+        let a_bytes = scalar_to_bytes(&a);
 
         // Receiver's input: b
         let b = random_scalar::<Secp256k1>(&mut rng);
-        let b_bytes = scalar_to_be_bytes(&b);
+        let b_bytes = scalar_to_bytes(&b);
 
         // Step 1: Sender init
         let (init_msg, sender_state) =
@@ -410,8 +406,8 @@ mod tests {
         let a = k256::Scalar::from(42u64);
         let b = k256::Scalar::from(99u64);
 
-        let a_bytes = scalar_to_be_bytes(&a);
-        let b_bytes = scalar_to_be_bytes(&b);
+        let a_bytes = scalar_to_bytes(&a);
+        let b_bytes = scalar_to_bytes(&b);
 
         let (init_msg, sender_state) =
             RvoleMtA::sender_init(&setup, &mut rng).expect("sender_init");

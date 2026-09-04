@@ -10,6 +10,7 @@
 
 use k256::Secp256k1;
 use rand_core::OsRng;
+pub use tecdsa_curve::conv::scalar_to_bytes;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::backend::Integer;
 
@@ -17,10 +18,6 @@ pub type C = Secp256k1;
 
 pub fn random_scalar() -> k256::Scalar {
     C::random_scalar(&mut OsRng)
-}
-
-pub fn scalar_to_bytes(s: &k256::Scalar) -> Vec<u8> {
-    tecdsa_curve::conv::scalar_to_bytes::<C>(s)
 }
 
 pub fn paillier_keys() -> (

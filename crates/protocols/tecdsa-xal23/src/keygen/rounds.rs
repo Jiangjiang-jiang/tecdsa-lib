@@ -26,7 +26,7 @@ use elliptic_curve::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes, zk::dlog::DlogProof};
 use tecdsa_joye_libert::{
     kgen::{JlPublicKey, JlSecretKey},
     zk::zkjlmod::ZkJlModProof,
@@ -46,17 +46,6 @@ where
 {
     let encoded = p.to_bytes();
     let slice: &[u8] = encoded.as_ref();
-    slice.to_vec()
-}
-
-/// Serialize a `Scalar` to big-endian byte representation.
-pub(crate) fn scalar_to_bytes<C: TecdsaCurve>(s: &C::Scalar) -> Vec<u8>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
     slice.to_vec()
 }
 
@@ -118,7 +107,7 @@ impl SerDlogProof {
     {
         Self {
             commitment_bytes: proj_to_bytes::<C>(&proof.commitment),
-            response_bytes: scalar_to_bytes::<C>(&proof.response),
+            response_bytes: scalar_to_bytes(&proof.response),
         }
     }
 
@@ -219,7 +208,7 @@ where
         hasher.update(proj_to_bytes::<C>(com));
     }
     hasher.update(proj_to_bytes::<C>(&dlog_proof.commitment));
-    hasher.update(scalar_to_bytes::<C>(&dlog_proof.response));
+    hasher.update(scalar_to_bytes(&dlog_proof.response));
     hasher.update(jl_mod_proof_bytes);
     hasher.finalize().into()
 }

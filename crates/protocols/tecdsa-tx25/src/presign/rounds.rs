@@ -287,7 +287,7 @@ pub(crate) fn transition_r1_to_r2(
     }
 
     // MPMtA Round 2 for k*gamma.
-    let k_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&k_i);
+    let k_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
     let kg_mta = mpmta_round2(
         setup,
         &party_ids_u16,
@@ -300,7 +300,7 @@ pub(crate) fn transition_r1_to_r2(
     .map_err(|e| TecdsaError::Other(format!("MPMtA2 k*gamma: {e}")))?;
 
     // MPMtA Round 2 for x*gamma.
-    let x_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&key_mat.x_i);
+    let x_bytes = tecdsa_curve::conv::scalar_to_bytes(&key_mat.x_i);
     let xg_mta = mpmta_round2(
         setup,
         &party_ids_u16,

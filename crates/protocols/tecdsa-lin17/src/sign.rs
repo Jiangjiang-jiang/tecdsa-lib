@@ -322,7 +322,7 @@ where
 
     // Sample rho from Z_{q^2} for masking
     // q is the curve order. We need q^2 as the sampling range.
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
+    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     // q = -(-1) in the field, but we need the actual order.
     // For secp256k1, the order is a known constant.
     // We extract q from the scalar field: q = order of the group
@@ -335,10 +335,10 @@ where
     let rho = q_squared.random_below_ref(rng);
 
     // Compute: rho * q + k_2^{-1} * m' mod q
-    let k2_inv_bytes = scalar_to_bytes::<C>(&k2_inv);
+    let k2_inv_bytes = scalar_to_bytes(&k2_inv);
     let k2_inv_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&k2_inv_bytes);
 
-    let m_prime_bytes = scalar_to_bytes::<C>(&m_prime);
+    let m_prime_bytes = scalar_to_bytes(&m_prime);
     let m_prime_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&m_prime_bytes);
 
     // k_2^{-1} * m' mod q
@@ -354,10 +354,10 @@ where
         .map_err(|e| Lin17Error::Paillier(format!("encryption of partial_sig failed: {e}")))?;
 
     // Step 6: Compute v = k_2^{-1} * r * x_2 mod q
-    let r_bytes = scalar_to_bytes::<C>(&r);
+    let r_bytes = scalar_to_bytes(&r);
     let r_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&r_bytes);
 
-    let x2_bytes = scalar_to_bytes::<C>(&key_share.secret_share);
+    let x2_bytes = scalar_to_bytes(&key_share.secret_share);
     let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&x2_bytes);
 
     let v = (&k2_inv_int * ((&r_int * &x2_int) % &q_int)) % &q_int;

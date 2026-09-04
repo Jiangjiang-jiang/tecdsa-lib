@@ -157,7 +157,7 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     // Compute q (group order)
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
+    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
     let q_squared = &q_int * &q_int;
 
@@ -301,7 +301,7 @@ where
 
     // Check that a * x_1 + b = alpha (over the integers).
     // First we need x_1 as an Integer.
-    let x1_bytes = scalar_to_bytes::<C>(x1);
+    let x1_bytes = scalar_to_bytes(x1);
     let x1_int = Integer::from_bytes_msf(&x1_bytes);
 
     let expected = &verifier_msg2.a * &x1_int + &verifier_msg2.b;
@@ -398,7 +398,7 @@ mod tests {
         let q1 = Secp256k1::generator() * x1;
 
         // Encrypt x1
-        let x1_bytes = scalar_to_bytes::<Secp256k1>(&x1);
+        let x1_bytes = scalar_to_bytes(&x1);
         let x1_int = Integer::from_bytes_msf(&x1_bytes);
         let (c_key, _) = dk.encrypt_with_random(&mut rng, &x1_int).expect("encrypt");
 
@@ -420,7 +420,7 @@ mod tests {
 
         // Encrypt a DIFFERENT value
         let wrong_x = Secp256k1::random_scalar(&mut rng);
-        let wrong_bytes = scalar_to_bytes::<Secp256k1>(&wrong_x);
+        let wrong_bytes = scalar_to_bytes(&wrong_x);
         let wrong_int = Integer::from_bytes_msf(&wrong_bytes);
         let (wrong_c_key, _) = dk
             .encrypt_with_random(&mut rng, &wrong_int)
@@ -445,7 +445,7 @@ mod tests {
         let wrong_x = Secp256k1::random_scalar(&mut rng);
         let wrong_q1 = Secp256k1::generator() * wrong_x;
 
-        let x1_bytes = scalar_to_bytes::<Secp256k1>(&x1);
+        let x1_bytes = scalar_to_bytes(&x1);
         let x1_int = Integer::from_bytes_msf(&x1_bytes);
         let (c_key, _) = dk.encrypt_with_random(&mut rng, &x1_int).expect("encrypt");
 
