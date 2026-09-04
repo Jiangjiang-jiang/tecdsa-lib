@@ -140,7 +140,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    tecdsa_paillier::backend::Integer::from_bytes_msf(&scalar_to_bytes::<C>(s))
+    tecdsa_paillier::backend::Integer::from_bytes_msf(&scalar_to_bytes(s))
 }
 
 pub(crate) fn int_to_scalar<C: TecdsaCurve>(value: &tecdsa_paillier::backend::Integer) -> C::Scalar

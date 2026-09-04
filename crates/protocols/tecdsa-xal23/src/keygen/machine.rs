@@ -21,14 +21,14 @@ use std::collections::BTreeMap;
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand::RngCore;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
 use tecdsa_joye_libert::{kgen::JlPublicKey, zk::zkjlmod::ZkJlModProof};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{
     msg::Xal23KeygenMsg,
     rounds::{
-        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_from_bytes, scalar_to_bytes,
+        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_from_bytes,
         R1LocalState, R2BcastPayload, R2ReceivedBcast, SerDlogProof,
     },
 };
@@ -318,7 +318,7 @@ where
                 .iter()
                 .find(|s| s.index == j_1based)
                 .expect("share for party j must exist");
-            let share_bytes = scalar_to_bytes::<C>(&share_for_j.value);
+            let share_bytes = scalar_to_bytes(&share_for_j.value);
             self.outgoing.push(Outgoing {
                 to: Recipient::Party(party),
                 msg: Xal23KeygenMsg::Round2Share(share_bytes),

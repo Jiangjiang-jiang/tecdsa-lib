@@ -31,12 +31,13 @@ use elliptic_curve::{ops::Reduce, CurveArithmetic, Field, FieldBytes, PrimeField
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
+use tecdsa_curve::conv::scalar_to_bytes;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
     base_ot::OtError,
     soft_spoken::{
-        random_scalar, scalar_to_bytes, tagged_hash, tagged_hash_as_scalar, HashOutput,
+        random_scalar, tagged_hash, tagged_hash_as_scalar, HashOutput,
         OtExtensionReceiver, OtExtensionSender, OteDataToSender, OteInitSenderMsg, PrgOutput,
         BATCH_SIZE,
     },
@@ -82,7 +83,7 @@ where
     let mut counter = *nonce;
     for _ in 0..BATCH_SIZE {
         counter += <C::Scalar as Field>::ONE;
-        let counter_bytes = scalar_to_bytes::<C>(&counter);
+        let counter_bytes = scalar_to_bytes(&counter);
         gadget.push(tagged_hash_as_scalar::<C>(
             TAG_MUL_GADGET,
             &[session_id, &counter_bytes],
@@ -169,7 +170,7 @@ impl MulSender {
         let (ote_sender, ote_msg) = OtExtensionSender::init(session_id, rng);
 
         let gadget = compute_public_gadget::<C>(session_id, nonce);
-        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(|s| scalar_to_bytes::<C>(s)).collect();
+        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(scalar_to_bytes).collect();
 
         let sender = MulSender {
             gadget_bytes,
@@ -265,7 +266,7 @@ impl MulSender {
             let mut entries_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE as usize {
                 let entry = chi_tilde[i] * z_tilde[i][j] + chi_hat[i] * z_hat[i][j];
-                entries_bytes.push(scalar_to_bytes::<C>(&entry));
+                entries_bytes.push(scalar_to_bytes(&entry));
             }
             rows_r_bytes.push(entries_bytes.concat());
 
@@ -294,11 +295,11 @@ impl MulSender {
         // Serialize tau, verify_u, gamma for transport.
         let tau_bytes: Vec<Vec<Vec<u8>>> = vector_of_tau
             .iter()
-            .map(|tau| tau.iter().map(|s| scalar_to_bytes::<C>(s)).collect())
+            .map(|tau| tau.iter().map(scalar_to_bytes).collect())
             .collect();
         let verify_u_bytes: Vec<Vec<u8>> =
-            verify_u.iter().map(|s| scalar_to_bytes::<C>(s)).collect();
-        let gamma_bytes: Vec<Vec<u8>> = gamma.iter().map(|s| scalar_to_bytes::<C>(s)).collect();
+            verify_u.iter().map(scalar_to_bytes).collect();
+        let gamma_bytes: Vec<Vec<u8>> = gamma.iter().map(scalar_to_bytes).collect();
 
         let data_to_receiver = MulDataToReceiver {
             vector_of_tau: tau_bytes,
@@ -344,7 +345,7 @@ impl MulReceiver {
         let ote_receiver = OtExtensionReceiver::init(session_id, sender_ote_msg)?;
 
         let gadget = compute_public_gadget::<C>(session_id, nonce);
-        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(|s| scalar_to_bytes::<C>(s)).collect();
+        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(scalar_to_bytes).collect();
 
         Ok(MulReceiver {
             gadget_bytes,
@@ -415,10 +416,10 @@ impl MulReceiver {
             ));
         }
 
-        let b_bytes = scalar_to_bytes::<C>(&b);
+        let b_bytes = scalar_to_bytes(&b);
         let chi_tilde_bytes: Vec<Vec<u8>> =
-            chi_tilde.iter().map(|s| scalar_to_bytes::<C>(s)).collect();
-        let chi_hat_bytes: Vec<Vec<u8>> = chi_hat.iter().map(|s| scalar_to_bytes::<C>(s)).collect();
+            chi_tilde.iter().map(scalar_to_bytes).collect();
+        let chi_hat_bytes: Vec<Vec<u8>> = chi_hat.iter().map(scalar_to_bytes).collect();
 
         let data_to_keep = MulDataToKeep {
             b_bytes,
@@ -557,7 +558,7 @@ impl MulReceiver {
                 if data_kept.choice_bits[j] {
                     entry += verify_u[i];
                 }
-                entries_bytes.push(scalar_to_bytes::<C>(&entry));
+                entries_bytes.push(scalar_to_bytes(&entry));
             }
             rows_r_bytes.push(entries_bytes.concat());
         }

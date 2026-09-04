@@ -9,7 +9,7 @@ use elliptic_curve::{
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand::{rngs::OsRng, RngCore};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{
@@ -286,8 +286,8 @@ where
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
             msg: Ku24PresignMsg::Round3(PresignRound3 {
-                r_share: wire::encode_scalar::<C>(&self.r_share),
-                beta_share: wire::encode_scalar::<C>(&self.beta_share),
+                r_share: scalar_to_bytes(&self.r_share),
+                beta_share: scalar_to_bytes(&self.beta_share),
             }),
         });
         self.round = PresignRound::Round3(next);
@@ -324,7 +324,7 @@ where
         // do not need to stay private once cheating has been detected.
         let big_r: Vec<C::ProjectivePoint> = self.k.iter().map(|k| C::generator() * *k).collect();
         let payload = PresignRound4 {
-            t_share: wire::encode_scalar::<C>(&t_share),
+            t_share: scalar_to_bytes(&t_share),
             w: wire::encode_scalars::<C>(&self.w),
             big_r: wire::encode_points::<C>(&big_r)?,
         };

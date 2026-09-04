@@ -146,7 +146,7 @@ pub fn pvss_distribute_with_secret(
         )));
     }
 
-    let secret_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&secret);
+    let secret_bytes = tecdsa_curve::conv::scalar_to_bytes(&secret);
 
     let output = pvss_share::pvss_share_distribute_with_secret(
         setup,

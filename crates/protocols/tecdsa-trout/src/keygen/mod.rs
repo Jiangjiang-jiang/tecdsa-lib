@@ -81,7 +81,7 @@ pub fn trusted_dealer_keygen(
     let mut ct_components = Vec::new();
     let mut deltas = Vec::new();
     for share in &shares {
-        let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&share.value);
+        let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&share.value);
 
         // Generate random delta_i (encryption randomness)
         let (sk_tmp, _) = setup.keygen()?;

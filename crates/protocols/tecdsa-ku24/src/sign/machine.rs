@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
 use tecdsa_protocol::{
     ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
     state_machine::Outgoing,
@@ -94,8 +94,8 @@ where
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
             msg: Ku24SignMsg::Round1 {
-                r: wire::encode_scalar::<C>(&r),
-                s: wire::encode_scalar::<C>(&s_share),
+                r: scalar_to_bytes(&r),
+                s: scalar_to_bytes(&s_share),
             },
         }];
         let mut received = BTreeMap::new();

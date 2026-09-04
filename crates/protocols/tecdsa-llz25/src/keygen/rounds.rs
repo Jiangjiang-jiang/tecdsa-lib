@@ -27,7 +27,7 @@ use tecdsa_class_group::{
     zk::r_cl_dl_ec::RClDlEcProof,
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
+use tecdsa_curve::{conv::scalar_to_bytes, zk::dlog::DlogProof};
 use tecdsa_protocol::PartyId;
 use zeroize::Zeroize;
 
@@ -40,12 +40,6 @@ use crate::key_share::Llz25KeyShare;
 pub(crate) fn proj_to_bytes(p: &k256::ProjectivePoint) -> Vec<u8> {
     let encoded = p.to_bytes();
     let slice: &[u8] = encoded.as_ref();
-    slice.to_vec()
-}
-
-pub(crate) fn scalar_to_bytes(s: &k256::Scalar) -> Vec<u8> {
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
     slice.to_vec()
 }
 
@@ -322,7 +316,7 @@ pub(crate) fn transition_to_r3(
     let my_x_i_bytes = proj_to_bytes(&my_x_i_point);
 
     // 7. NIM.Encode_B(crs, x_i) -> (pe_{x,i}, st_{x,i})
-    let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&combined_share);
+    let x_i_bytes = scalar_to_bytes(&combined_share);
 
     let mut nim = Nim::new(setup);
     let NimEncodeBOutput { pe_b, state: st_b } = nim

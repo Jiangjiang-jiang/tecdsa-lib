@@ -324,7 +324,7 @@ pub fn mpmta_round2(
         // Sample beta_{i,j} uniformly from Z_q.
         let beta_ij = k256::Secp256k1::random_scalar(rng);
         let neg_beta = -beta_ij;
-        let neg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&neg_beta);
+        let neg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes(&neg_beta);
 
         // Parse C_{gamma_j} = (c_{j,1}, c_{j,2}).
         let (cj1, cj2) = setup.ct_components(&c_gammas[j])?;
@@ -398,7 +398,7 @@ pub fn mpmta_round2(
     let agg_d2 = setup.multiexp_bytes(&d2s.iter().collect::<Vec<_>>(), &e_js)?;
 
     // Compute aggregated beta decimal for the proof.
-    let agg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&agg_beta);
+    let agg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes(&agg_beta);
 
     // Generate the R_m-AffDL-Ec proof on the aggregated values.
     let proof = RMAffDlEcProof::prove(

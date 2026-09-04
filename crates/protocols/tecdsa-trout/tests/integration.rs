@@ -185,8 +185,8 @@ fn test_scaled_decrypt_standalone() {
     let mut com_qfis = Vec::new();
 
     for i in 0..n {
-        let a_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&a[i]);
-        let b_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&b[i]);
+        let a_bytes = tecdsa_curve::conv::scalar_to_bytes(&a[i]);
+        let b_bytes = tecdsa_curve::conv::scalar_to_bytes(&b[i]);
 
         let (sk_tmp, _) = setup.keygen().expect("keygen");
         let alpha_i = setup.sk_to_bytes(&sk_tmp).expect("sk_bytes");
@@ -218,7 +218,7 @@ fn test_scaled_decrypt_standalone() {
         .map(|i| ScaledDecryptPartyInput {
             alpha_i: alphas[i].clone(),
             beta_i: betas[i].clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&b[i]),
+            b_i: tecdsa_curve::conv::scalar_to_bytes(&b[i]),
         })
         .collect();
 

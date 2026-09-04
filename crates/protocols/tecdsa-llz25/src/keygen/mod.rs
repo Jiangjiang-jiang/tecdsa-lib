@@ -89,7 +89,7 @@ pub fn keygen_with_dealer(
     let mut all_pe_x_components: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(n as usize);
 
     for (i, share) in shares.iter().enumerate() {
-        let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&share.value);
+        let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&share.value);
 
         // NIM.Encode_B(crs, x_i) -- CL encryption of x_i.
         let mut nim = Nim::new(setup);

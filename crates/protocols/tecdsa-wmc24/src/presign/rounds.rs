@@ -190,7 +190,7 @@ pub(crate) fn transition_r1_to_r2(
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
     let lambda_i = lagrange_coeffs[my_idx];
     let lambda_x_i = lambda_i * key_mat.x_i;
-    let lambda_x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&lambda_x_i);
+    let lambda_x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&lambda_x_i);
 
     let xk_bar_i = scalar_mul_ct(setup, &k_bar, &lambda_x_i_bytes)
         .map_err(|e| TecdsaError::Other(format!("scalar_mul xk_bar_i: {e}")))?;
@@ -221,7 +221,7 @@ pub(crate) fn transition_r1_to_r2(
         let reduced = bu % &q;
         tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
     };
-    let gamma_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&gamma_i);
+    let gamma_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&gamma_i);
 
     // ElGamal encrypt g^{gamma_i}: D_gamma_i = t-ElG.Enc(elek, g^{gamma_i}; r_{gamma_i}).
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
@@ -265,8 +265,8 @@ pub(crate) fn transition_r1_to_r2(
         &ck_1,
         &cgk_0,
         &cgk_1,
-        &tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&gamma_i),
-        &tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_elg_i),
+        &tecdsa_curve::conv::scalar_to_bytes(&gamma_i),
+        &tecdsa_curve::conv::scalar_to_bytes(&r_elg_i),
     )
     .map_err(|e| TecdsaError::Other(format!("R_El-CL prove: {e}")))?;
 

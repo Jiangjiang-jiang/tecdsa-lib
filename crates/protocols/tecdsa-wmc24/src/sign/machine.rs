@@ -76,10 +76,10 @@ impl Wmc24OnlineSignMachine {
         }
 
         let m = hash_message_to_scalar(message);
-        let m_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&m);
+        let m_bytes = tecdsa_curve::conv::scalar_to_bytes(&m);
         let message_data = DataToSign::from_digest(m);
         let r_x = presignature.r_x;
-        let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&r_x);
+        let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_x);
 
         // Reconstruct k_bar ciphertext.
         let kb_c1 = Qfi::from_bytes(&presignature.k_bar_c1_abc.data);

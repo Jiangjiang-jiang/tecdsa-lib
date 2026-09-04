@@ -22,8 +22,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar, scalar_to_integer},
-    TecdsaCurve,
+    TecdsaCurve, conv::{curve_order, integer_to_scalar, scalar_to_bytes, scalar_to_integer},
 };
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSenderState, JlMtaSetup};
 use tecdsa_protocol::{state_machine::Outgoing, MtA, PartyId, Recipient};
@@ -40,16 +39,6 @@ use crate::key_share::Xal23KeyShare;
 // ---------------------------------------------------------------------------
 // Helper: scalar (de)serialization
 // ---------------------------------------------------------------------------
-
-fn scalar_to_bytes<C: TecdsaCurve>(s: &C::Scalar) -> Vec<u8>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
-    slice.to_vec()
-}
 
 pub(crate) fn scalar_from_bytes<C: TecdsaCurve>(bytes: &[u8]) -> tecdsa_core::Result<C::Scalar>
 where
@@ -533,7 +522,7 @@ where
     }
 
     // Broadcast delta_i
-    let delta_bytes = scalar_to_bytes::<C>(&delta_i);
+    let delta_bytes = scalar_to_bytes(&delta_i);
     let mut outgoing = Vec::new();
     for &peer in &state.all_parties {
         if peer == state.my_id {

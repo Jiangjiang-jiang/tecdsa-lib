@@ -247,7 +247,7 @@ pub fn dkg_dl_gen(
         let share = &vss.shares[j];
         let chi_ij = share.value;
         let chi_prime_ij = share.randomness;
-        let chi_ij_bytes = scalar_to_bytes::<k256::Secp256k1>(&chi_ij);
+        let chi_ij_bytes = scalar_to_bytes(&chi_ij);
 
         // EC Pedersen commitment: PC = g^{chi_ij} * h^{chi'_ij}
         // This equals evaluating the commitment polynomial at j's index.
@@ -264,7 +264,7 @@ pub fn dkg_dl_gen(
         // R_Enc-PC proof (cross-domain): proves ct encrypts chi_ij AND
         // PC = g^{chi_ij} * h^{chi'_ij} uses the same chi_ij.
         let pc_bytes = pc.to_bytes();
-        let chi_prime_ij_bytes = scalar_to_bytes::<k256::Secp256k1>(&chi_prime_ij);
+        let chi_prime_ij_bytes = scalar_to_bytes(&chi_prime_ij);
         let proof = REncPcProof::prove(
             setup,
             pk_j,
@@ -461,7 +461,7 @@ pub fn dkg_dl_reveal_verify(
     // From the verifier's perspective: given X_i = g^{x_i} and the combined
     // ciphertext c = (c1, c2), the prover claims c2 / c1^{sk} = f^{x_i}.
     // So pd = c1^{sk} = c2 * (f^{x_i})^{-1}.
-    let x_i_bytes = scalar_to_bytes::<k256::Secp256k1>(&reveal.combined_share);
+    let x_i_bytes = scalar_to_bytes(&reveal.combined_share);
     let f_xi = setup.power_of_f_bytes(&x_i_bytes)?;
     let (_, c2) = setup.ct_components(&reveal.combined_ct)?;
     let mut f_xi_inv = f_xi;

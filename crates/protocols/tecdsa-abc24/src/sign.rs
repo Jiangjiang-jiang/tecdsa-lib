@@ -272,12 +272,12 @@ where
         .ok_or_else(|| Abc24Error::ProtocolState("k_1 is zero".into()))?;
 
     // Get curve order q
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
+    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes) + 1u8;
 
     // Compute u = [k_1^{-1} * (m + r * x_1)]_q + mu_mask * q
     let k1_inv_m_rx1 = k1_inv * (m + r * key_share.secret_share);
-    let u_base_bytes = scalar_to_bytes::<C>(&k1_inv_m_rx1);
+    let u_base_bytes = scalar_to_bytes(&k1_inv_m_rx1);
     let u_base = tecdsa_paillier::backend::Integer::from_bytes_msf(&u_base_bytes);
 
     // mu_mask: statistical masking to hide u mod q
@@ -286,7 +286,7 @@ where
 
     // Compute v = [k_1^{-1} * r]_q + mu'_mask * q
     let k1_inv_r = k1_inv * r;
-    let v_base_bytes = scalar_to_bytes::<C>(&k1_inv_r);
+    let v_base_bytes = scalar_to_bytes(&k1_inv_r);
     let v_base = tecdsa_paillier::backend::Integer::from_bytes_msf(&v_base_bytes);
 
     let mu_prime_mask = q_int.random_below_ref(rng);

@@ -8,14 +8,8 @@ use crate::TecdsaCurve;
 
 /// Serialize a scalar to big-endian bytes.
 #[must_use]
-pub fn scalar_to_bytes<C: TecdsaCurve>(s: &C::Scalar) -> Vec<u8>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
-    slice.to_vec()
+pub fn scalar_to_bytes<F: PrimeField>(s: &F) -> Vec<u8> {
+    s.to_repr().as_ref().to_vec()
 }
 
 /// Convert big-endian bytes to a scalar by reducing modulo the group order.
@@ -30,7 +24,7 @@ where
 {
     let value = Integer::from_digits(bytes, Order::Msf);
 
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
+    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     let q = Integer::from_digits(&q_bytes, Order::Msf) + 1;
 
     let reduced = value.modulo(&q);
@@ -71,7 +65,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    Integer::from_digits(&scalar_to_bytes::<C>(s), Order::Msf)
+    Integer::from_digits(&scalar_to_bytes(s), Order::Msf)
 }
 
 /// Returns the group order `q` as an `Integer`.

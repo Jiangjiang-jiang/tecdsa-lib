@@ -164,7 +164,7 @@ pub fn mtawc_alice_step1(
     pk_alice: &ClPublicKey,
     a: &k256::Scalar,
 ) -> MtAwcResult<(MtAwcAliceState, ClCiphertext)> {
-    let a_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(a);
+    let a_bytes = tecdsa_curve::conv::scalar_to_bytes(a);
     let ct = setup.encrypt_bytes(pk_alice, &a_bytes)?;
     Ok((MtAwcAliceState { a: *a }, ct))
 }
@@ -191,12 +191,12 @@ pub fn mtawc_bob(
     let beta = k256::Secp256k1::random_scalar(rng);
 
     // Compute homomorphic scalar mul: b * c_a = Enc(a*b)
-    let b_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(b);
+    let b_bytes = tecdsa_curve::conv::scalar_to_bytes(b);
     let c_ab = setup.scal_ciphertext_bytes(pk_alice, c_a, &b_bytes)?;
 
     // Compute Enc(-beta)
     let neg_beta = -beta;
-    let neg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&neg_beta);
+    let neg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes(&neg_beta);
     let c_neg_beta = setup.encrypt_bytes(pk_alice, &neg_beta_bytes)?;
 
     // Homomorphic add: c_alpha = Enc(a*b) + Enc(-beta) = Enc(a*b - beta)
@@ -309,7 +309,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         for _ in 0..10 {
             let s = k256::Secp256k1::random_scalar(&mut rng);
-            let bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&s);
+            let bytes = tecdsa_curve::conv::scalar_to_bytes(&s);
             let s2 = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&bytes);
             assert_eq!(s, s2, "scalar round-trip failed");
         }

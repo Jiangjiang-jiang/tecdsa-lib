@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
 use tecdsa_protocol::{
     state_machine::Outgoing, DataToSign, IaReport, PartyId, Recipient, Signature, StateMachine,
 };
@@ -33,16 +33,6 @@ use crate::presign::Xal23Presignature;
 // ---------------------------------------------------------------------------
 // Helpers: scalar (de)serialization
 // ---------------------------------------------------------------------------
-
-fn scalar_to_bytes<C: TecdsaCurve>(s: &C::Scalar) -> Vec<u8>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
-    slice.to_vec()
-}
 
 fn scalar_from_bytes<C: TecdsaCurve>(bytes: &[u8]) -> tecdsa_core::Result<C::Scalar>
 where
@@ -129,7 +119,7 @@ where
 
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
-            msg: Xal23SignMsg::PartialSig(scalar_to_bytes::<C>(&s_i)),
+            msg: Xal23SignMsg::PartialSig(scalar_to_bytes(&s_i)),
         }];
 
         Self {

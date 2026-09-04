@@ -464,8 +464,8 @@ fn mta_once() {
         let mut nim_setup =
             tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed).expect("cl");
         let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
-        let x_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&a);
-        let y_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&b);
+        let x_bytes = tecdsa_curve::conv::scalar_to_bytes(&a);
+        let y_bytes = tecdsa_curve::conv::scalar_to_bytes(&b);
         // V = x * G is the EC commitment bound by R_Ped to the Encode_A output.
         let big_v = {
             use elliptic_curve::group::GroupEncoding;

@@ -208,7 +208,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
+    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
@@ -307,7 +307,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
+    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
@@ -380,7 +380,7 @@ where
     }
 
     // Step 5: Verify range proof
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
+    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
     if !p1_round3
         .range_proof

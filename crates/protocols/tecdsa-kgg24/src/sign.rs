@@ -389,21 +389,21 @@ where
     // Blinded inverse: k_tilde_2_inv = [k_2^{-1}]_q + rho_bar * q
     // where rho_bar is sampled from [0, q)
     let rho_bar = q_int.random_below_ref(rng);
-    let k2_inv_bytes = scalar_to_bytes::<C>(&k2_inv);
+    let k2_inv_bytes = scalar_to_bytes(&k2_inv);
     let k2_inv_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&k2_inv_bytes);
     let k_tilde_2_inv = &k2_inv_int + &rho_bar * &q_int;
 
     // Step 5: Compute the message digest as integer
     let m_prime = *message.digest();
-    let m_prime_bytes = scalar_to_bytes::<C>(&m_prime);
+    let m_prime_bytes = scalar_to_bytes(&m_prime);
     let m_prime_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&m_prime_bytes);
 
     // Get r as integer
-    let r_bytes = scalar_to_bytes::<C>(&r);
+    let r_bytes = scalar_to_bytes(&r);
     let r_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&r_bytes);
 
     // Get x_2 as integer
-    let x2_bytes = scalar_to_bytes::<C>(&key_share.secret_share);
+    let x2_bytes = scalar_to_bytes(&key_share.secret_share);
     let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&x2_bytes);
 
     // Sample rho from [0, 3*q^3 * 2^{4*tau + 2*kappa}) for masking

@@ -81,7 +81,7 @@ impl Wmc24PresignMachine {
             let reduced = bu % &q;
             tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
         };
-        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&k_i);
+        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
 
         let (r_sk, _) = setup.keygen()?;
         let enc_randomness = setup.sk_to_bytes(&r_sk)?;
