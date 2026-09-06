@@ -29,7 +29,7 @@ use std::{
 
 use elliptic_curve::{ops::Reduce, PrimeField};
 use k256::Secp256k1;
-use rug::Complete;
+use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
 use tecdsa_bench::{config, per_party};
 use tecdsa_ln18::sign::Ln18MtaBackend;
@@ -143,11 +143,11 @@ fn point_wire_len(p: &k256::ProjectivePoint) -> usize {
 /// of its own; message structs carry it through
 /// `#[serde(with = "tecdsa_bigint::int_wire")]`. This measures it the same way,
 /// so the figure matches what the protocol actually puts on the wire.
-fn integer_wire_len(x: &tecdsa_paillier::backend::Integer) -> usize {
+fn integer_wire_len(x: &Integer) -> usize {
     #[derive(serde::Serialize)]
     struct IntWire<'a> {
         #[serde(with = "tecdsa_bigint::int_wire")]
-        n: &'a tecdsa_paillier::backend::Integer,
+        n: &'a Integer,
     }
     tecdsa_testkit::wire_size(&IntWire { n: x })
 }
@@ -271,7 +271,7 @@ fn mta_once() {
 
     // ── Setup (timed separately) ──
     let paillier_dk = time_once("mta/setup/paillier_keygen", || {
-        tecdsa_paillier::keygen(&mut OsRng).expect("keygen")
+        tecdsa_paillier::DecryptionKey::generate(&mut OsRng).expect("keygen")
     });
     let paillier_ek = paillier_dk.encryption_key().clone();
 
@@ -321,11 +321,9 @@ fn mta_once() {
 
     // ── 2. Paillier MtA with CGGMP20 proofs (pi_enc + pi_aff-g) ──
     {
-        use paillier_zk::{
-            paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
-        };
-        use tecdsa_paillier::mta::{
-            Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup,
+        use tecdsa_paillier::{
+            mta::{Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup},
+            zk::{pi_aff_g as pi_aff, pi_enc},
         };
         type M = PaillierMtA<Cggmp20Proofs>;
         // Ring-Pedersen Aux (s, t, N^) reuses the N-tilde fixture: s<-h1,
@@ -334,10 +332,8 @@ fn mta_once() {
             s: ntilde.h1.clone(),
             t: ntilde.h2.clone(),
             rsa_modulo: ntilde.n_tilde.clone(),
-            multiexp: None,
-            crt: None,
         };
-        let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes);
+        let q_int = Integer::from_bytes_msf(&q_bytes);
         let setup = PaillierMtaSetup::<Cggmp20Proofs> {
             ek: paillier_ek.clone(),
             dk: paillier_dk.clone(),
@@ -960,14 +956,11 @@ fn ggn16_dealer_setup(
 ) -> (
     tecdsa_paillier::threshold::ThresholdSetup,
     Vec<tecdsa_paillier::threshold::DecryptionShare>,
-    tecdsa_paillier::backend::Integer,
-    tecdsa_paillier::backend::Integer,
-    tecdsa_paillier::backend::Integer,
+    Integer,
+    Integer,
+    Integer,
 ) {
-    use tecdsa_paillier::{
-        backend::Integer,
-        threshold::{DecryptionShare, ThresholdSetup},
-    };
+    use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
 
     let mut rng = rand_core::OsRng;
     let p = Integer::generate_safe_prime(&mut rng, 1536);

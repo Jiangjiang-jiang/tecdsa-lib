@@ -26,14 +26,13 @@
 
 use std::marker::PhantomData;
 
-use fast_paillier::{
-    backend::{BigIntExt, Integer},
-    DecryptionKey, EncryptionKey,
-};
 use rand_core::CryptoRngCore;
-use rug::Complete;
+use rug::{Complete, Integer};
 use sha2::Sha256;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_protocol::MtA;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 // ---------------------------------------------------------------------------
 // PaillierMtaProofs trait: abstracts over the ZK proof system
@@ -289,10 +288,8 @@ impl PaillierMtaProofs for Gg18Proofs {
 // ---------------------------------------------------------------------------
 
 use generic_ec::curves::Secp256k1 as GE;
-use paillier_zk::{
-    paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
-    IntegerExt,
-};
+
+use crate::zk::{pi_aff_g as pi_aff, pi_enc, IntegerExt};
 
 /// CGGMP20 proof setup: Ring-Pedersen auxiliary parameters, security
 /// parameters, and the prover's own Paillier key.
@@ -376,7 +373,7 @@ pub struct Cggmp20ReceiverProof {
     pub x: generic_ec::Point<GE>,
     /// Ciphertext `Y = Enc(key_i, alpha')` under the prover's own key.
     #[serde(with = "tecdsa_bigint::int_wire")]
-    pub y: fast_paillier::Ciphertext,
+    pub y: crate::scheme::Ciphertext,
 }
 
 /// Fiat-Shamir domain separator for CGGMP20 MtA proofs generated through the
@@ -597,7 +594,7 @@ pub struct PaillierSenderState<P: PaillierMtaProofs = SimpleProofs> {
 pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_B = Enc(pk, b; r)`: Paillier ciphertext of the sender's input.
     #[serde(with = "tecdsa_bigint::int_wire")]
-    pub ciphertext: fast_paillier::Ciphertext,
+    pub ciphertext: crate::scheme::Ciphertext,
     /// Proof accompanying the sender's ciphertext.
     pub proof: P::SenderProof,
 }
@@ -611,7 +608,7 @@ pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
 pub struct PaillierReceiverMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_A = c_B^a * Enc(pk, alpha'; r')`: the affine ciphertext.
     #[serde(with = "tecdsa_bigint::int_wire")]
-    pub ciphertext: fast_paillier::Ciphertext,
+    pub ciphertext: crate::scheme::Ciphertext,
     /// Proof accompanying the receiver's affine computation.
     pub proof: P::ReceiverProof,
 }
@@ -813,7 +810,7 @@ mod tests {
 
     /// Helper: generate a Paillier key pair and return (ek, dk).
     fn gen_paillier_keys(rng: &mut impl CryptoRngCore) -> (EncryptionKey, DecryptionKey) {
-        let dk = crate::keygen(rng).expect("Paillier keygen failed");
+        let dk = crate::DecryptionKey::generate(rng).expect("Paillier keygen failed");
         let ek = dk.encryption_key().clone();
         (ek, dk)
     }
@@ -1088,8 +1085,6 @@ mod tests {
                 s,
                 t,
                 rsa_modulo: n,
-                multiexp: None,
-                crt: None,
             }
         };
 

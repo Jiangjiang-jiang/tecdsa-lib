@@ -54,13 +54,13 @@ where
     let x1_point = C::generator() * x1;
     let x2_point = C::generator() * x2;
 
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
     let setup = SetupData::from_ek(&ek);
 
     let x2_bytes = x2.to_repr();
-    let x2_plaintext = tecdsa_paillier::backend::Integer::from_bytes_msf(x2_bytes.as_ref());
+    let x2_plaintext = rug::Integer::from_bytes_msf(x2_bytes.as_ref());
 
     let (enc_x2, _nonce) = dk
         .encrypt_with_random(rng, &x2_plaintext)
@@ -114,7 +114,7 @@ mod tests {
             .decrypt(&client.enc_x2)
             .expect("decryption failed");
         let x2_bytes = server.secret_share.to_repr();
-        let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x2_bytes.as_ref());
+        let x2_int = rug::Integer::from_bytes_msf(x2_bytes.as_ref());
         assert_eq!(decrypted, x2_int);
     }
 

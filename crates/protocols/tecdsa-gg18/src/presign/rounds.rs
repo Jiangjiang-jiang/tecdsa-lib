@@ -33,6 +33,7 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
@@ -41,7 +42,6 @@ use tecdsa_curve::{
     TecdsaCurve,
 };
 use tecdsa_paillier::{
-    backend::Integer,
     mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtaProofs},
     zk::mta_range::BobProofExt,
     BigIntExt,

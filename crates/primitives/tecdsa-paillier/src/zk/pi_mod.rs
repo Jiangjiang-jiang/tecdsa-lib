@@ -1,68 +1,13 @@
-//! ZK-proof of Paillier-Blum modulus. Called Пmod or Rmod in the CGGMP24 paper.
-//!
-//! ## Description
-//! A party P has a Paillier-Blum modulus `N = pq`, with p and q being primes such
-//! that `gcd(N, phi(N)) = 1` and `p,q = 3 \mod 4`. P wants to prove that those
-//! equalities about N hold, without disclosing p and q.
-//!
-//! ## Example
-//! ```rust
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use fast_paillier::backend::Integer;
-//! let mut rng = rand_core::OsRng;
-//! # let mut rng = rand_dev::DevRng::new();
-//!
-//! // 0. Prover P derives two Blum primes and makes a Paillier-Blum modulus
-//! let p = Integer::generate_safe_prime(&mut rng, 256);
-//! let q = Integer::generate_safe_prime(&mut rng, 256);
-//! let n = &p * &q;
-//!
-//! // 1. P computes a non-interactive proof that `n` is a Paillier-Blum modulus:
-//! use paillier_zk::paillier_blum_modulus as p;
-//!
-//! // Security parameter
-//! const SECURITY: usize = 33;
-//! // Verifier and prover share the same state
-//! let shared_state = "some shared state";
-//!
-//! let data = p::Data { n: &n };
-//! let pdata = p::PrivateData { p: &p, q: &q };
-//!
-//! let proof = p::non_interactive::prove::<{ SECURITY }, sha2::Sha256>(
-//!     &shared_state,
-//!     data,
-//!     pdata,
-//!     &mut rng,
-//! )?;
-//!
-//! // 2. P sends `data, commitment, proof` to the verifier V
-//!
-//! # fn send(_: &p::Data, _: &p::NiProof<{SECURITY}>) { }
-//! send(&data, &proof);
-//!
-//! // 3. V receives and verifies the proof:
-//!
-//! # let recv = || (data, proof);
-//! let (data, proof) = recv();
-//!
-//! p::non_interactive::verify::<{ SECURITY }, sha2::Sha256>(
-//!     &shared_state,
-//!     data,
-//!     &proof,
-//!     &mut rng,
-//! )?;
-//! # Ok(()) }
-//! ```
-//! If the verification succeeded, V can continue communication with P
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 
-use fast_paillier::backend::Integer;
-#[cfg(feature = "serde")]
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 
 /// Public data that both parties know: the Paillier-Blum modulus
 #[derive(Debug, Clone, Copy, udigest::Digestable)]
 pub struct Data<'a> {
-    #[udigest(as = &crate::common::encoding::Integer)]
+    #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub n: &'a Integer,
 }
 
@@ -74,11 +19,10 @@ pub struct PrivateData<'a> {
 }
 
 /// Prover's first message, obtained by [`interactive::commit`]
-#[derive(Debug, Clone, udigest::Digestable)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, udigest::Digestable, Serialize, Deserialize)]
 pub struct Commitment {
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub w: Integer,
 }
 
@@ -92,34 +36,28 @@ pub struct Challenge<const M: usize> {
 }
 
 /// A part of proof. Having enough of those guarantees security
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofPoint {
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub x: Integer,
     pub a: bool,
     pub b: bool,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z: Integer,
 }
 
 /// The ZK proof. Computed by [`interactive::prove`].
 /// Consists of M proofs for each challenge
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proof<const M: usize> {
-    #[cfg_attr(
-        // A trick to serialize arbitrary size arrays
-        feature = "serde",
-        serde(with = "serde_with::As::<[serde_with::Same; M]>")
-    )]
+    // A trick to serialize arbitrary size arrays
+    #[serde(with = "serde_with::As::<[serde_with::Same; M]>")]
     pub points: [ProofPoint; M],
 }
 
 /// The non-interactive ZK proof. Computed by [`non_interactive::prove`].
 /// Combines commitment and proof.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NiProof<const M: usize> {
     pub commitment: Commitment,
     pub proof: Proof<M>,
@@ -129,11 +67,14 @@ pub struct NiProof<const M: usize> {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use fast_paillier::backend::{BigIntExt, Integer};
     use rand_core::RngCore;
+    use rug::Integer;
+    use tecdsa_bigint::BigIntExt;
 
     use super::{Challenge, Commitment, Data, PrivateData, Proof, ProofPoint};
-    use crate::{common::fail_if, BadExponent, Error, ErrorReason, InvalidProof, InvalidProofReason};
+    use crate::zk::{
+        common::fail_if, BadExponent, Error, ErrorReason, InvalidProof, InvalidProofReason,
+    };
 
     /// Create random commitment
     pub fn commit<R: RngCore>(Data { n }: Data, rng: &mut R) -> Commitment {
@@ -185,7 +126,7 @@ pub mod interactive {
     ) -> Result<(), InvalidProof> {
         // rug's `is_probably_prime` (unlike the old fast-paillier trait method it
         // replaces) doesn't take an rng; `_rng` is kept for API compatibility.
-        if data.n.is_probably_prime(25) != fast_paillier::backend::IsPrime::No {
+        if data.n.is_probably_prime(25) != rug::integer::IsPrime::No {
             return Err(InvalidProofReason::ModulusIsPrime.into());
         }
         if data.n.is_even() {
@@ -252,7 +193,7 @@ pub mod non_interactive {
     use digest::Digest;
 
     use super::{Challenge, Commitment, Data, NiProof, PrivateData};
-    use crate::{Error, InvalidProof};
+    use crate::zk::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.
@@ -303,7 +244,10 @@ pub mod non_interactive {
 
 #[cfg(test)]
 mod test {
-    use crate::common::test::generate_blum_prime;
+    use rug::Complete;
+    use tecdsa_bigint::BigIntExt;
+
+    use crate::zk::common::test::generate_blum_prime;
 
     type D = sha2::Sha256;
 
@@ -312,7 +256,7 @@ mod test {
         let mut rng = rand_dev::DevRng::new();
         let p = generate_blum_prime(&mut rng, 256);
         let q = generate_blum_prime(&mut rng, 256);
-        let n = &p * &q;
+        let n = (&p * &q).complete();
         let data = super::Data { n: &n };
         let pdata = super::PrivateData { p: &p, q: &q };
         let shared_state = "shared state";
@@ -331,12 +275,12 @@ mod test {
         let p = generate_blum_prime(&mut rng, 256);
         let q = loop {
             // non blum prime
-            let q = fast_paillier::backend::Integer::generate_prime(&mut rng, 256);
+            let q = rug::Integer::generate_prime(&mut rng, 256);
             if q.mod_u(4) == 1 {
                 break q;
             }
         };
-        let n = &p * &q;
+        let n = (&p * &q).complete();
         let data = super::Data { n: &n };
         let pdata = super::PrivateData { p: &p, q: &q };
         let shared_state = "shared state";

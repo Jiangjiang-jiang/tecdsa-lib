@@ -9,6 +9,7 @@
 //! - Round 4: (verification only, no new messages)
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
@@ -31,10 +32,10 @@ pub const PI_MOD_SECURITY: usize = 80;
 
 /// A big integer serialized as MSF (most-significant-first) bytes.
 ///
-/// Wraps `tecdsa_paillier::backend::Integer` with serde support via
+/// Wraps `rug::Integer` with serde support via
 /// its `to_bytes_msf` / `from_bytes_msf` conversions.
 #[derive(Clone, Debug)]
-pub struct SerInteger(pub tecdsa_paillier::backend::Integer);
+pub struct SerInteger(pub Integer);
 
 impl Serialize for SerInteger {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -46,9 +47,7 @@ impl Serialize for SerInteger {
 impl<'de> Deserialize<'de> for SerInteger {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
-        Ok(SerInteger(
-            tecdsa_paillier::backend::Integer::from_bytes_msf(&bytes),
-        ))
+        Ok(SerInteger(Integer::from_bytes_msf(&bytes)))
     }
 }
 
@@ -127,8 +126,7 @@ where
     pub schnorr_proof: DlogProof<C>,
     /// Proof that the sender's Paillier modulus N is a Paillier-Blum modulus
     /// (product of two safe primes, both ≡ 3 mod 4).
-    pub paillier_mod_proof:
-        tecdsa_paillier::zk::paillier_zk::paillier_blum_modulus::NiProof<PI_MOD_SECURITY>,
+    pub paillier_mod_proof: tecdsa_paillier::zk::pi_mod::NiProof<PI_MOD_SECURITY>,
 }
 
 // ---------------------------------------------------------------------------

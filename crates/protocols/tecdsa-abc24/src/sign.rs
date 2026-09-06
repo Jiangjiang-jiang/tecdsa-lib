@@ -279,7 +279,7 @@ where
     // Compute u = [k_1^{-1} * (m + r * x_1)]_q + mu_mask * q
     let k1_inv_m_rx1 = k1_inv * (m + r * key_share.secret_share);
     let u_base_bytes = scalar_to_bytes(&k1_inv_m_rx1);
-    let u_base = tecdsa_paillier::backend::Integer::from_bytes_msf(&u_base_bytes);
+    let u_base = rug::Integer::from_bytes_msf(&u_base_bytes);
 
     // mu_mask: statistical masking to hide u mod q
     let mu_mask = q_int.sample_below_ref(rng);
@@ -288,7 +288,7 @@ where
     // Compute v = [k_1^{-1} * r]_q + mu'_mask * q
     let k1_inv_r = k1_inv * r;
     let v_base_bytes = scalar_to_bytes(&k1_inv_r);
-    let v_base = tecdsa_paillier::backend::Integer::from_bytes_msf(&v_base_bytes);
+    let v_base = rug::Integer::from_bytes_msf(&v_base_bytes);
 
     let mu_prime_mask = q_int.sample_below_ref(rng);
     let v = v_base + mu_prime_mask * q_int;

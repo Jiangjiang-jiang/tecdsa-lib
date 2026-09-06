@@ -9,9 +9,9 @@
 #![allow(non_snake_case)]
 
 use elliptic_curve::CurveArithmetic;
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_paillier::backend::Integer;
 
 // ---------------------------------------------------------------------------
 // Round 1: hash commitment

@@ -18,13 +18,12 @@
 //! The `domain` parameter provides protocol-specific domain separation for the
 //! Fiat-Shamir challenges (e.g. `b"lin17-correct-key-challenge"`).
 
-use fast_paillier::{
-    backend::{BigIntExt, Integer},
-    DecryptionKey, EncryptionKey,
-};
-use rug::Complete;
+use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 /// Number of repetitions for the correct-key proof.
 /// Each repetition halves the soundness error, so 80 gives 2^{-80}.
@@ -142,7 +141,7 @@ mod tests {
     #[test]
     fn correct_key_proof_valid() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let proof = NICorrectKeyProof::prove(&dk, b"test-domain");
@@ -152,8 +151,8 @@ mod tests {
     #[test]
     fn correct_key_proof_wrong_key() {
         let mut rng = rand_core::OsRng;
-        let dk1 = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
-        let dk2 = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk1 = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk2 = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek2 = dk2.encryption_key().clone();
 
         // Proof generated with dk1 should NOT verify with ek2
@@ -168,7 +167,7 @@ mod tests {
     #[ignore = "redundant boundary test"]
     fn correct_key_proof_deterministic() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
 
         let proof1 = NICorrectKeyProof::prove(&dk, b"test-domain");
         let proof2 = NICorrectKeyProof::prove(&dk, b"test-domain");
@@ -184,7 +183,7 @@ mod tests {
     #[ignore = "redundant boundary test"]
     fn correct_key_proof_truncated_fails() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let mut proof = NICorrectKeyProof::prove(&dk, b"test-domain");
@@ -199,7 +198,7 @@ mod tests {
     #[ignore = "redundant boundary test"]
     fn correct_key_proof_wrong_domain_fails() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let proof = NICorrectKeyProof::prove(&dk, b"domain-a");

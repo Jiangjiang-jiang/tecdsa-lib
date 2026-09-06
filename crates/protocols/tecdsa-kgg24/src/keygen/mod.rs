@@ -24,8 +24,9 @@ pub use interactive::{
 };
 pub use machine::{Kgg24KeyShare, Kgg24KeygenMachine, Kgg24KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{backend::Integer, BigIntExt};
+use tecdsa_paillier::BigIntExt;
 
 use crate::key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare};
 
@@ -62,7 +63,7 @@ where
     let public_key = C::generator() * x;
 
     // Generate Paillier key pair for P_1
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
     // Get the curve order q
@@ -74,7 +75,7 @@ where
 
     // Compute x_hat_1 = x_1 + t * q (the noised share)
     let x1_bytes = x1.to_repr();
-    let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
+    let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
     let x_hat_1 = x1_int + t * q_int;
 
     // Encrypt x_hat_1: C = Enc_pk(x_1 + t*q)
@@ -128,7 +129,7 @@ mod tests {
         // Decrypt c_key and verify it equals x_1 mod q
         let decrypted = p1.dk.decrypt(&p2.c_key).expect("decryption failed");
         let x1_bytes = p1.secret_share.to_repr();
-        let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
+        let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
 
         // The decrypted value is x_1 + t*q, so (decrypted mod q) should equal x_1
         let q_int = curve_order::<Secp256k1>();

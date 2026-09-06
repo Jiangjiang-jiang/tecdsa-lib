@@ -8,15 +8,16 @@
 //! bytes of framing. These tests pin that property so a serde regression
 //! cannot silently double every ciphertext on the wire again.
 //!
-//! `fast_paillier::backend::Integer` is a plain re-export of `rug::Integer`,
+//! `tecdsa_paillier::backend::Integer` is a plain re-export of `rug::Integer`,
 //! so (per the orphan rule) it cannot implement `Serialize`/`Deserialize`
 //! directly in this crate or in `fast-paillier` itself -- only a field
-//! annotated with `#[serde(with = "fast_paillier::backend::int_wire")]` gets
+//! annotated with `#[serde(with = "tecdsa_bigint::int_wire")]` gets
 //! the compact encoding. Tests that check the encoding of a bare `Integer`
 //! value therefore wrap it in a one-field local struct, same as
 //! `rug_int_wire_is_compact` below does for `tecdsa_bigint::int_wire`.
 
-use fast_paillier::backend::{BigIntExt, Integer};
+use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 
 fn wire_size<T: serde::Serialize>(value: &T) -> usize {
     bincode::serde::encode_to_vec(value, bincode::config::standard())
@@ -29,14 +30,14 @@ const SLACK: usize = 16;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct IntWire {
-    #[serde(with = "fast_paillier::backend::int_wire")]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     n: Integer,
 }
 
 #[test]
 fn paillier_ciphertext_is_compact() {
     // A Paillier ciphertext for a 3072-bit modulus lives in Z_{N^2}: 6144 bits.
-    let ct: fast_paillier::Ciphertext = Integer::two_pow(6144) - Integer::one();
+    let ct: tecdsa_paillier::Ciphertext = Integer::two_pow(6144) - Integer::one();
     let size = wire_size(&IntWire { n: ct });
     assert!(size >= 768, "6144-bit ciphertext cannot fit in {size} B");
     assert!(
@@ -48,7 +49,7 @@ fn paillier_ciphertext_is_compact() {
 #[test]
 fn paillier_encryption_key_is_compact() {
     let n: Integer = Integer::two_pow(3072) - Integer::one();
-    let ek = fast_paillier::EncryptionKey::from_n(n);
+    let ek = tecdsa_paillier::EncryptionKey::from_n(n);
     let size = wire_size(&ek);
     assert!(
         (384..=384 + SLACK).contains(&size),

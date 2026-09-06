@@ -120,7 +120,7 @@ where
     let mut eks = BTreeMap::new();
     let mut ntilde_map = BTreeMap::new();
     for &pid in signers {
-        let dk = tecdsa_paillier::keygen(rng).expect("paillier keygen");
+        let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("paillier keygen");
         eks.insert(pid, dk.encryption_key().clone());
         dks.push(dk);
         let nt = generate_ntilde(rng, ntilde_prime_bits);

@@ -20,6 +20,7 @@ tecdsa-protocol.workspace = true
 tecdsa-paillier.workspace = true
 tecdsa-commit.workspace = true
 elliptic-curve.workspace = true
+rug.workspace = true
 
 k256.workspace = true
 serde = { workspace = true, optional = true }

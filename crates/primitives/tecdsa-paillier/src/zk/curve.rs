@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 use subtle::{Choice, ConstantTimeEq};
 
 #[derive(PartialEq, Eq, Clone, Copy, Hash, PartialOrd, Ord, Default)]

@@ -3,18 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_paillier::{
-    zk::paillier_zk::{no_small_factor as pi_fac, paillier_blum_modulus as pi_mod},
-    EncryptionKey,
-};
-use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
-
-/// Number of repetitions in the π_mod Paillier-Blum modulus proof.
-///
-/// π_mod's soundness error is `2^-PI_MOD_REPS`: a prover who does not know the
-/// factorisation passes a single repetition with probability 1/2. CGGMP20
-/// Figure 12 requires 80.
-pub const PI_MOD_REPS: usize = 80;
+use tecdsa_paillier::{zk::pi_fac, EncryptionKey};
+use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
 
 /// Round 1 broadcast: hash commitment to the party's auxiliary material.
 #[derive(Clone, Debug, Serialize, Deserialize)]

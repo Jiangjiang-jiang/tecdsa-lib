@@ -277,7 +277,7 @@ where
         })?;
 
     // t_A = alpha (the receiver's MtA output share)
-    let alpha_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&alpha_bytes);
+    let alpha_int = rug::Integer::from_bytes_msf(&alpha_bytes);
     let t_A = int_to_scalar::<C>(&alpha_int);
 
     // Sample r_1 and compute cc = t_A + x'_1 * r_1 - x_1 mod q
@@ -320,7 +320,7 @@ where
     let beta_bytes = M::sender_decrypt(setup, sender_state, &q_bytes, &p1_msg.mta_msg)
         .map_err(|e| Xal21Error::Paillier(format!("MtA sender_decrypt failed: {e}")))?;
 
-    let beta_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&beta_bytes);
+    let beta_int = rug::Integer::from_bytes_msf(&beta_bytes);
     let t_B = int_to_scalar::<C>(&beta_int);
 
     // 2. Verify consistency check:

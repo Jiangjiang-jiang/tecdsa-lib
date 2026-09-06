@@ -27,14 +27,13 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::{
-    backend::{BigIntExt, Integer},
-    DecryptionKey, EncryptionKey,
-};
 use rand_core::CryptoRngCore;
-use rug::Complete;
+use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_curve::TecdsaCurve;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 /// Security parameter tau (bit-length of the noise exponent base).
 const TAU: u32 = 256;
@@ -53,7 +52,7 @@ where
 {
     /// Ciphertext commitment `gamma_1 = Enc_N(b; delta)`.
     #[serde(with = "tecdsa_bigint::int_wire")]
-    pub gamma_1: fast_paillier::Ciphertext,
+    pub gamma_1: crate::scheme::Ciphertext,
     /// EC point commitment `gamma_2 = b * G` (reduced mod q).
     pub gamma_2: C::ProjectivePoint,
     /// Integer response `z1 = x_hat_1 * sigma + b`.
@@ -100,7 +99,7 @@ where
         ssid: &[u8],
         ek: &EncryptionKey,
         _dk: &DecryptionKey,
-        c: &fast_paillier::Ciphertext,
+        c: &crate::scheme::Ciphertext,
         x1_point: &C::ProjectivePoint,
         x_hat_1: &Integer,
         enc_nonce: &Integer,
@@ -157,7 +156,7 @@ where
         &self,
         ssid: &[u8],
         ek: &EncryptionKey,
-        c: &fast_paillier::Ciphertext,
+        c: &crate::scheme::Ciphertext,
         x1_point: &C::ProjectivePoint,
     ) -> bool {
         let n = ek.n();
@@ -234,9 +233,9 @@ where
 /// Compute the Fiat-Shamir challenge: `sigma = H(ssid, C, X1, gamma_1, gamma_2) mod q`.
 fn fiat_shamir_challenge<C: TecdsaCurve>(
     ssid: &[u8],
-    c: &fast_paillier::Ciphertext,
+    c: &crate::scheme::Ciphertext,
     x1_point: &C::ProjectivePoint,
-    gamma_1: &fast_paillier::Ciphertext,
+    gamma_1: &crate::scheme::Ciphertext,
     gamma_2: &C::ProjectivePoint,
 ) -> C::Scalar
 where
@@ -269,7 +268,7 @@ mod tests {
     fn setup_test_scenario() -> (
         DecryptionKey,
         EncryptionKey,
-        fast_paillier::Ciphertext,
+        crate::scheme::Ciphertext,
         Integer, // x_hat_1
         Integer, // enc_nonce (rho)
         <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint,
@@ -277,7 +276,7 @@ mod tests {
         let mut rng = rand_core::OsRng;
 
         // Generate Paillier keys
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         // Sample x1 scalar
@@ -387,7 +386,7 @@ mod tests {
         );
 
         // Use a different Paillier key for verification
-        let dk2 = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk2 = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek2 = dk2.encryption_key().clone();
 
         assert!(

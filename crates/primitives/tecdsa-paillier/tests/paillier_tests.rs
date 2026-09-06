@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use tecdsa_paillier::{
-    add_ciphertexts, backend::Integer, decrypt, encrypt, scalar_mul_ciphertext, BigIntExt,
-};
+use rug::Integer;
+use tecdsa_paillier::BigIntExt;
 
 fn test_dk() -> tecdsa_paillier::DecryptionKey {
     // Use small primes for fast tests.
@@ -17,8 +16,10 @@ fn paillier_enc_dec_roundtrip() {
     let mut rng = rand::thread_rng();
 
     let plaintext = Integer::from(42);
-    let (ciphertext, _nonce) = encrypt(ek, &mut rng, &plaintext).expect("encrypt");
-    let recovered = decrypt(&dk, &ciphertext).expect("decrypt");
+    let (ciphertext, _nonce) = ek
+        .encrypt_with_random(&mut rng, &plaintext)
+        .expect("encrypt");
+    let recovered = dk.decrypt(&ciphertext).expect("decrypt");
     assert_eq!(recovered, plaintext);
 }
 
@@ -30,11 +31,11 @@ fn paillier_homomorphic_add() {
 
     let a = Integer::from(17);
     let b = Integer::from(25);
-    let (ca, _) = encrypt(ek, &mut rng, &a).expect("encrypt a");
-    let (cb, _) = encrypt(ek, &mut rng, &b).expect("encrypt b");
+    let (ca, _) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");
+    let (cb, _) = ek.encrypt_with_random(&mut rng, &b).expect("encrypt b");
 
-    let c_sum = add_ciphertexts(ek, &ca, &cb).expect("add");
-    let result = decrypt(&dk, &c_sum).expect("decrypt sum");
+    let c_sum = ek.oadd(&ca, &cb).expect("add");
+    let result = dk.decrypt(&c_sum).expect("decrypt sum");
     assert_eq!(result, Integer::from(42));
 }
 
@@ -46,9 +47,11 @@ fn paillier_homomorphic_scalar_mul() {
 
     let plaintext = Integer::from(7);
     let scalar = Integer::from(6);
-    let (ciphertext, _) = encrypt(ek, &mut rng, &plaintext).expect("encrypt");
+    let (ciphertext, _) = ek
+        .encrypt_with_random(&mut rng, &plaintext)
+        .expect("encrypt");
 
-    let c_product = scalar_mul_ciphertext(ek, &scalar, &ciphertext).expect("scalar mul");
-    let result = decrypt(&dk, &c_product).expect("decrypt product");
+    let c_product = ek.omul(&scalar, &ciphertext).expect("scalar mul");
+    let result = dk.decrypt(&c_product).expect("decrypt product");
     assert_eq!(result, Integer::from(42));
 }

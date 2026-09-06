@@ -9,6 +9,7 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
@@ -144,8 +145,8 @@ where
     Ok(PiEqProof {
         gamma_1: wire.gamma_1,
         gamma_2,
-        z1: tecdsa_paillier::backend::Integer::from_bytes_msf(&wire.z1_bytes),
-        z2: tecdsa_paillier::backend::Integer::from_bytes_msf(&wire.z2_bytes),
+        z1: Integer::from_bytes_msf(&wire.z1_bytes),
+        z2: Integer::from_bytes_msf(&wire.z2_bytes),
     })
 }
 

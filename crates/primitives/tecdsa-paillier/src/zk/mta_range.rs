@@ -23,10 +23,10 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize,
     PrimeField,
 };
-use fast_paillier::backend::{BigIntExt, Integer};
-use rug::{ops::Pow, Complete};
+use rug::{ops::Pow, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_curve::{
     conv::{curve_order, integer_to_scalar},
     TecdsaCurve,
@@ -844,10 +844,10 @@ mod tests {
     /// Set up Paillier keys for testing (small primes for speed).
     fn setup_paillier(
         rng: &mut impl rand_core::CryptoRngCore,
-    ) -> (fast_paillier::DecryptionKey, fast_paillier::EncryptionKey) {
+    ) -> (crate::scheme::DecryptionKey, crate::scheme::EncryptionKey) {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let dk = fast_paillier::DecryptionKey::from_primes(p, q).expect("valid primes");
+        let dk = crate::scheme::DecryptionKey::from_primes(p, q).expect("valid primes");
         let ek = dk.encryption_key().clone();
         (dk, ek)
     }
@@ -1119,7 +1119,7 @@ mod tests {
         // 512-bit primes (N ~ 1024 bits) — same as GG18 sign tests
         let p = Integer::generate_safe_prime(&mut rng, 512);
         let q = Integer::generate_safe_prime(&mut rng, 512);
-        let dk = fast_paillier::DecryptionKey::from_primes(p, q).expect("valid primes");
+        let dk = crate::scheme::DecryptionKey::from_primes(p, q).expect("valid primes");
         let ek = dk.encryption_key().clone();
 
         let ntilde = setup_ntilde(&mut rng);

@@ -144,7 +144,7 @@ where
 {
     // Generate the one-time MtA setup (Paillier keypair + Ring-Pedersen params);
     // see the precomputed variant below.
-    let dk = tecdsa_paillier::keygen(rng)
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Xal21Error::Paillier(format!("Paillier keygen failed: {e}")))?;
     let ntilde = super::generate_ntilde_params(rng);
 
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(p2.dk.encryption_key().n(), p1.ek.n());
 
         // Test encrypt-decrypt round trip
-        let test_val = tecdsa_paillier::backend::Integer::from(42u32);
+        let test_val = rug::Integer::from(42u32);
         let (ct, _) = p1.ek.encrypt_with_random(&mut rng, &test_val).unwrap();
         let pt = p2.dk.decrypt(&ct).unwrap();
         assert_eq!(pt, test_val);

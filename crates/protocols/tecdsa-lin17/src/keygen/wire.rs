@@ -9,12 +9,12 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
     zk::{
         correct_key_ni::NICorrectKeyProof,
         pdl::{PdlProverMsg1, PdlProverMsg2, PdlVerifierMsg1, PdlVerifierMsg2},

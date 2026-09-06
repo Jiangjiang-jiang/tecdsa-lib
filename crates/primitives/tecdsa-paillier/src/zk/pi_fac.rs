@@ -1,94 +1,14 @@
-//! ZK-proof for factoring of a RSA modulus. Called Пfac or Rfac in the CGGMP24
-//! paper.
-//!
-//! ## Description
-//!
-//! Both parties agree on verifier [aux data](Aux) and [security level](SecurityParams). Common input is
-//! `n > 4*security.l`. Prover additionally knows primes `p, q < pow(2, security.l) * sqrt(n)`.
-//!
-//! Proof guarantees that each `p, q > pow(2, security.l)`.
-//!
-//! ## Example
-//!
-//! ```rust
-//! use fast_paillier::backend::Integer;
-//! use paillier_zk::no_small_factor as p;
-//! # mod pregenerated {
-//! #     use super::*;
-//! #     paillier_zk::load_pregenerated_data!(
-//! #         verifier_aux: p::Aux,
-//! #         primes_1536bits: [Integer; 4],
-//! #     );
-//! # }
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let shared_state = "some shared state";
-//! let mut rng = rand_core::OsRng;
-//! # let mut rng = rand_dev::DevRng::new();
-//!
-//! // 0. Setup: prover and verifier share common Ring-Pedersen parameters, and
-//! // agree on the level of security
-//!
-//! let aux: p::Aux = pregenerated::verifier_aux();
-//! let security = p::SecurityParams {
-//!     l: 256,
-//!     epsilon: 512,
-//! };
-//!
-//! // 1. Prover prepares the data to obtain proof about
-//!
-//! let [p, q, ..] = pregenerated::primes_1536bits();
-//! let n = Integer::from(&p * &q);
-//! // `n` is a product of two positive primes, so it is always non-negative
-//! // and `sqrt_ref` (which panics on negative input) cannot panic here.
-//! let n_root = Integer::from(n.sqrt_ref());
-//! let data = p::Data {
-//!     n: &n,
-//!     n_root: &n_root,
-//! };
-//!
-//! // 2. Prover computes a non-interactive proof that both factors are large enough
-//!
-//! let proof = p::non_interactive::prove::<sha2::Sha256>(
-//!     &shared_state,
-//!     &aux,
-//!     data,
-//!     p::PrivateData { p: &p, q: &q },
-//!     &security,
-//!     &mut rng,
-//! )?;
-//!
-//! // 4. Prover sends this data to verifier
-//!
-//! # fn send(_: &Integer, _: &p::NiProof) {  }
-//! send(data.n, &proof);
-//!
-//! // 5. Verifier receives the data and the proof and verifies it
-//!
-//! # let recv = || (data.n, proof);
-//! let (n, proof) = recv();
-//! // Same `n` as computed by the prover above, so still non-negative.
-//! let n_root = Integer::from(n.sqrt_ref());
-//! let data = p::Data {
-//!     n: &n,
-//!     n_root: &n_root,
-//! };
-//! p::non_interactive::verify::<sha2::Sha256>(&shared_state, &aux, data, &security, &proof)?;
-//! # Ok(()) }
-//! ```
-//!
-//! If the verification succeeded, verifier can continue communication with prover
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 
-use fast_paillier::backend::Integer;
-#[cfg(feature = "serde")]
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 
-pub use crate::common::{Aux, InvalidProof};
+pub use crate::zk::common::{Aux, InvalidProof};
 
 /// Security parameters for proof. Choosing the values is a tradeoff between
 /// speed and chance of rejecting a valid proof or accepting an invalid proof
-#[derive(Debug, Clone, udigest::Digestable)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, udigest::Digestable, Serialize, Deserialize)]
 pub struct SecurityParams {
     /// l in paper, security parameter for bit size of plaintext: it needs to
     /// differ from sqrt(n) not more than by 2^l
@@ -101,10 +21,10 @@ pub struct SecurityParams {
 #[derive(Debug, Clone, Copy, udigest::Digestable)]
 pub struct Data<'a> {
     /// N_i in the spec
-    #[udigest(as = &crate::common::encoding::Integer)]
+    #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub n: &'a Integer,
     /// A number close to square root of n
-    #[udigest(as = &crate::common::encoding::Integer)]
+    #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub n_root: &'a Integer,
 }
 
@@ -117,43 +37,41 @@ pub struct PrivateData<'a> {
 
 /// Prover's data accompanying the commitment. Kept as state between rounds in
 /// the interactive protocol.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivateCommitment {
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub alpha: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub beta: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub mu: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub nu: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub r: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub x: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub y: Integer,
 }
 
 /// Prover's first message, obtained by [`interactive::commit`]
-#[derive(Debug, Clone, udigest::Digestable)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, udigest::Digestable, Serialize, Deserialize)]
 pub struct Commitment {
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub p: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub q: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub a: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub b: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub t: Integer,
 }
 
@@ -162,25 +80,23 @@ pub struct Commitment {
 pub type Challenge = Integer;
 
 /// The ZK proof, computed by [`interactive::prove`]
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proof {
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z1: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z2: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub w1: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub w2: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub v: Integer,
 }
 
 /// The non-interactive ZK proof. Computed by [`non_interactive::prove`].
 /// Combines commitment and proof.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NiProof {
     commitment: Commitment,
     proof: Proof,
@@ -188,14 +104,15 @@ pub struct NiProof {
 
 /// Interactive version of the proof
 pub mod interactive {
-    use fast_paillier::backend::{BigIntExt, Integer};
     use rand_core::RngCore;
+    use rug::Integer;
+    use tecdsa_bigint::BigIntExt;
 
     use super::{
         Aux, Challenge, Commitment, Data, InvalidProof, PrivateCommitment, PrivateData, Proof,
         SecurityParams,
     };
-    use crate::{
+    use crate::zk::{
         common::{fail_if, fail_if_ne, IntegerExt, InvalidProofReason},
         Error,
     };
@@ -230,7 +147,7 @@ pub mod interactive {
         let t = aux
             .rsa_modulo
             .combine(&q, &alpha, &aux.t, &r)
-            .ok_or_else(crate::BadExponent::undefined)?;
+            .ok_or_else(crate::zk::BadExponent::undefined)?;
 
         let commitment = Commitment { p, q, a, b, t };
         let private_commitment = PrivateCommitment {
@@ -360,7 +277,7 @@ pub mod non_interactive {
     use digest::Digest;
 
     pub use super::{Aux, Challenge, Data, NiProof, PrivateData, SecurityParams};
-    pub use crate::{Error, InvalidProof};
+    pub use crate::zk::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.
@@ -422,9 +339,9 @@ pub mod non_interactive {
 
 #[cfg(test)]
 mod test {
-    use fast_paillier::backend::Integer;
+    use rug::Integer;
 
-    use crate::common::{test::generate_blum_prime, InvalidProofReason};
+    use crate::zk::common::{test::generate_blum_prime, InvalidProofReason};
 
     #[test]
     fn passing() {
@@ -448,9 +365,9 @@ mod test {
             n_root: &n_root,
         };
 
-        assert!(n.significant_bits() >= u64::from(n_bitlen) - 1);
+        assert!(n.significant_bits() >= n_bitlen - 1);
 
-        let aux = crate::common::test::aux(&mut rng);
+        let aux = crate::zk::common::test::aux(&mut rng);
         let shared_state = "shared state";
         let proof = super::non_interactive::prove::<D>(
             &shared_state,
@@ -490,9 +407,9 @@ mod test {
             n_root: &n_root,
         };
 
-        assert!(n.significant_bits() >= u64::from(n_bitlen) - 1);
+        assert!(n.significant_bits() >= n_bitlen - 1);
 
-        let aux = crate::common::test::aux(&mut rng);
+        let aux = crate::zk::common::test::aux(&mut rng);
         let shared_state = "shared state";
         let proof = super::non_interactive::prove::<D>(
             &shared_state,

@@ -44,9 +44,10 @@ use elliptic_curve::{
     FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
-use tecdsa_paillier::{backend::Integer, BigIntExt};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -243,12 +244,11 @@ where
 
     // Compute s_1 = [s_0]_q (reduce mod q)
     let q_int = curve_order::<C>();
-    let s1_int = tecdsa_paillier::backend::Integer::from(s0_int.modulo_ref(&q_int));
+    let s1_int = Integer::from(s0_int.modulo_ref(&q_int));
 
     // --- Divisibility check (Section 4) ---
     // s_2 = s_0 - s_1 + ell * q where ell is random in [0, q^2 * 2^{tau+kappa})
-    let ell_bound =
-        tecdsa_paillier::backend::Integer::from(&q_int * &q_int) * Integer::two_pow(TAU + KAPPA);
+    let ell_bound = Integer::from(&q_int * &q_int) * Integer::two_pow(TAU + KAPPA);
     let ell = ell_bound.sample_below_ref(rng);
     let s2_int = (s0_int - &s1_int) + (ell * &q_int);
 
@@ -262,7 +262,7 @@ where
     } else {
         // Check: s_2 == 0 (mod q)
         let s2_mod_q = s2_int.modulo(&q_int);
-        s2_mod_q != tecdsa_paillier::backend::Integer::zero()
+        s2_mod_q != Integer::zero()
     };
 
     // --- Compute the actual signature regardless of the divisibility check ---
@@ -392,31 +392,31 @@ where
     // where rho_bar is sampled from [0, q)
     let rho_bar = q_int.sample_below_ref(rng);
     let k2_inv_bytes = scalar_to_bytes(&k2_inv);
-    let k2_inv_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&k2_inv_bytes);
+    let k2_inv_int = Integer::from_bytes_msf(&k2_inv_bytes);
     let k_tilde_2_inv = k2_inv_int + rho_bar * &q_int;
 
     // Step 5: Compute the message digest as integer
     let m_prime = *message.digest();
     let m_prime_bytes = scalar_to_bytes(&m_prime);
-    let m_prime_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&m_prime_bytes);
+    let m_prime_int = Integer::from_bytes_msf(&m_prime_bytes);
 
     // Get r as integer
     let r_bytes = scalar_to_bytes(&r);
-    let r_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&r_bytes);
+    let r_int = Integer::from_bytes_msf(&r_bytes);
 
     // Get x_2 as integer
     let x2_bytes = scalar_to_bytes(&key_share.secret_share);
-    let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&x2_bytes);
+    let x2_int = Integer::from_bytes_msf(&x2_bytes);
 
     // Sample rho from [0, 3*q^3 * 2^{4*tau + 2*kappa}) for masking
-    let q_cubed = tecdsa_paillier::backend::Integer::from(&q_int * &q_int) * &q_int;
+    let q_cubed = Integer::from(&q_int * &q_int) * &q_int;
     let rho_bound = (q_cubed * 3u8) * Integer::two_pow(4 * TAU + 2 * KAPPA);
     let rho = rho_bound.sample_below_ref(rng);
 
     // Compute: partial_plaintext = rho * q + k_tilde_2_inv * m' + k_tilde_2_inv * r * x_2
     // This is the "message + P_2's share contribution" part
-    let k_tilde_m = tecdsa_paillier::backend::Integer::from(&k_tilde_2_inv * &m_prime_int);
-    let k_tilde_r_x2 = tecdsa_paillier::backend::Integer::from(&k_tilde_2_inv * &r_int) * &x2_int;
+    let k_tilde_m = Integer::from(&k_tilde_2_inv * &m_prime_int);
+    let k_tilde_r_x2 = Integer::from(&k_tilde_2_inv * &r_int) * &x2_int;
     let partial_plaintext = rho * q_int + &k_tilde_m + &k_tilde_r_x2;
 
     // Step 6: Encrypt partial_plaintext: c_1 = Enc(partial_plaintext)
@@ -448,7 +448,7 @@ where
 
 use tecdsa_curve::conv::scalar_to_bytes;
 
-fn int_to_scalar<C: TecdsaCurve>(value: &tecdsa_paillier::backend::Integer) -> C::Scalar
+fn int_to_scalar<C: TecdsaCurve>(value: &Integer) -> C::Scalar
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,

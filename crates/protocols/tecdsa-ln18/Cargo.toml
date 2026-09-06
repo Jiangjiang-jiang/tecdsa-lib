@@ -24,6 +24,7 @@ tecdsa-vss.workspace = true
 tecdsa-paillier.workspace = true
 tecdsa-commit.workspace = true
 tecdsa-ot.workspace = true
+rug.workspace = true
 k256.workspace = true
 elliptic-curve.workspace = true
 sha2.workspace = true

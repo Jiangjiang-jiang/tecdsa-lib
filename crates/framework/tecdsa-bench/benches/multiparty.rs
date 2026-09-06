@@ -272,11 +272,9 @@ mod gg18_helpers {
 // ===========================================================================
 
 mod ggn16_helpers {
+    use rug::Integer;
     use tecdsa_ggn16::key_share::Ggn16KeyShare;
-    use tecdsa_paillier::{
-        backend::Integer,
-        threshold::{DecryptionShare, ThresholdSetup},
-    };
+    use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
 
     use super::*;
 

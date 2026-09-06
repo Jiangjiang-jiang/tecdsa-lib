@@ -903,7 +903,7 @@ fn paillier_zk(c: &mut Criterion) {
 
     // pi_eq
     {
-        use tecdsa_paillier::{backend::Integer, zk::pi_eq::PiEqProof};
+        use tecdsa_paillier::zk::pi_eq::PiEqProof;
 
         let x1 = C::random_scalar(rng);
         let x1_bytes = scalar_to_bytes(&x1);
@@ -929,10 +929,7 @@ fn paillier_zk(c: &mut Criterion) {
 
     // homo_mult — relation: c3 = c2^eta * r_c3^N mod N^2
     {
-        use tecdsa_paillier::{
-            backend::Integer,
-            zk::homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness},
-        };
+        use tecdsa_paillier::zk::homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness};
         let nt = &*NTILDE;
         let q = group_order();
         let eta = sample_below(&q);
@@ -1051,7 +1048,7 @@ fn paillier_zk(c: &mut Criterion) {
 
     // bob_ext — Bob's extended MtA range proof with EC check
     {
-        use tecdsa_paillier::{backend::Integer, zk::mta_range::BobProofExt};
+        use tecdsa_paillier::zk::mta_range::BobProofExt;
         let nt = &*NTILDE;
         let q = group_order();
         let ntilde = nt.to_mta_params();
@@ -1101,9 +1098,8 @@ fn paillier_zk(c: &mut Criterion) {
 
     // nonce_consist
     {
-        use tecdsa_paillier::{
-            backend::Integer,
-            zk::nonce_consist::{NonceConsistProof, NonceConsistStatement, NonceConsistWitness},
+        use tecdsa_paillier::zk::nonce_consist::{
+            NonceConsistProof, NonceConsistStatement, NonceConsistWitness,
         };
         let nt = &*NTILDE;
         let q = group_order();
@@ -1156,7 +1152,7 @@ fn paillier_zk(c: &mut Criterion) {
 
     // pia — proves c_A = c_B^a * Enc(alpha'; r')
     {
-        use tecdsa_paillier::{backend::Integer, zk::pia_pib::PiAProof};
+        use tecdsa_paillier::zk::pia_pib::PiAProof;
         let q = group_order();
         let b_val = sample_below(&q);
         let (c_b, _) = paillier_encrypt(ek, &b_val);
@@ -1181,7 +1177,7 @@ fn paillier_zk(c: &mut Criterion) {
 
     // bob — Bob's MtA range proof (without EC check)
     {
-        use tecdsa_paillier::{backend::Integer, zk::mta_range::BobProof};
+        use tecdsa_paillier::zk::mta_range::BobProof;
         let nt = &*NTILDE;
         let q = group_order();
         let ntilde = nt.to_mta_params();
@@ -1231,7 +1227,7 @@ fn paillier_zk(c: &mut Criterion) {
 
     // pdl_transcript — full interactive PDL verification (5 steps)
     {
-        use tecdsa_paillier::{backend::Integer, zk::pdl::pdl_verify};
+        use tecdsa_paillier::zk::pdl::pdl_verify;
         let x1 = C::random_scalar(rng);
         let q1 = C::generator() * x1;
         let x1_bytes = scalar_to_bytes(&x1);
@@ -1252,7 +1248,7 @@ fn paillier_zk(c: &mut Criterion) {
 
 fn paillier_zk_facade(c: &mut Criterion) {
     use sha2::Sha256;
-    use tecdsa_paillier::zk::{bridge::pedersen_to_aux, paillier_zk};
+    use tecdsa_paillier::zk::bridge::pedersen_to_aux;
 
     #[derive(udigest::Digestable)]
     struct BenchTag(&'static str);
@@ -1270,8 +1266,7 @@ fn paillier_zk_facade(c: &mut Criterion) {
 
     // Pi_enc
     {
-        use paillier_zk::paillier_encryption_in_range as pi_enc;
-        use tecdsa_paillier::backend::Integer;
+        use tecdsa_paillier::zk::pi_enc;
         let plaintext = Integer::from(42);
         let (ct, nonce) = paillier_encrypt(ek, &plaintext);
         let data = pi_enc::Data {
@@ -1306,7 +1301,7 @@ fn paillier_zk_facade(c: &mut Criterion) {
 
     // Pi_fac
     {
-        use paillier_zk::no_small_factor as pi_fac;
+        use tecdsa_paillier::zk::pi_fac;
         let n = dk.n().clone();
         let p = dk.p().clone();
         let q_paillier = dk.q().clone();
@@ -1342,9 +1337,9 @@ fn paillier_zk_facade(c: &mut Criterion) {
         });
     }
 
-    // Pi_mod (upstream paillier_blum_modulus)
+    // Pi_mod (upstream pi_mod)
     {
-        use paillier_zk::paillier_blum_modulus as pi_mod_up;
+        use tecdsa_paillier::zk::pi_mod as pi_mod_up;
         let n = dk.n().clone();
         let p = dk.p().clone();
         let q_p = dk.q().clone();
@@ -1364,8 +1359,7 @@ fn paillier_zk_facade(c: &mut Criterion) {
 
     // Pi_aff_g — affine operation in range with group commitment
     {
-        use paillier_zk::paillier_affine_operation_in_range as pi_aff;
-        use tecdsa_paillier::{backend::Integer, zk::bridge::point_to_ge};
+        use tecdsa_paillier::zk::{bridge::point_to_ge, pi_aff_g as pi_aff};
 
         type GE = generic_ec::curves::Secp256k1;
         let x_val = Integer::from(7);
@@ -1425,8 +1419,7 @@ fn paillier_zk_facade(c: &mut Criterion) {
 
     // Pi_elog — dlog with El-Gamal commitment
     {
-        use paillier_zk::dlog_with_el_gamal_commitment as pi_elog;
-        use tecdsa_paillier::zk::bridge::scalar_to_ge;
+        use tecdsa_paillier::zk::{bridge::scalar_to_ge, pi_elog};
         type GE = generic_ec::curves::Secp256k1;
         let y_scalar = C::random_scalar(rng);
         let lambda_scalar = C::random_scalar(rng);
@@ -1462,10 +1455,7 @@ fn paillier_zk_facade(c: &mut Criterion) {
 
     // Pi_enc_elg — encryption in range with ElGamal
     {
-        use paillier_zk::{
-            paillier_encryption_in_range_with_el_gamal as pi_enc_elg, IntegerExt as _,
-        };
-        use tecdsa_paillier::backend::Integer;
+        use tecdsa_paillier::zk::{pi_enc_elg, IntegerExt as _};
 
         type GE = generic_ec::curves::Secp256k1;
         let security = pi_enc_elg::SecurityParams {

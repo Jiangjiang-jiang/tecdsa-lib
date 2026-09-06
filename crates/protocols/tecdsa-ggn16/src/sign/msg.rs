@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_paillier::{backend::Integer, threshold::PartialDecryption};
+use tecdsa_paillier::threshold::PartialDecryption;
 
 /// All message types for the GGN16 signing protocol (Rounds 1-6).
 #[derive(Debug, Clone, Serialize, Deserialize)]

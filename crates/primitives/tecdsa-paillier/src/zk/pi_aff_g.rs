@@ -1,154 +1,16 @@
-//! ZK-proof of paillier operation with group commitment in range. Called Пaff-g
-//! or Raff-g in the CGGMP24 paper.
-//!
-//! ## Description
-//!
-//! A party P performs a paillier affine operation with C, Y, and X
-//! obtaining `D = C*X + Y`. `X` and `Y` are encrypted values of `x` and `y`. P
-//! then wants to prove that `y` and `x` are at most `L` and `L'` bits,
-//! correspondingly, and P doesn't want to disclose none of the plaintexts
-//!
-//! Given:
-//! - `key0`, `pkey0`, `key1`, `pkey1` - pairs of public and private keys in
-//!   paillier cryptosystem
-//! - `nonce_y`, `nonce` - nonces in paillier encryption
-//! - `x`, `y` - some numbers
-//! - `q`, `g` such that `<g> = Zq*` - prime order group
-//! - `C` is some ciphertext encrypted by `key0`
-//! - `Y = key1.encrypt(y, nonce_y)`
-//! - `X = g * x`
-//! - `D = oadd(enc(y, nonce), omul(x, C))` where `enc`, `oadd` and `omul` are
-//!   paillier encryption, homomorphic addition and multiplication with `key0`
-//!
-//! Prove:
-//! - `bitsize(abs(x)) <= l_x`
-//! - `bitsize(abs(y)) <= l_y`
-//!
-//! Disclosing only: `key0`, `key1`, `C`, `D`, `Y`, `X`
-//!
-//! ## Example
-//!
-//! ```rust
-//! use fast_paillier::backend::Integer;
-//! use generic_ec::{curves::Secp256k1 as E, Point};
-//! use paillier_zk::{paillier_affine_operation_in_range as p, IntegerExt};
-//! # mod pregenerated {
-//! #     use super::*;
-//! #     paillier_zk::load_pregenerated_data!(
-//! #         verifier_aux: p::Aux,
-//! #         someone_encryption_key0: fast_paillier::EncryptionKey,
-//! #         someone_encryption_key1: fast_paillier::EncryptionKey,
-//! #     );
-//! # }
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Prover and verifier have a shared protocol state
-//! let shared_state = "some shared state";
-//!
-//! let mut rng = rand_core::OsRng;
-//! # let mut rng = rand_dev::DevRng::new();
-//!
-//! // 0. Setup: prover and verifier share common Ring-Pedersen parameters:
-//!
-//! let aux: p::Aux = pregenerated::verifier_aux();
-//! let security = p::SecurityParams {
-//!     l_x: 256,
-//!     l_y: 256 * 5,
-//!     epsilon: 256 * 2,
-//! };
-//!
-//! // 1. Setup: prover prepares the paillier keys
-//!
-//! // C and D are encrypted by this key
-//! let key_j: fast_paillier::EncryptionKey = pregenerated::someone_encryption_key0();
-//! // Y is encrypted using this key
-//! let key_i: fast_paillier::EncryptionKey = pregenerated::someone_encryption_key1();
-//!
-//! // C is some number encrypted using key_j. Neither of parties
-//! // need to know the plaintext
-//! let ciphertext_c = Integer::sample_in_mult_group_of(&mut rng, &key_j.nn());
-//!
-//! // 2. Setup: prover prepares all plaintexts
-//!
-//! // x in paper
-//! let plaintext_x = Integer::from_rng_half_pm(&mut rng, &(Integer::one() << security.l_x));
-//! // y in paper
-//! let plaintext_y = Integer::from_rng_half_pm(&mut rng, &(Integer::one() << security.l_y));
-//!
-//! // 3. Setup: prover encrypts everything on correct keys and remembers some nonces
-//!
-//! // X in paper
-//! let ciphertext_x = Point::<E>::generator() * plaintext_x.to_scalar();
-//! // Y and ρ_y in paper
-//! let (ciphertext_y, nonce_y) = key_i.encrypt_with_random(&mut rng, &(plaintext_y))?;
-//! // nonce is ρ in paper
-//! let (ciphertext_y_by_key_j, nonce) = key_j.encrypt_with_random(&mut rng, &(plaintext_y))?;
-//! // D in paper
-//! let ciphertext_d = key_j.oadd(
-//!     &key_j.omul(&plaintext_x, &ciphertext_c)?,
-//!     &ciphertext_y_by_key_j,
-//! )?;
-//!
-//! // 4. Prover computes a non-interactive proof that plaintext_x and
-//! //    plaintext_y are at most `l_x` and `l_y` bits
-//!
-//! let data = p::Data {
-//!     key_j: &key_j,
-//!     key_i: &key_i,
-//!     c: &ciphertext_c,
-//!     d: &ciphertext_d,
-//!     x: &ciphertext_x,
-//!     y: &ciphertext_y,
-//! };
-//! let pdata = p::PrivateData {
-//!     x: &plaintext_x,
-//!     y: &plaintext_y,
-//!     nonce: &nonce,
-//!     nonce_y: &nonce_y,
-//! };
-//! let proof = p::non_interactive::prove::<E, sha2::Sha256>(
-//!     &shared_state,
-//!     &aux,
-//!     data,
-//!     pdata,
-//!     &security,
-//!     &mut rng,
-//! )?;
-//!
-//! // 5. Prover sends this data to verifier
-//!
-//! # use generic_ec::Curve;
-//! # fn send<E: Curve>(_: &p::Data<E>, _: &p::NiProof<E>) {  }
-//! send(&data, &proof);
-//!
-//! // 6. Verifier receives the data and the proof and verifies it
-//!
-//! # let recv = || (data, proof);
-//! let (data, proof) = recv();
-//! let r = p::non_interactive::verify::<E, sha2::Sha256>(
-//!     &shared_state,
-//!     &aux,
-//!     data,
-//!     &security,
-//!     &proof,
-//! )?;
-//! #
-//! # Ok(()) }
-//! ```
-//!
-//! If the verification succeeded, verifier can continue communication with prover
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 
-use fast_paillier::{backend::Integer, AnyEncryptionKey, Ciphertext, Nonce};
 use generic_ec::{Curve, Point};
-#[cfg(feature = "serde")]
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 
-pub use crate::common::{Aux, InvalidProof};
+use crate::scheme::{AnyEncryptionKey, Ciphertext, Nonce};
+pub use crate::zk::common::{Aux, InvalidProof};
 
 /// Security parameters for proof. Choosing the values is a tradeoff between
 /// speed and chance of rejecting a valid proof or accepting an invalid proof
-#[derive(Debug, Clone, udigest::Digestable)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, udigest::Digestable, Serialize, Deserialize)]
 pub struct SecurityParams {
     /// l in paper, bit size of +-x
     pub l_x: usize,
@@ -163,19 +25,19 @@ pub struct SecurityParams {
 #[udigest(bound = "")]
 pub struct Data<'a, C: Curve> {
     /// Nj in the spec, public key that C was encrypted on
-    #[udigest(as = crate::common::encoding::AnyEncryptionKey)]
+    #[udigest(as = crate::zk::common::encoding::AnyEncryptionKey)]
     pub key_j: &'a dyn AnyEncryptionKey,
     /// Ni in the spec, public key that y -> Y was encrypted on
-    #[udigest(as = crate::common::encoding::AnyEncryptionKey)]
+    #[udigest(as = crate::zk::common::encoding::AnyEncryptionKey)]
     pub key_i: &'a dyn AnyEncryptionKey,
     /// C in the spec, some data encrypted on Nj
-    #[udigest(as = &crate::common::encoding::Integer)]
+    #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub c: &'a Ciphertext,
     /// D in the spec, result of affine transformation of C with x and y
-    #[udigest(as = &crate::common::encoding::Integer)]
+    #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub d: &'a Integer,
     /// Y in the spec, y encrypted on Ni
-    #[udigest(as = &crate::common::encoding::Integer)]
+    #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub y: &'a Ciphertext,
     /// X in the spec, obtained as `x G`
     pub x: &'a Point<C>,
@@ -197,26 +59,27 @@ pub struct PrivateData<'a> {
 /// Prover's first message, obtained by [`interactive::commit`]
 #[derive(Debug, Clone, udigest::Digestable)]
 #[udigest(bound = "")]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct Commitment<C: Curve> {
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub a: Integer,
     pub b_x: Point<C>,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub b_y: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub e: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub s: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub f: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub t: Integer,
 }
 
@@ -239,28 +102,26 @@ pub struct PrivateCommitment {
 pub type Challenge = Integer;
 
 /// The ZK proof. Computed by [`interactive::prove`].
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proof {
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z1: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z2: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z3: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z4: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub w: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub w_y: Integer,
 }
 
 /// The non-interactive ZK proof. Computed by [`non_interactive::prove`].
 /// Combines commitment and proof.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound = ""))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct NiProof<C: Curve> {
     pub commitment: Commitment<C>,
     pub proof: Proof,
@@ -270,12 +131,13 @@ pub struct NiProof<C: Curve> {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use fast_paillier::backend::{BigIntExt, Integer};
     use generic_ec::{Curve, Point};
     use rand_core::RngCore;
+    use rug::Integer;
+    use tecdsa_bigint::BigIntExt;
 
     use super::*;
-    use crate::{
+    use crate::zk::{
         common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason},
         Error,
     };
@@ -345,13 +207,13 @@ pub mod interactive {
                 .key_j
                 .n()
                 .combine(&pcomm.r, &Integer::one(), pdata.nonce, challenge)
-                .ok_or_else(crate::BadExponent::undefined)?,
+                .ok_or_else(crate::zk::BadExponent::undefined)?,
             // TODO: this can be optimized as prover knows key_i factorization
             w_y: data
                 .key_i
                 .n()
                 .combine(&pcomm.r_y, &Integer::one(), pdata.nonce_y, challenge)
-                .ok_or_else(crate::BadExponent::undefined)?,
+                .ok_or_else(crate::zk::BadExponent::undefined)?,
         })
     }
 
@@ -491,7 +353,7 @@ pub mod non_interactive {
     use generic_ec::Curve;
 
     use super::{Aux, Challenge, Commitment, Data, NiProof, PrivateData, SecurityParams};
-    use crate::{Error, InvalidProof};
+    use crate::zk::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.
@@ -554,18 +416,19 @@ pub mod non_interactive {
 
 #[cfg(test)]
 mod test {
-    use fast_paillier::backend::Integer;
     use generic_ec::{Curve, Point};
+    use rug::Integer;
     use sha2::Digest;
+    use tecdsa_bigint::BigIntExt;
 
-    use crate::common::{test::random_key, IntegerExt, InvalidProofReason};
+    use crate::zk::common::{test::random_key, IntegerExt, InvalidProofReason};
 
     fn run<R: rand_core::RngCore + rand_core::CryptoRng, C: Curve, D: Digest>(
         rng: &mut R,
         security: super::SecurityParams,
         x: Integer,
         y: Integer,
-    ) -> Result<(), crate::common::InvalidProof> {
+    ) -> Result<(), crate::zk::common::InvalidProof> {
         let dk0 = random_key(rng).unwrap();
         let dk1 = random_key(rng).unwrap();
         let ek0 = dk0.encryption_key().clone();
@@ -597,7 +460,7 @@ mod test {
             nonce_y: &rho_y,
         };
 
-        let aux = crate::common::test::aux(rng);
+        let aux = crate::zk::common::test::aux(rng);
 
         let shared_state = "shared state";
 
@@ -666,14 +529,14 @@ mod test {
 
     #[test]
     fn passing_million() {
-        passing_test::<crate::curve::C, sha2::Sha256>()
+        passing_test::<crate::zk::curve::C, sha2::Sha256>()
     }
     #[test]
     fn failing_million_add() {
-        failing_on_additive::<crate::curve::C, sha2::Sha256>()
+        failing_on_additive::<crate::zk::curve::C, sha2::Sha256>()
     }
     #[test]
     fn failing_million_mul() {
-        failing_on_multiplicative::<crate::curve::C, sha2::Sha256>()
+        failing_on_multiplicative::<crate::zk::curve::C, sha2::Sha256>()
     }
 }

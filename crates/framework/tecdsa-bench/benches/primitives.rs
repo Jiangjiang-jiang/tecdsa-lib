@@ -12,9 +12,10 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use elliptic_curve::PrimeField;
 use k256::Secp256k1;
 use rand_core::OsRng;
+use rug::Integer;
 use tecdsa_bench::zk_fixtures::{NTildeFixture, PaillierFixture, PedersenFixture};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{backend::Integer, BigIntExt};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::MtA;
 
 static PAILLIER: LazyLock<PaillierFixture> = LazyLock::new(PaillierFixture::generate);
@@ -79,12 +80,9 @@ fn paillier_mta(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn cggmp20_mta(c: &mut Criterion) {
-    use paillier_zk::{
-        paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
-    };
     use tecdsa_paillier::{
         mta::{Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup},
-        zk::bridge::pedersen_to_aux,
+        zk::{bridge::pedersen_to_aux, pi_aff_g as pi_aff, pi_enc},
     };
     type M = PaillierMtA<Cggmp20Proofs>;
 

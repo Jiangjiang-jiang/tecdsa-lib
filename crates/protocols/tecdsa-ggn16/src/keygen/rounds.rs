@@ -22,11 +22,11 @@ use elliptic_curve::{
     FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::{
-    backend::Integer,
     threshold::{DecryptionShare, ThresholdSetup},
     zk::pdl_slack::{PdlSlackProof, PdlSlackStatement, PdlSlackWitness},
     BigIntExt,

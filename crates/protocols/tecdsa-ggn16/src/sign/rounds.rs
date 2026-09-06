@@ -14,15 +14,13 @@ use std::collections::BTreeMap;
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use rug::Integer;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
     conv::{integer_to_scalar, scalar_to_integer},
     TecdsaCurve,
 };
-use tecdsa_paillier::{
-    backend::Integer,
-    threshold::{combine_partials, partial_decrypt, PartialDecryption},
-};
+use tecdsa_paillier::threshold::{combine_partials, partial_decrypt, PartialDecryption};
 use tecdsa_protocol::{
     low_s_normalize, verify_ecdsa, DataToSign, Outgoing, PartyId, Recipient, Signature,
 };

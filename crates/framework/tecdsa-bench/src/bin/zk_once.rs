@@ -768,7 +768,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     }
 
     {
-        use tecdsa_paillier::{backend::Integer, zk::pi_eq::PiEqProof};
+        use tecdsa_paillier::zk::pi_eq::PiEqProof;
         let x1 = C::random_scalar(rng);
         let x1_bytes = scalar_to_bytes(&x1);
         let x1_point = C::generator() * x1;
@@ -785,10 +785,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     }
 
     {
-        use tecdsa_paillier::{
-            backend::Integer,
-            zk::homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness},
-        };
+        use tecdsa_paillier::zk::homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness};
         let q = group_order();
         let eta = sample_below(&q);
         let (c1, r_c1) = paillier_encrypt(ek, &eta);
@@ -892,7 +889,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     }
 
     {
-        use tecdsa_paillier::{backend::Integer, zk::mta_range::BobProofExt};
+        use tecdsa_paillier::zk::mta_range::BobProofExt;
         let q = group_order();
         let ntilde = nt.to_mta_params();
         let a = sample_below(&q);
@@ -926,9 +923,8 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     }
 
     {
-        use tecdsa_paillier::{
-            backend::Integer,
-            zk::nonce_consist::{NonceConsistProof, NonceConsistStatement, NonceConsistWitness},
+        use tecdsa_paillier::zk::nonce_consist::{
+            NonceConsistProof, NonceConsistStatement, NonceConsistWitness,
         };
         let q = group_order();
         let gen = C::generator();
@@ -977,7 +973,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     }
 
     {
-        use tecdsa_paillier::{backend::Integer, zk::pia_pib::PiAProof};
+        use tecdsa_paillier::zk::pia_pib::PiAProof;
         let q = group_order();
         let b_val = sample_below(&q);
         let (c_b, _) = paillier_encrypt(ek, &b_val);
@@ -999,7 +995,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     }
 
     {
-        use tecdsa_paillier::{backend::Integer, zk::mta_range::BobProof};
+        use tecdsa_paillier::zk::mta_range::BobProof;
         let q = group_order();
         let ntilde = nt.to_mta_params();
         let a = sample_below(&q);
@@ -1033,7 +1029,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     }
 
     {
-        use tecdsa_paillier::{backend::Integer, zk::pdl::pdl_verify};
+        use tecdsa_paillier::zk::pdl::pdl_verify;
         let x1 = C::random_scalar(rng);
         let q1 = C::generator() * x1;
         let x1_int = Integer::from_bytes_msf(&scalar_to_bytes(&x1));
@@ -1046,10 +1042,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
 
 fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     use sha2::Sha256;
-    use tecdsa_paillier::zk::{
-        bridge::{pedersen_to_aux, point_to_ge, scalar_to_ge},
-        paillier_zk,
-    };
+    use tecdsa_paillier::zk::bridge::{pedersen_to_aux, point_to_ge, scalar_to_ge};
 
     #[derive(udigest::Digestable)]
     struct BenchTag(&'static str);
@@ -1061,8 +1054,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     let tag = BenchTag("bench");
 
     {
-        use paillier_zk::paillier_encryption_in_range as pi_enc;
-        use tecdsa_paillier::backend::Integer;
+        use tecdsa_paillier::zk::pi_enc;
         let plaintext = Integer::from(42);
         let (ct, nonce) = paillier_encrypt(ek, &plaintext);
         let data = pi_enc::Data {
@@ -1090,7 +1082,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     }
 
     {
-        use paillier_zk::no_small_factor as pi_fac;
+        use tecdsa_paillier::zk::pi_fac;
         let n = dk.n().clone();
         let p = dk.p().clone();
         let q = dk.q().clone();
@@ -1117,7 +1109,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     }
 
     {
-        use paillier_zk::paillier_blum_modulus as pi_mod;
+        use tecdsa_paillier::zk::pi_mod;
         let n = dk.n().clone();
         let p = dk.p().clone();
         let q = dk.q().clone();
@@ -1135,8 +1127,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     }
 
     {
-        use paillier_zk::paillier_affine_operation_in_range as pi_aff;
-        use tecdsa_paillier::backend::Integer;
+        use tecdsa_paillier::zk::pi_aff_g as pi_aff;
         type GE = generic_ec::curves::Secp256k1;
         let x_val = Integer::from(7);
         let y_val = Integer::from(13);
@@ -1185,7 +1176,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     }
 
     {
-        use paillier_zk::dlog_with_el_gamal_commitment as pi_elog;
+        use tecdsa_paillier::zk::pi_elog;
         type GE = generic_ec::curves::Secp256k1;
         let y = scalar_to_ge(&C::random_scalar(rng));
         let lambda = scalar_to_ge(&C::random_scalar(rng));
@@ -1217,10 +1208,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     }
 
     {
-        use paillier_zk::{
-            paillier_encryption_in_range_with_el_gamal as pi_enc_elg, IntegerExt as _,
-        };
-        use tecdsa_paillier::backend::Integer;
+        use tecdsa_paillier::zk::{pi_enc_elg, IntegerExt as _};
 
         type GE = generic_ec::curves::Secp256k1;
         let security = pi_enc_elg::SecurityParams {

@@ -1,40 +1,37 @@
-//! Various utilities
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/fast-paillier>
 
 use core::fmt;
 
-use rug::Complete;
-
-use crate::backend::Integer;
+use rug::{Complete, Integer};
 
 /// Faster algorithm for modular exponentiation based on Chinese remainder theorem when modulo factorization is known
 ///
 /// `CrtExp` makes exponentation modulo `n` faster when factorization `n = n1 * n2` is known as well as `phi(n1)` and `phi(n2)`
 /// (note that `n1` and `n2` don't need to be primes). In this case, you can [build](Self::build) a `CrtExp` and use provided
 /// [exponentiation algorithm](Self::exp).
-#[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct CrtExp {
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     n: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     n1: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     phi_n1: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     n2: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     phi_n2: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     beta: Integer,
 }
 
 /// Exponent for [modular exponentiation](CrtExp::exp) via [`CrtExp`]
-#[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Exponent {
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     e_mod_phi_pp: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     e_mod_phi_qq: Integer,
     is_negative: bool,
 }
@@ -45,7 +42,7 @@ impl CrtExp {
     /// `phi_n1 = phi(n1)` and `phi_n2 = phi(n2)` need to be known. For instance, if `p` is a prime,
     /// then `phi(p) = p - 1` and `phi(p^2) = p * (p - 1)`.
     ///
-    /// [`CrtExp::build_n`] and [`CrtExp::build_nn`] can be used when `n1` and `n2` are primes or
+    /// [`CrtExp::build_nn`] can be used when `n1` and `n2` are primes or
     /// square of primes.
     pub fn build(n1: Integer, phi_n1: Integer, n2: Integer, phi_n2: Integer) -> Option<Self> {
         if n1.cmp0().is_le()
@@ -67,13 +64,6 @@ impl CrtExp {
             phi_n2,
             beta,
         })
-    }
-
-    /// Builds a `CrtExp` for exponentiation modulo `n = p * q` where `p`, `q` are primes
-    pub fn build_n(p: &Integer, q: &Integer) -> Option<Self> {
-        let phi_p = p - 1u8;
-        let phi_q = q - 1u8;
-        Self::build(p.clone(), phi_p.complete(), q.clone(), phi_q.complete())
     }
 
     /// Builds a `CrtExp` for exponentiation modulo `nn = (p * q)^2` where `p`, `q` are primes

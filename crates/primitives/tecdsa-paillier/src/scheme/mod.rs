@@ -1,44 +1,15 @@
-#![doc = include_str!("../README.md")]
-#![warn(missing_docs, unused_crate_dependencies)]
-#![cfg_attr(
-    not(test),
-    warn(clippy::expect_used, clippy::unwrap_used, clippy::panic)
-)]
-#![no_std]
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/fast-paillier>
 
-#[cfg(test)]
-mod unused_deps {
-    // Since dev-dependencies are not allowed to be optional, we have to
-    // explicitly use them to prevent unused_crate_dependencies warning
-
-    #[cfg(not(feature = "serde"))]
-    use serde_json as _;
-
-    mod test_deps {
-        use ciborium as _;
-        use rand as _;
-        use rug as _;
-    }
-    mod benchmark_deps {
-        use criterion as _;
-        use libpaillier as _;
-    }
-}
-
-extern crate alloc;
-
-pub mod backend;
 mod decryption_key;
 mod encryption_key;
 pub mod utils;
 
-#[cfg(feature = "serde")]
 mod serde;
 
 use core::fmt;
 
-use crate::backend::{BigIntExt, Integer};
-use rand_core::{CryptoRng, RngCore};
+use rug::Integer;
 
 /// Paillier ciphertext
 pub type Ciphertext = Integer;
@@ -84,31 +55,14 @@ impl From<Bug> for Error {
 
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for crate::EncryptionKey {}
-    impl Sealed for crate::DecryptionKey {}
+    impl Sealed for crate::scheme::EncryptionKey {}
+    impl Sealed for crate::scheme::DecryptionKey {}
 }
 
 /// Any key capable of encryption
 ///
 /// Both encryption and decryption keys can be used to carry out encryption. Moreover, encryption
 /// using decryption key is faster.
-///
-/// ## Example
-/// This trait can be used, for instance, to accept an encryption key as an argument to the function
-/// and benefit from faster encryption if decryption key is provided.
-///
-/// ```rust
-/// use fast_paillier::{AnyEncryptionKey, Error, backend::Integer};
-///
-/// // This function accepts both encryption and decryption key. If decryption key is provided,
-/// // it'll be more efficient
-/// fn some_function(ek: &dyn AnyEncryptionKey) -> Result<Integer, Error> {
-///     // ...
-/// # let x = Integer::from(123); let r = Integer::from(321);
-///     let ciphertext = ek.encrypt_with(&x, &r)?;
-///     Ok(ciphertext)
-/// }
-/// ```
 pub trait AnyEncryptionKey: sealed::Sealed {
     /// Returns `N`
     fn n(&self) -> &Integer;
@@ -149,32 +103,6 @@ pub trait AnyEncryptionKey: sealed::Sealed {
 
     /// Checks whether `x` is `{-N/2, .., N/2}`
     fn in_signed_group(&self, x: &Integer) -> bool;
-}
-
-/// Additional functionality implemented for [AnyEncryptionKey]
-pub trait AnyEncryptionKeyExt: AnyEncryptionKey {
-    /// Encrypts the plaintext `x` in `{-N/2, .., N_2}`
-    ///
-    /// Nonce is sampled randomly using `rng`.
-    ///
-    /// Returns error if plaintext is not in specified range
-    fn encrypt_with_random(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        x: &Plaintext,
-    ) -> Result<(Ciphertext, Nonce), Error>;
-}
-
-impl<E: AnyEncryptionKey> AnyEncryptionKeyExt for E {
-    fn encrypt_with_random(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        x: &Plaintext,
-    ) -> Result<(Ciphertext, Nonce), Error> {
-        let nonce = Integer::sample_in_mult_group_of(rng, self.n());
-        let ciphertext = self.encrypt_with(x, &nonce)?;
-        Ok((ciphertext, nonce))
-    }
 }
 
 impl AnyEncryptionKey for EncryptionKey {

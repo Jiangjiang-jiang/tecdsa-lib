@@ -14,7 +14,6 @@ tecdsa-protocol = { workspace = true }
 tecdsa-curve = { workspace = true }
 tecdsa-paillier = { workspace = true }
 tecdsa-bigint = { workspace = true }
-paillier-zk = { workspace = true }
 generic-ec = { workspace = true }
 tecdsa-pedersen-mod = { workspace = true }
 tecdsa-class-group = { workspace = true }

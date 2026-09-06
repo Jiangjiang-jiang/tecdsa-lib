@@ -25,9 +25,10 @@ use elliptic_curve::{
     FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
-use tecdsa_paillier::{backend::Integer, BigIntExt};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -332,10 +333,10 @@ where
 
     // Compute: rho * q + k_2^{-1} * m' mod q
     let k2_inv_bytes = scalar_to_bytes(&k2_inv);
-    let k2_inv_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&k2_inv_bytes);
+    let k2_inv_int = Integer::from_bytes_msf(&k2_inv_bytes);
 
     let m_prime_bytes = scalar_to_bytes(&m_prime);
-    let m_prime_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&m_prime_bytes);
+    let m_prime_int = Integer::from_bytes_msf(&m_prime_bytes);
 
     // k_2^{-1} * m' mod q
     let k2inv_m = Integer::from(&k2_inv_int * &m_prime_int) % &q_int;
@@ -351,10 +352,10 @@ where
 
     // Step 6: Compute v = k_2^{-1} * r * x_2 mod q
     let r_bytes = scalar_to_bytes(&r);
-    let r_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&r_bytes);
+    let r_int = Integer::from_bytes_msf(&r_bytes);
 
     let x2_bytes = scalar_to_bytes(&key_share.secret_share);
-    let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&x2_bytes);
+    let x2_int = Integer::from_bytes_msf(&x2_bytes);
 
     let r_x2_mod_q = (r_int * x2_int) % &q_int;
     let v = (k2_inv_int * r_x2_mod_q) % q_int;
