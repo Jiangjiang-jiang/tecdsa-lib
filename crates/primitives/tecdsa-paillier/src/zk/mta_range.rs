@@ -27,27 +27,10 @@ use fast_paillier::backend::{BigIntExt, Integer};
 use rug::{ops::Pow, Complete};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_curve::TecdsaCurve;
-
-// ---------------------------------------------------------------------------
-// Serde helper for Integer (MSF byte encoding)
-// ---------------------------------------------------------------------------
-
-mod ser_integer {
-    use fast_paillier::backend::{BigIntExt, Integer};
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(val: &Integer, serializer: S) -> Result<S::Ok, S::Error> {
-        val.to_bytes_msf().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Integer, D::Error> {
-        let bytes = Vec::<u8>::deserialize(deserializer)?;
-        Ok(Integer::from_bytes_msf(&bytes))
-    }
-}
-
-use tecdsa_curve::conv::{curve_order, integer_to_scalar};
+use tecdsa_curve::{
+    conv::{curve_order, integer_to_scalar},
+    TecdsaCurve,
+};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -74,13 +57,13 @@ pub enum MtaRangeError {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NTildeParams {
     /// RSA modulus $N' = p' q'$.
-    #[serde(with = "ser_integer")]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub N_tilde: Integer,
     /// First base $h_1$.
-    #[serde(with = "ser_integer")]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub h1: Integer,
     /// Second base $h_2 = h_1^\lambda \bmod N'$.
-    #[serde(with = "ser_integer")]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub h2: Integer,
 }
 
@@ -96,10 +79,15 @@ pub struct NTildeParams {
 /// **Witness:** $(a, r)$.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AliceProof {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     z: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     e: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     s: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     s1: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     s2: Integer,
 }
 
@@ -294,13 +282,21 @@ fn alice_challenge(
 /// **Witness:** $(b, \beta', r)$.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BobProof {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     t: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     z: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     e: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     s: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     s1: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     s2: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     t1: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     t2: Integer,
 }
 
