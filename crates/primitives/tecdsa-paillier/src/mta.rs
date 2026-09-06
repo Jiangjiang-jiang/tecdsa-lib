@@ -983,7 +983,7 @@ mod tests {
     #[test]
     #[ignore = "slow: redundant MtA/proof variant test"]
     fn mta_gg18_proofs_correctness() {
-        use crate::zk::{mta_range::NTildeParams, pdl_slack::sample_below};
+        use crate::zk::mta_range::NTildeParams;
 
         let mut rng = OsRng;
 
@@ -997,7 +997,7 @@ mod tests {
         let n_tilde = (&p2 * &q2).complete();
         let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
         let phi_n = (p2 - Integer::one()) * (q2 - Integer::one());
-        let lambda = sample_below(&phi_n, &mut rng);
+        let lambda = phi_n.sample_below_ref(&mut rng);
         let h2 = h1
             .pow_mod_ref(&lambda, &n_tilde)
             .expect("pow_mod defined")
@@ -1075,8 +1075,8 @@ mod tests {
         let aux = {
             let p = generate_blum_prime(&mut rng, 1024);
             let q_rp = generate_blum_prime(&mut rng, 1024);
-            let n = (&p * &q_rp).complete();
-            let phi_n = (p - Integer::one()) * (q_rp - Integer::one());
+            let phi_n = (&p - Integer::one()) * (&q_rp - Integer::one());
+            let n = p * q_rp;
             let r = Integer::sample_in_mult_group_of(&mut rng, &n);
             let lambda = phi_n.sample_below(&mut rng);
             let t = r.square().modulo(&n);

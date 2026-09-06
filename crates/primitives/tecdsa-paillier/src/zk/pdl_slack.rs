@@ -22,7 +22,7 @@ use elliptic_curve::{
     PrimeField,
 };
 use fast_paillier::backend::{BigIntExt, Integer};
-use rug::Complete;
+use rug::{ops::Pow, Complete};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::{
     conv::{curve_order, integer_to_scalar},
@@ -206,11 +206,6 @@ pub(crate) fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -
         .complete()
 }
 
-/// Sample a random integer in `[0, bound)`.
-pub(crate) fn sample_below(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
-    bound.sample_below_ref(rng)
-}
-
 /// Sample a random integer in `[1, bound)`.
 fn sample_range_one_to(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
     let bound_minus_one = bound - Integer::one();
@@ -280,14 +275,12 @@ where
     ) -> Self {
         let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
-        let q_N_tilde = q * &statement.N_tilde;
-        let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values
-        let alpha = sample_below(&q3, rng);
+        let alpha = q3.sample_below_ref(rng);
         let beta = sample_range_one_to(&statement.ek_n, rng);
-        let rho = sample_below(&q_N_tilde, rng);
-        let gamma = sample_below(&q3_N_tilde, rng);
+        let rho = (q * &statement.N_tilde).sample_below_ref(rng);
+        let gamma = (q3 * &statement.N_tilde).sample_below_ref(rng);
 
         // 2. z = h1^x * h2^rho mod N_tilde
         let z = commitment_unknown_order(
@@ -352,7 +345,6 @@ where
     /// Returns `PdlSlackError::Verify` if the proof does not verify.
     pub fn verify(&self, statement: &PdlSlackStatement<C>) -> Result<(), PdlSlackError> {
         let q = curve_order::<C>();
-        let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
         let e = compute_challenge(statement, &self.z, &self.u1, &self.u2, &self.u3);
@@ -404,7 +396,7 @@ where
         // --- Range check: |s1| < q^3 ---
         // s1 should be positive (alpha >= 0, e >= 0, x >= 0 in typical usage)
         // but we check absolute value just in case.
-        let s1_in_range = self.s1 < q3;
+        let s1_in_range = self.s1 < q.pow(3);
 
         if self.u1.to_bytes().as_ref() == u1_test.to_bytes().as_ref()
             && self.u2 == u2_test
@@ -439,24 +431,8 @@ mod tests {
     }
 
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> (Integer, Integer, Integer) {
-        // Generate Ring-Pedersen parameters (N_tilde, h1, h2)
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = (&p * &q).complete();
-
-        // h2 = random QR mod N_tilde
-        let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = r.square().modulo(&n_tilde);
-
-        // h1 = h2^lambda mod N_tilde for a random lambda
-        let phi_n = (p - Integer::one()) * (q - Integer::one());
-        let lambda = sample_below(&phi_n, rng);
-        let h1 = h2
-            .pow_mod_ref(&lambda, &n_tilde)
-            .expect("pow_mod defined")
-            .complete();
-
-        (n_tilde, h1, h2)
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        (params.n, params.t, params.s)
     }
 
     #[test]

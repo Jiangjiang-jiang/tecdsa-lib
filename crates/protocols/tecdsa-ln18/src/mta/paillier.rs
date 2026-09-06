@@ -446,15 +446,8 @@ mod tests {
     /// Generate Ring-Pedersen auxiliary parameters $(N', h_1, h_2)$ for testing.
     #[cfg(feature = "secp256k1")]
     fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = Integer::from(&p * &q);
-
-        let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let phi_n = (p - Integer::one()) * (q - Integer::one());
-        let lambda = phi_n.sample_below_ref(rng);
-        let h2 = Integer::from(h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined"));
-
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        let (n_tilde, h1, h2) = (params.n, params.t, params.s);
         NTildeParams {
             N_tilde: n_tilde,
             h1,

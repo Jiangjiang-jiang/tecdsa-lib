@@ -18,6 +18,7 @@ tecdsa-bigint.workspace = true
 tecdsa-curve.workspace = true
 tecdsa-protocol.workspace = true
 tecdsa-paillier.workspace = true
+tecdsa-pedersen-mod.workspace = true
 tecdsa-commit.workspace = true
 elliptic-curve.workspace = true
 
