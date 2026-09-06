@@ -157,7 +157,7 @@ impl RangeProofNi {
         rng: &mut impl CryptoRngCore,
     ) -> Result<Self, RangeProofNiError> {
         // Range bound: masks sampled from [0, q * 2^{128}).
-        let range_bound = q * Integer::u_pow_u(2, 128).complete();
+        let range_bound = q * Integer::two_pow(128);
 
         let mut encrypted_pairs = Vec::with_capacity(SECURITY_PARAM);
         let mut masks = Vec::with_capacity(SECURITY_PARAM);
@@ -219,7 +219,7 @@ impl RangeProofNi {
             return false;
         }
 
-        let range_bound = q * Integer::u_pow_u(2, 128).complete();
+        let range_bound = q * Integer::two_pow(128);
         let upper_bound = (q + &range_bound).complete();
 
         // Re-derive challenge bits

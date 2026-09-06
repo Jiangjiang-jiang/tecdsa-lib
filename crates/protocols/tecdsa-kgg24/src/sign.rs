@@ -248,13 +248,13 @@ where
     // --- Divisibility check (Section 4) ---
     // s_2 = s_0 - s_1 + ell * q where ell is random in [0, q^2 * 2^{tau+kappa})
     let ell_bound = tecdsa_paillier::backend::Integer::from(&q_int * &q_int)
-        * tecdsa_paillier::backend::Integer::from(1u8).shl_ref(TAU + KAPPA);
+        * tecdsa_paillier::backend::Integer::two_pow(TAU + KAPPA);
     let ell = ell_bound.sample_below_ref(rng);
     let s2_int = (s0_int - &s1_int) + (ell * &q_int);
 
     // Check: s_2 < N / 2^{tau + 2*kappa}
     let n = key_share.dk.encryption_key().n().clone();
-    let divisor = tecdsa_paillier::backend::Integer::from(1u8).shl_ref(TAU + 2 * KAPPA);
+    let divisor = tecdsa_paillier::backend::Integer::two_pow(TAU + 2 * KAPPA);
     let threshold = n / divisor;
 
     let needs_refresh = if s2_int.cmp_abs(&threshold) == std::cmp::Ordering::Greater {
@@ -411,7 +411,7 @@ where
     // Sample rho from [0, 3*q^3 * 2^{4*tau + 2*kappa}) for masking
     let q_cubed = tecdsa_paillier::backend::Integer::from(&q_int * &q_int) * &q_int;
     let rho_bound =
-        (q_cubed * 3u8) * tecdsa_paillier::backend::Integer::from(1u8).shl_ref(4 * TAU + 2 * KAPPA);
+        (q_cubed * 3u8) * tecdsa_paillier::backend::Integer::two_pow(4 * TAU + 2 * KAPPA);
     let rho = rho_bound.sample_below_ref(rng);
 
     // Compute: partial_plaintext = rho * q + k_tilde_2_inv * m' + k_tilde_2_inv * r * x_2
@@ -521,18 +521,4 @@ where
     C::ProjectivePoint: LinearCombination<[(C::ProjectivePoint, C::Scalar); 2]>,
 {
     sign(p1_key, p2_key, message, rng).map(|r| r.signature)
-}
-
-/// Trait extension providing `shl_ref` for `Integer`.
-trait IntegerShlRef {
-    fn shl_ref(&self, bits: u32) -> Self;
-}
-
-impl IntegerShlRef for tecdsa_paillier::backend::Integer {
-    fn shl_ref(&self, bits: u32) -> Self {
-        let shift = tecdsa_paillier::backend::Integer::from(
-            tecdsa_paillier::backend::Integer::u_pow_u(2, bits),
-        );
-        tecdsa_paillier::backend::Integer::from(self * &shift)
-    }
 }
