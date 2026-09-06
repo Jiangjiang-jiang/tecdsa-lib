@@ -137,6 +137,21 @@ fn point_wire_len(p: &k256::ProjectivePoint) -> usize {
     AsRef::<[u8]>::as_ref(&p.to_bytes()).len()
 }
 
+/// Wire size (bytes) of a bare big integer.
+///
+/// `Integer` is `rug::Integer`, a foreign type, so it has no `Serialize` impl
+/// of its own; message structs carry it through
+/// `#[serde(with = "tecdsa_bigint::int_wire")]`. This measures it the same way,
+/// so the figure matches what the protocol actually puts on the wire.
+fn integer_wire_len(x: &tecdsa_paillier::backend::Integer) -> usize {
+    #[derive(serde::Serialize)]
+    struct IntWire<'a> {
+        #[serde(with = "tecdsa_bigint::int_wire")]
+        n: &'a tecdsa_paillier::backend::Integer,
+    }
+    tecdsa_testkit::wire_size(&IntWire { n: x })
+}
+
 /// Wire size (bytes) of a CL-HSM class-group ciphertext: the two `QFI`
 /// components in their native `to_bytes` encoding. CL/NIM types are not
 /// `serde::Serialize`, so they are sized through the class group's own
@@ -1681,7 +1696,7 @@ fn abc24_once() {
         "abc24/n2_t2/party2",
         point_wire_len(&client_msg.r1)
             + point_wire_len(&client_msg.r_point)
-            + tecdsa_testkit::wire_size(&client_msg.s_ct),
+            + integer_wire_len(&client_msg.s_ct),
     );
 }
 
