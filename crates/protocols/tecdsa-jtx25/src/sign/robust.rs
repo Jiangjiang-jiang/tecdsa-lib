@@ -47,6 +47,7 @@ use tecdsa_class_group::{
     zk::r_part_dec::RPartDecProof,
 };
 use tecdsa_core::TecdsaError;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{
     ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
     state_machine::Outgoing,
@@ -99,7 +100,7 @@ struct ReceivedR3 {
 
 fn hash_message_to_scalar(message: &[u8]) -> k256::Scalar {
     let hash: [u8; 32] = Sha256::digest(message).into();
-    tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&hash)
+    k256::Secp256k1::scalar_from_bytes(&hash)
 }
 
 // ---------------------------------------------------------------------------
@@ -169,10 +170,10 @@ impl Jtx25RobustOnlineSignMachine {
         }
 
         let m = hash_message_to_scalar(message);
-        let m_bytes = tecdsa_curve::conv::scalar_to_bytes(&m);
+        let m_bytes = m.to_bytes_vec();
         let message_data = DataToSign::from_digest(m);
         let r_x = presignature.r_x;
-        let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_x);
+        let r_x_bytes = r_x.to_bytes_vec();
 
         // Reconstruct phi_bar ciphertext.
         let pb_c1 = Qfi::from_bytes(&presignature.phi_bar_c1_bytes);
@@ -221,7 +222,7 @@ impl Jtx25RobustOnlineSignMachine {
                 .ok_or_else(|| TecdsaError::Other(format!("missing phi_bar_k c2 for {pid}")))?;
             kc1s.push(Qfi::from_bytes(kc1_bytes));
             kc2s.push(Qfi::from_bytes(kc2_bytes));
-            lambdas.push(tecdsa_curve::conv::scalar_to_bytes(lambda_j).to_vec());
+            lambdas.push(lambda_j.to_bytes_vec().to_vec());
         }
         let c0_c1 = setup
             .multiexp_bytes(&kc1s.iter().collect::<Vec<_>>(), &lambdas)
@@ -425,7 +426,7 @@ impl Jtx25RobustOnlineSignMachine {
         let p0_inv = p0.pow_mod(&q_minus_2, &q).expect("q - 2 is non-negative");
 
         let s_big = (p1 * p0_inv).modulo(&q);
-        let s_raw = tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&s_big);
+        let s_raw = k256::Secp256k1::scalar_from_integer(&s_big);
         let s = low_s_normalize::<k256::Secp256k1>(s_raw);
 
         let sig = Signature { r: r_x, s };

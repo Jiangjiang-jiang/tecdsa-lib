@@ -9,7 +9,7 @@ description = "Oblivious transfer and VOLE for tecdsa"
 
 [dependencies]
 tecdsa-core = { workspace = true }
-tecdsa-curve = { workspace = true }
+tecdsa-curve = { workspace = true, features = ["secp256k1"] }
 elliptic-curve = { workspace = true }
 k256 = { workspace = true }
 sha2 = { workspace = true }

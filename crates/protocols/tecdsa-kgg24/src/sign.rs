@@ -46,14 +46,13 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use rug::Integer;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
 use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
     error::Kgg24Error,
     key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
-    keygen::curve_order,
 };
 
 /// Security parameter tau (bit-length of the noise exponent base).
@@ -243,7 +242,7 @@ where
         .map_err(|e| Kgg24Error::Paillier(format!("decryption failed: {e}")))?;
 
     // Compute s_1 = [s_0]_q (reduce mod q)
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
     let s1_int = Integer::from(s0_int.modulo_ref(&q_int));
 
     // --- Divisibility check (Section 4) ---
@@ -386,26 +385,26 @@ where
         .into_option()
         .ok_or_else(|| Kgg24Error::ProtocolState("k_2 is zero, cannot invert".into()))?;
 
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
 
     // Blinded inverse: k_tilde_2_inv = [k_2^{-1}]_q + rho_bar * q
     // where rho_bar is sampled from [0, q)
     let rho_bar = q_int.sample_below_ref(rng);
-    let k2_inv_bytes = scalar_to_bytes(&k2_inv);
+    let k2_inv_bytes = k2_inv.to_bytes_vec();
     let k2_inv_int = Integer::from_bytes_msf(&k2_inv_bytes);
     let k_tilde_2_inv = k2_inv_int + rho_bar * &q_int;
 
     // Step 5: Compute the message digest as integer
     let m_prime = *message.digest();
-    let m_prime_bytes = scalar_to_bytes(&m_prime);
+    let m_prime_bytes = m_prime.to_bytes_vec();
     let m_prime_int = Integer::from_bytes_msf(&m_prime_bytes);
 
     // Get r as integer
-    let r_bytes = scalar_to_bytes(&r);
+    let r_bytes = r.to_bytes_vec();
     let r_int = Integer::from_bytes_msf(&r_bytes);
 
     // Get x_2 as integer
-    let x2_bytes = scalar_to_bytes(&key_share.secret_share);
+    let x2_bytes = key_share.secret_share.to_bytes_vec();
     let x2_int = Integer::from_bytes_msf(&x2_bytes);
 
     // Sample rho from [0, 3*q^3 * 2^{4*tau + 2*kappa}) for masking
@@ -446,14 +445,12 @@ where
 // Utility functions
 // ---------------------------------------------------------------------------
 
-use tecdsa_curve::conv::scalar_to_bytes;
-
 fn int_to_scalar<C: TecdsaCurve>(value: &Integer) -> C::Scalar
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    tecdsa_curve::conv::bytes_to_scalar::<C>(&value.to_bytes_msf())
+    C::scalar_from_bytes(&value.to_bytes_msf())
 }
 
 // ---------------------------------------------------------------------------

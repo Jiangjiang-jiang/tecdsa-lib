@@ -27,7 +27,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use rug::Integer;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
 use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
@@ -204,7 +204,7 @@ where
 
     // Convert s' from big integer to scalar (reduce mod q)
     let s_prime_bytes = s_prime_int.to_bytes_msf();
-    let s_prime_scalar = bytes_to_scalar::<C>(&s_prime_bytes);
+    let s_prime_scalar = C::scalar_from_bytes(&s_prime_bytes);
 
     // Compute s'' = k_1^{-1} * s' mod q
     let k1_inv = state
@@ -325,17 +325,17 @@ where
 
     // Sample rho from Z_{q^2} for masking
     // q is the curve order. We need q^2 as the sampling range.
-    let q_int = tecdsa_curve::conv::curve_order::<C>();
+    let q_int = C::order();
     let q_squared = Integer::from(&q_int * &q_int);
 
     // rho <- Z_{q^2}: sample a random value in [0, q^2)
     let rho = q_squared.sample_below_ref(rng);
 
     // Compute: rho * q + k_2^{-1} * m' mod q
-    let k2_inv_bytes = scalar_to_bytes(&k2_inv);
+    let k2_inv_bytes = k2_inv.to_bytes_vec();
     let k2_inv_int = Integer::from_bytes_msf(&k2_inv_bytes);
 
-    let m_prime_bytes = scalar_to_bytes(&m_prime);
+    let m_prime_bytes = m_prime.to_bytes_vec();
     let m_prime_int = Integer::from_bytes_msf(&m_prime_bytes);
 
     // k_2^{-1} * m' mod q
@@ -351,10 +351,10 @@ where
         .map_err(|e| Lin17Error::Paillier(format!("encryption of partial_sig failed: {e}")))?;
 
     // Step 6: Compute v = k_2^{-1} * r * x_2 mod q
-    let r_bytes = scalar_to_bytes(&r);
+    let r_bytes = r.to_bytes_vec();
     let r_int = Integer::from_bytes_msf(&r_bytes);
 
-    let x2_bytes = scalar_to_bytes(&key_share.secret_share);
+    let x2_bytes = key_share.secret_share.to_bytes_vec();
     let x2_int = Integer::from_bytes_msf(&x2_bytes);
 
     let r_x2_mod_q = (r_int * x2_int) % &q_int;
@@ -378,8 +378,6 @@ where
 // ---------------------------------------------------------------------------
 // Utility functions (delegating to tecdsa_curve::conv)
 // ---------------------------------------------------------------------------
-
-use tecdsa_curve::conv::{bytes_to_scalar, scalar_to_bytes};
 
 // ---------------------------------------------------------------------------
 // End-to-end signing convenience function

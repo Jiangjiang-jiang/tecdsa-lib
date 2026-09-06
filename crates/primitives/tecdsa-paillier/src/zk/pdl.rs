@@ -26,10 +26,7 @@ use rand_core::CryptoRngCore;
 use rug::Integer;
 use tecdsa_bigint::BigIntExt;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{
-    conv::{integer_to_scalar, scalar_to_bytes},
-    TecdsaCurve,
-};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use thiserror::Error;
 
 use crate::scheme::{DecryptionKey, EncryptionKey};
@@ -164,7 +161,7 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     // Compute q (group order)
-    let q_int = tecdsa_curve::conv::curve_order::<C>();
+    let q_int = C::order();
 
     // Sample a from Z_q
     let a = q_int.sample_below_ref(rng);
@@ -183,8 +180,8 @@ where
         .map_err(|e| PdlError::Paillier(format!("PDL oadd failed: {e}")))?;
 
     // Compute Q' = a * Q_1 + b * G
-    let a_scalar = tecdsa_curve::conv::bytes_to_scalar::<C>(&a.to_bytes_msf());
-    let b_scalar = tecdsa_curve::conv::bytes_to_scalar::<C>(&b.to_bytes_msf());
+    let a_scalar = C::scalar_from_bytes(&a.to_bytes_msf());
+    let b_scalar = C::scalar_from_bytes(&b.to_bytes_msf());
     let q_tag = *q1 * a_scalar + C::generator() * b_scalar;
 
     // Commit to (a, b)
@@ -262,7 +259,7 @@ where
     // Compute Q_hat = alpha * G
     // alpha might be negative (Paillier returns values in {-N/2, .., N/2})
     // We need to handle this by reducing mod q
-    let alpha_scalar = integer_to_scalar::<C>(&alpha);
+    let alpha_scalar = C::scalar_from_integer(&alpha);
     let q_hat = C::generator() * alpha_scalar;
 
     // Commit to Q_hat
@@ -306,7 +303,7 @@ where
 
     // Check that a * x_1 + b = alpha (over the integers).
     // First we need x_1 as an Integer.
-    let x1_bytes = scalar_to_bytes(x1);
+    let x1_bytes = x1.to_bytes_vec();
     let x1_int = Integer::from_bytes_msf(&x1_bytes);
 
     let expected = Integer::from(&verifier_msg2.a * &x1_int + &verifier_msg2.b);
@@ -403,7 +400,7 @@ mod tests {
         let q1 = Secp256k1::generator() * x1;
 
         // Encrypt x1
-        let x1_bytes = scalar_to_bytes(&x1);
+        let x1_bytes = x1.to_bytes_vec();
         let x1_int = Integer::from_bytes_msf(&x1_bytes);
         let (c_key, _) = dk.encrypt_with_random(&mut rng, &x1_int).expect("encrypt");
 
@@ -425,7 +422,7 @@ mod tests {
 
         // Encrypt a DIFFERENT value
         let wrong_x = Secp256k1::random_scalar(&mut rng);
-        let wrong_bytes = scalar_to_bytes(&wrong_x);
+        let wrong_bytes = wrong_x.to_bytes_vec();
         let wrong_int = Integer::from_bytes_msf(&wrong_bytes);
         let (wrong_c_key, _) = dk
             .encrypt_with_random(&mut rng, &wrong_int)
@@ -450,7 +447,7 @@ mod tests {
         let wrong_x = Secp256k1::random_scalar(&mut rng);
         let wrong_q1 = Secp256k1::generator() * wrong_x;
 
-        let x1_bytes = scalar_to_bytes(&x1);
+        let x1_bytes = x1.to_bytes_vec();
         let x1_int = Integer::from_bytes_msf(&x1_bytes);
         let (c_key, _) = dk.encrypt_with_random(&mut rng, &x1_int).expect("encrypt");
 

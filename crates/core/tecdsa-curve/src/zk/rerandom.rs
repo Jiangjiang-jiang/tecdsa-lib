@@ -96,7 +96,7 @@ where
             .finalize()
             .into();
 
-        crate::conv::bytes_to_scalar::<C>(&hash)
+        C::scalar_from_bytes(&hash)
     }
 
     /// Create a rerandomization proof.

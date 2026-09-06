@@ -24,10 +24,7 @@ use elliptic_curve::{
 use rug::{ops::Pow, Complete, Integer};
 use sha2::{Digest, Sha256};
 use tecdsa_bigint::BigIntExt;
-use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar},
-    TecdsaCurve,
-};
+use tecdsa_curve::TecdsaCurve;
 
 /// Fiat-Shamir challenge error.
 #[derive(Debug, thiserror::Error)]
@@ -245,7 +242,7 @@ where
         statement: &PdlSlackStatement<C>,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let q = curve_order::<C>();
+        let q = C::order();
         let q3 = (&q * &q).complete() * &q;
 
         // 1. Sample blinding values
@@ -261,7 +258,7 @@ where
             .expect("bases are invertible modulo n");
 
         // 3. u1 = alpha * G
-        let alpha_scalar = integer_to_scalar::<C>(&alpha);
+        let alpha_scalar = C::scalar_from_integer(&alpha);
         let u1 = statement.G * alpha_scalar;
 
         // 4. u2 = (1 + N)^alpha * beta^N mod N^2  (= Enc(N, alpha; beta))
@@ -310,18 +307,18 @@ where
     /// # Errors
     /// Returns `PdlSlackError::Verify` if the proof does not verify.
     pub fn verify(&self, statement: &PdlSlackStatement<C>) -> Result<(), PdlSlackError> {
-        let q = curve_order::<C>();
+        let q = C::order();
 
         // Recompute challenge
         let e = compute_challenge(statement, &self.z, &self.u1, &self.u2, &self.u3);
 
         // --- EC check: s1*G == u1 + e*Q ---
-        let s1_scalar = integer_to_scalar::<C>(&self.s1);
+        let s1_scalar = C::scalar_from_integer(&self.s1);
         let g_s1 = statement.G * s1_scalar;
 
         // e_neg = q - e (mod q), for subtraction on the curve
         let e_neg_int = &q - (&e % &q).complete();
-        let e_neg_scalar = integer_to_scalar::<C>(&e_neg_int);
+        let e_neg_scalar = C::scalar_from_integer(&e_neg_int);
         let q_times_neg_e = statement.Q * e_neg_scalar;
         let u1_test = g_s1 + q_times_neg_e;
 
@@ -395,12 +392,12 @@ mod tests {
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
         // Sample a secret x (as an Integer, must fit in the Paillier plaintext range)
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         // x should be a small value relative to N, let's pick something in [1, q)
         let x = q.sample_positive_below(&mut rng);
 
         // Q = x * G
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let Q = G * x_scalar;
 
@@ -433,10 +430,10 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         let x = q.sample_positive_below(&mut rng);
 
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let Q = G * x_scalar;
 
@@ -471,17 +468,17 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         let x = q.sample_positive_below(&mut rng);
 
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let _Q = G * x_scalar; // correct Q, unused — we test with wrong_Q below
 
         let (ciphertext, r) = ek.encrypt_with_random(&mut rng, &x).expect("encrypt");
 
         // Use a *wrong* Q (random point, not matching x)
-        let wrong_scalar = integer_to_scalar::<TestCurve>(&q.sample_positive_below(&mut rng));
+        let wrong_scalar = TestCurve::scalar_from_integer(&q.sample_positive_below(&mut rng));
         let wrong_Q = G * wrong_scalar;
 
         let statement = PdlSlackStatement::<TestCurve> {
@@ -511,10 +508,10 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         let x = q.sample_positive_below(&mut rng);
 
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let Q = G * x_scalar;
 

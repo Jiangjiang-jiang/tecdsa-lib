@@ -19,8 +19,9 @@
 //!
 //! Reference: LLZ25 (Lyu-Li-Zhou-Deng, CCS 2025), Section 4.3.
 
+use k256::Secp256k1;
 use rug::{integer::Order, Integer};
-use tecdsa_curve::conv;
+use tecdsa_curve::TecdsaCurve;
 
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
@@ -164,9 +165,9 @@ fn ec_scalar_base_mul_bytes(scalar_bytes: &[u8]) -> Vec<u8> {
     use elliptic_curve::group::GroupEncoding;
 
     let val = Integer::from_digits(scalar_bytes, Order::Msf);
-    let q = conv::curve_order::<k256::Secp256k1>();
+    let q = k256::Secp256k1::order();
     let reduced = val % &q;
-    let scalar = integer_to_scalar(&reduced);
+    let scalar = Secp256k1::scalar_from_integer(&reduced);
     let point = k256::ProjectivePoint::GENERATOR * scalar;
     point.to_bytes().to_vec()
 }
@@ -178,13 +179,13 @@ fn ec_schnorr_check_bytes(
     e_bytes: &[u8],
     big_v_bytes: &[u8],
 ) -> bool {
-    let q = conv::curve_order::<k256::Secp256k1>();
+    let q = k256::Secp256k1::order();
 
     let u2_val = Integer::from_digits(u2_bytes, Order::Msf) % &q;
     let e_val = Integer::from_digits(e_bytes, Order::Msf) % &q;
 
-    let u2_scalar = integer_to_scalar(&u2_val);
-    let e_scalar = integer_to_scalar(&e_val);
+    let u2_scalar = Secp256k1::scalar_from_integer(&u2_val);
+    let e_scalar = Secp256k1::scalar_from_integer(&e_val);
 
     // LHS = u2 * G
     let lhs = k256::ProjectivePoint::GENERATOR * u2_scalar;
@@ -201,10 +202,6 @@ fn ec_schnorr_check_bytes(
     let rhs = v_tilde + big_v * e_scalar;
 
     lhs == rhs
-}
-
-fn integer_to_scalar(val: &Integer) -> k256::Scalar {
-    conv::integer_to_scalar::<k256::Secp256k1>(val)
 }
 
 fn point_from_bytes(bytes: &[u8]) -> Option<k256::ProjectivePoint> {
@@ -242,7 +239,7 @@ mod tests {
         let ct = setup.encrypt_with_r(&pk, "42", &r_dec).expect("encrypt");
 
         // V = v * G
-        let v_scalar = integer_to_scalar(&Integer::from(42u32));
+        let v_scalar = Secp256k1::scalar_from_integer(&Integer::from(42u32));
         let big_v = k256::ProjectivePoint::GENERATOR * v_scalar;
         let big_v_bytes = big_v.to_bytes().to_vec();
 
@@ -268,7 +265,7 @@ mod tests {
         let ct = setup.encrypt_with_r(&pk, "42", &r_dec).expect("encrypt");
 
         // V uses wrong value
-        let wrong_v_scalar = integer_to_scalar(&Integer::from(99u32));
+        let wrong_v_scalar = Secp256k1::scalar_from_integer(&Integer::from(99u32));
         let wrong_v = k256::ProjectivePoint::GENERATOR * wrong_v_scalar;
         let wrong_v_bytes = wrong_v.to_bytes().to_vec();
 

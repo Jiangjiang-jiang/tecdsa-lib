@@ -12,7 +12,7 @@ use elliptic_curve::{
     sec1::ModulusSize,
     FieldBytes, FieldBytesSize, PrimeField,
 };
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
 use crate::error::{Ku24Error, Ku24Result};
 
@@ -32,7 +32,7 @@ where
 {
     let mut out = Vec::with_capacity(values.len() * C::SCALAR_BYTES);
     for v in values {
-        out.extend_from_slice(&scalar_to_bytes(v));
+        out.extend_from_slice(&v.to_bytes_vec());
     }
     out
 }

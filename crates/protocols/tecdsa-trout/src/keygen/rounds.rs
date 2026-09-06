@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_class_group::{cl::ClSetup, zk::r_cl_dl_ec::RClDlEcProof};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{conv::scalar_to_bytes, zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
 use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
 use tecdsa_protocol::PartyId;
 use zeroize::Zeroize;
@@ -138,7 +138,7 @@ impl SerDlogProof {
     pub fn from_proof(proof: &DlogProof<k256::Secp256k1>) -> Self {
         Self {
             commitment_bytes: proj_to_bytes(&proof.commitment),
-            response_bytes: scalar_to_bytes(&proof.response),
+            response_bytes: proof.response.to_bytes_vec(),
         }
     }
 
@@ -246,7 +246,7 @@ pub(crate) fn compute_commitment(
     hasher.update(cl_abc.1.as_bytes());
     hasher.update(cl_abc.2.as_bytes());
     hasher.update(proj_to_bytes(&dlog_proof.commitment));
-    hasher.update(scalar_to_bytes(&dlog_proof.response));
+    hasher.update(dlog_proof.response.to_bytes_vec());
     hasher.finalize().into()
 }
 
@@ -378,7 +378,7 @@ pub(crate) fn transition_to_r3(
     let my_x_i_bytes = proj_to_bytes(&my_x_i_point);
 
     // 8. CL-encrypt combined share
-    let x_i_bytes = scalar_to_bytes(&combined_share);
+    let x_i_bytes = combined_share.to_bytes_vec();
 
     // Generate encryption randomness delta_i
     let (sk_tmp, _) = setup

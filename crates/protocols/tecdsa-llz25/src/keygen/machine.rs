@@ -22,7 +22,7 @@ use elliptic_curve::PrimeField;
 use rand::RngCore;
 use tecdsa_class_group::cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
 
@@ -291,7 +291,7 @@ impl Llz25KeygenMachine {
                 .ok_or_else(|| {
                     TecdsaError::Other(format!("VSS share for party {party} must exist"))
                 })?;
-            let share_bytes = scalar_to_bytes(&share_for_j.value);
+            let share_bytes = share_for_j.value.to_bytes_vec();
             self.outgoing.push(Outgoing {
                 to: Recipient::Party(party),
                 msg: Llz25KeygenMsg::Round2Share(share_bytes),

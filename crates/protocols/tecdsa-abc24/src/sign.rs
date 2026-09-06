@@ -23,7 +23,7 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
@@ -198,7 +198,7 @@ where
 
     // Convert decrypted value to scalar (reduce mod q)
     let dec_bytes = decrypted.to_bytes_msf();
-    let sigma_raw = bytes_to_scalar::<C>(&dec_bytes);
+    let sigma_raw = C::scalar_from_bytes(&dec_bytes);
 
     // sigma = dec(S) * (k_2 + mu)^{-1} mod q
     let k2_mu_inv = k2_plus_mu
@@ -274,11 +274,11 @@ where
         .ok_or_else(|| Abc24Error::ProtocolState("k_1 is zero".into()))?;
 
     // Get curve order q
-    let q_int = tecdsa_curve::conv::curve_order::<C>();
+    let q_int = C::order();
 
     // Compute u = [k_1^{-1} * (m + r * x_1)]_q + mu_mask * q
     let k1_inv_m_rx1 = k1_inv * (m + r * key_share.secret_share);
-    let u_base_bytes = scalar_to_bytes(&k1_inv_m_rx1);
+    let u_base_bytes = k1_inv_m_rx1.to_bytes_vec();
     let u_base = rug::Integer::from_bytes_msf(&u_base_bytes);
 
     // mu_mask: statistical masking to hide u mod q
@@ -287,7 +287,7 @@ where
 
     // Compute v = [k_1^{-1} * r]_q + mu'_mask * q
     let k1_inv_r = k1_inv * r;
-    let v_base_bytes = scalar_to_bytes(&k1_inv_r);
+    let v_base_bytes = k1_inv_r.to_bytes_vec();
     let v_base = rug::Integer::from_bytes_msf(&v_base_bytes);
 
     let mu_prime_mask = q_int.sample_below_ref(rng);
@@ -318,8 +318,6 @@ where
 // ---------------------------------------------------------------------------
 // Utility functions
 // ---------------------------------------------------------------------------
-
-use tecdsa_curve::conv::{bytes_to_scalar, scalar_to_bytes};
 
 // ---------------------------------------------------------------------------
 // End-to-end signing convenience function

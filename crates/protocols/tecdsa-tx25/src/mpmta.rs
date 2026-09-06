@@ -74,7 +74,7 @@ use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSecretKey, ClSetup, Qfi},
     zk::{r_enc::REncProof, r_m_aff_dl_ec::RMAffDlEcProof},
 };
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
 use crate::error::Tx25Error;
 
@@ -186,7 +186,7 @@ fn fiat_shamir_challenge(
 
     let hash = hasher.finalize();
     let hash_uint = Integer::from_digits(&hash, Order::Msf);
-    let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
+    let q = k256::Secp256k1::order();
     let e = hash_uint % &q;
     Ok(e.to_digits::<u8>(Order::Msf))
 }
@@ -292,7 +292,7 @@ pub fn mpmta_round2(
     let k_star_bytes = k_star_bu.to_digits::<u8>(Order::Msf);
 
     // Compute R_i = (k mod q) * G.
-    let k_scalar = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(k_bytes);
+    let k_scalar = k256::Secp256k1::scalar_from_bytes(k_bytes);
     let r_point = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_scalar;
 
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
@@ -323,7 +323,7 @@ pub fn mpmta_round2(
         // Sample beta_{i,j} uniformly from Z_q.
         let beta_ij = k256::Secp256k1::random_scalar(rng);
         let neg_beta = -beta_ij;
-        let neg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes(&neg_beta);
+        let neg_beta_bytes = neg_beta.to_bytes_vec();
 
         // Parse C_{gamma_j} = (c_{j,1}, c_{j,2}).
         let (cj1, cj2) = setup.ct_components(&c_gammas[j])?;
@@ -380,7 +380,7 @@ pub fn mpmta_round2(
         )?;
 
         // Aggregate beta and B on the EC side.
-        let e_j_scalar = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&e_j_bytes);
+        let e_j_scalar = k256::Secp256k1::scalar_from_bytes(&e_j_bytes);
         agg_beta += betas[j] * e_j_scalar;
         agg_b_point += beta_points[j] * e_j_scalar;
 
@@ -397,7 +397,7 @@ pub fn mpmta_round2(
     let agg_d2 = setup.multiexp_bytes(&d2s.iter().collect::<Vec<_>>(), &e_js)?;
 
     // Compute aggregated beta decimal for the proof.
-    let agg_beta_bytes = tecdsa_curve::conv::scalar_to_bytes(&agg_beta);
+    let agg_beta_bytes = agg_beta.to_bytes_vec();
 
     // Generate the R_m-AffDL-Ec proof on the aggregated values.
     let proof = RMAffDlEcProof::prove(
@@ -446,7 +446,7 @@ pub fn mpmta_decrypt(
 ) -> Result<MpmtaDecryptOutput, Tx25Error> {
     // Decrypt: alpha = Dec(sk, C_alpha).
     let alpha_bytes = setup.decrypt_bytes(sk, c_alpha)?;
-    let alpha = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_bytes);
+    let alpha = k256::Secp256k1::scalar_from_bytes(&alpha_bytes);
 
     // delta = alpha + beta.
     let delta = alpha + beta;
@@ -506,7 +506,7 @@ pub fn mpmta_verify_round2(
             &[&j.to_string(), &prover_index.to_string()],
         )?;
 
-        let e_j_scalar = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&e_j_bytes);
+        let e_j_scalar = k256::Secp256k1::scalar_from_bytes(&e_j_bytes);
         agg_b_point += round2.beta_points[j] * e_j_scalar;
 
         c1s.push(cj1);

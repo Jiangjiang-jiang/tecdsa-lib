@@ -31,7 +31,7 @@ use elliptic_curve::{ops::Reduce, CurveArithmetic, Field, FieldBytes, PrimeField
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
-use tecdsa_curve::conv::scalar_to_bytes;
+use tecdsa_curve::ScalarExt;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
@@ -82,7 +82,7 @@ where
     let mut counter = *nonce;
     for _ in 0..BATCH_SIZE {
         counter += <C::Scalar as Field>::ONE;
-        let counter_bytes = scalar_to_bytes(&counter);
+        let counter_bytes = counter.to_bytes_vec();
         gadget.push(tagged_hash_as_scalar::<C>(
             TAG_MUL_GADGET,
             &[session_id, &counter_bytes],
@@ -169,7 +169,7 @@ impl MulSender {
         let (ote_sender, ote_msg) = OtExtensionSender::init(session_id, rng);
 
         let gadget = compute_public_gadget::<C>(session_id, nonce);
-        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(scalar_to_bytes).collect();
+        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(ScalarExt::to_bytes_vec).collect();
 
         let sender = MulSender {
             gadget_bytes,
@@ -265,7 +265,7 @@ impl MulSender {
             let mut entries_bytes: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE as usize);
             for j in 0..BATCH_SIZE as usize {
                 let entry = chi_tilde[i] * z_tilde[i][j] + chi_hat[i] * z_hat[i][j];
-                entries_bytes.push(scalar_to_bytes(&entry));
+                entries_bytes.push(entry.to_bytes_vec());
             }
             rows_r_bytes.push(entries_bytes.concat());
 
@@ -294,10 +294,10 @@ impl MulSender {
         // Serialize tau, verify_u, gamma for transport.
         let tau_bytes: Vec<Vec<Vec<u8>>> = vector_of_tau
             .iter()
-            .map(|tau| tau.iter().map(scalar_to_bytes).collect())
+            .map(|tau| tau.iter().map(ScalarExt::to_bytes_vec).collect())
             .collect();
-        let verify_u_bytes: Vec<Vec<u8>> = verify_u.iter().map(scalar_to_bytes).collect();
-        let gamma_bytes: Vec<Vec<u8>> = gamma.iter().map(scalar_to_bytes).collect();
+        let verify_u_bytes: Vec<Vec<u8>> = verify_u.iter().map(ScalarExt::to_bytes_vec).collect();
+        let gamma_bytes: Vec<Vec<u8>> = gamma.iter().map(ScalarExt::to_bytes_vec).collect();
 
         let data_to_receiver = MulDataToReceiver {
             vector_of_tau: tau_bytes,
@@ -343,7 +343,7 @@ impl MulReceiver {
         let ote_receiver = OtExtensionReceiver::init(session_id, sender_ote_msg)?;
 
         let gadget = compute_public_gadget::<C>(session_id, nonce);
-        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(scalar_to_bytes).collect();
+        let gadget_bytes: Vec<Vec<u8>> = gadget.iter().map(ScalarExt::to_bytes_vec).collect();
 
         Ok(MulReceiver {
             gadget_bytes,
@@ -414,9 +414,9 @@ impl MulReceiver {
             ));
         }
 
-        let b_bytes = scalar_to_bytes(&b);
-        let chi_tilde_bytes: Vec<Vec<u8>> = chi_tilde.iter().map(scalar_to_bytes).collect();
-        let chi_hat_bytes: Vec<Vec<u8>> = chi_hat.iter().map(scalar_to_bytes).collect();
+        let b_bytes = b.to_bytes_vec();
+        let chi_tilde_bytes: Vec<Vec<u8>> = chi_tilde.iter().map(ScalarExt::to_bytes_vec).collect();
+        let chi_hat_bytes: Vec<Vec<u8>> = chi_hat.iter().map(ScalarExt::to_bytes_vec).collect();
 
         let data_to_keep = MulDataToKeep {
             b_bytes,
@@ -555,7 +555,7 @@ impl MulReceiver {
                 if data_kept.choice_bits[j] {
                     entry += verify_u[i];
                 }
-                entries_bytes.push(scalar_to_bytes(&entry));
+                entries_bytes.push(entry.to_bytes_vec());
             }
             rows_r_bytes.push(entries_bytes.concat());
         }

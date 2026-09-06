@@ -17,7 +17,7 @@ use rand::thread_rng;
 use rug::{integer::Order, Complete, Integer};
 use tecdsa_bench::zk_fixtures::*;
 use tecdsa_class_group::cl::{Cleartext, Mpz, SECP256K1_ORDER};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::BigIntExt;
 use tecdsa_testkit::wire_size;
 
@@ -271,7 +271,7 @@ fn class_group_zk_once(
     {
         use tecdsa_class_group::zk::r_dl_cl::RDlClProof;
         let x_scalar = C::random_scalar(rng);
-        let x_bytes = scalar_to_bytes(&x_scalar);
+        let x_bytes = x_scalar.to_bytes_vec();
         let x_point =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar;
         let ct = setup.encrypt_bytes(&pk, &x_bytes).expect("enc");
@@ -435,7 +435,7 @@ fn class_group_zk_once(
         let ct = setup
             .encrypt_with_r_bytes(&pk, &v_bytes, &r_bytes)
             .expect("enc");
-        let v_scalar = tecdsa_curve::conv::bytes_to_scalar::<Secp256k1>(&v_bytes);
+        let v_scalar = Secp256k1::scalar_from_bytes(&v_bytes);
         let big_v =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * v_scalar;
         let big_v_bytes = big_v.to_bytes().to_vec();
@@ -518,7 +518,7 @@ fn class_group_zk_once(
         let encode_out = nim.encode_a(&x_bytes, &pk).expect("encode_a");
         let pe_a = encode_out.pe_a;
         let r_bytes_nim = encode_out.state.r_bytes.clone();
-        let x_scalar = tecdsa_curve::conv::bytes_to_scalar::<Secp256k1>(&x_bytes);
+        let x_scalar = Secp256k1::scalar_from_bytes(&x_bytes);
         let big_v =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar;
         let big_v_bytes = big_v.to_bytes().to_vec();
@@ -647,7 +647,7 @@ fn class_group_zk_once(
         let neg_beta = neg_beta_bu.to_bytes_be();
         let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("d2");
-        let k_scalar = tecdsa_curve::conv::bytes_to_scalar::<Secp256k1>(&k_star);
+        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
         let r_point =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * k_scalar;
         let beta_scalar = k256::Scalar::from(17u64);
@@ -770,7 +770,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
     {
         use tecdsa_paillier::zk::pi_eq::PiEqProof;
         let x1 = C::random_scalar(rng);
-        let x1_bytes = scalar_to_bytes(&x1);
+        let x1_bytes = x1.to_bytes_vec();
         let x1_point = C::generator() * x1;
         let q = group_order();
         let t = q.sample_below_ref(rng);
@@ -855,7 +855,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let q = group_order();
         let x = sample_below(&q);
         let (ciphertext, r) = paillier_encrypt(ek, &x);
-        let x_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&x);
+        let x_scalar = C::scalar_from_integer(&x);
         let gen = C::generator();
         let q_pt = gen * x_scalar;
         let stmt = PdlSlackStatement::<C> {
@@ -895,7 +895,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let a = sample_below(&q);
         let (enc_a, _) = paillier_encrypt(ek, &a);
         let b_val = sample_below(&q);
-        let b_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&b_val);
+        let b_scalar = C::scalar_from_integer(&b_val);
         let x_pt = C::generator() * b_scalar;
         let beta_prim = sample_below(&Integer::from_bytes_msf(&ek.half_n().to_bytes_msf()));
         let r_bob = Integer::sample_in_mult_group_of(rng, ek.n());
@@ -929,7 +929,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let q = group_order();
         let gen = C::generator();
         let eta1 = sample_below(&q);
-        let eta1_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&eta1);
+        let eta1_scalar = C::scalar_from_integer(&eta1);
         let r_i = gen * eta1_scalar;
         let rho = sample_below(&q);
         let (u_ct, _) = paillier_encrypt(ek, &rho);
@@ -1032,7 +1032,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         use tecdsa_paillier::zk::pdl::pdl_verify;
         let x1 = C::random_scalar(rng);
         let q1 = C::generator() * x1;
-        let x1_int = Integer::from_bytes_msf(&scalar_to_bytes(&x1));
+        let x1_int = Integer::from_bytes_msf(&x1.to_bytes_vec());
         let (c_key, _) = paillier_encrypt(ek, &x1_int);
         time_once("zk/paillier/pdl_transcript/full", || {
             pdl_verify::<C>(dk, ek, &x1, &c_key, &q1, rng).expect("PDL transcript fixture invalid")
@@ -1142,7 +1142,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
             let enc_y = ek.encrypt_with(&y_val, &nonce_aff).expect("enc_y");
             (c_x * enc_y).modulo(ek.nn())
         };
-        let x_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&x_val);
+        let x_scalar = C::scalar_from_integer(&x_val);
         let x_point = C::generator() * x_scalar;
         let x_ge = point_to_ge(&x_point);
         let data = pi_aff::Data::<GE> {

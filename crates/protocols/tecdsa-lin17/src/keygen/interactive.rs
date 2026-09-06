@@ -211,7 +211,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_int = tecdsa_curve::conv::curve_order::<C>();
+    let q_int = C::order();
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
     Ok(KeyGenP1Round3Msg {
@@ -309,7 +309,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_int = tecdsa_curve::conv::curve_order::<C>();
+    let q_int = C::order();
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
     let msg = KeyGenP1Round3Msg {
@@ -381,7 +381,7 @@ where
     }
 
     // Step 5: Verify range proof
-    let q_int = tecdsa_curve::conv::curve_order::<C>();
+    let q_int = C::order();
     if !p1_round3
         .range_proof
         .verify(&p1_round3.ek, &p1_round3.c_key, &q_int)

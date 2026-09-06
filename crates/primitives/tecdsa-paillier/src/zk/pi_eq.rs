@@ -106,7 +106,7 @@ where
         rng: &mut impl CryptoRngCore,
     ) -> Self {
         let n = ek.n();
-        let q_int = tecdsa_curve::conv::curve_order::<C>();
+        let q_int = C::order();
 
         // Step 1: Sample b from [0, q^2 * 2^{2(tau+kappa)})
         let b_bound = Integer::two_pow(2 * (TAU + KAPPA)) * &q_int * &q_int;
@@ -161,7 +161,7 @@ where
     ) -> bool {
         let n = ek.n();
         let nn = ek.nn();
-        let q_int = tecdsa_curve::conv::curve_order::<C>();
+        let q_int = C::order();
 
         // Check 1: z2 != 0
         if self.z2.cmp0().is_eq() {
@@ -226,7 +226,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let scalar = tecdsa_curve::conv::bytes_to_scalar::<C>(&b.to_bytes_msf());
+    let scalar = C::scalar_from_bytes(&b.to_bytes_msf());
     C::generator() * scalar
 }
 
@@ -255,7 +255,7 @@ where
         .finalize()
         .into();
 
-    tecdsa_curve::conv::bytes_to_scalar::<C>(&hash)
+    C::scalar_from_bytes(&hash)
 }
 
 #[cfg(test)]
@@ -284,7 +284,7 @@ mod tests {
         let x1_point = <Secp256k1 as TecdsaCurve>::generator() * x1;
 
         // Compute x_hat_1 = x1 + t * q
-        let q_int = tecdsa_curve::conv::curve_order::<Secp256k1>();
+        let q_int = Secp256k1::order();
         let x1_bytes = x1.to_repr();
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
         let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);

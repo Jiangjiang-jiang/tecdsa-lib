@@ -317,6 +317,8 @@ fn derive_challenges(
 
 #[cfg(test)]
 mod tests {
+    use tecdsa_curve::ScalarExt;
+
     use super::*;
 
     #[test]
@@ -351,18 +353,18 @@ mod tests {
     #[test]
     #[ignore = "redundant boundary test"]
     fn range_proof_with_real_curve_order() {
-        use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+        use tecdsa_curve::TecdsaCurve;
 
         let mut rng = rand_core::OsRng;
         let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         // Use actual secp256k1 group order
-        let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
+        let q = k256::Secp256k1::order();
 
         // Random x < q
         let x1 = k256::Secp256k1::random_scalar(&mut rng);
-        let x1_bytes = scalar_to_bytes(&x1);
+        let x1_bytes = x1.to_bytes_vec();
         let x = Integer::from_bytes_msf(&x1_bytes);
 
         let (c, r) = dk.encrypt_with_random(&mut rng, &x).expect("encrypt");

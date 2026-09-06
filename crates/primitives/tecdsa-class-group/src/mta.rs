@@ -28,7 +28,7 @@ use k256::Secp256k1;
 use rand_core::CryptoRngCore;
 use rug::{integer::Order, Integer};
 use subtle::ConstantTimeEq;
-use tecdsa_curve::conv;
+use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{MtA, MtAWithCheck};
 
 use crate::cl::{
@@ -265,7 +265,7 @@ impl MtAWithCheck for ClMtA {
         // Compute g^alpha as an EC point for the consistency check.
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let q = Integer::from_digits(q_bytes, Order::Msf);
-        let alpha_scalar = conv::integer_to_scalar::<Secp256k1>(&(alpha % q));
+        let alpha_scalar = Secp256k1::scalar_from_integer(&(alpha % q));
 
         let g_alpha = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * alpha_scalar;
         let g_alpha_bytes = g_alpha.to_bytes().to_vec();
@@ -312,12 +312,12 @@ impl MtAWithCheck for ClMtA {
 
         // Compute g^beta from beta_bytes.
         let beta = Integer::from_digits(beta_bytes, Order::Msf);
-        let beta_scalar = conv::integer_to_scalar::<Secp256k1>(&(beta % &q));
+        let beta_scalar = Secp256k1::scalar_from_integer(&(beta % &q));
         let g_beta = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * beta_scalar;
 
         // Compute b as scalar.
         let b = Integer::from_digits(&state.b_bytes, Order::Msf);
-        let b_scalar = conv::integer_to_scalar::<Secp256k1>(&(b % q));
+        let b_scalar = Secp256k1::scalar_from_integer(&(b % q));
 
         // Check: g^alpha * g^beta == (g^a)^b
         let lhs = g_alpha + g_beta;
@@ -348,16 +348,11 @@ mod tests {
         }
     }
 
-    /// Helper: secp256k1 curve order as an integer.
-    fn curve_order() -> Integer {
-        conv::curve_order::<Secp256k1>()
-    }
-
     #[test]
     fn cl_mta_correctness() {
         let setup = test_setup("2001");
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Sender's input b
@@ -398,7 +393,7 @@ mod tests {
     fn cl_mta_multiple_runs() {
         let setup = test_setup("2002");
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();
@@ -442,7 +437,7 @@ mod tests {
     fn cl_mta_with_larger_values() {
         let setup = test_setup("2003");
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Use values that are close to (but less than) q
@@ -479,7 +474,7 @@ mod tests {
     fn cl_mta_with_check_correctness() {
         let setup = test_setup("3001");
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Sender's input b
@@ -545,7 +540,7 @@ mod tests {
     fn cl_mta_with_check_multiple_runs() {
         let setup = test_setup("3002");
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();

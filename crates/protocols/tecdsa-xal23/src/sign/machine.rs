@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{
     state_machine::Outgoing, DataToSign, IaReport, PartyId, Recipient, Signature, StateMachine,
 };
@@ -119,7 +119,7 @@ where
 
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
-            msg: Xal23SignMsg::PartialSig(scalar_to_bytes(&s_i)),
+            msg: Xal23SignMsg::PartialSig(s_i.to_bytes_vec()),
         }];
 
         Self {

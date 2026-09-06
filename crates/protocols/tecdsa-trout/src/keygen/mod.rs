@@ -18,7 +18,7 @@ pub use machine::TroutKeygenMachine;
 pub use msg::TroutKeygenMsg;
 use rand_core::CryptoRngCore;
 use tecdsa_class_group::cl::ClSetup;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_evrf::EvrfSecretKey;
 
 use crate::{
@@ -81,7 +81,7 @@ pub fn trusted_dealer_keygen(
     let mut ct_components = Vec::new();
     let mut deltas = Vec::new();
     for share in &shares {
-        let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&share.value);
+        let x_i_bytes = share.value.to_bytes_vec();
 
         // Generate random delta_i (encryption randomness)
         let (sk_tmp, _) = setup.keygen()?;

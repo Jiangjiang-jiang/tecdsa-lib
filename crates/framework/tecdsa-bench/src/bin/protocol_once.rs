@@ -32,6 +32,7 @@ use k256::Secp256k1;
 use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
 use tecdsa_bench::{config, per_party};
+use tecdsa_curve::ScalarExt;
 use tecdsa_ln18::sign::Ln18MtaBackend;
 use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{DataToSign, PartyId, PartyInfo, SessionConfig, SessionId};
@@ -267,7 +268,7 @@ fn mta_once() {
     let b = Secp256k1::random_scalar(&mut OsRng);
     let a_bytes = a.to_repr();
     let b_bytes = b.to_repr();
-    let q_bytes = tecdsa_curve::conv::curve_order::<Secp256k1>().to_bytes_msf();
+    let q_bytes = Secp256k1::order().to_bytes_msf();
 
     // ── Setup (timed separately) ──
     let paillier_dk = time_once("mta/setup/paillier_keygen", || {
@@ -474,8 +475,8 @@ fn mta_once() {
         let mut nim_setup =
             tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed).expect("cl");
         let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
-        let x_bytes = tecdsa_curve::conv::scalar_to_bytes(&a);
-        let y_bytes = tecdsa_curve::conv::scalar_to_bytes(&b);
+        let x_bytes = a.to_bytes_vec();
+        let y_bytes = b.to_bytes_vec();
         // V = x * G is the EC commitment bound by R_Ped to the Encode_A output.
         let big_v = {
             use elliptic_curve::group::GroupEncoding;

@@ -65,7 +65,7 @@ use tecdsa_class_group::{
     zk::{r_dl_cl::RDlClProof, r_enc::REncProof},
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
 
@@ -370,7 +370,7 @@ impl Jtx25PresignMachine {
             cl_pk_share_bytes.insert(pid, data);
         }
 
-        let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&key_share.secret_share);
+        let x_i_bytes = key_share.secret_share.to_bytes_vec();
 
         let key_mat = KeyMaterial {
             x_i: key_share.secret_share,
@@ -395,9 +395,9 @@ impl Jtx25PresignMachine {
             let q = Integer::from_digits(&q_bytes, Order::Msf);
             let bu = Integer::from_digits(&sk_bytes, Order::Msf);
             let reduced = bu % &q;
-            tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
+            k256::Secp256k1::scalar_from_integer(&reduced)
         };
-        let phi_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&phi_i);
+        let phi_i_bytes = phi_i.to_bytes_vec();
 
         // --- Step 2: Sample k_i ---
         let k_i = {
@@ -407,7 +407,7 @@ impl Jtx25PresignMachine {
             let q = Integer::from_digits(&q_bytes, Order::Msf);
             let bu = Integer::from_digits(&sk_bytes, Order::Msf);
             let reduced = bu % &q;
-            tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
+            k256::Secp256k1::scalar_from_integer(&reduced)
         };
 
         // --- Step 3: Encrypt phi_i under aggregate CL pk ---
@@ -533,7 +533,7 @@ impl Jtx25PresignMachine {
             tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
         let lambda_i = lagrange_coeffs[my_idx];
         let lambda_x_i = lambda_i * key_mat.x_i;
-        let lambda_x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&lambda_x_i);
+        let lambda_x_i_bytes = lambda_x_i.to_bytes_vec();
 
         let phi_bar_x_i = scalar_mul_ct(setup, &phi_bar, &lambda_x_i_bytes)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_x_i: {e}")))?;
@@ -551,7 +551,7 @@ impl Jtx25PresignMachine {
         .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
 
         // --- Step 3: Compute phi_bar_k_i = phi_bar * k_i ---
-        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&state.k_i);
+        let k_i_bytes = state.k_i.to_bytes_vec();
         let phi_bar_k_i = scalar_mul_ct(setup, &phi_bar, &k_i_bytes)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_k_i: {e}")))?;
 

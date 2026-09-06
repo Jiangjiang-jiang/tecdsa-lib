@@ -5,17 +5,20 @@
 extern crate alloc;
 
 pub mod adapters;
-pub mod conv;
 pub mod elgamal_exp;
+pub mod ext;
 pub mod serde_projective;
 pub mod zk;
 
 use elliptic_curve::{
     group::GroupEncoding,
+    ops::Reduce,
     point::AffineCoordinates,
     sec1::{FromSec1Point, ModulusSize, ToSec1Point},
     CurveArithmetic, Field, FieldBytes, FieldBytesSize, PrimeCurve, PrimeField,
 };
+pub use ext::{PointExt, ScalarExt};
+use rug::{integer::Order, Integer};
 
 /// Projective point type for curve `C`.
 pub type CurvePoint<C> = <C as CurveArithmetic>::ProjectivePoint;
@@ -35,6 +38,7 @@ pub trait TecdsaCurve:
     + CurveArithmetic<
         ProjectivePoint: GroupEncoding,
         AffinePoint: AffineCoordinates + FromSec1Point<Self> + ToSec1Point<Self>,
+        Scalar: PrimeField<Repr = FieldBytes<Self>> + Reduce<FieldBytes<Self>>,
     > + 'static
 where
     FieldBytesSize<Self>: ModulusSize,
@@ -66,6 +70,46 @@ where
     /// Returns [`tecdsa_core::TecdsaError::InvalidKey`] if the bytes are not a valid point.
     fn point_from_bytes(bytes: &[u8]) -> tecdsa_core::Result<Self::AffinePoint>;
 
+    /// The group order `q`, i.e. the modulus of the scalar field.
+    ///
+    /// Derived from `-1`, which is `q - 1`; this agrees with [`elliptic_curve::Curve::ORDER`]
+    /// and avoids depending on the `Uint` width.
+    #[must_use]
+    fn order() -> Integer {
+        Integer::from_digits((-Self::Scalar::ONE).to_repr().as_ref(), Order::Msf) + 1u32
+    }
+
+    /// Interpret big-endian `bytes` as an integer and reduce it into the scalar field.
+    ///
+    /// Inputs no wider than a scalar are zero-extended and reduced with the
+    /// field's own constant-time [`Reduce`]. Wider inputs are first narrowed
+    /// with `rug`, which is variable-time; that path exists only for callers
+    /// hashing into more bytes than a scalar holds.
+    #[must_use]
+    fn scalar_from_bytes(bytes: &[u8]) -> Self::Scalar {
+        let mut repr = FieldBytes::<Self>::default();
+        let width = <FieldBytes<Self> as AsRef<[u8]>>::as_ref(&repr).len();
+        if bytes.len() <= width {
+            repr[width - bytes.len()..].copy_from_slice(bytes);
+        } else {
+            let narrowed = Integer::from_digits(bytes, Order::Msf).modulo(&Self::order());
+            let digits = narrowed.to_digits::<u8>(Order::Msf);
+            repr[width - digits.len()..].copy_from_slice(&digits);
+        }
+        <Self::Scalar as Reduce<FieldBytes<Self>>>::reduce(&repr)
+    }
+
+    /// Reduce `v` into the scalar field, mapping negative values to `q - |v|`.
+    #[must_use]
+    fn scalar_from_integer(v: &Integer) -> Self::Scalar {
+        let magnitude = Self::scalar_from_bytes(&v.to_digits::<u8>(Order::Msf));
+        if v.cmp0().is_lt() {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+
     /// Return the NUMS (Nothing-Up-My-Sleeve) auxiliary point *H* for Pedersen commitments.
     ///
     /// *H* is deterministically derived from a fixed domain-separation tag so that the
@@ -77,10 +121,7 @@ where
     /// Fills `FieldBytes` from the RNG and attempts `from_repr`; rejects zero
     /// and out-of-range values.  Expected to terminate after ~1 attempt for
     /// 256-bit curves.
-    fn random_scalar(rng: &mut impl rand_core::CryptoRngCore) -> Self::Scalar
-    where
-        Self::Scalar: PrimeField<Repr = FieldBytes<Self>>,
-    {
+    fn random_scalar(rng: &mut impl rand_core::CryptoRngCore) -> Self::Scalar {
         loop {
             let mut bytes = FieldBytes::<Self>::default();
             rng.fill_bytes(&mut bytes);

@@ -130,7 +130,7 @@ where
             .finalize()
             .into();
 
-        crate::conv::bytes_to_scalar::<C>(&hash)
+        C::scalar_from_bytes(&hash)
     }
 
     /// Build the nested DDH statement from the main proof components.

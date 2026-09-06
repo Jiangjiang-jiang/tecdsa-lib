@@ -43,6 +43,7 @@ use tecdsa_class_group::{
     },
 };
 use tecdsa_core::TecdsaError;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{
     ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
     state_machine::Outgoing,
@@ -155,8 +156,8 @@ impl TroutSignMachine {
         }
 
         let r_scalar = my_presign.r_scalar;
-        let r_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_scalar);
-        let m_bytes = tecdsa_curve::conv::scalar_to_bytes(message.digest());
+        let r_bytes = r_scalar.to_bytes_vec();
+        let m_bytes = (message.digest()).to_bytes_vec();
         let broadcasts = &my_presign.all_broadcasts;
 
         // -----------------------------------------------------------
@@ -298,7 +299,7 @@ impl TroutSignMachine {
         let sd1_input = ScaledDecryptPartyInput {
             alpha_i: my_presign.alpha_i.clone(),
             beta_i: my_presign.beta_i.clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes(&my_presign.u_i),
+            b_i: my_presign.u_i.to_bytes_vec(),
         };
         let f_i_1 = compute_f_share(&setup, &sd1_input, &sd1_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD1: {e}")))?;
@@ -312,7 +313,7 @@ impl TroutSignMachine {
         let sd2_input = ScaledDecryptPartyInput {
             alpha_i: alpha_z,
             beta_i: my_presign.beta_i.clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes(&my_presign.u_i),
+            b_i: my_presign.u_i.to_bytes_vec(),
         };
         let f_i_2 = compute_f_share(&setup, &sd2_input, &sd2_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD2: {e}")))?;
@@ -408,13 +409,13 @@ impl TroutSignMachine {
         }
 
         // Aggregate and solve SD1: u*k
-        let uk = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
+        let uk = k256::Secp256k1::scalar_from_bytes(
             &aggregate_and_solve(&fin.setup, &f1_shares)
                 .map_err(|e| TecdsaError::Other(format!("agg_solve SD1: {e}")))?,
         );
 
         // Aggregate and solve SD2: u*(H(m) + r*x)
-        let u_mx = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
+        let u_mx = k256::Secp256k1::scalar_from_bytes(
             &aggregate_and_solve(&fin.setup, &f2_shares)
                 .map_err(|e| TecdsaError::Other(format!("agg_solve SD2: {e}")))?,
         );

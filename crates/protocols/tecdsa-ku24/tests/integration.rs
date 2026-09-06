@@ -128,7 +128,7 @@ fn digest_of(msg: &[u8]) -> DataToSign<C> {
     let mut repr = k256::FieldBytes::default();
     repr.copy_from_slice(&hash);
     let scalar = Option::<Scalar>::from(Scalar::from_repr(repr))
-        .unwrap_or_else(|| tecdsa_curve::conv::bytes_to_scalar::<C>(&hash));
+        .unwrap_or_else(|| C::scalar_from_bytes(&hash));
     DataToSign::from_digest(scalar)
 }
 

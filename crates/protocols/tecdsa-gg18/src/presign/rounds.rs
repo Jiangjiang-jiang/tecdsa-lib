@@ -36,11 +36,7 @@ use rand_core::CryptoRngCore;
 use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{
-    conv::{integer_to_scalar, scalar_to_integer},
-    zk::dlog::DlogProof,
-    TecdsaCurve,
-};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{
     mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtaProofs},
     zk::mta_range::BobProofExt,
@@ -144,7 +140,7 @@ where
             .expect("this party must be in the signing subset");
         let lambda_i = lagrange_coeffs[my_signer_pos];
 
-        let sign_keys = SignKeys::create(&config.key_share.secret_share, &lambda_i, rng);
+        let sign_keys = SignKeys::<C>::create(&config.key_share.secret_share, &lambda_i, rng);
 
         // Commit to g_gamma_i
         let commit_data = point_to_bytes::<C>(&sign_keys.g_gamma_i);
@@ -156,7 +152,7 @@ where
         // Encrypt k_i for MtA Alice messages.
         let my_idx = (my_id.0 - 1) as usize;
         let my_ek = &config.key_share.paillier_eks[my_idx];
-        let k_i_int = scalar_to_integer::<C>(&sign_keys.k_i);
+        let k_i_int = sign_keys.k_i.to_integer();
         let (c_a, r_a) = my_ek
             .encrypt_with_random(rng, &k_i_int)
             .expect("Paillier encrypt must succeed");
@@ -267,7 +263,7 @@ where
         let sender_ntilde = &self.shared.key_share.n_tilde_params[(from.0 - 1) as usize];
 
         // MtA for (k_j, gamma_i):
-        let gamma_i_int = scalar_to_integer::<C>(&self.shared.sign_keys.gamma_i);
+        let gamma_i_int = self.shared.sign_keys.gamma_i.to_integer();
         let beta_prim = sender_ek.half_n().sample_below_ref(rng);
         let r_bob_gamma = Integer::sample_in_mult_group_of(rng, sender_ek.n());
 
@@ -278,7 +274,7 @@ where
         let c_b_gamma = sender_ek.oadd(&b_times_ca, &enc_beta).expect("oadd");
 
         // MtA for (k_j, w_i):
-        let w_i_int = scalar_to_integer::<C>(&self.shared.sign_keys.w_i);
+        let w_i_int = self.shared.sign_keys.w_i.to_integer();
         let nu_prim = sender_ek.half_n().sample_below_ref(rng);
         let r_bob_w = Integer::sample_in_mult_group_of(rng, sender_ek.n());
 
@@ -314,13 +310,13 @@ where
         );
 
         // Store Bob's shares: beta = -beta_prim, nu = -nu_prim
-        let neg_beta_scalar = -integer_to_scalar::<C>(&beta_prim);
-        let neg_nu_scalar = -integer_to_scalar::<C>(&nu_prim);
+        let neg_beta_scalar = -C::scalar_from_integer(&beta_prim);
+        let neg_nu_scalar = -C::scalar_from_integer(&nu_prim);
         self.beta_shares.insert(from, neg_beta_scalar);
         self.nu_shares.insert(from, neg_nu_scalar);
 
         // Compute w_i * G for the proof (Bob's claimed public point)
-        let w_i_scalar = integer_to_scalar::<C>(&w_i_int);
+        let w_i_scalar = C::scalar_from_integer(&w_i_int);
         let w_j_point = C::generator() * w_i_scalar;
 
         // Queue Bob response to Alice
@@ -457,7 +453,7 @@ where
                 .dk
                 .decrypt(&bob_msg.c_b_gamma.0)
                 .expect("decrypt c_b_gamma");
-            let alpha = integer_to_scalar::<C>(&alpha_int);
+            let alpha = C::scalar_from_integer(&alpha_int);
             alpha_vec.push(alpha);
 
             let mu_int = self
@@ -466,7 +462,7 @@ where
                 .dk
                 .decrypt(&bob_msg.c_b_w.0)
                 .expect("decrypt c_b_w");
-            let mu = integer_to_scalar::<C>(&mu_int);
+            let mu = C::scalar_from_integer(&mu_int);
             mu_vec.push(mu);
         }
 

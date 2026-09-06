@@ -174,6 +174,7 @@ impl RAffComProof {
 #[cfg(test)]
 mod tests {
     use rug::{integer::Order, Integer};
+    use tecdsa_curve::TecdsaCurve;
 
     use super::*;
     use crate::cl::ClSetup;
@@ -200,7 +201,7 @@ mod tests {
             setup.sk_to_bytes(&sk2).expect("bytes")
         };
 
-        let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
+        let q = k256::Secp256k1::order();
         let x_val = Integer::from(5u32);
         let m_in = Integer::from(100u32);
         let y_val = Integer::from(10u32);
@@ -260,7 +261,7 @@ mod tests {
         };
         let r_base_dec = Integer::from_digits(&r_base, Order::Msf).to_string_radix(10);
 
-        let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
+        let q = k256::Secp256k1::order();
         let x_val = Integer::from(5u32);
         let m_in = Integer::from(100u32);
         let y_val = Integer::from(10u32);

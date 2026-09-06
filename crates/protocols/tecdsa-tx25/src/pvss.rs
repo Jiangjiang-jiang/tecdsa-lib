@@ -43,7 +43,7 @@ use tecdsa_class_group::{
     pvss_share,
     zk::r_sh::RShProof,
 };
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
 use crate::error::Tx25Error;
 
@@ -146,7 +146,7 @@ pub fn pvss_distribute_with_secret(
         )));
     }
 
-    let secret_bytes = tecdsa_curve::conv::scalar_to_bytes(&secret);
+    let secret_bytes = secret.to_bytes_vec();
 
     let output = pvss_share::pvss_share_distribute_with_secret(
         setup,
@@ -161,16 +161,14 @@ pub fn pvss_distribute_with_secret(
     let polynomial_coeffs: Vec<k256::Scalar> = output
         .polynomial_coeffs_bytes
         .iter()
-        .map(|b| tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(b))
+        .map(|b| k256::Secp256k1::scalar_from_bytes(b))
         .collect();
 
     Ok(PvssOutput {
         c1: output.c1,
         c2s: output.c2s,
         proof: output.proof,
-        secret_share: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
-            &output.secret_share_bytes,
-        ),
+        secret_share: k256::Secp256k1::scalar_from_bytes(&output.secret_share_bytes),
         polynomial_coeffs,
     })
 }
@@ -218,9 +216,7 @@ pub fn pvss_decrypt_share(
 ) -> Result<k256::Scalar, Tx25Error> {
     let sk_bytes = setup.sk_to_bytes(sk)?;
     let share_bytes = pvss_share::pvss_share_decrypt(setup, &sk_bytes, c1, c2_my)?;
-    Ok(tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
-        &share_bytes,
-    ))
+    Ok(k256::Secp256k1::scalar_from_bytes(&share_bytes))
 }
 
 /// Decrypts a party's encrypted PVSS share and returns full output

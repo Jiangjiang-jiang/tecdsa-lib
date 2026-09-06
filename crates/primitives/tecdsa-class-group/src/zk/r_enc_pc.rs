@@ -222,6 +222,7 @@ fn point_from_compressed(bytes: &[u8]) -> ClResult<ProjectivePoint> {
 mod tests {
     use elliptic_curve::group::GroupEncoding;
     use rug::{integer::Order, Integer};
+    use tecdsa_curve::ScalarExt;
 
     use super::*;
     use crate::cl::ClSetup;
@@ -233,8 +234,8 @@ mod tests {
 
         let chi = k256::Scalar::from(77u64);
         let chi_prime = k256::Scalar::from(42u64);
-        let chi_bytes = tecdsa_curve::conv::scalar_to_bytes(&chi);
-        let chi_prime_bytes = tecdsa_curve::conv::scalar_to_bytes(&chi_prime);
+        let chi_bytes = chi.to_bytes_vec();
+        let chi_prime_bytes = chi_prime.to_bytes_vec();
 
         // EC Pedersen commitment: PC = g^chi * h^{chi'}
         let g = ProjectivePoint::GENERATOR;
@@ -274,9 +275,9 @@ mod tests {
         let chi = k256::Scalar::from(77u64);
         let chi_prime = k256::Scalar::from(42u64);
         let wrong_chi = k256::Scalar::from(88u64);
-        let _chi_bytes = tecdsa_curve::conv::scalar_to_bytes(&chi);
-        let wrong_chi_bytes = tecdsa_curve::conv::scalar_to_bytes(&wrong_chi);
-        let chi_prime_bytes = tecdsa_curve::conv::scalar_to_bytes(&chi_prime);
+        let _chi_bytes = chi.to_bytes_vec();
+        let wrong_chi_bytes = wrong_chi.to_bytes_vec();
+        let chi_prime_bytes = chi_prime.to_bytes_vec();
 
         // PC uses correct chi.
         let g = ProjectivePoint::GENERATOR;

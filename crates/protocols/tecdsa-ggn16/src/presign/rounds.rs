@@ -32,10 +32,7 @@ use rand_core::CryptoRngCore;
 use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar, scalar_to_integer},
-    TecdsaCurve,
-};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{
     threshold::{combine_partials, partial_decrypt, PartialDecryption},
     zk::{
@@ -120,7 +117,7 @@ where
         let alpha = &config.key_share.alpha;
 
         // 1. Sample rho_i in Z_q
-        let q = curve_order::<C>();
+        let q = C::order();
         let rho_i = q.sample_below_ref(rng);
 
         // 2. u_i = E(rho_i; r_u) -- encrypt under shared Paillier key
@@ -345,11 +342,11 @@ where
         // Now u = E(rho) and v = E(rho * x) where rho = sum(rho_i)
 
         // Round 3: sample k_i, c_i, compute r_i = k_i*G and w_i
-        let q = curve_order::<C>();
+        let q = C::order();
 
         // k_i in Z_q (nonzero)
         let k_i_scalar = C::random_scalar(rng);
-        let k_i = scalar_to_integer::<C>(&k_i_scalar);
+        let k_i = k_i_scalar.to_integer();
 
         // r_i = k_i * G
         let r_i = C::generator() * k_i_scalar;
@@ -735,11 +732,11 @@ where
             .map_err(|e| TecdsaError::Other(format!("threshold decryption of w failed: {e}")))?;
 
         // Reduce eta mod q to get k*rho mod q
-        let q = curve_order::<C>();
+        let q = C::order();
         let eta_mod_q = eta.modulo(&q);
 
         // Compute psi = (k*rho)^{-1} mod q
-        let eta_scalar = integer_to_scalar::<C>(&eta_mod_q);
+        let eta_scalar = C::scalar_from_integer(&eta_mod_q);
         let psi = eta_scalar
             .invert()
             .into_option()

@@ -54,7 +54,7 @@ use tecdsa_class_group::{
     zk::{r_dl_cl::RDlClProof, r_enc::REncProof, r_pc_dl::RPcDlProof},
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
 
@@ -414,9 +414,9 @@ impl Jtx25RobustPresignMachine {
             let bu = Integer::from_str_radix(&sk_dec, 10)
                 .map_err(|e| Jtx25Error::ScalarConversion(format!("parse sk: {e}")))?;
             let reduced = bu % &q;
-            tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
+            k256::Secp256k1::scalar_from_integer(&reduced)
         };
-        let phi_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&phi_i);
+        let phi_i_bytes = phi_i.to_bytes_vec();
 
         // --- Step 2: Encrypt phi_i under aggregate CL pk ---
         let (r_sk, _) = setup.keygen()?;
@@ -470,8 +470,8 @@ impl Jtx25RobustPresignMachine {
             .vss_shares
             .iter()
             .map(|s| {
-                let v = tecdsa_curve::conv::scalar_to_bytes(&s.value);
-                let r = tecdsa_curve::conv::scalar_to_bytes(&s.randomness);
+                let v = s.value.to_bytes_vec();
+                let r = s.randomness.to_bytes_vec();
                 (v, r)
             })
             .collect();
@@ -598,7 +598,7 @@ impl Jtx25RobustPresignMachine {
         let r_point_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_i;
 
         // --- Step 2b: DRG.RevealExp — prove R_i = g^{k_i} via R_PC-DL ---
-        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
+        let k_i_bytes = k_i.to_bytes_vec();
         let y_k = setup
             .power_of_f_bytes(&k_i_bytes)
             .map_err(|e| TecdsaError::Other(format!("power_of_f: {e}")))?;
@@ -629,7 +629,7 @@ impl Jtx25RobustPresignMachine {
             tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
         let lambda_i = lagrange_coeffs[my_idx];
         let lambda_x_i = lambda_i * key_mat.x_i;
-        let lambda_x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&lambda_x_i);
+        let lambda_x_i_bytes = lambda_x_i.to_bytes_vec();
 
         let phi_bar_x_i = scalar_mul_ct(setup, &phi_bar, &lambda_x_i_bytes)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_x_i: {e}")))?;
@@ -648,7 +648,7 @@ impl Jtx25RobustPresignMachine {
         .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
 
         // --- Step 5: Compute phi_bar_k_i = phi_bar * k_i ---
-        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
+        let k_i_bytes = k_i.to_bytes_vec();
         let phi_bar_k_i = scalar_mul_ct(setup, &phi_bar, &k_i_bytes)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_k_i: {e}")))?;
 
@@ -885,10 +885,8 @@ impl StateMachine for Jtx25RobustPresignMachine {
                     let (ref val_bytes, ref rand_bytes) = payload.drg_shares[my_idx];
                     let my_share = PedersenVssShare {
                         index: (my_idx + 1) as u16,
-                        value: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(val_bytes),
-                        randomness: tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
-                            rand_bytes,
-                        ),
+                        value: k256::Secp256k1::scalar_from_bytes(val_bytes),
+                        randomness: k256::Secp256k1::scalar_from_bytes(rand_bytes),
                     };
 
                     // Verify R_enc proof for phi_bar_i.
