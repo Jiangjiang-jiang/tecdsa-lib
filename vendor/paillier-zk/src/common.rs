@@ -1,5 +1,3 @@
-pub mod sqrt;
-
 use std::sync::Arc;
 
 use fast_paillier::backend::{BigIntExt, Integer};

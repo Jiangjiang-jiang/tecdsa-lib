@@ -133,18 +133,12 @@ pub mod interactive {
     use rand_core::RngCore;
 
     use super::{Challenge, Commitment, Data, PrivateData, Proof, ProofPoint};
-    use crate::{
-        common::{
-            fail_if,
-            sqrt::{blum_sqrt, find_residue, sample_invertible_with_neg_jacobi},
-        },
-        BadExponent, Error, ErrorReason, InvalidProof, InvalidProofReason,
-    };
+    use crate::{common::fail_if, BadExponent, Error, ErrorReason, InvalidProof, InvalidProofReason};
 
     /// Create random commitment
     pub fn commit<R: RngCore>(Data { n }: Data, rng: &mut R) -> Commitment {
         Commitment {
-            w: sample_invertible_with_neg_jacobi(n, rng),
+            w: Integer::sample_neg_jacobi(rng, n),
         }
     }
 
@@ -155,7 +149,7 @@ pub mod interactive {
         Commitment { ref w }: &Commitment,
         challenge: &Challenge<M>,
     ) -> Result<Proof<M>, Error> {
-        let blum_sqrt = |x| blum_sqrt(&x, p, q, n);
+        let blum_sqrt = |x: Integer| x.blum_sqrt(p, q, n);
         let phi = Integer::from(p - 1) * Integer::from(q - 1);
         let n_inverse = Integer::from(n.invert_ref(&phi).ok_or(ErrorReason::Invert)?);
 
@@ -168,7 +162,7 @@ pub mod interactive {
                     y.pow_mod_ref(&n_inverse, n)
                         .ok_or(BadExponent::undefined())?,
                 );
-                let (a, b, y_) = find_residue(y, w, p, q, n).ok_or(ErrorReason::FindResidue)?;
+                let (a, b, y_) = y.find_residue(w, p, q, n).ok_or(ErrorReason::FindResidue)?;
                 let x = blum_sqrt(blum_sqrt(y_));
                 Ok(ProofPoint { x, a, b, z })
             })
