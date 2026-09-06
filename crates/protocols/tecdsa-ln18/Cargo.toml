@@ -33,6 +33,7 @@ serde = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+tecdsa-pedersen-mod = { workspace = true }
 tecdsa-testkit.workspace = true
 sha2.workspace = true
 

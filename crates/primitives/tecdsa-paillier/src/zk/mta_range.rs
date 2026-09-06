@@ -24,7 +24,7 @@ use elliptic_curve::{
     PrimeField,
 };
 use fast_paillier::backend::{BigIntExt, Integer};
-use rug::Complete;
+use rug::{ops::Pow, Complete};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
@@ -49,7 +49,7 @@ mod ser_integer {
 
 use tecdsa_curve::conv::{curve_order, integer_to_scalar};
 
-use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
+use super::pdl_slack::{commitment_unknown_order, pow_mod_signed};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -132,14 +132,12 @@ impl AliceProof {
     {
         let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
-        let q_N_tilde = q * &ntilde.N_tilde;
-        let q3_N_tilde = (&q3 * &ntilde.N_tilde).complete();
 
         // Round 1: sample blinding values and compute commitments
-        let alpha = sample_below(&q3, rng);
+        let alpha = q3.sample_below_ref(rng);
         let beta = Integer::sample_in_mult_group_of(rng, ek_n);
-        let gamma = sample_below(&q3_N_tilde, rng);
-        let rho = sample_below(&q_N_tilde, rng);
+        let gamma = (q3 * &ntilde.N_tilde).sample_below_ref(rng);
+        let rho = (q * &ntilde.N_tilde).sample_below_ref(rng);
 
         // z = h1^a * h2^rho mod N_tilde
         let z = commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, a, &rho);
@@ -197,10 +195,9 @@ impl AliceProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
         let q = curve_order::<C>();
-        let q3 = (&q * &q).complete() * &q;
 
         // Range check: s1 < q^3
-        if self.s1 > q3 {
+        if self.s1 > q.pow(3) {
             return Err(MtaRangeError::AliceVerify);
         }
 
@@ -320,13 +317,13 @@ impl BobProof {
         let q2_N = (&q * &q).complete() * ek_n;
 
         // Round 1: sample blinding values
-        let alpha = sample_below(&q3, rng);
+        let alpha = q3.sample_below_ref(rng);
         let beta = Integer::sample_in_mult_group_of(rng, ek_n);
-        let gamma = sample_below(&q2_N, rng);
-        let rho = sample_below(&q_N_tilde, rng);
-        let rho_prim = sample_below(&q3_N_tilde, rng);
-        let sigma = sample_below(&q_N_tilde, rng);
-        let tau = sample_below(&q3_N_tilde, rng);
+        let gamma = q2_N.sample_below_ref(rng);
+        let rho = q_N_tilde.sample_below_ref(rng);
+        let rho_prim = q3_N_tilde.sample_below_ref(rng);
+        let sigma = q_N_tilde.sample_below_ref(rng);
+        let tau = q3_N_tilde.sample_below_ref(rng);
 
         // z = h1^b * h2^rho mod N_tilde
         let z = commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, b, &rho);
@@ -458,10 +455,9 @@ impl BobProof {
         <C as CurveArithmetic>::ProjectivePoint: GroupEncoding,
     {
         let q = curve_order::<C>();
-        let q3 = (&q * &q).complete() * &q;
 
         // Range check: s1 < q^3
-        if self.s1 > q3 {
+        if self.s1 > q.pow(3) {
             return Err(MtaRangeError::BobVerify);
         }
 
@@ -778,21 +774,8 @@ mod tests {
 
     /// Set up Ring-Pedersen auxiliary parameters $(N', h_1, h_2)$.
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> NTildeParams {
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = (&p * &q).complete();
-
-        // h1 = random element in Z*_{N'}
-        let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-
-        // h2 = h1^lambda mod N' for random lambda coprime to phi(N')
-        let phi_n = (p - Integer::one()) * (q - Integer::one());
-        let lambda = sample_below(&phi_n, rng);
-        let h2 = h1
-            .pow_mod_ref(&lambda, &n_tilde)
-            .expect("pow_mod defined")
-            .complete();
-
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        let (n_tilde, h1, h2) = (params.n, params.t, params.s);
         NTildeParams {
             N_tilde: n_tilde,
             h1,
@@ -810,7 +793,7 @@ mod tests {
 
         // Alice's secret: a small value in [1, q)
         let q = curve_order::<TestCurve>();
-        let a = sample_below(&q, &mut rng);
+        let a = q.sample_below_ref(&mut rng);
 
         // Encrypt a
         let (cipher, r) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt");
@@ -831,11 +814,11 @@ mod tests {
         let ntilde = setup_ntilde(&mut rng);
 
         let q = curve_order::<TestCurve>();
-        let a = sample_below(&q, &mut rng);
+        let a = q.sample_below_ref(&mut rng);
         let (cipher, _r) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt");
 
         // Use a wrong `a` in the proof (different from what was encrypted)
-        let wrong_a = sample_below(&q, &mut rng);
+        let wrong_a = q.sample_below_ref(&mut rng);
         let wrong_r = Integer::sample_in_mult_group_of(&mut rng, ek.n());
 
         let proof = AliceProof::prove::<TestCurve>(
@@ -868,14 +851,14 @@ mod tests {
         let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
-        let a = sample_below(&q, &mut rng);
+        let a = q.sample_below_ref(&mut rng);
         let (enc_a, _r_a) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");
 
         // Bob's secret
-        let b = sample_below(&q, &mut rng);
+        let b = q.sample_below_ref(&mut rng);
 
         // Bob computes MtA: C_b = b * C_a + Enc(beta_prim)
-        let beta_prim = sample_below(ek.half_n(), &mut rng);
+        let beta_prim = ek.half_n().sample_below_ref(&mut rng);
         let r_bob = Integer::sample_in_mult_group_of(&mut rng, ek.n());
 
         let b_times_enc_a = ek.omul(&b, &enc_a).expect("omul");
@@ -910,14 +893,14 @@ mod tests {
         let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
-        let a = sample_below(&q, &mut rng);
+        let a = q.sample_below_ref(&mut rng);
         let (enc_a, _r_a) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");
 
         // Bob's real secret
-        let b = sample_below(&q, &mut rng);
+        let b = q.sample_below_ref(&mut rng);
 
         // Bob computes MtA correctly
-        let beta_prim = sample_below(ek.half_n(), &mut rng);
+        let beta_prim = ek.half_n().sample_below_ref(&mut rng);
         let r_bob = Integer::sample_in_mult_group_of(&mut rng, ek.n());
 
         let b_times_enc_a = ek.omul(&b, &enc_a).expect("omul");
@@ -925,7 +908,7 @@ mod tests {
         let mta_out = ek.oadd(&b_times_enc_a, &enc_beta).expect("oadd");
 
         // Prove with wrong b
-        let wrong_b = sample_below(&q, &mut rng);
+        let wrong_b = q.sample_below_ref(&mut rng);
 
         let (proof, _) = BobProof::prove::<TestCurve>(
             &enc_a,
@@ -959,11 +942,11 @@ mod tests {
         let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
-        let a = sample_below(&q, &mut rng);
+        let a = q.sample_below_ref(&mut rng);
         let (enc_a, _r_a) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");
 
         // Bob's secret
-        let b = sample_below(&q, &mut rng);
+        let b = q.sample_below_ref(&mut rng);
 
         // X = bG
         let b_scalar = integer_to_scalar::<TestCurve>(&b);
@@ -971,7 +954,7 @@ mod tests {
         let X = G * b_scalar;
 
         // Bob computes MtA
-        let beta_prim = sample_below(ek.half_n(), &mut rng);
+        let beta_prim = ek.half_n().sample_below_ref(&mut rng);
         let r_bob = Integer::sample_in_mult_group_of(&mut rng, ek.n());
 
         let b_times_enc_a = ek.omul(&b, &enc_a).expect("omul");
@@ -1005,11 +988,11 @@ mod tests {
         let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
-        let a = sample_below(&q, &mut rng);
+        let a = q.sample_below_ref(&mut rng);
         let (enc_a, _r_a) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");
 
         // Bob's real secret
-        let b = sample_below(&q, &mut rng);
+        let b = q.sample_below_ref(&mut rng);
 
         // X = bG (correct public key)
         let b_scalar = integer_to_scalar::<TestCurve>(&b);
@@ -1017,7 +1000,7 @@ mod tests {
         let X = G * b_scalar;
 
         // Bob computes MtA correctly
-        let beta_prim = sample_below(ek.half_n(), &mut rng);
+        let beta_prim = ek.half_n().sample_below_ref(&mut rng);
         let r_bob = Integer::sample_in_mult_group_of(&mut rng, ek.n());
 
         let b_times_enc_a = ek.omul(&b, &enc_a).expect("omul");
@@ -1025,7 +1008,7 @@ mod tests {
         let mta_out = ek.oadd(&b_times_enc_a, &enc_beta).expect("oadd");
 
         // Prove with wrong b (X won't match)
-        let wrong_b = sample_below(&q, &mut rng);
+        let wrong_b = q.sample_below_ref(&mut rng);
 
         let proof = BobProofExt::<TestCurve>::prove(
             &enc_a,
@@ -1063,16 +1046,16 @@ mod tests {
 
         let q_order = curve_order::<TestCurve>();
 
-        let a = sample_below(&q_order, &mut rng);
+        let a = q_order.sample_below_ref(&mut rng);
         let (enc_a, _r_a) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");
 
-        let b = sample_below(&q_order, &mut rng);
+        let b = q_order.sample_below_ref(&mut rng);
 
         let b_scalar = integer_to_scalar::<TestCurve>(&b);
         let G = <TestCurve as CurveArithmetic>::ProjectivePoint::GENERATOR;
         let X = G * b_scalar;
 
-        let beta_prim = sample_below(ek.half_n(), &mut rng);
+        let beta_prim = ek.half_n().sample_below_ref(&mut rng);
         let r_bob = Integer::sample_in_mult_group_of(&mut rng, ek.n());
 
         let b_times_enc_a = ek.omul(&b, &enc_a).expect("omul");

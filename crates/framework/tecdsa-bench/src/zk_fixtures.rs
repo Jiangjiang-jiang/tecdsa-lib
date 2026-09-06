@@ -64,16 +64,8 @@ pub fn group_order() -> Integer {
 /// Ring-Pedersen auxiliary parameters (N_tilde, h1, h2).
 /// Profile B: N_tilde = 3072 bit (two 1536-bit safe primes).
 pub fn ntilde_params() -> (Integer, Integer, Integer) {
-    let p = Integer::generate_safe_prime(&mut OsRng, 1536);
-    let q = Integer::generate_safe_prime(&mut OsRng, 1536);
-    let n_tilde = (&p * &q).complete();
-    let h1 = Integer::sample_in_mult_group_of(&mut OsRng, &n_tilde);
-    let lambda = (p - Integer::one()) * (q - Integer::one());
-    let h2 = h1
-        .pow_mod_ref(&lambda, &n_tilde)
-        .expect("pow_mod for h2")
-        .complete();
-    (n_tilde, h1, h2)
+    let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(1536, &mut OsRng);
+    (params.n, params.t, params.s)
 }
 
 pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {

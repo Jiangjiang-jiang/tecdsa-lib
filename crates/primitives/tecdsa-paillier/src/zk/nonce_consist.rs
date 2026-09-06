@@ -27,7 +27,7 @@ use tecdsa_curve::{
     TecdsaCurve,
 };
 
-use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
+use super::pdl_slack::{commitment_unknown_order, pow_mod_signed};
 
 /// Verification error for the nonce consistency proof.
 #[derive(Debug, thiserror::Error)]
@@ -278,21 +278,19 @@ where
         let q5 = (&q3 * &q).complete() * &q;
         let q8 = (&q5 * &q).complete() * &q * &q;
         let q_N_tilde = (&q * &statement.N_tilde).complete();
-        let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
-        let q5_N_tilde = (&q5 * &statement.N_tilde).complete();
-        let q8_N_tilde = (&q8 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values
-        let alpha = sample_below(&q3, rng);
+        let alpha = q3.sample_below_ref(rng);
+        let q3_N_tilde = q3 * &statement.N_tilde;
         let beta = Integer::sample_in_mult_group_of(rng, &statement.ek_n);
-        let gamma = sample_below(&q3_N_tilde, rng);
-        let delta = sample_below(&q5, rng);
+        let gamma = q3_N_tilde.sample_below_ref(rng);
+        let delta = q5.sample_below_ref(rng);
         let mu = Integer::sample_in_mult_group_of(rng, &statement.ek_n);
-        let nu = sample_below(&q3_N_tilde, rng);
-        let theta = sample_below(&q8, rng);
-        let tau = sample_below(&q8_N_tilde, rng);
-        let rho1 = sample_below(&q_N_tilde, rng);
-        let rho2 = sample_below(&q5_N_tilde, rng);
+        let nu = q3_N_tilde.sample_below_ref(rng);
+        let theta = q8.sample_below_ref(rng);
+        let tau = (q8 * &statement.N_tilde).sample_below_ref(rng);
+        let rho1 = q_N_tilde.sample_below_ref(rng);
+        let rho2 = (q5 * &statement.N_tilde).sample_below_ref(rng);
 
         // 2. Compute commitments
         // z1 = h1^{eta1} * h2^{rho1} mod N_tilde
@@ -487,21 +485,8 @@ mod tests {
     }
 
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> (Integer, Integer, Integer) {
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = (&p * &q).complete();
-
-        let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = r.square().modulo(&n_tilde);
-
-        let phi_n = (p - Integer::one()) * (q - Integer::one());
-        let lambda = sample_below(&phi_n, rng);
-        let h1 = h2
-            .pow_mod_ref(&lambda, &n_tilde)
-            .expect("pow_mod defined")
-            .complete();
-
-        (n_tilde, h1, h2)
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        (params.n, params.t, params.s)
     }
 
     #[test]
@@ -514,18 +499,18 @@ mod tests {
         let G = Point::GENERATOR;
 
         // eta1 = k_i (nonce share)
-        let eta1 = sample_below(&q, &mut rng);
+        let eta1 = q.sample_below_ref(&mut rng);
 
         // r_i = G^{eta1}
         let eta1_scalar = integer_to_scalar::<TestCurve>(&eta1);
         let r_i = G * eta1_scalar;
 
         // u = Enc(rho) — the base ciphertext
-        let rho = sample_below(&q, &mut rng);
+        let rho = q.sample_below_ref(&mut rng);
         let (u_ct, _r_u) = ek.encrypt_with_random(&mut rng, &rho).expect("encrypt u");
 
         // eta2 = c_i (masking value)
-        let eta2 = sample_below(&q, &mut rng);
+        let eta2 = q.sample_below_ref(&mut rng);
 
         // w_i = u^{eta1} * Gamma^{q*eta2} * r_c^N mod N^2
         let r_c = Integer::sample_in_mult_group_of(&mut rng, ek.n());
@@ -568,14 +553,14 @@ mod tests {
         let q = curve_order::<TestCurve>();
         let G = Point::GENERATOR;
 
-        let eta1 = sample_below(&q, &mut rng);
+        let eta1 = q.sample_below_ref(&mut rng);
         let eta1_scalar = integer_to_scalar::<TestCurve>(&eta1);
         let r_i = G * eta1_scalar;
 
-        let rho = sample_below(&q, &mut rng);
+        let rho = q.sample_below_ref(&mut rng);
         let (u_ct, _r_u) = ek.encrypt_with_random(&mut rng, &rho).expect("encrypt u");
 
-        let eta2 = sample_below(&q, &mut rng);
+        let eta2 = q.sample_below_ref(&mut rng);
 
         let r_c = Integer::sample_in_mult_group_of(&mut rng, ek.n());
         let _gamma_paillier = ek.n() + Integer::one();
@@ -600,7 +585,7 @@ mod tests {
         };
 
         // Use a wrong eta1 in the witness
-        let wrong_eta1 = sample_below(&q, &mut rng);
+        let wrong_eta1 = q.sample_below_ref(&mut rng);
         let witness = NonceConsistWitness {
             eta1: wrong_eta1,
             eta2,

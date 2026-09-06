@@ -16,11 +16,11 @@
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize, PrimeField};
 use fast_paillier::backend::{BigIntExt, Integer};
-use rug::Complete;
+use rug::{ops::Pow, Complete};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::{conv::curve_order, TecdsaCurve};
 
-use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
+use super::pdl_slack::{commitment_unknown_order, pow_mod_signed};
 
 /// Verification error for the homomorphic multiplication proof.
 #[derive(Debug, thiserror::Error)]
@@ -195,14 +195,12 @@ impl HomoMultProof {
     {
         let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
-        let q_N_tilde = q * &statement.N_tilde;
-        let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values
-        let alpha = sample_below(&q3, rng);
+        let alpha = q3.sample_below_ref(rng);
         let beta = Integer::sample_in_mult_group_of(rng, &statement.ek_n);
-        let gamma = sample_below(&q3_N_tilde, rng);
-        let rho = sample_below(&q_N_tilde, rng);
+        let gamma = (q3 * &statement.N_tilde).sample_below_ref(rng);
+        let rho = (q * &statement.N_tilde).sample_below_ref(rng);
         let mu = Integer::sample_in_mult_group_of(rng, &statement.ek_n);
 
         // 2. Compute commitments
@@ -285,7 +283,7 @@ impl HomoMultProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
         let q = curve_order::<C>();
-        let q3 = (&q * &q).complete() * &q;
+        let q3 = q.pow(3);
 
         // Recompute challenge
         let e = compute_challenge(statement, &self.z, &self.u2, &self.u3, &self.v);
@@ -347,21 +345,8 @@ mod tests {
     }
 
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> (Integer, Integer, Integer) {
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = (&p * &q).complete();
-
-        let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = r.square().modulo(&n_tilde);
-
-        let phi_n = (p - Integer::one()) * (q - Integer::one());
-        let lambda = sample_below(&phi_n, rng);
-        let h1 = h2
-            .pow_mod_ref(&lambda, &n_tilde)
-            .expect("pow_mod defined")
-            .complete();
-
-        (n_tilde, h1, h2)
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        (params.n, params.t, params.s)
     }
 
     #[test]
@@ -373,13 +358,13 @@ mod tests {
         let q = curve_order::<TestCurve>();
 
         // eta: the scalar multiplier (plaintext of c1)
-        let eta = sample_below(&q, &mut rng);
+        let eta = q.sample_below_ref(&mut rng);
 
         // c1 = Enc(eta; r_c1)
         let (c1, r_c1) = ek.encrypt_with_random(&mut rng, &eta).expect("encrypt c1");
 
         // c2 = Enc(some_value) — the base ciphertext
-        let some_value = sample_below(&q, &mut rng);
+        let some_value = q.sample_below_ref(&mut rng);
         let (c2, _r_c2) = ek
             .encrypt_with_random(&mut rng, &some_value)
             .expect("encrypt c2");
@@ -419,10 +404,10 @@ mod tests {
 
         let q = curve_order::<TestCurve>();
 
-        let eta = sample_below(&q, &mut rng);
+        let eta = q.sample_below_ref(&mut rng);
         let (c1, r_c1) = ek.encrypt_with_random(&mut rng, &eta).expect("encrypt c1");
 
-        let some_value = sample_below(&q, &mut rng);
+        let some_value = q.sample_below_ref(&mut rng);
         let (c2, _r_c2) = ek
             .encrypt_with_random(&mut rng, &some_value)
             .expect("encrypt c2");
@@ -446,7 +431,7 @@ mod tests {
         };
 
         // Use a wrong eta in the witness
-        let wrong_eta = sample_below(&q, &mut rng);
+        let wrong_eta = q.sample_below_ref(&mut rng);
         let witness = HomoMultWitness {
             eta: wrong_eta,
             r_c1,

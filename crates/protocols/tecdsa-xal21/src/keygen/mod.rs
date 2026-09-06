@@ -25,21 +25,19 @@ pub use interactive::{
 pub use machine::{TwoPartyRole, Xal21KeyShare, Xal21KeygenMachine, Xal21KeygenMsg};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{backend::Integer, zk::mta_range::NTildeParams, BigIntExt};
+use tecdsa_paillier::{zk::mta_range::NTildeParams, BigIntExt};
 
 use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
 
 fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
-    let p = Integer::generate_safe_prime(rng, 1536);
-    let q = Integer::generate_safe_prime(rng, 1536);
-    let n_tilde = Integer::from(&p * &q);
-    let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    let lambda = (p - Integer::one()) * (q - Integer::one());
-    let h2 = Integer::from(h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2"));
+    // `t` is the quadratic-residue base and `s = t^lambda` for a secret lambda,
+    // so the discrete log relating them is unknown -- which is what makes the
+    // range proofs' Ring-Pedersen commitments hiding.
+    let (params, _secret) = tecdsa_pedersen_mod::PedersenModParams::generate(1536, rng);
     NTildeParams {
-        N_tilde: n_tilde,
-        h1,
-        h2,
+        N_tilde: params.n,
+        h1: params.t,
+        h2: params.s,
     }
 }
 
@@ -177,15 +175,16 @@ mod tests {
     /// the commitment becomes a deterministic function of the secret witness.
     #[test]
     fn ntilde_params_are_hiding() {
+        use tecdsa_paillier::BigIntExt;
+
         let rng = &mut rand::thread_rng();
         let ntilde = super::generate_ntilde_params(rng);
 
         assert_ne!(
-            ntilde.h2,
-            Integer::one(),
+            ntilde.h2, 1,
             "h2 must not be the identity: h1^x * h2^r would ignore r"
         );
-        assert_ne!(ntilde.h1, Integer::one(), "h1 must not be the identity");
+        assert_ne!(ntilde.h1, 1, "h1 must not be the identity");
         assert_ne!(ntilde.h1, ntilde.h2, "h1 and h2 must differ");
         assert!(ntilde.h1.in_mult_group_of(&ntilde.N_tilde));
         assert!(ntilde.h2.in_mult_group_of(&ntilde.N_tilde));
