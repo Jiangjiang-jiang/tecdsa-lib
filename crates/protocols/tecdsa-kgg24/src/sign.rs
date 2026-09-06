@@ -46,7 +46,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
-use tecdsa_paillier::BigIntExt;
+use tecdsa_paillier::{backend::Integer, BigIntExt};
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -247,14 +247,14 @@ where
 
     // --- Divisibility check (Section 4) ---
     // s_2 = s_0 - s_1 + ell * q where ell is random in [0, q^2 * 2^{tau+kappa})
-    let ell_bound = tecdsa_paillier::backend::Integer::from(&q_int * &q_int)
-        * tecdsa_paillier::backend::Integer::two_pow(TAU + KAPPA);
+    let ell_bound =
+        tecdsa_paillier::backend::Integer::from(&q_int * &q_int) * Integer::two_pow(TAU + KAPPA);
     let ell = ell_bound.sample_below_ref(rng);
     let s2_int = (s0_int - &s1_int) + (ell * &q_int);
 
     // Check: s_2 < N / 2^{tau + 2*kappa}
     let n = key_share.dk.encryption_key().n().clone();
-    let divisor = tecdsa_paillier::backend::Integer::two_pow(TAU + 2 * KAPPA);
+    let divisor = Integer::two_pow(TAU + 2 * KAPPA);
     let threshold = n / divisor;
 
     let needs_refresh = if s2_int.cmp_abs(&threshold) == std::cmp::Ordering::Greater {
@@ -410,8 +410,7 @@ where
 
     // Sample rho from [0, 3*q^3 * 2^{4*tau + 2*kappa}) for masking
     let q_cubed = tecdsa_paillier::backend::Integer::from(&q_int * &q_int) * &q_int;
-    let rho_bound =
-        (q_cubed * 3u8) * tecdsa_paillier::backend::Integer::two_pow(4 * TAU + 2 * KAPPA);
+    let rho_bound = (q_cubed * 3u8) * Integer::two_pow(4 * TAU + 2 * KAPPA);
     let rho = rho_bound.sample_below_ref(rng);
 
     // Compute: partial_plaintext = rho * q + k_tilde_2_inv * m' + k_tilde_2_inv * r * x_2

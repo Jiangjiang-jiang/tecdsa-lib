@@ -164,7 +164,7 @@ fn wire_ggn16_keygen() {
     let q = Integer::generate_safe_prime(&mut rng, 256);
     let n_tilde = p * q;
     let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-    let xhi_bound = Integer::one() << 256u32;
+    let xhi_bound = Integer::two_pow(256);
     let xhi = xhi_bound.sample_below_ref(&mut rng);
     let h1_xhi = Integer::from(
         h1.pow_mod_ref(&xhi, &n_tilde)

@@ -122,7 +122,7 @@ mod tests {
     fn compact_size() {
         // A 3072-bit modulus must serialize to ~384 bytes plus a few bytes of
         // framing, not the ~770 bytes that the radix-16 string encoding costs.
-        let n = (Integer::from(1) << 3072u32) - 1u8;
+        let n = <Integer as crate::BigIntExt>::two_pow(3072) - 1u8;
         let w = Wire { x: n, v: vec![] };
         let bytes = bincode::serde::encode_to_vec(&w, bincode::config::standard()).unwrap();
         assert!(

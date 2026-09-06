@@ -49,14 +49,6 @@ pub mod rug;
 pub use ::rug::integer::IsPrime;
 pub use rug::*;
 
-/// Sign of a number, to distinguish positives and zero from negatives
-#[allow(missing_docs)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Sign {
-    /// Positive or zero
-    NonNegative,
-    Negative,
-}
 
 /// `#[serde(with = "fast_paillier::backend::int_wire")]`-compatible compact
 /// wire encoding for [`Integer`].
@@ -173,37 +165,6 @@ pub mod int_wire {
     }
 }
 
-/// Odd primes below `limit` (sieve of Eratosthenes), used for the double sieve.
-fn small_odd_primes(limit: usize) -> alloc::vec::Vec<u64> {
-    let mut composite = alloc::vec![false; limit];
-    let mut out = alloc::vec::Vec::new();
-    for i in 2..limit {
-        if !composite[i] {
-            if i > 2 {
-                out.push(i as u64);
-            }
-            let mut m = i * i;
-            while m < limit {
-                composite[m] = true;
-                m += i;
-            }
-        }
-    }
-    out
-}
-
-/// `x^(l-2) mod l == x^-1 mod l` (Fermat; `l` an odd prime, `0 < x < l`).
-fn inv_mod(x: u64, l: u64) -> u64 {
-    let (mut result, mut base, mut e) = (1u64, x % l, l - 2);
-    while e > 0 {
-        if e & 1 == 1 {
-            result = result * base % l;
-        }
-        base = base * base % l;
-        e >>= 1;
-    }
-    result
-}
 
 #[cfg(feature = "quickcheck")]
 impl quickcheck::Arbitrary for Sign {

@@ -16,7 +16,7 @@ pub(crate) mod wire;
 // ---------------------------------------------------------------------------
 // Trusted dealer key generation (formerly keygen.rs content)
 // ---------------------------------------------------------------------------
-use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
+use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     interactive_keygen, party1_finalize_keygen, party1_keygen_round2, party1_keygen_round2_with_dk,
     party1_verify_round3, party2_finalize_keygen, party2_keygen_round1, party2_keygen_round3,
@@ -25,7 +25,7 @@ pub use interactive::{
 pub use machine::{Kgg24KeyShare, Kgg24KeygenMachine, Kgg24KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::BigIntExt;
+use tecdsa_paillier::{backend::Integer, BigIntExt};
 
 use crate::key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare};
 
@@ -69,7 +69,7 @@ where
     let q_int = curve_order::<C>();
 
     // Sample noise t from [0, 2^{tau + 2*kappa})
-    let noise_bound = tecdsa_paillier::backend::Integer::from(1u8) << (TAU + 2 * KAPPA);
+    let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
     let t = noise_bound.sample_below_ref(rng);
 
     // Compute x_hat_1 = x_1 + t * q (the noised share)
@@ -98,18 +98,7 @@ where
     (p1_share, p2_share)
 }
 
-/// Compute the curve order q as a big integer.
-pub(crate) fn curve_order<C: TecdsaCurve>() -> tecdsa_paillier::backend::Integer
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    // q - 1 is the repr of -1 in the scalar field
-    let neg_one = -C::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    q_minus_1 + 1u8
-}
+pub(crate) use tecdsa_curve::conv::curve_order;
 
 #[cfg(test)]
 mod tests {
