@@ -9,7 +9,7 @@ use elliptic_curve::{
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand::{rngs::OsRng, RngCore};
-use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{

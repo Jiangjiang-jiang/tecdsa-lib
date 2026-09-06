@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
-use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 use tecdsa_protocol::{
     ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
     state_machine::Outgoing,

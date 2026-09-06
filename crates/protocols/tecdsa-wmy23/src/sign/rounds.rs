@@ -27,8 +27,10 @@ use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
-use crate::nizk::{RDl2PcProof, RDl2PcStatement};
-use crate::presign::Wmy23Presignature;
+use crate::{
+    nizk::{RDl2PcProof, RDl2PcStatement},
+    presign::Wmy23Presignature,
+};
 
 type Point = k256::ProjectivePoint;
 type Scalar = k256::Scalar;

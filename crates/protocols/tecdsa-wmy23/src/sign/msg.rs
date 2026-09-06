@@ -7,8 +7,7 @@ use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
 use tecdsa_curve::conv::scalar_to_bytes;
 
-use crate::nizk::RDl2PcProof;
-use crate::sign::rounds::SignContribution;
+use crate::{nizk::RDl2PcProof, sign::rounds::SignContribution};
 
 /// Messages exchanged during WMY23 identifiable online signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]

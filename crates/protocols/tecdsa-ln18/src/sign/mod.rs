@@ -13,8 +13,10 @@ pub(crate) mod state_rounds;
 
 // --- New real StateMachine path exports ---
 // --- Legacy wrapper exports (backward compatibility) ---
-pub use machine::{Ln18FullSignMachine, Ln18PresignMachine, Ln18SignMachine};
-pub use machine::{Ln18OfflineSignMachine, Ln18OnlineSignMachine};
+pub use machine::{
+    Ln18FullSignMachine, Ln18OfflineSignMachine, Ln18OnlineSignMachine, Ln18PresignMachine,
+    Ln18SignMachine,
+};
 pub use msg::{
     Ln18FullSignMsg, Ln18OfflineSignMsg, Ln18OnlineSignMsg, Ln18PresignMsg, Ln18SignMsg,
 };

@@ -12,7 +12,7 @@ use elliptic_curve::{
     sec1::ModulusSize,
     FieldBytes, FieldBytesSize, PrimeField,
 };
-use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 
 use crate::error::{Ku24Error, Ku24Result};
 

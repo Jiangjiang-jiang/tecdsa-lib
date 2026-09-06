@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 use tecdsa_protocol::{
     state_machine::Outgoing, DataToSign, IaReport, PartyId, Recipient, Signature, StateMachine,
 };

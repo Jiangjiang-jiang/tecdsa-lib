@@ -370,8 +370,7 @@ impl Jtx25PresignMachine {
             cl_pk_share_bytes.insert(pid, data);
         }
 
-        let x_i_bytes =
-            tecdsa_curve::conv::scalar_to_bytes(&key_share.secret_share);
+        let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&key_share.secret_share);
 
         let key_mat = KeyMaterial {
             x_i: key_share.secret_share,

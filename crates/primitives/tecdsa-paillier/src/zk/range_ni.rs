@@ -349,9 +349,8 @@ mod tests {
         let ek = dk.encryption_key().clone();
 
         // Use actual secp256k1 group order
-        let q_bytes = scalar_to_bytes(
-            &(-<k256::Secp256k1 as elliptic_curve::CurveArithmetic>::Scalar::ONE),
-        );
+        let q_bytes =
+            scalar_to_bytes(&(-<k256::Secp256k1 as elliptic_curve::CurveArithmetic>::Scalar::ONE));
         let q = Integer::from_bytes_msf(&q_bytes) + 1u8;
 
         // Random x < q

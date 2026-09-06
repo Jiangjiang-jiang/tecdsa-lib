@@ -22,7 +22,8 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
-    TecdsaCurve, conv::{curve_order, integer_to_scalar, scalar_to_bytes, scalar_to_integer},
+    conv::{curve_order, integer_to_scalar, scalar_to_bytes, scalar_to_integer},
+    TecdsaCurve,
 };
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSenderState, JlMtaSetup};
 use tecdsa_protocol::{state_machine::Outgoing, MtA, PartyId, Recipient};
