@@ -9,7 +9,7 @@
 //! This follows the setup described in CGGMP20 Section 3.3.
 
 use rand_core::CryptoRngCore;
-use rug::Integer;
+use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
 
 /// Ring-Pedersen parameters over an RSA modulus.
@@ -120,7 +120,7 @@ fn is_in_mult_group(x: &Integer, n: &Integer) -> bool {
     if *x <= zero || *x >= *n {
         return false;
     }
-    tecdsa_bigint::gcd(x, n) == 1
+    x.gcd_ref(n).complete() == 1
 }
 
 /// Sample a random element in `Z*_N`.

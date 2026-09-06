@@ -2,7 +2,6 @@
 //! Integration tests for `tecdsa-class-group`.
 
 use rug::{integer::Order, Integer};
-use tecdsa_bigint::mul_mod;
 use tecdsa_class_group::{cl::ClSetup, nim::Nim};
 
 /// The secp256k1 curve order.
@@ -103,7 +102,7 @@ fn cl_homomorphic_scalar_mul() {
         Order::Msf,
     );
 
-    let expected = mul_mod(&m, &s, &q());
+    let expected = Integer::from(&m * &s).modulo(&q());
     assert_eq!(
         result, expected,
         "homomorphic scalar mul failed: {result} != {expected}"
@@ -144,7 +143,7 @@ fn nim_correctness() {
     let q = q();
     let z_a = Integer::from_digits(&share_a, Order::Msf);
     let z_b = Integer::from_digits(&share_b, Order::Msf);
-    let xy = mul_mod(&x_val, &y_val, &q);
+    let xy = Integer::from(&x_val * &y_val).modulo(&q);
     let sum = Integer::from(&z_a + &z_b) % &q;
 
     assert_eq!(

@@ -507,7 +507,7 @@ impl ScaledDecryptMtA {
 
 #[cfg(test)]
 mod tests {
-    use tecdsa_bigint::mul_mod;
+
     use tecdsa_protocol::MtABroadcast;
 
     use super::*;
@@ -565,7 +565,7 @@ mod tests {
         let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
         let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
         let sum = (z_a + z_b) % &q;
-        let expected = mul_mod(&x, &y, &q);
+        let expected = Integer::from(&x * &y).modulo(&q);
 
         assert_eq!(sum, expected, "NIM MtABroadcast: z_A + z_B != x*y mod q");
     }
@@ -597,7 +597,7 @@ mod tests {
         let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
         let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
         let sum = (z_a + z_b) % &q;
-        let expected = mul_mod(&x, &y, &q);
+        let expected = Integer::from(&x * &y).modulo(&q);
 
         assert_eq!(
             sum, expected,
@@ -668,7 +668,7 @@ mod tests {
         // Compute expected product: (sum a_i) * (sum b_i) mod q
         let a_sum: Integer = a_scalars.iter().fold(Integer::from(0u32), |acc, v| acc + v) % &q;
         let b_sum: Integer = b_scalars.iter().fold(Integer::from(0u32), |acc, v| acc + v) % &q;
-        let expected = mul_mod(&a_sum, &b_sum, &q);
+        let expected = Integer::from(&a_sum * &b_sum).modulo(&q);
 
         // Each party encodes
         let mut encodings = Vec::new();

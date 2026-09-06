@@ -9,10 +9,10 @@
 //!
 //! This is essentially the range proof with slack from the reference.
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
+use tecdsa_bigint::{random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -78,7 +78,10 @@ impl ZkJlvComProof {
             let v = random_below(&v_bound, rng);
 
             let exp_y = Integer::from(&two_pow_k * &v);
-            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
+            let y_item = y_vec[i]
+                .pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
 
             v_vec.push(v);
             y_items.push(y_item);
@@ -87,11 +90,14 @@ impl ZkJlvComProof {
         // Commitment: d = prod y_i^{2^k * v_i} * h^{2^k * w} mod N
         let mut d = Integer::from(1);
         for y_item in &y_items {
-            d = mul_mod(&d, y_item, &pk.n);
+            d = (d * y_item).modulo(&pk.n);
         }
         let exp_h = two_pow_k * &w;
-        let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
-        d = mul_mod(&d, &h_w, &pk.n);
+        let h_w =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        d = (d * h_w).modulo(&pk.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, y_vec, c, &d);
@@ -120,16 +126,25 @@ impl ZkJlvComProof {
         let mut lhs = Integer::from(1);
         for i in 0..ell {
             let exp_y = Integer::from(&two_pow_k * &self.z_vec[i]);
-            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
-            lhs = mul_mod(&lhs, &y_item, &pk.n);
+            let y_item = y_vec[i]
+                .pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+            lhs = (lhs * y_item).modulo(&pk.n);
         }
         let exp_h = two_pow_k * &self.z_r;
-        let h_item = pow_mod(&pk.h, &exp_h, &pk.n);
-        lhs = mul_mod(&lhs, &h_item, &pk.n);
+        let h_item =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        lhs = (lhs * h_item).modulo(&pk.n);
 
         // RHS: c^e * d mod N
-        let c_e = pow_mod(c, &e, &pk.n);
-        let rhs = mul_mod(&c_e, &self.d, &pk.n);
+        let c_e = c
+            .pow_mod_ref(&e, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs = (c_e * &self.d).modulo(&pk.n);
 
         lhs == rhs
     }
@@ -166,12 +181,18 @@ pub fn jl_vec_commit(
     let mut c = Integer::from(1);
     for i in 0..y_vec.len() {
         let exp = Integer::from(&two_pow_k * &m_vec[i]);
-        let item = pow_mod(&y_vec[i], &exp, &pk.n);
-        c = mul_mod(&c, &item, &pk.n);
+        let item = y_vec[i]
+            .pow_mod_ref(&exp, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        c = (c * item).modulo(&pk.n);
     }
     let exp_h = two_pow_k * r;
-    let h_r = pow_mod(&pk.h, &exp_h, &pk.n);
-    mul_mod(&c, &h_r, &pk.n)
+    let h_r =
+        pk.h.pow_mod_ref(&exp_h, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+    (c * h_r).modulo(&pk.n)
 }
 
 #[cfg(test)]
@@ -189,7 +210,10 @@ mod tests {
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
             let alpha_i = random_below(&pk.n, &mut rng);
-            let y_i = pow_mod(&x, &alpha_i, &pk.n);
+            let y_i = x
+                .pow_mod_ref(&alpha_i, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
             y_vec.push(y_i);
         }
 
@@ -216,7 +240,10 @@ mod tests {
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
             let alpha_i = random_below(&pk.n, &mut rng);
-            let y_i = pow_mod(&x, &alpha_i, &pk.n);
+            let y_i = x
+                .pow_mod_ref(&alpha_i, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
             y_vec.push(y_i);
         }
 

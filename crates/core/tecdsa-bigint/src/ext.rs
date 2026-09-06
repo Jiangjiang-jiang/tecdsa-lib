@@ -121,6 +121,27 @@ pub trait BigIntExt: Sized {
     /// Compute l^le * r^re modulo self
     fn combine(&self, l: &Self, le: &Self, r: &Self, re: &Self) -> Option<Self>;
 
+    /// Simultaneous multi-exponentiation `prod bases[i]^exps[i]` modulo self,
+    /// via an interleaved fixed-window (Straus/Shamir) algorithm.
+    ///
+    /// A single squaring chain is shared across all bases (`max_bits` squarings
+    /// instead of one full chain per base), which is the dominant cost. Each
+    /// base contributes one multiplication per nonzero `W`-bit window.
+    ///
+    /// Modular inversion is *not* free here (unlike class groups), so this uses
+    /// plain unsigned windows rather than signed-digit (NAF/JSF) recoding. All
+    /// exponents must be non-negative.
+    ///
+    /// # Panics
+    /// Panics if `bases.len() != exps.len()`.
+    fn multi_exp(&self, bases: &[&Self], exps: &[&Self]) -> Self;
+
+    /// Modular square root by Tonelli-Shanks: returns `r` with `r^2 = self (mod p)`,
+    /// or `None` if `self` is a quadratic non-residue mod `p`.
+    ///
+    /// `p` must be an odd prime.
+    fn sqrt_mod(&self, p: &Self) -> Option<Self>;
+
     /// Checks that `self` is in Z<super>*</super><sub>n</sub>
     fn in_mult_group_of(&self, n: &Self) -> bool;
 
@@ -284,6 +305,113 @@ impl BigIntExt for rug::Integer {
         let l_to_le = l.pow_mod_ref(le, self)?.complete();
         let r_to_re = r.pow_mod_ref(re, self)?.complete();
         Some((l_to_le * r_to_re).modulo(self))
+    }
+
+    fn multi_exp(&self, bases: &[&Self], exps: &[&Self]) -> Self {
+        assert_eq!(
+            bases.len(),
+            exps.len(),
+            "multi_exp: bases and exps must have equal length"
+        );
+        /// Window width in bits.
+        const W: u32 = 4;
+        const TABLE: usize = 1 << W;
+
+        let mut maxbits = 0u32;
+        for e in exps {
+            maxbits = maxbits.max(e.significant_bits());
+        }
+        if maxbits == 0 {
+            return Self::one();
+        }
+
+        // Per-base window table: base^d mod self for d in 0..2^W.
+        let mut tables: Vec<Vec<Self>> = Vec::with_capacity(bases.len());
+        for b in bases {
+            let mut tab = Vec::with_capacity(TABLE);
+            tab.push(Self::one());
+            tab.push((*b).clone());
+            for d in 2..TABLE {
+                tab.push(rug::Integer::from(&tab[d - 1] * *b).modulo(self));
+            }
+            tables.push(tab);
+        }
+
+        let nblocks = maxbits.div_ceil(W);
+        let mut result = Self::one();
+        for blk in (0..nblocks).rev() {
+            for _ in 0..W {
+                result = result.square().modulo(self);
+            }
+            let shift = blk * W;
+            for (tab, e) in tables.iter().zip(exps.iter()) {
+                let mut d = 0usize;
+                for bit in 0..W {
+                    if e.get_bit(shift + bit) {
+                        d |= 1 << bit;
+                    }
+                }
+                if d != 0 {
+                    result = (result * &tab[d]).modulo(self);
+                }
+            }
+        }
+        result
+    }
+
+    #[allow(clippy::many_single_char_names)]
+    fn sqrt_mod(&self, p: &Self) -> Option<Self> {
+        if self.jacobi(p) != 1 {
+            return None;
+        }
+        let one = Self::one();
+
+        let p_minus_1 = (p - &one).complete();
+        let mut q = p_minus_1.clone();
+        let mut s: u32 = 0;
+        while q.is_even() {
+            q >>= 1u32;
+            s += 1;
+        }
+
+        if s == 1 {
+            let exp = (p + &one).complete() >> 2u32;
+            return self.clone().pow_mod(&exp, p).ok();
+        }
+
+        let mut z = rug::Integer::from(2);
+        while z.jacobi(p) != -1 {
+            z += &one;
+        }
+
+        let mut m_val = s;
+        let mut c = z.pow_mod(&q, p).unwrap();
+        let mut t = self.clone().pow_mod(&q, p).unwrap();
+        let mut r = self.clone().pow_mod(&((q + one) >> 1u32), p).unwrap();
+
+        loop {
+            if t == 1 {
+                return Some(r);
+            }
+            let mut i: u32 = 1;
+            let mut tmp = t.square_ref().complete() % p;
+            while tmp != 1 {
+                tmp = tmp.square() % p;
+                i += 1;
+            }
+            let b = c
+                .pow_mod(
+                    &rug::Integer::from(2)
+                        .pow_mod(&rug::Integer::from(m_val - i - 1), &p_minus_1)
+                        .unwrap(),
+                    p,
+                )
+                .unwrap();
+            m_val = i;
+            c = b.square_ref().complete() % p;
+            t = t * &c % p;
+            r = r * b % p;
+        }
     }
 
     fn in_mult_group_of(&self, n: &Self) -> bool {

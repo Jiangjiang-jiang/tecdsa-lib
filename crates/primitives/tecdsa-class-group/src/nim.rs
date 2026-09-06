@@ -230,7 +230,6 @@ fn sample_randomness(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use rug::{integer::Order, Integer};
-    use tecdsa_bigint::mul_mod;
 
     use super::*;
 
@@ -267,7 +266,7 @@ mod tests {
         let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
         let x_val = Integer::from(7u32);
         let y_val = Integer::from(11u32);
-        let xy = mul_mod(&x_val, &y_val, &q);
+        let xy = Integer::from(&x_val * &y_val).modulo(&q);
         let sum = (z_a + z_b) % q;
 
         assert_eq!(sum, xy, "NIM correctness: z_A + z_B != x*y mod q");

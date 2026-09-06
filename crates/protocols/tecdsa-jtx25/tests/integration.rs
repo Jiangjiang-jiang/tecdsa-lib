@@ -527,8 +527,7 @@ fn test_threshold_subset_signing() {
 /// Minimal inline test to verify the CL homomorphic math.
 #[test]
 fn test_cl_homomorphic_math() {
-    use rug::{integer::Order, Integer};
-    use tecdsa_bigint::{mul_mod, pow_mod};
+    use rug::{integer::Order, Complete, Integer};
     use tecdsa_class_group::{cl::ClSetup, t_cl};
 
     let seed = "70001";
@@ -601,8 +600,11 @@ fn test_cl_homomorphic_math() {
     let q_bytes = setup.q_bytes().unwrap();
     let q = Integer::from_digits(&q_bytes, Order::Msf);
     let q_minus_2 = Integer::from(&q - 2);
-    let p0_inv = pow_mod(&p0_bu, &q_minus_2, &q);
-    let s = mul_mod(&p1_bu, &p0_inv, &q);
+    let p0_inv = p0_bu
+        .pow_mod_ref(&q_minus_2, &q)
+        .expect("q - 2 is non-negative")
+        .complete();
+    let s = (p0_inv * &p1_bu).modulo(&q);
 
     // Expected: 2352 / 77 = 2352 * 77^(-1) mod q
     // 2352 / 77 = 30.545... but mod q: 77^{-1} mod q * 2352 mod q
@@ -617,7 +619,7 @@ fn test_cl_homomorphic_math() {
     let x_bu = Integer::from(17u32);
     let rx_bu = Integer::from(19u32);
     let k_bu = Integer::from(11u32);
-    let k_inv = pow_mod(&k_bu, &q_minus_2, &q);
+    let k_inv = k_bu.pow_mod(&q_minus_2, &q).expect("q - 2 is non-negative");
     let expected_s = (m_bu + x_bu * rx_bu) * k_inv % q;
     eprintln!(
         "[test_cl_homo] expected s = {}",

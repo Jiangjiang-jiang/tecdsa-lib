@@ -6,10 +6,10 @@
 //! This is a Sigma-protocol-style proof made non-interactive via
 //! the Fiat-Shamir heuristic (using SHA-256).
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
+use tecdsa_bigint::{random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -68,9 +68,15 @@ impl ZkJlComProof {
         // Commitment: d = y^{2^k * v} * h^{2^k * w} mod N
         let exp_y = Integer::from(&two_pow_k * &v);
         let exp_h = two_pow_k * &w;
-        let y_v = pow_mod(&pk.y, &exp_y, &pk.n);
-        let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
-        let d = mul_mod(&y_v, &h_w, &pk.n);
+        let y_v =
+            pk.y.pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let h_w =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let d = (y_v * h_w).modulo(&pk.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, c, &d);
@@ -93,12 +99,21 @@ impl ZkJlComProof {
         // Check: y^{2^k * z_m} * h^{2^k * z_r} == c^e * d mod N
         let exp_y = Integer::from(&two_pow_k * &self.z_m);
         let exp_h = two_pow_k * &self.z_r;
-        let lhs_1 = pow_mod(&pk.y, &exp_y, &pk.n);
-        let lhs_2 = pow_mod(&pk.h, &exp_h, &pk.n);
-        let lhs = mul_mod(&lhs_1, &lhs_2, &pk.n);
+        let lhs_1 =
+            pk.y.pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let lhs_2 =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let lhs = (lhs_1 * lhs_2).modulo(&pk.n);
 
-        let c_e = pow_mod(c, &e, &pk.n);
-        let rhs = mul_mod(&c_e, &self.d, &pk.n);
+        let c_e = c
+            .pow_mod_ref(&e, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs = (c_e * &self.d).modulo(&pk.n);
 
         lhs == rhs
     }
@@ -125,9 +140,15 @@ pub fn jl_commit(pk: &JlPublicKey, m: &Integer, r: &Integer) -> Integer {
     let two_pow_k = Integer::two_pow(pk.k);
     let exp_y = Integer::from(&two_pow_k * m);
     let exp_h = two_pow_k * r;
-    let y_m = pow_mod(&pk.y, &exp_y, &pk.n);
-    let h_r = pow_mod(&pk.h, &exp_h, &pk.n);
-    mul_mod(&y_m, &h_r, &pk.n)
+    let y_m =
+        pk.y.pow_mod_ref(&exp_y, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+    let h_r =
+        pk.h.pow_mod_ref(&exp_h, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+    (y_m * h_r).modulo(&pk.n)
 }
 
 #[cfg(test)]

@@ -22,7 +22,6 @@
 //! 2. Combine `t` partial decryptions using Lagrange interpolation.
 
 use rug::{integer::Order, Integer};
-use tecdsa_bigint::{mul_mod, pow_mod};
 
 use crate::{
     cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
@@ -172,9 +171,11 @@ pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String
 
         // Modular inverse of den via Fermat's little theorem: den^{q-2} mod q.
         let q_minus_2 = Integer::from(&q - 2);
-        let den_inv = pow_mod(&den_mod, &q_minus_2, &q);
+        let den_inv = den_mod
+            .pow_mod(&q_minus_2, &q)
+            .expect("q - 2 is non-negative");
 
-        let lambda = mul_mod(&num_mod, &den_inv, &q);
+        let lambda = (num_mod * den_inv).modulo(&q);
 
         secret = (secret + share_val * lambda) % &q;
     }
