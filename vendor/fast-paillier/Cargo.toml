@@ -44,7 +44,6 @@ backend-num-bigint = [
 ]
 backend-rug = [
     "dep:rug",
-    "dep:bytemuck",
 ]
 default = [
     "backend-rug",
@@ -67,11 +66,6 @@ path = "tests/integration/main.rs"
 name = "comparison"
 path = "benches/comparison.rs"
 harness = false
-
-[dependencies.bytemuck]
-version = "1.5"
-features = ["derive"]
-optional = true
 
 [dependencies.glass_pumpkin]
 version = "1.10"
@@ -111,6 +105,9 @@ version = "0.6"
 package = "rand_core"
 version = "0.10"
 optional = true
+
+[dependencies.tecdsa-bigint]
+path = "../../crates/core/tecdsa-bigint"
 
 [dependencies.rug]
 version = "1.24"

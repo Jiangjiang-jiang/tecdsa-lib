@@ -30,6 +30,7 @@ use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::{
+    backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof},
     BigIntExt,
 };
@@ -120,7 +121,7 @@ where
 
     // Sample noise t' from [0, 2^{tau + 2*kappa})
     let q_int = curve_order::<C>();
-    let noise_bound = tecdsa_paillier::backend::Integer::from(1u8) << (TAU + 2 * KAPPA);
+    let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
     let t_prime = noise_bound.sample_below_ref(rng);
 
     // Compute x_hat_1_new = x_1_new + t' * q
