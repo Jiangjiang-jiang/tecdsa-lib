@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use rug::{integer::Order, Complete, Integer};
-use tecdsa_bigint::{generate_safe_prime, is_safe_prime, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 #[test]
 fn jacobi_known_values() {
@@ -123,15 +123,15 @@ fn multi_exp_empty_exponents_is_one() {
 
 #[test]
 fn safe_prime_check() {
-    assert!(is_safe_prime(&Integer::from(11u64)));
-    assert!(!is_safe_prime(&Integer::from(13u64)));
+    assert!(Integer::from(11u64).is_safe_prime());
+    assert!(!Integer::from(13u64).is_safe_prime());
 }
 
 #[test]
 fn generate_safe_prime_produces_valid() {
     let mut rng = rand::thread_rng();
-    let p = generate_safe_prime(64, &mut rng);
-    assert!(is_safe_prime(&p));
+    let p = Integer::generate_safe_prime(&mut rng, 64);
+    assert!(p.is_safe_prime());
 }
 
 #[test]
