@@ -81,18 +81,3 @@ pub fn sample_neg_jacobi(n: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
         }
     }
 }
-
-/// Compute modular inverse: a^{-1} mod m, using extended GCD.
-///
-/// Returns `None` if gcd(a, m) != 1.
-pub fn mod_inverse(a: &Integer, m: &Integer) -> Option<Integer> {
-    a.clone().invert(m).ok()
-}
-
-/// Check if N is probably composite using Miller-Rabin.
-///
-/// Returns true if N is composite (not prime).
-#[allow(clippy::many_single_char_names)]
-pub fn is_probably_composite(n: &Integer, iterations: u32, _rng: &mut impl CryptoRngCore) -> bool {
-    n.is_probably_prime(iterations) == rug::integer::IsPrime::No
-}

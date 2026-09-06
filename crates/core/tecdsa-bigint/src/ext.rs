@@ -104,6 +104,14 @@ pub trait BigIntExt: Sized {
     fn sample_below(self, rng: &mut impl rand_core::RngCore) -> Self;
     /// Uniform sample in `[0, self)`. See [`BigIntExt::sample_below`].
     fn sample_below_ref(&self, rng: &mut impl rand_core::RngCore) -> Self;
+    /// Uniform sample in `[1, self)`.
+    ///
+    /// Drawn as `1 + sample_below(self - 1)` rather than by rejecting zero, so
+    /// it always terminates in one draw. See [`BigIntExt::sample_below`].
+    ///
+    /// # Panics
+    /// Panics if `self <= 1`, where the range is empty.
+    fn sample_positive_below(&self, rng: &mut impl rand_core::RngCore) -> Self;
     /// Uniform sample of `bits` random bits. See [`BigIntExt::sample_below`].
     fn sample_bits(bits: u32, rng: &mut impl rand_core::RngCore) -> Self;
     fn random_bits_signed(bits: u32, rng: &mut impl rand_core::RngCore) -> Self;
@@ -247,6 +255,11 @@ impl BigIntExt for rug::Integer {
         let mut adapter = RngAdapter(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         self.random_below_ref(&mut rng).complete()
+    }
+
+    fn sample_positive_below(&self, rng: &mut impl rand_core::RngCore) -> Self {
+        assert!(*self > 1, "sample_positive_below: range [1, self) is empty");
+        (self - 1u32).complete().sample_below(rng) + 1u32
     }
 
     fn sample_bits(bits: u32, rng: &mut impl rand_core::RngCore) -> Self {

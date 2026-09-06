@@ -9,8 +9,9 @@
 //! This follows the setup described in CGGMP20 Section 3.3.
 
 use rand_core::CryptoRngCore;
-use rug::{Complete, Integer};
+use rug::Integer;
 use serde::{Deserialize, Serialize};
+use tecdsa_bigint::BigIntExt;
 
 /// Ring-Pedersen parameters over an RSA modulus.
 ///
@@ -81,7 +82,7 @@ impl PedersenModParams {
         let t = r.pow_mod(&Integer::from(2), &n).unwrap();
 
         // Sample lambda in [1, phi(N))
-        let lambda = sample_in_range(rng, &phi_n);
+        let lambda = phi_n.sample_positive_below(rng);
 
         // s = t^lambda mod N
         let s = t.clone().pow_mod(&lambda, &n).unwrap();
@@ -107,43 +108,19 @@ impl PedersenModParams {
         }
 
         // s, t must be in [1, N) and coprime to N
-        is_in_mult_group(&self.s, &self.n)
-            && is_in_mult_group(&self.t, &self.n)
+        self.s.in_mult_group_of(&self.n)
+            && self.t.in_mult_group_of(&self.n)
             && self.s != 1
             && self.t != 1
     }
 }
 
-/// Check that `x` is in `Z*_N`: `0 < x < N` and `gcd(x, N) = 1`.
-fn is_in_mult_group(x: &Integer, n: &Integer) -> bool {
-    let zero = Integer::from(0);
-    if *x <= zero || *x >= *n {
-        return false;
-    }
-    x.gcd_ref(n).complete() == 1
-}
-
 /// Sample a random element in `Z*_N`.
 fn sample_coprime(rng: &mut impl CryptoRngCore, n: &Integer) -> Integer {
-    use tecdsa_bigint::SyncRng;
-    let mut sync_rng = SyncRng(rng);
-    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
     loop {
-        let x = n.clone().random_below(rug_rng);
-        if x > 1 && x.clone().gcd(n) == 1 {
-            return x;
-        }
-    }
-}
-
-/// Sample a random value in `[1, upper)`.
-fn sample_in_range(rng: &mut impl CryptoRngCore, upper: &Integer) -> Integer {
-    use tecdsa_bigint::SyncRng;
-    let mut sync_rng = SyncRng(rng);
-    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
-    loop {
-        let x = upper.clone().random_below(rug_rng);
-        if x > 0 {
+        let x = Integer::sample_in_mult_group_of(rng, n);
+        // 1 is excluded: it is a degenerate Ring-Pedersen generator.
+        if x > 1 {
             return x;
         }
     }
