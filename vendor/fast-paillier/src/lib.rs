@@ -37,7 +37,7 @@ mod serde;
 
 use core::fmt;
 
-use crate::backend::Integer;
+use crate::backend::{BigIntExt, Integer};
 use rand_core::{CryptoRng, RngCore};
 
 /// Paillier ciphertext
