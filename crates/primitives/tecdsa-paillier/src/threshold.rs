@@ -23,8 +23,12 @@
 
 #![allow(non_snake_case)]
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
+use fast_paillier::{
+    backend::{BigIntExt, Integer},
+    DecryptionKey, EncryptionKey,
+};
 use rand_core::CryptoRngCore;
+use rug::Complete;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
@@ -99,7 +103,7 @@ fn factorial(n: u16) -> Integer {
 /// L(u) = (u - 1) / N for u in {u in Z_{N^2} : u = 1 mod N}.
 fn l_function(u: &Integer, n: &Integer) -> Integer {
     let u_minus_1 = u - Integer::one();
-    &u_minus_1 / n
+    (&u_minus_1 / n).complete()
 }
 
 /// Generate threshold Paillier keys using a trusted dealer.
@@ -127,17 +131,17 @@ pub fn trusted_dealer_setup(
 
     let beta = loop {
         let candidate = sample_below(&n, rng);
-        if candidate > Integer::zero() && candidate.gcd_ref(&n) == Integer::one() {
+        if candidate > Integer::zero() && candidate.gcd_ref(&n).complete() == Integer::one() {
             break candidate;
         }
     };
 
-    let d = &lambda * &beta;
-    let theta = d.modulo_ref(&n);
+    let d = (&lambda * &beta).complete();
+    let theta = d.modulo_ref(&n).complete();
     let delta = factorial(total);
 
     // Shamir share d over Z with coefficient modulus M = N * delta.
-    let m = &n * &delta;
+    let m = (&n * &delta).complete();
     let shares = shamir_split_integer(&d, corruption_threshold, total, &m, rng);
 
     let setup = ThresholdSetup {
@@ -161,7 +165,10 @@ pub fn partial_decrypt(
 ) -> PartialDecryption {
     let nn = setup.ek.nn();
     let exp = Integer::from(2u32) * &setup.delta * &share.d_i;
-    let value = ciphertext.pow_mod_ref(&exp, nn).expect("pow_mod defined");
+    let value = ciphertext
+        .pow_mod_ref(&exp, nn)
+        .expect("pow_mod defined")
+        .complete();
     PartialDecryption {
         index: share.index,
         value,
@@ -209,15 +216,16 @@ pub fn combine_partials(
             }
             mu *= Integer::from(-j);
             let denom = Integer::from(i - j);
-            mu = &mu / &denom;
+            mu = (&mu / &denom).complete();
         }
 
         let exp = Integer::from(2i32) * &mu;
         let contrib = partial
             .value
             .pow_mod_ref(&exp, nn)
-            .expect("pow_mod defined");
-        c_prime = (&c_prime * &contrib).modulo(nn);
+            .expect("pow_mod defined")
+            .complete();
+        c_prime = (&c_prime * &contrib).complete().modulo(nn);
     }
 
     // m = L(c') * (4 * delta^2 * theta)^{-1} mod N
@@ -225,9 +233,10 @@ pub fn combine_partials(
     let denom = (Integer::from(4i32) * &setup.delta * &setup.delta * &setup.theta).modulo(n);
     let denom_inv = denom
         .invert_ref(n)
-        .ok_or(ThresholdError::ThetaNotInvertible)?;
+        .ok_or(ThresholdError::ThetaNotInvertible)?
+        .complete();
 
-    let mut m = (&l_val * &denom_inv).modulo(n);
+    let mut m = (&l_val * &denom_inv).complete().modulo(n);
 
     // Normalize to {-N/2, ..., N/2}
     let half_n = n / Integer::from(2u32);
@@ -268,7 +277,7 @@ fn shamir_split_integer(
 }
 
 fn lcm(a: &Integer, b: &Integer) -> Integer {
-    a.lcm_ref(b)
+    a.lcm_ref(b).complete()
 }
 
 #[cfg(test)]

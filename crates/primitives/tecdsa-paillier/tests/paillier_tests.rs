@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use tecdsa_paillier::{add_ciphertexts, backend::Integer, decrypt, encrypt, scalar_mul_ciphertext};
+use tecdsa_paillier::{
+    add_ciphertexts, backend::Integer, decrypt, encrypt, scalar_mul_ciphertext, BigIntExt,
+};
 
 fn test_dk() -> tecdsa_paillier::DecryptionKey {
     // Use small primes for fast tests.

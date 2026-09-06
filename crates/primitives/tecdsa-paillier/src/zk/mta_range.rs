@@ -23,10 +23,29 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize,
     PrimeField,
 };
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
+use rug::Complete;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
+
+// ---------------------------------------------------------------------------
+// Serde helper for Integer (MSF byte encoding)
+// ---------------------------------------------------------------------------
+
+mod ser_integer {
+    use fast_paillier::backend::{BigIntExt, Integer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(val: &Integer, serializer: S) -> Result<S::Ok, S::Error> {
+        val.to_bytes_msf().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Integer, D::Error> {
+        let bytes = Vec::<u8>::deserialize(deserializer)?;
+        Ok(Integer::from_bytes_msf(&bytes))
+    }
+}
 
 use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
 use crate::conv::{group_order_integer, integer_to_scalar};
@@ -108,9 +127,9 @@ impl AliceProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
-        let q_N_tilde = &q * &ntilde.N_tilde;
-        let q3_N_tilde = &q3 * &ntilde.N_tilde;
+        let q3 = (&q * &q).complete() * &q;
+        let q_N_tilde = (&q * &ntilde.N_tilde).complete();
+        let q3_N_tilde = (&q3 * &ntilde.N_tilde).complete();
 
         // Round 1: sample blinding values and compute commitments
         let alpha = sample_below(&q3, rng);
@@ -126,7 +145,7 @@ impl AliceProof {
         let g_paillier = ek_n + Integer::one();
         let u = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
-            let g_alpha = (Integer::one() + &alpha * ek_n).modulo(ek_nn);
+            let g_alpha = (Integer::one() + (&alpha * ek_n).complete()).modulo(ek_nn);
             let beta_n = pow_mod_signed(&beta, ek_n, ek_nn);
             (g_alpha * beta_n).modulo(ek_nn)
         };
@@ -144,9 +163,9 @@ impl AliceProof {
             (r_e * &beta).modulo(ek_n)
         };
         // s1 = e*a + alpha
-        let s1 = &e * a + &alpha;
+        let s1 = (&e * a).complete() + &alpha;
         // s2 = e*rho + gamma
-        let s2 = &e * &rho + &gamma;
+        let s2 = (&e * &rho).complete() + &gamma;
 
         AliceProof { z, e, s, s1, s2 }
     }
@@ -174,7 +193,7 @@ impl AliceProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
+        let q3 = (&q * &q).complete() * &q;
 
         // Range check: s1 < q^3
         if self.s1 > q3 {
@@ -185,7 +204,7 @@ impl AliceProof {
         let g_paillier = ek_n + Integer::one();
         let u = {
             // (1 + N)^s1 = (1 + s1*N) mod N^2 (binomial) — one mul, no modexp.
-            let gs1 = (Integer::one() + &self.s1 * ek_n).modulo(ek_nn);
+            let gs1 = (Integer::one() + (&self.s1 * ek_n).complete()).modulo(ek_nn);
             let s_n = pow_mod_signed(&self.s, ek_n, ek_nn);
             let neg_e = -self.e.clone();
             let c_neg_e = pow_mod_signed(cipher, &neg_e, ek_nn);
@@ -291,10 +310,10 @@ impl BobProof {
         <C as CurveArithmetic>::ProjectivePoint: GroupEncoding,
     {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
-        let q_N_tilde = &q * &ntilde.N_tilde;
-        let q3_N_tilde = &q3 * &ntilde.N_tilde;
-        let q2_N = &q * &q * ek_n;
+        let q3 = (&q * &q).complete() * &q;
+        let q_N_tilde = (&q * &ntilde.N_tilde).complete();
+        let q3_N_tilde = (&q3 * &ntilde.N_tilde).complete();
+        let q2_N = (&q * &q).complete() * ek_n;
 
         // Round 1: sample blinding values
         let alpha = sample_below(&q3, rng);
@@ -323,7 +342,7 @@ impl BobProof {
         // v = C_a^alpha * (1 + gamma*N) * beta^N mod N^2
         let v = {
             let ca_alpha = pow_mod_signed(a_encrypted, &alpha, ek_nn);
-            let g_gamma = (&gamma * ek_n + Integer::one()).modulo(ek_nn);
+            let g_gamma = ((&gamma * ek_n).complete() + Integer::one()).modulo(ek_nn);
             let beta_n = pow_mod_signed(&beta, ek_n, ek_nn);
             (ca_alpha * g_gamma % ek_nn * beta_n).modulo(ek_nn)
         };
@@ -371,10 +390,10 @@ impl BobProof {
             let r_e = pow_mod_signed(r, &e, ek_n);
             (r_e * &beta).modulo(ek_n)
         };
-        let s1 = &e * b + &alpha;
-        let s2 = &e * &rho + &rho_prim;
-        let t1 = &e * beta_prim + &gamma;
-        let t2 = &e * &sigma + &tau;
+        let s1 = (&e * b).complete() + &alpha;
+        let s2 = (&e * &rho).complete() + &rho_prim;
+        let t1 = (&e * beta_prim).complete() + &gamma;
+        let t2 = (&e * &sigma).complete() + &tau;
 
         (
             BobProof {
@@ -435,7 +454,7 @@ impl BobProof {
         <C as CurveArithmetic>::ProjectivePoint: GroupEncoding,
     {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
+        let q3 = (&q * &q).complete() * &q;
 
         // Range check: s1 < q^3
         if self.s1 > q3 {
@@ -456,7 +475,7 @@ impl BobProof {
         let v = {
             let ca_s1 = pow_mod_signed(a_enc, &self.s1, ek_nn);
             let s_n = pow_mod_signed(&self.s, ek_n, ek_nn);
-            let g_t1 = (&self.t1 * ek_n + Integer::one()).modulo(ek_nn);
+            let g_t1 = ((&self.t1 * ek_n).complete() + Integer::one()).modulo(ek_nn);
             let mta_neg_e = pow_mod_signed(mta_out, &neg_e, ek_nn);
             (ca_s1 * s_n % ek_nn * g_t1 % ek_nn * mta_neg_e).modulo(ek_nn)
         };
@@ -718,8 +737,8 @@ mod tests {
     fn paillier_g_pow_linear_vs_modexp() {
         use std::time::Instant;
         // ~3072-bit odd modulus N (primality irrelevant to timing); N^2 ~6144-bit.
-        let n = (Integer::one() << 3072) - Integer::one(); // ~3072-bit odd
-        let nn = &n * &n;
+        let n: Integer = (Integer::one() << 3072) - Integer::one(); // ~3072-bit odd
+        let nn: Integer = (&n * &n).complete();
         let g = &n + Integer::one(); // 1 + N
         let alpha = (Integer::one() << 768) - Integer::one(); // ~768-bit exponent
         const ITERS: u32 = 200;
@@ -732,7 +751,7 @@ mod tests {
 
         let t1 = Instant::now();
         for _ in 0..ITERS {
-            let _ = (Integer::one() + &alpha * &n).modulo(&nn);
+            let _ = (Integer::one() + (&alpha * &n).complete()).modulo(&nn);
         }
         let t_linear = t1.elapsed() / ITERS;
 
@@ -757,7 +776,7 @@ mod tests {
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> NTildeParams {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
+        let n_tilde = (&p * &q).complete();
 
         // h1 = random element in Z*_{N'}
         let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
@@ -765,7 +784,10 @@ mod tests {
         // h2 = h1^lambda mod N' for random lambda coprime to phi(N')
         let phi_n = (&p - Integer::one()) * (&q - Integer::one());
         let lambda = sample_below(&phi_n, rng);
-        let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let h2 = h1
+            .pow_mod_ref(&lambda, &n_tilde)
+            .expect("pow_mod defined")
+            .complete();
 
         NTildeParams {
             N_tilde: n_tilde,

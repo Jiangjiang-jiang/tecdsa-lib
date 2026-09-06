@@ -8,7 +8,7 @@
 //! bytes of framing. These tests pin that property so a serde regression
 //! cannot silently double every ciphertext on the wire again.
 
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
 
 fn wire_size<T: serde::Serialize>(value: &T) -> usize {
     bincode::serde::encode_to_vec(value, bincode::config::standard())

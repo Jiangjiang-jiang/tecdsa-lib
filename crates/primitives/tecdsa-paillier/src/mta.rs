@@ -26,8 +26,12 @@
 
 use std::marker::PhantomData;
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
+use fast_paillier::{
+    backend::{BigIntExt, Integer},
+    DecryptionKey, EncryptionKey,
+};
 use rand_core::CryptoRngCore;
+use rug::Complete;
 use sha2::Sha256;
 use tecdsa_protocol::MtA;
 
@@ -708,8 +712,8 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
         }
 
         // 2. Sample alpha' from Z_{q^2} for masking
-        let q_squared = &q * &q;
-        let alpha_prime = q_squared.random_below_ref(rng);
+        let q_squared = (&q * &q).complete();
+        let alpha_prime = q_squared.sample_below_ref(rng);
 
         // 3. Homomorphic computation:
         //    c_scaled = c_B^a = Enc(pk, a * b)
@@ -743,7 +747,7 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
         );
 
         // 5. alpha = -alpha' mod q
-        let alpha = (&q - &alpha_prime.modulo(&q)).modulo(&q);
+        let alpha = (&q - &alpha_prime.modulo(&q)).complete().modulo(&q);
         let alpha_bytes = alpha.to_bytes_msf();
 
         let msg = PaillierReceiverMsg {
@@ -817,7 +821,7 @@ mod tests {
         let neg_one = -k256::Scalar::ONE;
         let neg_one_bytes = neg_one.to_repr();
         let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-        &q_minus_1 + 1u8
+        (&q_minus_1 + 1u8).complete()
     }
 
     #[test]
@@ -827,7 +831,7 @@ mod tests {
         let (ek, _dk) = gen_paillier_keys(&mut rng);
         let q = curve_order_int();
 
-        let b = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
         let (c_B, nonce) = ek
             .encrypt_with_random(&mut rng, &b)
             .expect("encryption should succeed");
@@ -843,14 +847,14 @@ mod tests {
         let (ek, _dk) = gen_paillier_keys(&mut rng);
         let q = curve_order_int();
 
-        let b = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
         let (c_B, nonce) = ek
             .encrypt_with_random(&mut rng, &b)
             .expect("encryption should succeed");
 
         let proof = PiBProof::prove(&ek, &c_B, &b, &nonce, &q, &mut rng);
 
-        let b2 = q.random_below_ref(&mut rng);
+        let b2 = q.sample_below_ref(&mut rng);
         let (c_B2, _) = ek
             .encrypt_with_random(&mut rng, &b2)
             .expect("encryption should succeed");
@@ -867,15 +871,15 @@ mod tests {
         let (ek, _dk) = gen_paillier_keys(&mut rng);
         let q = curve_order_int();
         // K = q^2 * 2^{tau + 2*kappa} = q^2 * 2^{256 + 2*80} = q^2 * 2^{416}
-        let K = &q * &q * &Integer::u_pow_u(2, 416);
+        let K = (&q * &q).complete() * Integer::u_pow_u(2, 416).complete();
 
-        let k2 = q.random_below_ref(&mut rng);
+        let k2 = q.sample_below_ref(&mut rng);
         let (c_B, _) = ek
             .encrypt_with_random(&mut rng, &k2)
             .expect("encryption should succeed");
 
-        let a = q.random_below_ref(&mut rng);
-        let alpha_prime = K.random_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
+        let alpha_prime = K.sample_below_ref(&mut rng);
 
         let c_B_a = ek.omul(&a, &c_B).expect("omul");
         let (c_alpha, r_prime) = ek.encrypt_with_random(&mut rng, &alpha_prime).expect("enc");
@@ -902,11 +906,11 @@ mod tests {
         };
 
         // Sender's input b
-        let b = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
         let b_bytes = b.to_bytes_msf();
 
         // Receiver's input a
-        let a = q.random_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
         let a_bytes = a.to_bytes_msf();
 
         // Step 1: Sender encrypts
@@ -927,8 +931,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).modulo(&q);
-        let expected = (&a * &b).modulo(&q);
+        let sum = (&alpha + &beta).complete().modulo(&q);
+        let expected = (&a * &b).complete().modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -948,8 +952,8 @@ mod tests {
         };
 
         for _ in 0..3 {
-            let b = q.random_below_ref(&mut rng);
-            let a = q.random_below_ref(&mut rng);
+            let b = q.sample_below_ref(&mut rng);
+            let a = q.sample_below_ref(&mut rng);
 
             let (sender_msg, sender_state) =
                 PaillierMtA::sender_encrypt(&setup, &b.to_bytes_msf(), &q_bytes, &mut rng)
@@ -970,8 +974,8 @@ mod tests {
 
             let alpha = Integer::from_bytes_msf(&alpha_bytes);
             let beta = Integer::from_bytes_msf(&beta_bytes);
-            let sum = (&alpha + &beta).modulo(&q);
-            let expected = (&a * &b).modulo(&q);
+            let sum = (&alpha + &beta).complete().modulo(&q);
+            let expected = (&a * &b).complete().modulo(&q);
 
             assert_eq!(sum, expected, "MtA correctness must hold in all runs");
         }
@@ -991,11 +995,14 @@ mod tests {
         // are only commitment parameters, not encryption keys)
         let p2 = Integer::generate_safe_prime(&mut rng, 256);
         let q2 = Integer::generate_safe_prime(&mut rng, 256);
-        let n_tilde = &p2 * &q2;
+        let n_tilde = (&p2 * &q2).complete();
         let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
         let phi_n = (&p2 - Integer::one()) * (&q2 - Integer::one());
         let lambda = sample_below(&phi_n, &mut rng);
-        let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let h2 = h1
+            .pow_mod_ref(&lambda, &n_tilde)
+            .expect("pow_mod defined")
+            .complete();
         let ntilde = NTildeParams {
             N_tilde: n_tilde,
             h1,
@@ -1013,8 +1020,8 @@ mod tests {
             proof_setup,
         };
 
-        let b = q.random_below_ref(&mut rng);
-        let a = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
 
         let (sender_msg, sender_state) = PaillierMtA::<Gg18Proofs>::sender_encrypt(
             &setup,
@@ -1043,8 +1050,8 @@ mod tests {
 
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).modulo(&q);
-        let expected = (&a * &b).modulo(&q);
+        let sum = (&alpha + &beta).complete().modulo(&q);
+        let expected = (&a * &b).complete().modulo(&q);
 
         assert_eq!(
             sum, expected,
@@ -1069,12 +1076,15 @@ mod tests {
         let aux = {
             let p = generate_blum_prime(&mut rng, 1024);
             let q_rp = generate_blum_prime(&mut rng, 1024);
-            let n = &p * &q_rp;
+            let n = (&p * &q_rp).complete();
             let phi_n = (&p - Integer::one()) * (&q_rp - Integer::one());
             let r = Integer::sample_in_mult_group_of(&mut rng, &n);
-            let lambda = phi_n.random_below(&mut rng);
+            let lambda = phi_n.sample_below(&mut rng);
             let t = r.square().modulo(&n);
-            let s = t.pow_mod_ref(&lambda, &n).expect("pow_mod must succeed");
+            let s = t
+                .pow_mod_ref(&lambda, &n)
+                .expect("pow_mod must succeed")
+                .complete();
             pi_enc::Aux {
                 s,
                 t,
@@ -1108,8 +1118,8 @@ mod tests {
             proof_setup,
         };
 
-        let b = q.random_below_ref(&mut rng);
-        let a = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
 
         // Step 1: Sender encrypts
         let (sender_msg, sender_state) = PaillierMtA::<Cggmp20Proofs>::sender_encrypt(
@@ -1142,8 +1152,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).modulo(&q);
-        let expected = (&a * &b).modulo(&q);
+        let sum = (&alpha + &beta).complete().modulo(&q);
+        let expected = (&a * &b).complete().modulo(&q);
 
         assert_eq!(
             sum, expected,

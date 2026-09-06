@@ -21,7 +21,8 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize,
     PrimeField,
 };
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
+use rug::Complete;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 
@@ -203,25 +204,29 @@ pub(crate) fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -
         // base^(-|exp|) mod m = (base^-1)^|exp| mod m
         let base_inv = base
             .invert_ref(modulus)
-            .expect("base must be invertible mod modulus");
+            .expect("base must be invertible mod modulus")
+            .complete();
         let pos_exp = -exp.clone();
         base_inv
             .pow_mod_ref(&pos_exp, modulus)
             .expect("pow_mod defined")
+            .complete()
     } else {
-        base.pow_mod_ref(exp, modulus).expect("pow_mod defined")
+        base.pow_mod_ref(exp, modulus)
+            .expect("pow_mod defined")
+            .complete()
     }
 }
 
 /// Sample a random integer in `[0, bound)`.
 pub(crate) fn sample_below(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
-    bound.random_below_ref(rng)
+    bound.sample_below_ref(rng)
 }
 
 /// Sample a random integer in `[1, bound)`.
 fn sample_range_one_to(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
     let bound_minus_one = bound - Integer::one();
-    bound_minus_one.random_below_ref(rng) + Integer::one()
+    bound_minus_one.sample_below_ref(rng) + Integer::one()
 }
 
 /// Hash public values and commitments to produce a Fiat-Shamir challenge.
@@ -286,9 +291,9 @@ where
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
-        let q_N_tilde = &q * &statement.N_tilde;
-        let q3_N_tilde = &q3 * &statement.N_tilde;
+        let q3 = (&q * &q).complete() * &q;
+        let q_N_tilde = (&q * &statement.N_tilde).complete();
+        let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values
         let alpha = sample_below(&q3, rng);
@@ -334,13 +339,13 @@ where
         let e = compute_challenge(statement, &z, &u1, &u2, &u3);
 
         // 7. s1 = alpha + e*x
-        let s1 = &alpha + &e * &witness.x;
+        let s1 = &alpha + (&e * &witness.x).complete();
 
         // 8. s2 = beta * r^e mod N  (i.e., commitment_unknown_order(r, beta, N, e, 1))
         let s2 = commitment_unknown_order(&witness.r, &beta, &statement.ek_n, &e, &Integer::one());
 
         // 9. s3 = gamma + e*rho
-        let s3 = &gamma + &e * &rho;
+        let s3 = &gamma + (&e * &rho).complete();
 
         PdlSlackProof {
             z,
@@ -359,7 +364,7 @@ where
     /// Returns `PdlSlackError::Verify` if the proof does not verify.
     pub fn verify(&self, statement: &PdlSlackStatement<C>) -> Result<(), PdlSlackError> {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
+        let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
         let e = compute_challenge(statement, &self.z, &self.u1, &self.u2, &self.u3);
@@ -369,7 +374,7 @@ where
         let g_s1 = statement.G * s1_scalar;
 
         // e_neg = q - e (mod q), for subtraction on the curve
-        let e_neg_int = &q - (&e % &q);
+        let e_neg_int = &q - (&e % &q).complete();
         let e_neg_scalar = integer_to_scalar::<C>(&e_neg_int);
         let q_times_neg_e = statement.Q * e_neg_scalar;
         let u1_test = g_s1 + q_times_neg_e;
@@ -449,16 +454,19 @@ mod tests {
         // Generate Ring-Pedersen parameters (N_tilde, h1, h2)
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
+        let n_tilde = (&p * &q).complete();
 
         // h2 = random QR mod N_tilde
         let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = (&r * &r).modulo(&n_tilde);
+        let h2 = (&r * &r).complete().modulo(&n_tilde);
 
         // h1 = h2^lambda mod N_tilde for a random lambda
         let phi_n = (&p - Integer::one()) * (&q - Integer::one());
         let lambda = sample_below(&phi_n, rng);
-        let h1 = h2.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let h1 = h2
+            .pow_mod_ref(&lambda, &n_tilde)
+            .expect("pow_mod defined")
+            .complete();
 
         (n_tilde, h1, h2)
     }
