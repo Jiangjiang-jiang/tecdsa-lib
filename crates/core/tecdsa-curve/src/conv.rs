@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Scalar <-> big-integer conversions for use with Paillier big integers.
 
-use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
+use elliptic_curve::{
+    bigint::Encoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
+};
 use rug::{integer::Order, Integer};
 
 use crate::TecdsaCurve;
@@ -69,11 +71,15 @@ where
 }
 
 /// Returns the group order `q` as an `Integer`.
+///
+/// Reads `C::ORDER` directly, which `elliptic_curve::Curve` documents as "order
+/// of this curve's prime order subgroup, i.e. number of elements in the scalar
+/// field" — so it is the scalar field modulus, not the base field one.
 #[must_use]
 pub fn curve_order<C: TecdsaCurve>() -> Integer
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    scalar_to_integer::<C>(&(-C::Scalar::ONE)) + 1
+    Integer::from_digits(C::ORDER.to_be_bytes().as_ref(), Order::Msf)
 }
