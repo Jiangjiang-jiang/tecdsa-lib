@@ -142,6 +142,10 @@ large_enum_variant = "allow"
 # Remove when upstream merges fix (https://github.com/LFDT-Lockness/fast-paillier/issues/23).
 [patch.crates-io]
 fast-paillier = { path = "vendor/fast-paillier" }
+# Vendor patch: paillier-zk 0.7.0-alpha.4 must build against the modified fast-paillier
+# backend (Integer unification, see REFACTOR_PLAN.md Phase 0); crates.io's copy pulls the
+# unmodified fast-paillier and no longer compiles against our patched backend API.
+paillier-zk = { path = "vendor/paillier-zk" }
 
 # Build profiles. Overflow checks were previously forced on for every profile via
 # `.cargo/config.toml` RUSTFLAGS; they are now scoped here so benchmarks run
