@@ -52,7 +52,7 @@ use tecdsa_class_group::{
     nim::{Nim, NimEncodeAOutput, NimEncodeBOutput, NimStateA, NimStateB},
     zk::{r_cl_dl_ec::RClDlEcProof, r_ped_ec::RPedEcProof},
 };
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use zeroize::Zeroize;
 
 use crate::{error::Llz25Error, key_share::Llz25KeyShare};
@@ -120,8 +120,8 @@ pub fn presign_round1(
     let big_k = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_i;
     let big_gamma = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * gamma_i;
 
-    let k_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
-    let gamma_bytes = tecdsa_curve::conv::scalar_to_bytes(&gamma_i);
+    let k_bytes = k_i.to_bytes_vec();
+    let gamma_bytes = gamma_i.to_bytes_vec();
 
     // 3a. NIM.Encode_B(crs, k_i) -- CL encryption.
     let mut nim = Nim::new(setup);
@@ -327,13 +327,13 @@ pub fn compute_presign_coefficients(
         let alpha_bytes = nim
             .decode_b(&pm_j.pe_gamma, &st_k)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_b alpha: {e}")))?;
-        let alpha_ij = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_bytes);
+        let alpha_ij = k256::Secp256k1::scalar_from_bytes(&alpha_bytes);
 
         // beta_{j,i} = NIM.Decode_A(pe_{k,j}, st_{gamma,i})
         let beta_bytes = nim
             .decode_a(&pm_j.pe_k, &st_gamma)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_a beta: {e}")))?;
-        let beta_ji = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&beta_bytes);
+        let beta_ji = k256::Secp256k1::scalar_from_bytes(&beta_bytes);
 
         alpha_beta_sum += alpha_ij + beta_ji;
 
@@ -341,14 +341,14 @@ pub fn compute_presign_coefficients(
         let mu_bytes = nim
             .decode_b(&pm_j.pe_gamma, &st_x)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_b mu: {e}")))?;
-        let mu_ij = my_lambda * tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&mu_bytes);
+        let mu_ij = my_lambda * k256::Secp256k1::scalar_from_bytes(&mu_bytes);
 
         // nu_{j,i} = lambda_j * NIM.Decode_A(pe_{x,j}, st_{gamma,i})
         let lambda_j = lagrange_coefficient(quorum_indices, j);
         let nu_bytes = nim
             .decode_a(&pe_x_list[j], &st_gamma)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_a nu: {e}")))?;
-        let nu_ji = lambda_j * tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&nu_bytes);
+        let nu_ji = lambda_j * k256::Secp256k1::scalar_from_bytes(&nu_bytes);
 
         mu_nu_sum += mu_ij + nu_ji;
     }

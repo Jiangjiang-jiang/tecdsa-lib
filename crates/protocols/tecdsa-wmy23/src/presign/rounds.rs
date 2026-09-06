@@ -39,7 +39,7 @@ use tecdsa_class_group::{
     drg::{drg_comb, drg_gen, drg_gen_verify, DrgCombOutput, DrgGenOutput, PedersenVssShare},
     zk::r_enc_pc::REncPcProof,
 };
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
 use crate::{
     key_share::Wmy23KeyShare,
@@ -552,7 +552,7 @@ pub fn drg_presign_round3_bob(
 
         // Scale Alice j's bound DRG.Comb ciphertext c_{k_j} by Alice's public
         // Lagrange coefficient: c_{hat_k_j} = lambda_j (x) c_{k_j}.
-        let lambda_j_bytes = scalar_to_bytes(&local_lambdas[j]);
+        let lambda_j_bytes = local_lambdas[j].to_bytes_vec();
         let c_hat_k_j =
             setup.scal_ciphertext_bytes(pk_j, &r2_bcasts[j].k_comb_ct, &lambda_j_bytes)?;
 

@@ -36,10 +36,7 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use rug::Integer;
-use tecdsa_curve::{
-    conv::{integer_to_scalar, scalar_to_integer},
-    TecdsaCurve,
-};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{
     zk::mta_range::{AliceProof, BobProofExt, NTildeParams},
     BigIntExt, DecryptionKey, EncryptionKey,
@@ -168,7 +165,7 @@ where
         );
 
         // Encrypt a_i under our own key
-        let a_i_int = scalar_to_integer::<C>(&a_i);
+        let a_i_int = a_i.to_integer();
         let my_ek = &eks[&my_id];
         let (c_a, r_a) = my_ek
             .encrypt_with_random(rng, &a_i_int)
@@ -265,7 +262,7 @@ where
                 })?;
 
             let c_a_j = &msg.c_a;
-            let b_i_int = scalar_to_integer::<C>(&self.b_i);
+            let b_i_int = self.b_i.to_integer();
 
             // Sample beta_prime uniformly from [0, N/2)
             let beta_prime = alice_ek.half_n().sample_below_ref(rng);
@@ -307,11 +304,11 @@ where
             );
 
             // B = b_i * G (the claimed public point for BobProofExt verification)
-            let b_scalar = integer_to_scalar::<C>(&b_i_int);
+            let b_scalar = C::scalar_from_integer(&b_i_int);
             let b_point = C::generator() * b_scalar;
 
             // Bob's share: beta = -beta_prime (mod q)
-            let neg_beta = -integer_to_scalar::<C>(&beta_prime);
+            let neg_beta = -C::scalar_from_integer(&beta_prime);
             self.beta_shares.insert(msg.from, neg_beta);
 
             round2_msgs.push((
@@ -384,7 +381,7 @@ where
                 .dk
                 .decrypt(&msg.c_b)
                 .map_err(|e| format!("decrypt failed for party {}: {}", msg.from, e))?;
-            let alpha = integer_to_scalar::<C>(&alpha_int);
+            let alpha = C::scalar_from_integer(&alpha_int);
             alpha_sum += alpha;
         }
 

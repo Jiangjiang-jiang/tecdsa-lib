@@ -19,8 +19,8 @@
 //! by the same secret `x` that is committed on the elliptic curve as `X = x * G`.
 
 use elliptic_curve::group::GroupEncoding;
-use k256::{ProjectivePoint, Scalar, Secp256k1};
-use tecdsa_curve::conv;
+use k256::{ProjectivePoint, Secp256k1};
+use tecdsa_curve::TecdsaCurve;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
@@ -37,15 +37,6 @@ pub struct RDlClProof {
     pub z: Vec<u8>,
     /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
-}
-
-fn bytes_to_scalar(bytes: &[u8]) -> ClResult<Scalar> {
-    Ok(conv::bytes_to_scalar::<Secp256k1>(bytes))
-}
-
-#[cfg(test)]
-fn test_scalar(val: u64) -> Scalar {
-    Scalar::from(val)
 }
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
@@ -88,7 +79,7 @@ impl RDlClProof {
         // 2. Compute commitments.
         let t1 = setup.exp_bytes(&c01, &a)?;
         let t2 = setup.exp_bytes(&c02, &a)?;
-        let a_scalar = bytes_to_scalar(&a)?;
+        let a_scalar = Secp256k1::scalar_from_bytes(&a);
         let t_ec = ProjectivePoint::GENERATOR * a_scalar;
         let t_ec_bytes = point_to_bytes(&t_ec);
 
@@ -161,9 +152,9 @@ impl RDlClProof {
         }
 
         // Check 3: (z mod q) * G == T + e * X
-        let z_scalar = bytes_to_scalar(&self.z)?;
+        let z_scalar = Secp256k1::scalar_from_bytes(&self.z);
         let lhs3 = ProjectivePoint::GENERATOR * z_scalar;
-        let e_scalar = bytes_to_scalar(&self.e)?;
+        let e_scalar = Secp256k1::scalar_from_bytes(&self.e);
         let rhs3 = t_ec + *x_point * e_scalar;
         if lhs3 != rhs3 {
             return Ok(false);
@@ -209,7 +200,7 @@ mod tests {
 
         let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
 
-        let x_scalar = test_scalar(17);
+        let x_scalar = k256::Scalar::from(17u64);
         let x_point = ProjectivePoint::GENERATOR * x_scalar;
 
         let proof =
@@ -238,7 +229,7 @@ mod tests {
         let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
 
-        let x_scalar = test_scalar(17);
+        let x_scalar = k256::Scalar::from(17u64);
         let x_point = ProjectivePoint::GENERATOR * x_scalar;
 
         let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
@@ -268,7 +259,7 @@ mod tests {
         let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
 
-        let x_scalar = test_scalar(17);
+        let x_scalar = k256::Scalar::from(17u64);
         let x_point = ProjectivePoint::GENERATOR * x_scalar;
 
         let proof =

@@ -9,7 +9,7 @@ use tecdsa_class_group::{
     zk::{r_dec_dl::RDecDlProof, r_enc::REncProof, r_m_aff_dl_ec::RMAffDlEcProof, r_sh::RShProof},
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, PartyId, Recipient};
 use zeroize::Zeroize;
 
@@ -287,7 +287,7 @@ pub(crate) fn transition_r1_to_r2(
     }
 
     // MPMtA Round 2 for k*gamma.
-    let k_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
+    let k_bytes = k_i.to_bytes_vec();
     let kg_mta = mpmta_round2(
         setup,
         &party_ids_u16,
@@ -300,7 +300,7 @@ pub(crate) fn transition_r1_to_r2(
     .map_err(|e| TecdsaError::Other(format!("MPMtA2 k*gamma: {e}")))?;
 
     // MPMtA Round 2 for x*gamma.
-    let x_bytes = tecdsa_curve::conv::scalar_to_bytes(&key_mat.x_i);
+    let x_bytes = key_mat.x_i.to_bytes_vec();
     let xg_mta = mpmta_round2(
         setup,
         &party_ids_u16,
@@ -581,7 +581,7 @@ pub(crate) fn finalize(
         let alpha_kg_bytes = setup.decrypt_bytes(&sk_raw, c_alpha_ij).map_err(|e| {
             TecdsaError::Other(format!("decrypt k*gamma alpha from party {party_j}: {e}"))
         })?;
-        let alpha_kg = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_kg_bytes);
+        let alpha_kg = k256::Secp256k1::scalar_from_bytes(&alpha_kg_bytes);
 
         // Our beta for party j (from our MPMtA2 output for k*gamma).
         let beta_kg_ij = state.kg_mta.betas[j_idx];
@@ -594,7 +594,7 @@ pub(crate) fn finalize(
         let alpha_xg_bytes = setup.decrypt_bytes(&sk_raw, c_alpha_hat_ij).map_err(|e| {
             TecdsaError::Other(format!("decrypt x*gamma alpha from party {party_j}: {e}"))
         })?;
-        let alpha_xg = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&alpha_xg_bytes);
+        let alpha_xg = k256::Secp256k1::scalar_from_bytes(&alpha_xg_bytes);
 
         let beta_xg_ij = state.xg_mta.betas[j_idx];
         zeta_shares.insert(j_pid, alpha_xg + beta_xg_ij);

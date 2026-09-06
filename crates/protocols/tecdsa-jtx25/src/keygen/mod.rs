@@ -51,6 +51,7 @@ use tecdsa_class_group::{
     zk::{r_dec_dl::RDecDlProof, r_key::RKeyProof, r_sh::RShProof},
 };
 use tecdsa_core::TecdsaError;
+use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use crate::{error::Jtx25Error, key_share::Jtx25KeyShare};
@@ -804,9 +805,7 @@ impl Jtx25KeygenMachine {
         // ---- DKG-Sig: PVSS decrypt and combine ----
 
         // Start with own PVSS share.
-        let mut x_i = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(
-            &state.my_pvss.secret_share_bytes,
-        );
+        let mut x_i = k256::Secp256k1::scalar_from_bytes(&state.my_pvss.secret_share_bytes);
 
         // Decrypt shares from other parties.
         for pid in &state.all_parties {
@@ -825,7 +824,7 @@ impl Jtx25KeygenMachine {
                 &r2_msg.c2s[my_idx],
             )
             .map_err(|e| TecdsaError::Other(format!("pvss_decrypt from {pid}: {e}")))?;
-            let share_j = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&share_bytes);
+            let share_j = k256::Secp256k1::scalar_from_bytes(&share_bytes);
 
             x_i += share_j;
         }

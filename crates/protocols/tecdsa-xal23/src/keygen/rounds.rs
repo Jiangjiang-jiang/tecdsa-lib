@@ -26,7 +26,7 @@ use elliptic_curve::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{conv::scalar_to_bytes, zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
 use tecdsa_joye_libert::{
     kgen::{JlPublicKey, JlSecretKey},
     zk::zkjlmod::ZkJlModProof,
@@ -107,7 +107,7 @@ impl SerDlogProof {
     {
         Self {
             commitment_bytes: proj_to_bytes::<C>(&proof.commitment),
-            response_bytes: scalar_to_bytes(&proof.response),
+            response_bytes: proof.response.to_bytes_vec(),
         }
     }
 
@@ -208,7 +208,7 @@ where
         hasher.update(proj_to_bytes::<C>(com));
     }
     hasher.update(proj_to_bytes::<C>(&dlog_proof.commitment));
-    hasher.update(scalar_to_bytes(&dlog_proof.response));
+    hasher.update(dlog_proof.response.to_bytes_vec());
     hasher.update(jl_mod_proof_bytes);
     hasher.finalize().into()
 }

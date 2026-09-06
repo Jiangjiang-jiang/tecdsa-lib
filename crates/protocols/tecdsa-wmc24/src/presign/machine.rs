@@ -10,7 +10,7 @@ use tecdsa_class_group::{
     zk::r_enc::REncProof,
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::ddh::DdhStatement;
+use tecdsa_curve::{zk::ddh::DdhStatement, ScalarExt, TecdsaCurve};
 use tecdsa_elgamal::Ciphertext as ElGamalCiphertext;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
@@ -79,9 +79,9 @@ impl Wmc24PresignMachine {
             let bu = Integer::from_str_radix(&sk_dec, 10)
                 .map_err(|e| Wmc24Error::ScalarConversion(format!("parse sk: {e}")))?;
             let reduced = bu % &q;
-            tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
+            k256::Secp256k1::scalar_from_integer(&reduced)
         };
-        let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
+        let k_i_bytes = k_i.to_bytes_vec();
 
         let (r_sk, _) = setup.keygen()?;
         let enc_randomness = setup.sk_to_bytes(&r_sk)?;

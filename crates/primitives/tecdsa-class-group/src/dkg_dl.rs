@@ -37,8 +37,9 @@
 //! - **Aggregate**: compute aggregate public key via Lagrange interpolation.
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use k256::Secp256k1;
 use rand_core::CryptoRngCore;
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
 use crate::{
     cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey},
@@ -247,7 +248,7 @@ pub fn dkg_dl_gen(
         let share = &vss.shares[j];
         let chi_ij = share.value;
         let chi_prime_ij = share.randomness;
-        let chi_ij_bytes = scalar_to_bytes(&chi_ij);
+        let chi_ij_bytes = chi_ij.to_bytes_vec();
 
         // EC Pedersen commitment: PC = g^{chi_ij} * h^{chi'_ij}
         // This equals evaluating the commitment polynomial at j's index.
@@ -264,7 +265,7 @@ pub fn dkg_dl_gen(
         // R_Enc-PC proof (cross-domain): proves ct encrypts chi_ij AND
         // PC = g^{chi_ij} * h^{chi'_ij} uses the same chi_ij.
         let pc_bytes = pc.to_bytes();
-        let chi_prime_ij_bytes = scalar_to_bytes(&chi_prime_ij);
+        let chi_prime_ij_bytes = chi_prime_ij.to_bytes_vec();
         let proof = REncPcProof::prove(
             setup,
             pk_j,
@@ -401,7 +402,7 @@ pub fn dkg_dl_reveal(
         // Convert decrypted bytes to scalar (reduce mod q implicitly via from_repr
         // or manual conversion). The plaintext is already in [0, q), so interpret
         // as a scalar.
-        let chi_ji = bytes_to_scalar(&m_bytes);
+        let chi_ji = Secp256k1::scalar_from_bytes(&m_bytes);
         combined_share += chi_ji;
 
         // Accumulate ciphertext components: c_{x_i} = hom_sum c_{chi_ji}
@@ -461,7 +462,7 @@ pub fn dkg_dl_reveal_verify(
     // From the verifier's perspective: given X_i = g^{x_i} and the combined
     // ciphertext c = (c1, c2), the prover claims c2 / c1^{sk} = f^{x_i}.
     // So pd = c1^{sk} = c2 * (f^{x_i})^{-1}.
-    let x_i_bytes = scalar_to_bytes(&reveal.combined_share);
+    let x_i_bytes = reveal.combined_share.to_bytes_vec();
     let f_xi = setup.power_of_f_bytes(&x_i_bytes)?;
     let (_, c2) = setup.ct_components(&reveal.combined_ct)?;
     let mut f_xi_inv = f_xi;
@@ -531,14 +532,6 @@ fn lagrange_coefficients_at_zero(indices: &[u16]) -> Vec<k256::Scalar> {
                 })
         })
         .collect()
-}
-
-/// Convert big-endian bytes to a `k256::Scalar`.
-///
-/// If the bytes represent a value >= q, reduces modulo q.
-/// This handles the output of CL decryption which is always in [0, q).
-fn bytes_to_scalar(bytes: &[u8]) -> k256::Scalar {
-    tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(bytes)
 }
 
 // ---------------------------------------------------------------------------

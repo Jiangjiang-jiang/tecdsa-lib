@@ -33,7 +33,7 @@ use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_ot::{
     rvole::{MulDataToKeep, MulReceiver, MulSender},
     seed_state::OtSeedState,
@@ -46,7 +46,7 @@ use super::types::{Dkls23Presignature, PartyRvoleData};
 use crate::{
     key_share::Dkls23KeyShare,
     sign::msg::{Dkls23SignMsg, SignR1Broadcast, SignR1P2p, SignR2Broadcast, SignR2P2p, SignR3P2p},
-    utils::{deserialize_point, deserialize_scalar, scalar_to_bytes, validate_sender},
+    utils::{deserialize_point, deserialize_scalar, validate_sender},
 };
 
 // ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ where
 
             // Sample a nonce for the public gadget (always fresh per session)
             let nonce = C::random_scalar(rng);
-            let nonce_bytes = scalar_to_bytes(&nonce);
+            let nonce_bytes = nonce.to_bytes_vec();
 
             // Always run fresh base OT for now.
             let (mul_sender, ote_init_msg) = MulSender::init::<C>(&session_id, &nonce, rng);

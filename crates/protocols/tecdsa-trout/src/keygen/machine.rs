@@ -22,7 +22,7 @@ use elliptic_curve::PrimeField;
 use rand::RngCore;
 use tecdsa_class_group::cl::ClSetup;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
@@ -350,7 +350,7 @@ impl TroutKeygenMachine {
                 .iter()
                 .find(|s| s.index == j_1based)
                 .expect("share for party j must exist");
-            let share_bytes = scalar_to_bytes(&share_for_j.value);
+            let share_bytes = share_for_j.value.to_bytes_vec();
             self.outgoing.push(Outgoing {
                 to: Recipient::Party(party),
                 msg: TroutKeygenMsg::Round2Share(share_bytes),

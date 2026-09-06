@@ -16,10 +16,7 @@ use elliptic_curve::{
 };
 use rug::Integer;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{
-    conv::{integer_to_scalar, scalar_to_integer},
-    TecdsaCurve,
-};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::threshold::{combine_partials, partial_decrypt, PartialDecryption};
 use tecdsa_protocol::{
     low_s_normalize, verify_ecdsa, DataToSign, Outgoing, PartyId, Recipient, Signature,
@@ -96,9 +93,9 @@ where
         // = E(k^{-1} * (m + r*x))
         // = E(s)
 
-        let m_int = scalar_to_integer::<C>(&m);
-        let r_int = scalar_to_integer::<C>(&r);
-        let psi_int = scalar_to_integer::<C>(&psi);
+        let m_int = m.to_integer();
+        let r_int = r.to_integer();
+        let psi_int = psi.to_integer();
 
         // m ×_E u
         let m_u = ek
@@ -186,7 +183,7 @@ where
         })?;
 
         // Reduce mod q
-        let mut s_scalar = integer_to_scalar::<C>(&s_raw);
+        let mut s_scalar = C::scalar_from_integer(&s_raw);
 
         // Low-S normalization (BIP-146)
         s_scalar = low_s_normalize::<C>(s_scalar);

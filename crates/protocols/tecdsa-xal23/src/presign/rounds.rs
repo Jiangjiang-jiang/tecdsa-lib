@@ -21,10 +21,7 @@ use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar, scalar_to_bytes, scalar_to_integer},
-    TecdsaCurve,
-};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSenderState, JlMtaSetup};
 use tecdsa_protocol::{state_machine::Outgoing, MtA, PartyId, Recipient};
 
@@ -222,10 +219,10 @@ where
         .into();
 
     // MtA setup and sender_encrypt for each peer
-    let q = curve_order::<C>();
+    let q = C::order();
     let q_bytes = q.to_digits::<u8>(Order::Msf);
-    let gamma_i_bytes = scalar_to_integer::<C>(&gamma_i).to_digits::<u8>(Order::Msf);
-    let w_i_bytes = scalar_to_integer::<C>(&w_i).to_digits::<u8>(Order::Msf);
+    let gamma_i_bytes = gamma_i.to_integer().to_digits::<u8>(Order::Msf);
+    let w_i_bytes = w_i.to_integer().to_digits::<u8>(Order::Msf);
 
     let mut gamma_sender_states = BTreeMap::new();
     let mut w_sender_states = BTreeMap::new();
@@ -309,9 +306,9 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let q = curve_order::<C>();
+    let q = C::order();
     let q_bytes = q.to_digits::<u8>(Order::Msf);
-    let k_i_bytes = scalar_to_integer::<C>(&state.k_i).to_digits::<u8>(Order::Msf);
+    let k_i_bytes = state.k_i.to_integer().to_digits::<u8>(Order::Msf);
 
     let mut alpha_kg = BTreeMap::new();
     let mut mu_kw = BTreeMap::new();
@@ -419,7 +416,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let q = curve_order::<C>();
+    let q = C::order();
     let q_bytes = q.to_digits::<u8>(Order::Msf);
     let my_idx = state.key_share.party_index as usize;
 
@@ -501,8 +498,8 @@ where
         let beta = beta_kg
             .get(&peer)
             .ok_or_else(|| TecdsaError::Other(format!("missing beta_kg for {peer}")))?;
-        delta_i += integer_to_scalar::<C>(alpha);
-        delta_i += integer_to_scalar::<C>(beta);
+        delta_i += C::scalar_from_integer(alpha);
+        delta_i += C::scalar_from_integer(beta);
     }
 
     // Compute sigma_i = k_i * w_i + sum_j(mu_kw[j] + nu_kw[j])
@@ -518,12 +515,12 @@ where
         let nu = nu_kw
             .get(&peer)
             .ok_or_else(|| TecdsaError::Other(format!("missing nu_kw for {peer}")))?;
-        sigma_i += integer_to_scalar::<C>(mu);
-        sigma_i += integer_to_scalar::<C>(nu);
+        sigma_i += C::scalar_from_integer(mu);
+        sigma_i += C::scalar_from_integer(nu);
     }
 
     // Broadcast delta_i
-    let delta_bytes = scalar_to_bytes(&delta_i);
+    let delta_bytes = delta_i.to_bytes_vec();
     let mut outgoing = Vec::new();
     for &peer in &state.all_parties {
         if peer == state.my_id {

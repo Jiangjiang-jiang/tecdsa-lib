@@ -8,6 +8,7 @@
 //! Production would use s=t=40.
 
 use sha2::{Digest, Sha256};
+use tecdsa_curve::ScalarExt;
 use tecdsa_xal23::{
     key_share::trusted_dealer_keygen,
     presign::presign_all_with_sec,
@@ -37,25 +38,22 @@ fn hash_message(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
 /// Test the JL MtA correctness in isolation with secp256k1 scalars.
 #[test]
 fn xal23_mta_correctness_secp256k1() {
-    use tecdsa_curve::{
-        conv::{curve_order, scalar_to_integer},
-        TecdsaCurve,
-    };
+    use tecdsa_curve::TecdsaCurve;
     use tecdsa_joye_libert::{kgen::generate_keypair_with_params, mta::*};
 
     let mut rng = rand::thread_rng();
     let (pk, sk) = generate_keypair_with_params(TEST_JL_P_BITS, TEST_JL_K, &mut rng);
 
-    let q = curve_order::<C>();
+    let q = C::order();
 
     // Use actual secp256k1 scalars
     let a_scalar = C::random_scalar(&mut rng);
     let b_scalar = C::random_scalar(&mut rng);
     let ab_scalar = a_scalar * b_scalar;
-    let ab_uint = scalar_to_integer::<C>(&ab_scalar);
+    let ab_uint = ab_scalar.to_integer();
 
-    let a = scalar_to_integer::<C>(&a_scalar);
-    let b = scalar_to_integer::<C>(&b_scalar);
+    let a = a_scalar.to_integer();
+    let b = b_scalar.to_integer();
 
     let sender = JlMtaSender::new(a);
     let receiver = JlMtaReceiver::new(b);

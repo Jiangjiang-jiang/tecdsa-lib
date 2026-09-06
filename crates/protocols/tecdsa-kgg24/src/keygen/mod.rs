@@ -67,7 +67,7 @@ where
     let ek = dk.encryption_key().clone();
 
     // Get the curve order q
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
 
     // Sample noise t from [0, 2^{tau + 2*kappa})
     let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
@@ -98,8 +98,6 @@ where
 
     (p1_share, p2_share)
 }
-
-pub(crate) use tecdsa_curve::conv::curve_order;
 
 #[cfg(test)]
 mod tests {
@@ -132,7 +130,7 @@ mod tests {
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
 
         // The decrypted value is x_1 + t*q, so (decrypted mod q) should equal x_1
-        let q_int = curve_order::<Secp256k1>();
+        let q_int = Secp256k1::order();
         let decrypted_mod_q = decrypted.modulo(&q_int);
         assert_eq!(decrypted_mod_q, x1_int);
     }

@@ -50,7 +50,7 @@ use tecdsa_class_group::{
     cl::ClSetup,
     zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof},
 };
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 pub use types::{TroutPresignOutput, TroutRound1Broadcast, TroutRound1State};
 
 use crate::{
@@ -87,7 +87,7 @@ pub fn presign_round1(
     let (evrf_output, evrf_proof) = share.evrf_sk.eval(session_nonce, rng);
     let k_i = *share.evrf_sk.scalar();
 
-    let k_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&k_i);
+    let k_i_bytes = k_i.to_bytes_vec();
     // R_i = k_i * G (ECDSA nonce point, using the curve generator)
     let r_i_proj = <k256::Secp256k1 as TecdsaCurve>::generator() * k_i;
     let r_i_affine = elliptic_curve::group::Curve::to_affine(&r_i_proj);
@@ -95,7 +95,7 @@ pub fn presign_round1(
 
     // 2. Choose random alpha_i, beta_i, u_i
     let u_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut *rng);
-    let u_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&u_i);
+    let u_i_bytes = u_i.to_bytes_vec();
 
     // alpha_i: random CL exponent (for encryption)
     let (sk_tmp, _) = setup.keygen()?;
@@ -123,7 +123,7 @@ pub fn presign_round1(
         .position(|&p| p == my_idx)
         .ok_or_else(|| TroutError::InvalidParam("party not in signing set".into()))?;
     let l_i = lagrange_coeffs[my_party_pos];
-    let l_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&l_i);
+    let l_i_bytes = l_i.to_bytes_vec();
 
     // Rebuild C_tilde_i from stored components
     let (c1_a, c1_b, c1_c, c2_a, c2_b, c2_c) = &share.ct_share_components;

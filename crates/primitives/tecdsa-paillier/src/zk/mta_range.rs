@@ -27,10 +27,7 @@ use rug::{ops::Pow, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_bigint::BigIntExt;
-use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar},
-    TecdsaCurve,
-};
+use tecdsa_curve::TecdsaCurve;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -116,7 +113,7 @@ impl AliceProof {
         FieldBytesSize<C>: ModulusSize,
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
-        let q = curve_order::<C>();
+        let q = C::order();
         let q3 = (&q * &q).complete() * &q;
 
         // Round 1: sample blinding values and compute commitments
@@ -192,7 +189,7 @@ impl AliceProof {
         FieldBytesSize<C>: ModulusSize,
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
-        let q = curve_order::<C>();
+        let q = C::order();
 
         // Range check: s1 < q^3
         if self.s1 > q.pow(3) {
@@ -335,7 +332,7 @@ impl BobProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
         <C as CurveArithmetic>::ProjectivePoint: GroupEncoding,
     {
-        let q = curve_order::<C>();
+        let q = C::order();
         let q3 = (&q * &q).complete() * &q;
         let q_N_tilde = (&q * &ntilde.N_tilde).complete();
         let q3_N_tilde = (&q3 * &ntilde.N_tilde).complete();
@@ -392,8 +389,8 @@ impl BobProof {
         let g_paillier = ek_n + Integer::one();
         let (e, check_u) = if check_ec {
             // Extended proof: include X = bG and u = alpha*G in the hash
-            let b_scalar = integer_to_scalar::<C>(b);
-            let alpha_scalar = integer_to_scalar::<C>(&alpha);
+            let b_scalar = C::scalar_from_integer(b);
+            let alpha_scalar = C::scalar_from_integer(&alpha);
             let G = C::generator();
             let X = G * b_scalar;
             let u_point = G * alpha_scalar;
@@ -497,7 +494,7 @@ impl BobProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
         <C as CurveArithmetic>::ProjectivePoint: GroupEncoding,
     {
-        let q = curve_order::<C>();
+        let q = C::order();
 
         // Range check: s1 < q^3
         if self.s1 > q.pow(3) {
@@ -785,8 +782,8 @@ where
             .verify_inner::<C>(a_enc, mta_out, ek_n, ek_nn, ntilde, Some((X, &self.u)))?;
 
         // EC check: s1 * G == e * X + u
-        let s1_scalar = integer_to_scalar::<C>(&self.proof.s1);
-        let e_scalar = integer_to_scalar::<C>(&self.proof.e);
+        let s1_scalar = C::scalar_from_integer(&self.proof.s1);
+        let e_scalar = C::scalar_from_integer(&self.proof.e);
         let G = C::generator();
         let lhs = G * s1_scalar;
         let rhs = *X * e_scalar + self.u;
@@ -872,7 +869,7 @@ mod tests {
         let ntilde = setup_ntilde(&mut rng);
 
         // Alice's secret: a small value in [1, q)
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         let a = q.sample_below_ref(&mut rng);
 
         // Encrypt a
@@ -893,7 +890,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         let a = q.sample_below_ref(&mut rng);
         let (cipher, _r) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt");
 
@@ -928,7 +925,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
 
         // Alice encrypts her secret
         let a = q.sample_below_ref(&mut rng);
@@ -970,7 +967,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
 
         // Alice encrypts her secret
         let a = q.sample_below_ref(&mut rng);
@@ -1019,7 +1016,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
 
         // Alice encrypts her secret
         let a = q.sample_below_ref(&mut rng);
@@ -1029,7 +1026,7 @@ mod tests {
         let b = q.sample_below_ref(&mut rng);
 
         // X = bG
-        let b_scalar = integer_to_scalar::<TestCurve>(&b);
+        let b_scalar = TestCurve::scalar_from_integer(&b);
         let G = <TestCurve as CurveArithmetic>::ProjectivePoint::GENERATOR;
         let X = G * b_scalar;
 
@@ -1065,7 +1062,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
 
         // Alice encrypts her secret
         let a = q.sample_below_ref(&mut rng);
@@ -1075,7 +1072,7 @@ mod tests {
         let b = q.sample_below_ref(&mut rng);
 
         // X = bG (correct public key)
-        let b_scalar = integer_to_scalar::<TestCurve>(&b);
+        let b_scalar = TestCurve::scalar_from_integer(&b);
         let G = <TestCurve as CurveArithmetic>::ProjectivePoint::GENERATOR;
         let X = G * b_scalar;
 
@@ -1124,14 +1121,14 @@ mod tests {
 
         let ntilde = setup_ntilde(&mut rng);
 
-        let q_order = curve_order::<TestCurve>();
+        let q_order = TestCurve::order();
 
         let a = q_order.sample_below_ref(&mut rng);
         let (enc_a, _r_a) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");
 
         let b = q_order.sample_below_ref(&mut rng);
 
-        let b_scalar = integer_to_scalar::<TestCurve>(&b);
+        let b_scalar = TestCurve::scalar_from_integer(&b);
         let G = <TestCurve as CurveArithmetic>::ProjectivePoint::GENERATOR;
         let X = G * b_scalar;
 

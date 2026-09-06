@@ -38,7 +38,6 @@ use tecdsa_paillier::{
 use crate::{
     error::Kgg24Error,
     key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
-    keygen::curve_order,
 };
 
 /// Security parameter tau.
@@ -120,7 +119,7 @@ where
     let ek_new = dk_new.encryption_key().clone();
 
     // Sample noise t' from [0, 2^{tau + 2*kappa})
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
     let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
     let t_prime = noise_bound.sample_below_ref(rng);
 
@@ -291,7 +290,7 @@ mod tests {
 
         // Verify the new ciphertext decrypts to x_1_new mod q
         let decrypted = p1.dk.decrypt(&p2.c_key).expect("decryption failed");
-        let q_int = curve_order::<Secp256k1>();
+        let q_int = Secp256k1::order();
         let decrypted_mod_q = decrypted.modulo(&q_int);
 
         let x1_bytes = p1.secret_share.to_repr();

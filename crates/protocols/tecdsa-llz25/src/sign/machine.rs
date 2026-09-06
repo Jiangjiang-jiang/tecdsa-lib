@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::conv::scalar_to_bytes;
+use tecdsa_curve::ScalarExt;
 use tecdsa_protocol::{
     ecdsa::Signature, state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine,
 };
@@ -131,8 +131,8 @@ impl Llz25SignMachine {
 
         // Serialize partial signature for broadcast.
         let payload = PartialSigPayload {
-            w_i_bytes: scalar_to_bytes(&partial.w_i),
-            u_i_bytes: scalar_to_bytes(&partial.u_i),
+            w_i_bytes: partial.w_i.to_bytes_vec(),
+            u_i_bytes: partial.u_i.to_bytes_vec(),
         };
         let payload_bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard())
             .map_err(|e| Llz25Error::Protocol(format!("serialize partial sig: {e}")))?;

@@ -244,7 +244,7 @@ where
     hasher.update(B.to_bytes().as_ref());
 
     let hash = hasher.finalize();
-    tecdsa_curve::conv::bytes_to_scalar::<C>(&hash)
+    C::scalar_from_bytes(&hash)
 }
 
 // ---------------------------------------------------------------------------

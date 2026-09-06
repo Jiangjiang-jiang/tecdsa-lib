@@ -507,7 +507,7 @@ impl ScaledDecryptMtA {
 
 #[cfg(test)]
 mod tests {
-
+    use tecdsa_curve::TecdsaCurve;
     use tecdsa_protocol::MtABroadcast;
 
     use super::*;
@@ -526,7 +526,7 @@ mod tests {
     }
 
     fn secp256k1_order_bytes() -> Vec<u8> {
-        tecdsa_curve::conv::curve_order::<k256::Secp256k1>().to_digits::<u8>(Order::Msf)
+        k256::Secp256k1::order().to_digits::<u8>(Order::Msf)
     }
 
     #[test]

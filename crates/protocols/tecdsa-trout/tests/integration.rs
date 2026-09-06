@@ -14,7 +14,7 @@
 use elliptic_curve::PrimeField;
 use sha2::{Digest, Sha256};
 use tecdsa_class_group::cl::ClSetup;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
 use tecdsa_trout::{
     key_share::TroutKeyShare, keygen::trusted_dealer_keygen, presign::presign_round1,
@@ -29,7 +29,7 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
         .into_option()
         .unwrap_or_else(|| {
             use rug::{integer::Order, Integer};
-            let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
+            let q = k256::Secp256k1::order();
             let val = Integer::from_digits(&bytes, Order::Msf) % &q;
             let mut padded = [0u8; 32];
             let be = val.to_digits::<u8>(Order::Msf);
@@ -185,8 +185,8 @@ fn test_scaled_decrypt_standalone() {
     let mut com_qfis = Vec::new();
 
     for i in 0..n {
-        let a_bytes = tecdsa_curve::conv::scalar_to_bytes(&a[i]);
-        let b_bytes = tecdsa_curve::conv::scalar_to_bytes(&b[i]);
+        let a_bytes = a[i].to_bytes_vec();
+        let b_bytes = b[i].to_bytes_vec();
 
         let (sk_tmp, _) = setup.keygen().expect("keygen");
         let alpha_i = setup.sk_to_bytes(&sk_tmp).expect("sk_bytes");
@@ -218,12 +218,12 @@ fn test_scaled_decrypt_standalone() {
         .map(|i| ScaledDecryptPartyInput {
             alpha_i: alphas[i].clone(),
             beta_i: betas[i].clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes(&b[i]),
+            b_i: b[i].to_bytes_vec(),
         })
         .collect();
 
     let result_bytes = scaled_decrypt_local(&setup, &inputs, &public).expect("scaled_decrypt");
-    let result = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&result_bytes);
+    let result = k256::Secp256k1::scalar_from_bytes(&result_bytes);
     assert_eq!(
         result, expected,
         "scaled decryption must correctly compute a*b mod q"

@@ -55,6 +55,7 @@ use tecdsa_class_group::{
         compute_f_share, ScaledDecryptPartyInput, ScaledDecryptPublic,
     },
 };
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -87,8 +88,8 @@ pub fn sign_round2(
 ) -> TroutResult<Signature<k256::Secp256k1>> {
     let _n = all_presigns.len();
     let r_scalar = all_presigns[0].r_scalar;
-    let r_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_scalar);
-    let m_bytes = tecdsa_curve::conv::scalar_to_bytes(message.digest());
+    let r_bytes = r_scalar.to_bytes_vec();
+    let m_bytes = (message.digest()).to_bytes_vec();
 
     // ---------------------------------------------------------------
     // Reconstruct per-party components from broadcasts
@@ -204,7 +205,7 @@ pub fn sign_round2(
         .map(|p| ScaledDecryptPartyInput {
             alpha_i: p.alpha_i.clone(),
             beta_i: p.beta_i.clone(),
-            b_i: tecdsa_curve::conv::scalar_to_bytes(&p.u_i),
+            b_i: p.u_i.to_bytes_vec(),
         })
         .collect();
 
@@ -213,9 +214,7 @@ pub fn sign_round2(
         let f_i = compute_f_share(setup, input, &sd1_public)?;
         f1_shares.push(f_i);
     }
-    let uk = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&aggregate_and_solve(
-        setup, &f1_shares,
-    )?);
+    let uk = k256::Secp256k1::scalar_from_bytes(&aggregate_and_solve(setup, &f1_shares)?);
 
     // ---------------------------------------------------------------
     // Scaled Decryption #2: compute u * (H(m) + r*x)
@@ -237,15 +236,14 @@ pub fn sign_round2(
     let sd2_inputs: Vec<ScaledDecryptPartyInput> = all_presigns
         .iter()
         .map(|p| {
-            let r_val =
-                Integer::from_digits(&tecdsa_curve::conv::scalar_to_bytes(&r_scalar), Order::Msf);
+            let r_val = Integer::from_digits(&r_scalar.to_bytes_vec(), Order::Msf);
             let lid_val = Integer::from_digits(&p.l_i_delta_i, Order::Msf);
             let alpha_z = (r_val * lid_val).to_digits::<u8>(Order::Msf);
 
             ScaledDecryptPartyInput {
                 alpha_i: alpha_z,
                 beta_i: p.beta_i.clone(),
-                b_i: tecdsa_curve::conv::scalar_to_bytes(&p.u_i),
+                b_i: p.u_i.to_bytes_vec(),
             }
         })
         .collect();
@@ -255,9 +253,7 @@ pub fn sign_round2(
         let f_i = compute_f_share(setup, input, &sd2_public)?;
         f2_shares.push(f_i);
     }
-    let u_mx = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&aggregate_and_solve(
-        setup, &f2_shares,
-    )?);
+    let u_mx = k256::Secp256k1::scalar_from_bytes(&aggregate_and_solve(setup, &f2_shares)?);
 
     // ---------------------------------------------------------------
     // Compute s = (u*k)^{-1} * u*(H(m)+r*x)

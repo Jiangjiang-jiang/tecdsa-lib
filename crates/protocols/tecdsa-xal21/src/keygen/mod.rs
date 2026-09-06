@@ -24,7 +24,7 @@ pub use interactive::{
 };
 pub use machine::{TwoPartyRole, Xal21KeyShare, Xal21KeygenMachine, Xal21KeygenMsg};
 use rand_core::CryptoRngCore;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{zk::mta_range::NTildeParams, BigIntExt};
 
 use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
@@ -115,15 +115,13 @@ where
     (p1_share, p2_share)
 }
 
-pub(crate) use tecdsa_curve::conv::{curve_order, scalar_to_bytes};
-
 #[allow(dead_code)]
 pub(crate) fn scalar_to_int<C: TecdsaCurve>(s: &C::Scalar) -> rug::Integer
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    rug::Integer::from_bytes_msf(&scalar_to_bytes(s))
+    rug::Integer::from_bytes_msf(&s.to_bytes_vec())
 }
 
 pub(crate) fn int_to_scalar<C: TecdsaCurve>(value: &rug::Integer) -> C::Scalar
@@ -131,7 +129,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    tecdsa_curve::conv::bytes_to_scalar::<C>(&value.to_bytes_msf())
+    C::scalar_from_bytes(&value.to_bytes_msf())
 }
 
 #[cfg(test)]

@@ -77,5 +77,3 @@ where
     let fb = FieldBytes::<C>::try_from(bytes).map_err(|_| ())?;
     Option::from(<C::Scalar as PrimeField>::from_repr(fb)).ok_or(())
 }
-
-pub use tecdsa_curve::conv::scalar_to_bytes;

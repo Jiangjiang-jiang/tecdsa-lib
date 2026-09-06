@@ -11,10 +11,7 @@ use rand_core::CryptoRngCore;
 use rug::Integer;
 use sha2::Sha256;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{
-    conv::{integer_to_scalar, scalar_to_integer},
-    TecdsaCurve,
-};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{
     zk::{pi_aff_g as pi_aff, pi_elog, pi_enc_elg},
     Ciphertext, DecryptionKey, EncryptionKey,
@@ -192,12 +189,12 @@ where
         let gamma_i = C::random_scalar(rng);
 
         let own_ek = &aux.paillier_eks[aux.party_index as usize];
-        let plaintext_k = scalar_to_integer::<C>(&k_i);
+        let plaintext_k = k_i.to_integer();
         let (big_k_i, rho_i) = own_ek
             .encrypt_with_random(rng, &plaintext_k)
             .expect("encryption of k_i must succeed");
 
-        let plaintext_gamma = scalar_to_integer::<C>(&gamma_i);
+        let plaintext_gamma = gamma_i.to_integer();
         let (big_g_i, gamma_nonce) = own_ek
             .encrypt_with_random(rng, &plaintext_gamma)
             .expect("encryption of gamma_i must succeed");
@@ -287,8 +284,8 @@ where
 
         let big_gamma_i = C::generator() * self.gamma_i;
 
-        let gamma_i_int = scalar_to_integer::<C>(&self.gamma_i);
-        let x_i_int = scalar_to_integer::<C>(&self.x_i_additive);
+        let gamma_i_int = self.gamma_i.to_integer();
+        let x_i_int = self.x_i_additive.to_integer();
 
         let mut beta_map: BTreeMap<PartyId, C::Scalar> = BTreeMap::new();
         let mut hat_beta_map: BTreeMap<PartyId, C::Scalar> = BTreeMap::new();
@@ -339,7 +336,7 @@ where
         let x_i_public = C::generator() * self.x_i_additive;
         let ge_x_i_public = to_ge_point::<C>(&x_i_public);
 
-        let k_i_int = scalar_to_integer::<C>(&self.k_i);
+        let k_i_int = self.k_i.to_integer();
 
         for &peer_pid in &self.signers_pids {
             if peer_pid == self.my_id {
@@ -357,7 +354,7 @@ where
 
             // --- MtA for gamma_i * k_j ---
             let beta_ij = C::random_scalar(&mut rng);
-            let beta_ij_int = scalar_to_integer::<C>(&beta_ij);
+            let beta_ij_int = beta_ij.to_integer();
             let neg_beta_ij_int = -beta_ij_int;
 
             let d_step1 = peer_ek
@@ -378,7 +375,7 @@ where
 
             // --- MtA for x_i * k_j ---
             let hat_beta_ij = C::random_scalar(&mut rng);
-            let hat_beta_ij_int = scalar_to_integer::<C>(&hat_beta_ij);
+            let hat_beta_ij_int = hat_beta_ij.to_integer();
             let neg_hat_beta_ij_int = -hat_beta_ij_int;
 
             let hat_d_step1 = peer_ek
@@ -443,7 +440,7 @@ where
                     x: &ge_b2,
                 },
                 pi_enc_elg::PrivateData {
-                    plaintext: &scalar_to_integer::<C>(&self.gamma_i),
+                    plaintext: &self.gamma_i.to_integer(),
                     nonce: &self.gamma_nonce,
                     b: &ge_b_i,
                 },
@@ -801,14 +798,14 @@ where
                 .dk
                 .decrypt(&round2.big_d)
                 .map_err(|e| TecdsaError::Other(format!("decrypt alpha from {peer_index}: {e}")))?;
-            let alpha_ij = integer_to_scalar::<C>(&alpha_int);
+            let alpha_ij = C::scalar_from_integer(&alpha_int);
             alpha_sum += alpha_ij;
 
             // Decrypt hat_D to get hat_alpha_ij
             let hat_alpha_int = self.dk.decrypt(&round2.hat_big_d).map_err(|e| {
                 TecdsaError::Other(format!("decrypt hat_alpha from {peer_index}: {e}"))
             })?;
-            let hat_alpha_ij = integer_to_scalar::<C>(&hat_alpha_int);
+            let hat_alpha_ij = C::scalar_from_integer(&hat_alpha_int);
             hat_alpha_sum += hat_alpha_ij;
         }
 

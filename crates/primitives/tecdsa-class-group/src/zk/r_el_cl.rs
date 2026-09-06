@@ -21,9 +21,9 @@
 //! z2 mod q (for EC checks only).
 
 use elliptic_curve::group::GroupEncoding;
-use k256::{ProjectivePoint, Scalar, Secp256k1};
+use k256::{ProjectivePoint, Secp256k1};
 use rug::{integer::Order, Integer};
-use tecdsa_curve::conv;
+use tecdsa_curve::TecdsaCurve;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
 use crate::cl::{ClResult, ClSetup, Qfi};
@@ -44,15 +44,6 @@ pub struct RElClProof {
     pub z2: Vec<u8>,
     /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
-}
-
-fn bytes_to_scalar(bytes: &[u8]) -> ClResult<Scalar> {
-    Ok(conv::bytes_to_scalar::<Secp256k1>(bytes))
-}
-
-#[cfg(test)]
-fn test_scalar(val: u64) -> Scalar {
-    Scalar::from(val)
 }
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
@@ -99,12 +90,12 @@ impl RElClProof {
 
         // 2. Compute commitments.
         // EC: R_elg = a2 * G
-        let a2_scalar = bytes_to_scalar(&a2)?;
+        let a2_scalar = Secp256k1::scalar_from_bytes(&a2);
         let r_elg = ProjectivePoint::GENERATOR * a2_scalar;
         let r_elg_bytes = point_to_bytes(&r_elg);
 
         // EC: S_elg = a1 * D + a2 * elek
-        let a1_scalar = bytes_to_scalar(&a1)?;
+        let a1_scalar = Secp256k1::scalar_from_bytes(&a1);
         let s_elg = *d * a1_scalar + *elek * a2_scalar;
         let s_elg_bytes = point_to_bytes(&s_elg);
 
@@ -198,9 +189,9 @@ impl RElClProof {
             return Ok(false);
         }
 
-        let z1_scalar = bytes_to_scalar(&self.z1)?;
-        let z2_scalar = bytes_to_scalar(&self.z2)?;
-        let e_scalar = bytes_to_scalar(&self.e)?;
+        let z1_scalar = Secp256k1::scalar_from_bytes(&self.z1);
+        let z2_scalar = Secp256k1::scalar_from_bytes(&self.z2);
+        let e_scalar = Secp256k1::scalar_from_bytes(&self.e);
 
         // Check 1: z2 * G == R_elg + e * elg_0
         let lhs1 = ProjectivePoint::GENERATOR * z2_scalar;
@@ -251,14 +242,14 @@ mod tests {
         let g = ProjectivePoint::GENERATOR;
 
         // ElGamal key
-        let eldk = test_scalar(42);
+        let eldk = k256::Scalar::from(42u64);
         let elek = g * eldk;
 
         // Witness: gamma and r
         let gamma_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
         let r_bytes = Integer::from(23u32).to_digits::<u8>(Order::Msf);
-        let gamma_scalar = test_scalar(17);
-        let r_scalar = test_scalar(23);
+        let gamma_scalar = k256::Scalar::from(17u64);
+        let r_scalar = k256::Scalar::from(23u64);
 
         // ElGamal encryption of g^gamma: (r*G, gamma*G + r*elek)
         let elg_0 = g * r_scalar;
@@ -305,11 +296,11 @@ mod tests {
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         let g = ProjectivePoint::GENERATOR;
-        let eldk = test_scalar(42);
+        let eldk = k256::Scalar::from(42u64);
         let elek = g * eldk;
 
-        let gamma_scalar = test_scalar(17);
-        let r_scalar = test_scalar(23);
+        let gamma_scalar = k256::Scalar::from(17u64);
+        let r_scalar = k256::Scalar::from(23u64);
         let r_bytes = Integer::from(23u32).to_digits::<u8>(Order::Msf);
 
         let elg_0 = g * r_scalar;

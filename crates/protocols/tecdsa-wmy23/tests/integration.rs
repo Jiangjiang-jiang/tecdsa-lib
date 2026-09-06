@@ -8,6 +8,7 @@
 
 use sha2::{Digest, Sha256};
 use tecdsa_class_group::cl::ClSetup;
+use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
 use tecdsa_wmy23::{
     key_share::Wmy23KeyShare,
@@ -31,7 +32,7 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
         .into_option()
         .unwrap_or_else(|| {
             use rug::{integer::Order, Integer};
-            let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
+            let q = k256::Secp256k1::order();
             let val = Integer::from_digits(&bytes, Order::Msf) % &q;
             let mut padded = [0u8; 32];
             let offset = 32 - val.to_digits::<u8>(Order::Msf).len();

@@ -20,9 +20,9 @@
 //! rerandomisation parameter `rho`.
 
 use elliptic_curve::group::GroupEncoding;
-use k256::{ProjectivePoint, Scalar, Secp256k1};
+use k256::{ProjectivePoint, Secp256k1};
 use rug::{integer::Order, Integer};
-use tecdsa_curve::conv;
+use tecdsa_curve::TecdsaCurve;
 
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
@@ -45,15 +45,6 @@ pub struct RMAffDlEcProof {
     pub beta_hat: Vec<u8>,
     /// Fiat-Shamir challenge (big-endian bytes).
     pub e: Vec<u8>,
-}
-
-fn bytes_to_scalar(bytes: &[u8]) -> ClResult<Scalar> {
-    Ok(conv::bytes_to_scalar::<Secp256k1>(bytes))
-}
-
-#[cfg(test)]
-fn test_scalar(val: u64) -> Scalar {
-    Scalar::from(val)
 }
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
@@ -119,11 +110,11 @@ impl RMAffDlEcProof {
         let d_prime_2 = setup.compose(&c2_k0, &f_neg_beta0)?;
 
         // 3. Compute EC commitments.
-        let beta0_scalar = bytes_to_scalar(&beta0)?;
+        let beta0_scalar = Secp256k1::scalar_from_bytes(&beta0);
         let b0 = ProjectivePoint::GENERATOR * beta0_scalar;
         let b0_bytes = point_to_bytes(&b0);
 
-        let k0_scalar = bytes_to_scalar(&k0_star)?;
+        let k0_scalar = Secp256k1::scalar_from_bytes(&k0_star);
         let r0 = ProjectivePoint::GENERATOR * k0_scalar;
         let r0_bytes = point_to_bytes(&r0);
 
@@ -205,16 +196,16 @@ impl RMAffDlEcProof {
         }
 
         // Check 3: (k_hat mod q) * G == R0 + ch * R
-        let khat_scalar = bytes_to_scalar(&self.k_hat)?;
+        let khat_scalar = Secp256k1::scalar_from_bytes(&self.k_hat);
         let lhs3 = ProjectivePoint::GENERATOR * khat_scalar;
-        let e_scalar = bytes_to_scalar(&self.e)?;
+        let e_scalar = Secp256k1::scalar_from_bytes(&self.e);
         let rhs3 = r0 + *r_point * e_scalar;
         if lhs3 != rhs3 {
             return Ok(false);
         }
 
         // Check 4: beta_hat * G == B0 + ch * B
-        let bhat_scalar = bytes_to_scalar(&self.beta_hat)?;
+        let bhat_scalar = Secp256k1::scalar_from_bytes(&self.beta_hat);
         let lhs4 = ProjectivePoint::GENERATOR * bhat_scalar;
         let rhs4 = b0 + *b_point * e_scalar;
         if lhs4 != rhs4 {
@@ -262,9 +253,9 @@ mod tests {
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("compose");
 
         // EC points: R = k_star * G, B = beta * G.
-        let k_scalar = bytes_to_scalar(&k_star).expect("k scalar");
+        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
         let r_point = ProjectivePoint::GENERATOR * k_scalar;
-        let beta_scalar = test_scalar(17);
+        let beta_scalar = k256::Scalar::from(17u64);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
         let proof = RMAffDlEcProof::prove(
@@ -314,9 +305,9 @@ mod tests {
         let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("compose");
 
-        let k_scalar = bytes_to_scalar(&k_star).expect("k scalar");
+        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
         let r_point = ProjectivePoint::GENERATOR * k_scalar;
-        let beta_scalar = test_scalar(17);
+        let beta_scalar = k256::Scalar::from(17u64);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
         // Prove with WRONG k_star.
@@ -372,9 +363,9 @@ mod tests {
         let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("compose");
 
-        let k_scalar = bytes_to_scalar(&k_star).expect("k scalar");
+        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
         let r_point = ProjectivePoint::GENERATOR * k_scalar;
-        let beta_scalar = test_scalar(17);
+        let beta_scalar = k256::Scalar::from(17u64);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
         // Prove with WRONG beta.

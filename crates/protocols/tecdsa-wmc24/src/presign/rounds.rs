@@ -13,7 +13,7 @@ use tecdsa_class_group::{
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
     zk::ddh::{DdhProof, DdhStatement, DdhWitness},
-    TecdsaCurve,
+    ScalarExt, TecdsaCurve,
 };
 use tecdsa_elgamal::Ciphertext as ElGamalCiphertext;
 use tecdsa_protocol::{state_machine::Outgoing, PartyId, Recipient};
@@ -190,7 +190,7 @@ pub(crate) fn transition_r1_to_r2(
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
     let lambda_i = lagrange_coeffs[my_idx];
     let lambda_x_i = lambda_i * key_mat.x_i;
-    let lambda_x_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&lambda_x_i);
+    let lambda_x_i_bytes = lambda_x_i.to_bytes_vec();
 
     let xk_bar_i = scalar_mul_ct(setup, &k_bar, &lambda_x_i_bytes)
         .map_err(|e| TecdsaError::Other(format!("scalar_mul xk_bar_i: {e}")))?;
@@ -219,9 +219,9 @@ pub(crate) fn transition_r1_to_r2(
         let bu = Integer::from_str_radix(&sk_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse sk: {e}")))?;
         let reduced = bu % &q;
-        tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
+        k256::Secp256k1::scalar_from_integer(&reduced)
     };
-    let gamma_i_bytes = tecdsa_curve::conv::scalar_to_bytes(&gamma_i);
+    let gamma_i_bytes = gamma_i.to_bytes_vec();
 
     // ElGamal encrypt g^{gamma_i}: D_gamma_i = t-ElG.Enc(elek, g^{gamma_i}; r_{gamma_i}).
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
@@ -239,7 +239,7 @@ pub(crate) fn transition_r1_to_r2(
         let bu = Integer::from_str_radix(&sk_dec, 10)
             .map_err(|e| TecdsaError::Other(format!("parse sk: {e}")))?;
         let reduced = bu % &q;
-        tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
+        k256::Secp256k1::scalar_from_integer(&reduced)
     };
     let d_gamma_i = tecdsa_elgamal::encrypt(&key_mat.elek, &g_gamma_i, &r_elg_i);
 
@@ -265,8 +265,8 @@ pub(crate) fn transition_r1_to_r2(
         &ck_1,
         &cgk_0,
         &cgk_1,
-        &tecdsa_curve::conv::scalar_to_bytes(&gamma_i),
-        &tecdsa_curve::conv::scalar_to_bytes(&r_elg_i),
+        &gamma_i.to_bytes_vec(),
+        &r_elg_i.to_bytes_vec(),
     )
     .map_err(|e| TecdsaError::Other(format!("R_El-CL prove: {e}")))?;
 
@@ -502,7 +502,7 @@ pub(crate) fn finalize(
         threshold_cl::final_decrypt(setup, &state.gk_bar, key_mat.n_parties_dkg, &pd_cls)
             .map_err(|e| TecdsaError::Other(format!("final_decrypt gk: {e}")))?;
 
-    let gamma_k = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&gamma_k_bytes);
+    let gamma_k = k256::Secp256k1::scalar_from_bytes(&gamma_k_bytes);
 
     // 3. R = (g^gamma)^{1/(gamma*k)} = g^{1/k}.
     let gamma_k_inv: k256::Scalar = {

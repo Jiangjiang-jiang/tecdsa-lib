@@ -22,10 +22,7 @@ use elliptic_curve::{
 use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
 use tecdsa_bigint::BigIntExt;
-use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar},
-    TecdsaCurve,
-};
+use tecdsa_curve::TecdsaCurve;
 
 /// Verification error for the nonce consistency proof.
 #[derive(Debug, thiserror::Error)]
@@ -271,7 +268,7 @@ where
         statement: &NonceConsistStatement<C>,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let q = curve_order::<C>();
+        let q = C::order();
         let q3 = (&q * &q).complete() * &q;
         let q5 = (&q3 * &q).complete() * &q;
         let q8 = (&q5 * &q).complete() * &q * &q;
@@ -304,7 +301,7 @@ where
             .expect("bases are invertible modulo n");
 
         // u1 = G^alpha (EC point)
-        let alpha_scalar = integer_to_scalar::<C>(&alpha);
+        let alpha_scalar = C::scalar_from_integer(&alpha);
         let u1 = statement.G * alpha_scalar;
 
         // u2 = Gamma^alpha * beta^N mod N^2
@@ -401,7 +398,7 @@ where
     /// # Errors
     /// Returns [`NonceConsistError::Verify`] if the proof does not verify.
     pub fn verify(&self, statement: &NonceConsistStatement<C>) -> Result<(), NonceConsistError> {
-        let q = curve_order::<C>();
+        let q = C::order();
         let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
@@ -412,11 +409,11 @@ where
         let neg_e = -e.clone();
 
         // --- EC check: G^{s1} * r_i^{-e} == u1 ---
-        let s1_scalar = integer_to_scalar::<C>(&self.s1);
+        let s1_scalar = C::scalar_from_integer(&self.s1);
         let g_s1 = statement.G * s1_scalar;
 
         let e_neg_int = &q - (e % &q);
-        let e_neg_scalar = integer_to_scalar::<C>(&e_neg_int);
+        let e_neg_scalar = C::scalar_from_integer(&e_neg_int);
         let r_i_neg_e = statement.r_i * e_neg_scalar;
         let u1_check = g_s1 + r_i_neg_e;
 
@@ -527,14 +524,14 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         let G = Point::GENERATOR;
 
         // eta1 = k_i (nonce share)
         let eta1 = q.sample_below_ref(&mut rng);
 
         // r_i = G^{eta1}
-        let eta1_scalar = integer_to_scalar::<TestCurve>(&eta1);
+        let eta1_scalar = TestCurve::scalar_from_integer(&eta1);
         let r_i = G * eta1_scalar;
 
         // u = Enc(rho) — the base ciphertext
@@ -588,11 +585,11 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = curve_order::<TestCurve>();
+        let q = TestCurve::order();
         let G = Point::GENERATOR;
 
         let eta1 = q.sample_below_ref(&mut rng);
-        let eta1_scalar = integer_to_scalar::<TestCurve>(&eta1);
+        let eta1_scalar = TestCurve::scalar_from_integer(&eta1);
         let r_i = G * eta1_scalar;
 
         let rho = q.sample_below_ref(&mut rng);

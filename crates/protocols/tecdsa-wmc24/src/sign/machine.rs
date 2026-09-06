@@ -9,6 +9,7 @@ use tecdsa_class_group::{
     zk::r_part_dec::RPartDecProof,
 };
 use tecdsa_core::TecdsaError;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{
     ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
     state_machine::Outgoing,
@@ -76,10 +77,10 @@ impl Wmc24OnlineSignMachine {
         }
 
         let m = hash_message_to_scalar(message);
-        let m_bytes = tecdsa_curve::conv::scalar_to_bytes(&m);
+        let m_bytes = m.to_bytes_vec();
         let message_data = DataToSign::from_digest(m);
         let r_x = presignature.r_x;
-        let r_x_bytes = tecdsa_curve::conv::scalar_to_bytes(&r_x);
+        let r_x_bytes = r_x.to_bytes_vec();
 
         // Reconstruct k_bar ciphertext.
         let kb_c1 = Qfi::from_bytes(&presignature.k_bar_c1_abc.data);
@@ -227,7 +228,7 @@ impl Wmc24OnlineSignMachine {
 
         // s = km + rkx -- this is already the s value for ECDSA with R = g^{1/k}.
         // ECDSA verify: g^{s^{-1}m} * X^{s^{-1}r} = g^{(m+rx)/s} = g^{(m+rx)/(km+rkx)} = g^{1/k} = R
-        let s_raw = tecdsa_curve::conv::bytes_to_scalar::<k256::Secp256k1>(&s_bytes);
+        let s_raw = k256::Secp256k1::scalar_from_bytes(&s_bytes);
         let s = low_s_normalize::<k256::Secp256k1>(s_raw);
 
         let sig = Signature { r: r_x, s };

@@ -14,7 +14,7 @@ use k256::Secp256k1;
 use rand_core::OsRng;
 use rug::Integer;
 use tecdsa_bench::zk_fixtures::{NTildeFixture, PaillierFixture, PedersenFixture};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::MtA;
 
@@ -23,7 +23,7 @@ static NTILDE: LazyLock<NTildeFixture> = LazyLock::new(NTildeFixture::generate);
 static PEDERSEN: LazyLock<PedersenFixture> = LazyLock::new(PedersenFixture::generate);
 
 fn q_bytes() -> Vec<u8> {
-    tecdsa_curve::conv::curve_order::<Secp256k1>().to_bytes_msf()
+    Secp256k1::order().to_bytes_msf()
 }
 
 // ---------------------------------------------------------------------------
@@ -307,8 +307,8 @@ fn nim_mta(c: &mut Criterion) {
     let mut nim_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
     let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
     let x_scalar = Secp256k1::random_scalar(&mut OsRng);
-    let x = tecdsa_curve::conv::scalar_to_bytes(&x_scalar);
-    let y = tecdsa_curve::conv::scalar_to_bytes(&Secp256k1::random_scalar(&mut OsRng));
+    let x = x_scalar.to_bytes_vec();
+    let y = (Secp256k1::random_scalar(&mut OsRng)).to_bytes_vec();
     // V = x * G is the EC commitment that R_Ped binds the Encode_A output to.
     let big_v = (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar)
         .to_bytes()

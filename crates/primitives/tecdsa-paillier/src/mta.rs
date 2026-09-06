@@ -805,6 +805,7 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
 #[cfg(test)]
 mod tests {
     use rand_core::OsRng;
+    use tecdsa_curve::TecdsaCurve;
 
     use super::*;
 
@@ -817,7 +818,7 @@ mod tests {
 
     /// Helper: compute curve order q as a big integer.
     fn curve_order_int() -> Integer {
-        tecdsa_curve::conv::curve_order::<k256::Secp256k1>()
+        k256::Secp256k1::order()
     }
 
     #[test]

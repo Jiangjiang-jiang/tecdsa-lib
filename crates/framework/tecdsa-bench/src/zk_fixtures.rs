@@ -11,7 +11,6 @@
 use k256::Secp256k1;
 use rand_core::OsRng;
 use rug::Integer;
-pub use tecdsa_curve::conv::scalar_to_bytes;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::BigIntExt;
 
@@ -58,7 +57,7 @@ pub fn sample_below(bound: &Integer) -> Integer {
 }
 
 pub fn group_order() -> Integer {
-    tecdsa_curve::conv::curve_order::<C>()
+    C::order()
 }
 
 /// Ring-Pedersen auxiliary parameters (N_tilde, h1, h2).
