@@ -58,6 +58,7 @@ where
     /// `R = R_2^{k_1}` — combined nonce point for DH check.
     pub r_point: C::ProjectivePoint,
     /// `S = enc_N(u; rho^{lambda_0}) * E^v mod N^2` — OLE ciphertext.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub s_ct: tecdsa_paillier::Ciphertext,
 }
 

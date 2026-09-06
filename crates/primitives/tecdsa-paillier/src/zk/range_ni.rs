@@ -65,8 +65,10 @@ pub struct RangeProofNi {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EncryptedPair {
     /// `c_masked_i = c (+) c_mask_i`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub c_masked: fast_paillier::Ciphertext,
     /// `c_mask_i = Enc(rho_i; t_i)`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub c_mask: fast_paillier::Ciphertext,
 }
 
@@ -77,15 +79,19 @@ pub enum RangeResponse {
     /// and `s_i` is the nonce of `c_masked_i`.
     Open {
         /// `w_i = x + rho_i`, the masked plaintext.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         w: Integer,
         /// `s_i`, the Paillier nonce of `c_masked_i`.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         s: Integer,
     },
     /// Challenge bit = 1: reveal `(rho_i, t_i)` to prove the mask structure.
     Verify {
         /// `rho_i`, the random mask.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         rho: Integer,
         /// `t_i`, the Paillier nonce for `c_mask_i`.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         t: Integer,
     },
 }

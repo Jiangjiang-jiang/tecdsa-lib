@@ -1351,7 +1351,6 @@ dependencies = [
  "gmp-mpfr-sys",
  "libc",
  "libm",
- "serde",
 ]
 
 [[package]]

@@ -200,17 +200,23 @@ pub struct PrivateData<'a> {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
 pub struct Commitment<C: Curve> {
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub a: Integer,
     pub b_x: Point<C>,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub b_y: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub e: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub s: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub f: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub t: Integer,
 }
 
@@ -236,11 +242,17 @@ pub type Challenge = Integer;
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Proof {
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z1: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z2: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z3: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z4: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub w: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub w_y: Integer,
 }
 

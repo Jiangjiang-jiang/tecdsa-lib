@@ -165,8 +165,10 @@ where
     /// Paillier encryption key.
     pub ek: tecdsa_paillier::EncryptionKey,
     /// `c_key = Enc_pk(x_1)`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c_key: tecdsa_paillier::Ciphertext,
     /// Paillier nonce used to encrypt `x_1` (needed for range proof).
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c_key_nonce: Integer,
     /// Proof that P1 knows the factorization of `N`.
     pub correct_key_proof: NICorrectKeyProof,

@@ -14,11 +14,17 @@ use crate::backend::Integer;
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CrtExp {
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     n: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     n1: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     phi_n1: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     n2: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     phi_n2: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     beta: Integer,
 }
 
@@ -26,7 +32,9 @@ pub struct CrtExp {
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Exponent {
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     e_mod_phi_pp: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "crate::backend::int_wire"))]
     e_mod_phi_qq: Integer,
     is_negative: bool,
 }

@@ -103,6 +103,7 @@ where
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Party2PartialSigMsg {
     /// `c_3 = Enc(rho*q + k_tilde_2_inv*m' + r*k_tilde_2_inv*x_2) (+) (C ^ (r*k_tilde_2_inv))`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c3: tecdsa_paillier::Ciphertext,
 }
 

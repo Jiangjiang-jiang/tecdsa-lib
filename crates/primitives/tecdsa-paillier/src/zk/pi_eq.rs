@@ -52,12 +52,15 @@ where
     FieldBytesSize<C>: ModulusSize,
 {
     /// Ciphertext commitment `gamma_1 = Enc_N(b; delta)`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub gamma_1: fast_paillier::Ciphertext,
     /// EC point commitment `gamma_2 = b * G` (reduced mod q).
     pub gamma_2: C::ProjectivePoint,
     /// Integer response `z1 = x_hat_1 * sigma + b`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z1: Integer,
     /// Nonce response `z2 = rho^sigma * delta mod N`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z2: Integer,
 }
 

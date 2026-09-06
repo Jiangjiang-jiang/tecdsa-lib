@@ -121,6 +121,7 @@ where
     /// DLog proof for `X1`.
     pub dlog_proof: DlogProof<C>,
     /// Paillier ciphertext `C = Enc_N(x1 + t*q)`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c_key: tecdsa_paillier::Ciphertext,
     /// Paillier encryption key.
     pub ek: tecdsa_paillier::EncryptionKey,

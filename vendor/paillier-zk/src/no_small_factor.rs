@@ -120,12 +120,19 @@ pub struct PrivateData<'a> {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct PrivateCommitment {
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub alpha: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub beta: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub mu: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub nu: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub r: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub x: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub y: Integer,
 }
 
@@ -134,14 +141,19 @@ pub struct PrivateCommitment {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Commitment {
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub p: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub q: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub a: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub b: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub t: Integer,
 }
 
@@ -153,10 +165,15 @@ pub type Challenge = Integer;
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Proof {
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z1: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z2: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub w1: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub w2: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub v: Integer,
 }
 

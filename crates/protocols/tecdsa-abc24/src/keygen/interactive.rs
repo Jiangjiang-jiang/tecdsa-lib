@@ -219,6 +219,7 @@ where
     /// Commitment opening nonce for B.
     pub nonce: [u8; 32],
     /// `E = enc_N(x'_2; rho)` -- Paillier encryption of server's share.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub enc_x2: tecdsa_paillier::Ciphertext,
 }
 

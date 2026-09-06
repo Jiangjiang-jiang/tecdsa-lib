@@ -11,12 +11,25 @@ use fast_paillier::backend::{BigIntExt, Integer};
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MultiexpTable {
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "fast_paillier::backend::int_wire::vec")
+    )]
     s: Vec<Integer>,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     ell_x: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     s_to_ell_x: Integer,
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "fast_paillier::backend::int_wire::vec")
+    )]
     t: Vec<Integer>,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     ell_y: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     t_to_ell_y: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     N: Integer,
 }
 

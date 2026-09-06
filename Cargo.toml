@@ -23,7 +23,13 @@ generic-ec = { version = "0.5", features = ["curve-secp256k1", "serde"] }
 
 # Big integers
 gmp-mpfr-sys = "1.7"
-rug = { version = "1", features = ["serde"] }
+# No "serde" feature: rug's native serde encodes integers as radix-16 strings
+# ({radix, value}), which doubles wire size under bincode. `Integer` fields
+# use the compact `tecdsa_bigint::int_wire` (workspace crates) or
+# `fast_paillier::backend::int_wire` (vendor/fast-paillier, vendor/paillier-zk)
+# adapters instead. Re-enabling this feature would silently regress that
+# (nothing in the workspace legitimately needs rug's own serde impl).
+rug = { version = "1" }
 
 # Hashing
 sha2 = "0.10"

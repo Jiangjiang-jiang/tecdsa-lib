@@ -37,6 +37,7 @@ pub(crate) struct WireR1Msg {
 pub(crate) struct WireR2Msg {
     pub(crate) x1_point_bytes: Vec<u8>,
     pub(crate) dlog_proof_json: Vec<u8>,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub(crate) c_key: tecdsa_paillier::Ciphertext,
     pub(crate) ek: tecdsa_paillier::EncryptionKey,
     pub(crate) pi_gcd: NICorrectKeyProof,
@@ -53,6 +54,7 @@ pub(crate) struct WireR3Msg {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WirePiEq {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub(crate) gamma_1: tecdsa_paillier::Ciphertext,
     pub(crate) gamma_2_bytes: Vec<u8>,
     pub(crate) z1_bytes: Vec<u8>,

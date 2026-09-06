@@ -43,6 +43,7 @@ pub(crate) struct WireStep2Msg {
 pub(crate) struct WireStep3Msg {
     pub(crate) x2_point_bytes: Vec<u8>,
     pub(crate) nonce: [u8; 32],
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub(crate) enc_x2: tecdsa_paillier::Ciphertext,
 }
 
