@@ -10,7 +10,6 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use k256::Secp256k1;
 use rand::thread_rng;
 use rug::{integer::Order, Complete, Integer};
-use tecdsa::bigint::random_below;
 use tecdsa_bench::zk_fixtures::*;
 use tecdsa_class_group::cl::{Cleartext, Mpz, SECP256K1_ORDER};
 use tecdsa_curve::TecdsaCurve;
@@ -1561,7 +1560,7 @@ fn joye_libert_zk(c: &mut Criterion) {
     {
         use tecdsa_joye_libert::zk::zkjl_com::{jl_commit, ZkJlComProof};
         let m = Integer::from(42u32);
-        let r = random_below(&jl_pk.n, rng);
+        let r = jl_pk.n.sample_below_ref(rng);
         let c = jl_commit(jl_pk, &m, &r);
         let proof = ZkJlComProof::prove(jl_pk, &c, &m, &r, jl_pk.k, rng);
         assert!(proof.verify(jl_pk, &c), "ZkJlComProof fixture invalid");
@@ -1601,8 +1600,8 @@ fn joye_libert_zk(c: &mut Criterion) {
         let jl_ex = &*JL_EXTRA;
         let pk0 = &jl_ex.pk0;
         let m = Integer::from(42u32);
-        let r1 = random_below(&jl_pk.n, rng);
-        let r0 = random_below(&pk0.n, rng);
+        let r1 = jl_pk.n.sample_below_ref(rng);
+        let r0 = pk0.n.sample_below_ref(rng);
         let c = jl_commit(jl_pk, &m, &r1);
         let c_prime = jl_commit(pk0, &m, &r0);
         let proof = ZkJlEquProof::prove(jl_pk, pk0, &c, &c_prime, &m, &r1, &r0, jl_pk.k, rng);
@@ -1625,7 +1624,7 @@ fn joye_libert_zk(c: &mut Criterion) {
         let (ct_b, _) = tecdsa_joye_libert::enc_dec::encrypt(jl_pk, &b_msg, rng);
         let a = Integer::from(5u32);
         let alpha = Integer::from(13u32);
-        let r_aff = random_below(&jl_pk.n, rng);
+        let r_aff = jl_pk.n.sample_below_ref(rng);
         let c_a = ct_b.c.pow_mod_ref(&a, &jl_pk.n).unwrap().complete();
         let y_alpha = jl_pk.y.pow_mod_ref(&alpha, &jl_pk.n).unwrap().complete();
         let h_r = jl_pk.h.pow_mod_ref(&r_aff, &jl_pk.n).unwrap().complete();
@@ -1655,7 +1654,7 @@ fn joye_libert_zk(c: &mut Criterion) {
         let ell = 3;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&jl_pk.n, rng);
+            let alpha_i = jl_pk.n.sample_below_ref(rng);
             let y_i = jl_x.pow_mod_ref(&alpha_i, &jl_pk.n).unwrap().complete();
             y_vec.push(y_i);
         }
@@ -1665,7 +1664,7 @@ fn joye_libert_zk(c: &mut Criterion) {
             Integer::from(99u32),
         ];
         let b_bits_vec = vec![32u32, 32, 32];
-        let r_vc = random_below(&jl_pk.n, rng);
+        let r_vc = jl_pk.n.sample_below_ref(rng);
         let c_vc = jl_vec_commit(jl_pk, &y_vec, &m_vec, &r_vc);
         let proof = ZkJlvComProof::prove(jl_pk, &y_vec, &c_vc, &m_vec, &r_vc, &b_bits_vec, rng);
         assert!(
@@ -1690,17 +1689,17 @@ fn joye_libert_zk(c: &mut Criterion) {
         let ell = 2;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&jl_pk.n, rng);
+            let alpha_i = jl_pk.n.sample_below_ref(rng);
             y_vec.push(jl_x.pow_mod_ref(&alpha_i, &jl_pk.n).unwrap().complete());
         }
         let m_vec = vec![Integer::from(42u32), Integer::from(17u32)];
         let b_bits_vec = vec![32u32, 32];
-        let r1 = random_below(&jl_pk.n, rng);
+        let r1 = jl_pk.n.sample_below_ref(rng);
         let c_ve = jl_vec_commit(jl_pk, &y_vec, &m_vec, &r1);
         let mut c_prime_vec = Vec::with_capacity(ell);
         let mut r0_vec = Vec::with_capacity(ell);
         for i in 0..ell {
-            let r0 = random_below(&pk0.n, rng);
+            let r0 = pk0.n.sample_below_ref(rng);
             c_prime_vec.push(jl_commit(pk0, &m_vec[i], &r0));
             r0_vec.push(r0);
         }

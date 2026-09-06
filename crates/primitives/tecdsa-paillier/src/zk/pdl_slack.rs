@@ -184,12 +184,6 @@ where
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Sample a random integer in `[1, bound)`.
-fn sample_range_one_to(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
-    let bound_minus_one = bound - Integer::one();
-    bound_minus_one.sample_below_ref(rng) + Integer::one()
-}
-
 /// Hash public values and commitments to produce a Fiat-Shamir challenge.
 fn compute_challenge<C>(
     stmt: &PdlSlackStatement<C>,
@@ -256,7 +250,7 @@ where
 
         // 1. Sample blinding values
         let alpha = q3.sample_below_ref(rng);
-        let beta = sample_range_one_to(&statement.ek_n, rng);
+        let beta = statement.ek_n.sample_positive_below(rng);
         let rho = (q * &statement.N_tilde).sample_below_ref(rng);
         let gamma = (q3 * &statement.N_tilde).sample_below_ref(rng);
 
@@ -404,7 +398,7 @@ mod tests {
         // Sample a secret x (as an Integer, must fit in the Paillier plaintext range)
         let q = curve_order::<TestCurve>();
         // x should be a small value relative to N, let's pick something in [1, q)
-        let x = sample_range_one_to(&q, &mut rng);
+        let x = q.sample_positive_below(&mut rng);
 
         // Q = x * G
         let x_scalar = integer_to_scalar::<TestCurve>(&x);
@@ -441,7 +435,7 @@ mod tests {
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
         let q = curve_order::<TestCurve>();
-        let x = sample_range_one_to(&q, &mut rng);
+        let x = q.sample_positive_below(&mut rng);
 
         let x_scalar = integer_to_scalar::<TestCurve>(&x);
         let G = Point::GENERATOR;
@@ -461,7 +455,7 @@ mod tests {
         };
 
         // Use a *wrong* x in the witness
-        let wrong_x = sample_range_one_to(&q, &mut rng);
+        let wrong_x = q.sample_positive_below(&mut rng);
         let witness = PdlSlackWitness { x: wrong_x, r };
 
         let proof = PdlSlackProof::prove(&witness, &statement, &mut rng);
@@ -479,7 +473,7 @@ mod tests {
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
         let q = curve_order::<TestCurve>();
-        let x = sample_range_one_to(&q, &mut rng);
+        let x = q.sample_positive_below(&mut rng);
 
         let x_scalar = integer_to_scalar::<TestCurve>(&x);
         let G = Point::GENERATOR;
@@ -488,7 +482,7 @@ mod tests {
         let (ciphertext, r) = ek.encrypt_with_random(&mut rng, &x).expect("encrypt");
 
         // Use a *wrong* Q (random point, not matching x)
-        let wrong_scalar = integer_to_scalar::<TestCurve>(&sample_range_one_to(&q, &mut rng));
+        let wrong_scalar = integer_to_scalar::<TestCurve>(&q.sample_positive_below(&mut rng));
         let wrong_Q = G * wrong_scalar;
 
         let statement = PdlSlackStatement::<TestCurve> {
@@ -519,7 +513,7 @@ mod tests {
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
         let q = curve_order::<TestCurve>();
-        let x = sample_range_one_to(&q, &mut rng);
+        let x = q.sample_positive_below(&mut rng);
 
         let x_scalar = integer_to_scalar::<TestCurve>(&x);
         let G = Point::GENERATOR;

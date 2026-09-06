@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use rand_core::CryptoRngCore;
 use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::{JlPublicKey, JlSecretKey};
 
@@ -43,7 +43,7 @@ pub fn encrypt(
     let two_pow_k = Integer::two_pow(pk.k);
     assert!(m < &two_pow_k, "plaintext must be in Z_{{2^k}}");
 
-    let r = random_below(&pk.n, rng);
+    let r = pk.n.sample_below_ref(rng);
     let ct = encrypt_with_randomness(pk, m, &r);
     (ct, r)
 }
@@ -186,7 +186,7 @@ mod tests {
                 &max - Integer::from(1),
             ];
             for _ in 0..8 {
-                cases.push(random_below(&Integer::two_pow(k), &mut rng));
+                cases.push(Integer::two_pow(k).sample_below_ref(&mut rng));
             }
             for m in cases {
                 let (ct, _r) = encrypt(&pk, &m, &mut rng);

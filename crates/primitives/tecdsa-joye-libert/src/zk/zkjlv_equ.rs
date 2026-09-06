@@ -15,7 +15,7 @@
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -82,7 +82,7 @@ impl ZkJlvEquProof {
 
         // Sample blinding values
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
-        let w = random_below(&w_bound, rng);
+        let w = w_bound.sample_below_ref(rng);
 
         let mut v_vec = Vec::with_capacity(ell);
         let mut w0_vec = Vec::with_capacity(ell);
@@ -93,8 +93,8 @@ impl ZkJlvEquProof {
             let v_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
             let w0_bound = Integer::from(&pk0.n << (STAT_SEC + CHALLENGE_BITS));
 
-            let v = random_below(&v_bound, rng);
-            let w0 = random_below(&w0_bound, rng);
+            let v = v_bound.sample_below_ref(rng);
+            let w0 = w0_bound.sample_below_ref(rng);
 
             // d'_i = y0^{2^k0 * v} * h0^{2^k0 * w0} mod N0
             let exp_y0 = Integer::from(&two_pow_k0 * &v);
@@ -292,7 +292,7 @@ mod tests {
         let ell = 2;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&pk.n, &mut rng);
+            let alpha_i = pk.n.sample_below_ref(&mut rng);
             let y_i = x
                 .pow_mod_ref(&alpha_i, &pk.n)
                 .expect("exponent is non-negative")
@@ -302,7 +302,7 @@ mod tests {
 
         let m_vec = vec![Integer::from(42u32), Integer::from(17u32)];
         let b_bits_vec = vec![32u32, 32];
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         // Vector commitment under pk
         let c = jl_vec_commit(&pk, &y_vec, &m_vec, &r);
@@ -311,7 +311,7 @@ mod tests {
         let mut c_prime_vec = Vec::with_capacity(ell);
         let mut r0_vec = Vec::with_capacity(ell);
         for i in 0..ell {
-            let r0 = random_below(&pk0.n, &mut rng);
+            let r0 = pk0.n.sample_below_ref(&mut rng);
             let cp = jl_commit(&pk0, &m_vec[i], &r0);
             c_prime_vec.push(cp);
             r0_vec.push(r0);

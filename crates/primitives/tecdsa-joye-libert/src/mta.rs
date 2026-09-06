@@ -19,7 +19,7 @@
 use rand_core::CryptoRngCore;
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 use zeroize::Zeroize;
 
 use crate::{
@@ -197,7 +197,7 @@ pub fn mta_sender_step_with_sec(
     // Sample alpha' <- [0, q^2 * 2^{2s+t})
     let q_sq = Integer::from(q * q);
     let alpha_prime_bound = q_sq << (2 * s + t);
-    let alpha_prime = random_below(&alpha_prime_bound, rng);
+    let alpha_prime = alpha_prime_bound.sample_below_ref(rng);
 
     // Shift factor: 2^{s+t} * q
     let shift = Integer::from(q << (s + t));
@@ -222,7 +222,7 @@ pub fn mta_sender_step_with_sec(
         .pow_mod_ref(&alpha_prime, &pk_receiver.n)
         .expect("exponent is non-negative")
         .complete();
-    let r = random_below(&pk_receiver.n, rng);
+    let r = pk_receiver.n.sample_below_ref(rng);
     let h_r = pk_receiver
         .h
         .pow_mod_ref(&r, &pk_receiver.n)
@@ -447,7 +447,7 @@ impl MtA for JlMtA {
         // Sample alpha' <- [0, q^2 * 2^{2s+t})
         let q_sq = Integer::from(&q * &q);
         let alpha_prime_bound = q_sq << (2 * setup.s + setup.t);
-        let alpha_prime = random_below(&alpha_prime_bound, rng);
+        let alpha_prime = alpha_prime_bound.sample_below_ref(rng);
 
         // Shift factor: 2^{s+t} * q
         let shift = Integer::from(&q << (setup.s + setup.t));
@@ -463,7 +463,7 @@ impl MtA for JlMtA {
 
         // C_1 = C_shifted^a * y^{alpha'} * h^{r_aff} mod N, via one shared-
         // squaring multi-exponentiation instead of three modexps + two muls.
-        let r_aff = random_below(&setup.pk.n, rng);
+        let r_aff = setup.pk.n.sample_below_ref(rng);
         let c_1 = setup.pk.n.multi_exp(
             &[&c_shifted, &setup.pk.y, &setup.pk.h],
             &[&a, &alpha_prime, &r_aff],
@@ -609,8 +609,8 @@ mod tests {
 
         let q = Integer::two_pow(q_bits);
 
-        let a = random_below(&q, &mut rng);
-        let b = random_below(&q, &mut rng);
+        let a = q.sample_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
         let ab_mod_q = Integer::from(&a * &b).modulo(&q);
 
         let sender = JlMtaSender::new(a);

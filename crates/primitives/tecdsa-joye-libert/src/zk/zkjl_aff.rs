@@ -13,7 +13,7 @@
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -73,9 +73,9 @@ impl ZkJlAffProof {
         let v2_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b2_bits);
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
 
-        let v1 = random_below(&v1_bound, rng);
-        let v2 = random_below(&v2_bound, rng);
-        let w = random_below(&w_bound, rng);
+        let v1 = v1_bound.sample_below_ref(rng);
+        let v2 = v2_bound.sample_below_ref(rng);
+        let w = w_bound.sample_below_ref(rng);
 
         // Commitment: d = C^v1 * y^v2 * h^w mod N, via one shared-squaring
         // multi-exponentiation instead of three modexps + two muls.
@@ -159,7 +159,7 @@ mod tests {
         // Affine op: C_aff = C^a * y^alpha * h^r mod N
         let a = Integer::from(5u32);
         let alpha = Integer::from(13u32);
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         let c_a = ct_b
             .c
@@ -191,7 +191,7 @@ mod tests {
 
         let a = Integer::from(5u32);
         let alpha = Integer::from(13u32);
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         let c_a = ct_b
             .c
@@ -210,7 +210,7 @@ mod tests {
 
         // Wrong witness
         let wrong_a = Integer::from(99u32);
-        let wrong_r = random_below(&pk.n, &mut rng);
+        let wrong_r = pk.n.sample_below_ref(&mut rng);
         let proof = ZkJlAffProof::prove(
             &pk, &ct_b.c, &c_aff, &wrong_a, &alpha, &wrong_r, 32, 32, &mut rng,
         );

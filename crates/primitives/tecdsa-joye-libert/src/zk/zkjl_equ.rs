@@ -11,7 +11,7 @@
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -77,9 +77,9 @@ impl ZkJlEquProof {
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
         let w0_bound = Integer::from(&pk0.n << (STAT_SEC + CHALLENGE_BITS));
 
-        let v = random_below(&v_bound, rng);
-        let w = random_below(&w_bound, rng);
-        let w0 = random_below(&w0_bound, rng);
+        let v = v_bound.sample_below_ref(rng);
+        let w = w_bound.sample_below_ref(rng);
+        let w0 = w0_bound.sample_below_ref(rng);
 
         // Commitment under pk: d = y^{2^k*v} * h^{2^k*w} mod N
         let exp_y = Integer::from(&two_pow_k * &v);
@@ -230,8 +230,8 @@ mod tests {
         let (pk0, _sk0) = generate_keypair_with_params(256, 32, &mut rng);
 
         let m = Integer::from(42u32);
-        let r = random_below(&pk.n, &mut rng);
-        let r0 = random_below(&pk0.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
+        let r0 = pk0.n.sample_below_ref(&mut rng);
 
         let c = jl_commit(&pk, &m, &r);
         let c_prime = jl_commit(&pk0, &m, &r0);
@@ -249,8 +249,8 @@ mod tests {
 
         let m1 = Integer::from(42u32);
         let m2 = Integer::from(99u32);
-        let r = random_below(&pk.n, &mut rng);
-        let r0 = random_below(&pk0.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
+        let r0 = pk0.n.sample_below_ref(&mut rng);
 
         let c = jl_commit(&pk, &m1, &r);
         let c_prime = jl_commit(&pk0, &m2, &r0);
