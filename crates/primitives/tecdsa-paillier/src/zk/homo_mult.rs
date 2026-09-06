@@ -195,7 +195,7 @@ impl HomoMultProof {
     {
         let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
-        let q_N_tilde = (&q * &statement.N_tilde).complete();
+        let q_N_tilde = q * &statement.N_tilde;
         let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values

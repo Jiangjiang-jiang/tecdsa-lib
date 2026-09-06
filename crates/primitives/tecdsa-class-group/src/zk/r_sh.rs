@@ -102,7 +102,7 @@ fn dual_code_coeffs(c2s: &[&Qfi], degree: usize, q: &Integer) -> ClResult<Vec<In
 fn horner_eval(coeffs: &[Integer], x: &Integer, q: &Integer) -> Integer {
     let mut result = Integer::new();
     for coeff in coeffs.iter().rev() {
-        result = (Integer::from(&result * x) + coeff) % q;
+        result = (result * x + coeff) % q;
     }
     result
 }
@@ -168,7 +168,7 @@ fn aggregate_products(
             }
             // (i - j) mod q, normalized to [0, q).
             let diff_pos = (Integer::from(i_id) - Integer::from(j_id)).modulo(&q);
-            den = Integer::from(&den * &diff_pos) % &q;
+            den = den * diff_pos % &q;
         }
 
         // Invert via Fermat's little theorem.
@@ -177,7 +177,7 @@ fn aggregate_products(
         // If dual code is active, multiply by polynomial evaluation.
         if degree_signed >= 0 {
             let value = horner_eval(&check_coeffs, &i_big, &q);
-            den = Integer::from(&den * &value) % &q;
+            den = den * value % &q;
         }
 
         // exp_i = c_i * M + den.
@@ -271,7 +271,7 @@ impl RShProof {
         // 6. Response: rho_response = k * rho + rho0.
         let k_uint = Integer::from_digits(&k_bytes, Order::Msf);
         let rho_uint = Integer::from_digits(rho_bytes, Order::Msf);
-        let rho_response = Integer::from(&k_uint * &rho_uint) + &rho0;
+        let rho_response = k_uint * rho_uint + rho0;
 
         Ok(Self {
             k: k_bytes,
@@ -368,8 +368,8 @@ mod tests {
             let mut val = Integer::new();
             let mut x_pow = Integer::from(1);
             for coeff in &coeffs {
-                val = (&val + Integer::from(coeff * &x_pow)) % &q;
-                x_pow = Integer::from(&x_pow * &x) % &q;
+                val = (val + coeff * &x_pow) % &q;
+                x_pow = x_pow * &x % &q;
             }
             shares.push(val.to_digits::<u8>(Order::Msf));
         }

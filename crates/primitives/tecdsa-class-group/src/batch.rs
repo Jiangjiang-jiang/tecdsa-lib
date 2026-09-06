@@ -87,7 +87,7 @@ pub fn batch_verify(setup: &ClSetup, instances: &[BatchInstance]) -> ClResult<bo
         // rhs += commit^w * target^{w*e}
         let commit_w = setup.exp_bytes(&inst.commitment, &w_bytes)?;
         let chal = Integer::from_digits(&inst.challenge, Order::Msf);
-        let we = Integer::from(&w * &chal).to_digits::<u8>(Order::Msf);
+        let we = (w * chal).to_digits::<u8>(Order::Msf);
         let target_we = setup.exp_bytes(&inst.target, &we)?;
         let rhs_part = setup.compose(&commit_w, &target_we)?;
         rhs = setup.compose(&rhs, &rhs_part)?;

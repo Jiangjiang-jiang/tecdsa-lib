@@ -302,7 +302,7 @@ mod ggn16_helpers {
         let n_int = ek.n().clone();
         let p_minus_1 = &p - Integer::one();
         let q_minus_1 = &q - Integer::one();
-        let lambda = p_minus_1.lcm_ref(&q_minus_1).complete();
+        let lambda = p_minus_1.lcm(&q_minus_1);
         let beta = loop {
             let candidate = n_int.sample_below_ref(&mut rng);
             if candidate > Integer::zero() && candidate.gcd_ref(&n_int).complete() == Integer::one()
@@ -310,13 +310,13 @@ mod ggn16_helpers {
                 break candidate;
             }
         };
-        let d = (&lambda * &beta).complete();
+        let d = lambda * beta;
         let theta = d.modulo_ref(&n_int).complete();
         let mut delta = Integer::one();
         for i in 2..=n as u32 {
             delta *= Integer::from(i);
         }
-        let m = (&n_int * &delta).complete();
+        let m = n_int * &delta;
         let mut coeffs = vec![d];
         for _ in 0..corruption_t {
             coeffs.push(m.sample_below_ref(&mut rng));

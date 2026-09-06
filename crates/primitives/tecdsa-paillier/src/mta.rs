@@ -750,7 +750,7 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
         );
 
         // 5. alpha = -alpha' mod q
-        let alpha = (&q - &alpha_prime.modulo(&q)).complete().modulo(&q);
+        let alpha = (&q - alpha_prime.modulo(&q)).modulo(&q);
         let alpha_bytes = alpha.to_bytes_msf();
 
         let msg = PaillierReceiverMsg {
@@ -824,7 +824,7 @@ mod tests {
         let neg_one = -k256::Scalar::ONE;
         let neg_one_bytes = neg_one.to_repr();
         let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-        (&q_minus_1 + 1u8).complete()
+        q_minus_1 + 1u8
     }
 
     #[test]
@@ -934,8 +934,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).complete().modulo(&q);
-        let expected = (&a * &b).complete().modulo(&q);
+        let sum = (alpha + beta).modulo(&q);
+        let expected = (a * b).modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -977,8 +977,8 @@ mod tests {
 
             let alpha = Integer::from_bytes_msf(&alpha_bytes);
             let beta = Integer::from_bytes_msf(&beta_bytes);
-            let sum = (&alpha + &beta).complete().modulo(&q);
-            let expected = (&a * &b).complete().modulo(&q);
+            let sum = (alpha + beta).modulo(&q);
+            let expected = (a * b).modulo(&q);
 
             assert_eq!(sum, expected, "MtA correctness must hold in all runs");
         }
@@ -1053,8 +1053,8 @@ mod tests {
 
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).complete().modulo(&q);
-        let expected = (&a * &b).complete().modulo(&q);
+        let sum = (alpha + beta).modulo(&q);
+        let expected = (a * b).modulo(&q);
 
         assert_eq!(
             sum, expected,
@@ -1155,8 +1155,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).complete().modulo(&q);
-        let expected = (&a * &b).complete().modulo(&q);
+        let sum = (alpha + beta).modulo(&q);
+        let expected = (a * b).modulo(&q);
 
         assert_eq!(
             sum, expected,

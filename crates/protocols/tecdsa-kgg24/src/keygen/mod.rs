@@ -75,7 +75,7 @@ where
     // Compute x_hat_1 = x_1 + t * q (the noised share)
     let x1_bytes = x1.to_repr();
     let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
-    let x_hat_1 = tecdsa_paillier::backend::Integer::from(&x1_int + &t * &q_int);
+    let x_hat_1 = x1_int + t * q_int;
 
     // Encrypt x_hat_1: C = Enc_pk(x_1 + t*q)
     let (c_key, _nonce) = dk
@@ -143,7 +143,7 @@ mod tests {
 
         // The decrypted value is x_1 + t*q, so (decrypted mod q) should equal x_1
         let q_int = curve_order::<Secp256k1>();
-        let decrypted_mod_q = tecdsa_paillier::backend::Integer::from(decrypted.modulo_ref(&q_int));
+        let decrypted_mod_q = decrypted.modulo(&q_int);
         assert_eq!(decrypted_mod_q, x1_int);
     }
 }

@@ -128,7 +128,7 @@ where
     let neg_one = -C::Scalar::ONE;
     let neg_one_bytes = neg_one.to_repr();
     let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    Integer::from(&q_minus_1 + 1u8)
+    q_minus_1 + 1u8
 }
 
 pub(crate) use tecdsa_curve::conv::scalar_to_bytes;

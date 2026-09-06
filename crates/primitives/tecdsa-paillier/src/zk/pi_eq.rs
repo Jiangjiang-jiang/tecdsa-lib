@@ -135,7 +135,7 @@ where
             .expect("pow_mod for z2 must succeed")
             .complete()
             * &delta;
-        let z2 = z2.modulo_ref(n).complete();
+        let z2 = z2.modulo(n);
 
         Self {
             gamma_1,
@@ -202,10 +202,7 @@ where
             .pow_mod_ref(&sigma_int, nn)
             .expect("pow_mod for C^sigma must succeed")
             .complete();
-        let lhs = (&self.gamma_1 * &c_to_sigma)
-            .complete()
-            .modulo_ref(nn)
-            .complete();
+        let lhs = (&self.gamma_1 * &c_to_sigma).complete().modulo(nn);
         let rhs = raw_encrypt(n, &self.z1, &self.z2);
         if lhs != rhs {
             return false;
@@ -237,7 +234,7 @@ where
     let neg_one = -C::Scalar::ONE;
     let neg_one_bytes = neg_one.to_repr();
     let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    (&q_minus_1 + 1u8).complete()
+    q_minus_1 + 1u8
 }
 
 /// Raw Paillier encryption: `Enc_N(m; r) = (1 + m*N) * r^N mod N^2`.
@@ -248,15 +245,13 @@ where
 fn raw_encrypt(n: &Integer, plaintext: &Integer, nonce: &Integer) -> Integer {
     let nn = (n * n).complete();
     // (1 + m*N) mod N^2
-    let term1 = (Integer::one() + (plaintext * n).complete())
-        .modulo_ref(&nn)
-        .complete();
+    let term1 = (Integer::one() + (plaintext * n).complete()).modulo(&nn);
     // r^N mod N^2
     let term2 = nonce
         .pow_mod_ref(n, &nn)
         .expect("pow_mod for r^N must succeed")
         .complete();
-    (&term1 * &term2).complete().modulo_ref(&nn).complete()
+    (term1 * term2).modulo(&nn)
 }
 
 /// Sample a random element from Z*_N (coprime to N and nonzero).
@@ -338,7 +333,7 @@ mod tests {
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
         let noise_bound = Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
         let t = noise_bound.sample_below_ref(&mut rng);
-        let x_hat_1 = &x1_int + (&t * &q_int).complete();
+        let x_hat_1 = &x1_int + (t * q_int);
 
         // Encrypt x_hat_1
         let (c, enc_nonce) = dk

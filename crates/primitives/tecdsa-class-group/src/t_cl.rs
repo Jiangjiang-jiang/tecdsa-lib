@@ -197,7 +197,7 @@ mod tests {
         for i in 2..=n {
             delta *= i as u64;
         }
-        let delta_sk = Integer::from(&delta * &sk);
+        let delta_sk = delta * sk;
 
         // Generate t-1 random coefficients (arbitrary precision).
         // Use secretkey_bound as the range for random coefficients.

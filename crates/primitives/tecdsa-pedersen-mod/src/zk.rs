@@ -164,6 +164,221 @@ impl PiPrm {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Pi_mod — Blum modulus proof (CGGMP20 Figure 12)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Proof that N is a Paillier-Blum modulus (CGGMP20 Figure 12).
+///
+/// Proves N = pq where p, q are primes with p = q = 3 mod 4,
+/// using m = 80 challenges with Jacobi classification, Blum fourth roots,
+/// and N-th roots. Soundness error: 2^{-81}.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiMod {
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    w: Integer,
+    proof_points: Vec<PiModPoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PiModPoint {
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    x: Integer,
+    a: bool,
+    b: bool,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    z: Integer,
+}
+
+impl PiMod {
+    /// Prove that a raw modulus N = p*q is a Blum modulus (CGGMP20 Figure 12).
+    ///
+    /// This is the primary API for proving any RSA-type modulus is Blum,
+    /// including Paillier moduli used in CGGMP20 aux-info.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `find_residue` fails for a challenge, which should not
+    /// happen with a valid Blum modulus and correctly chosen w.
+    #[allow(clippy::similar_names, clippy::many_single_char_names)]
+    pub fn prove_modulus(
+        n: &Integer,
+        p: &Integer,
+        q: &Integer,
+        rng: &mut impl CryptoRngCore,
+    ) -> Option<Self> {
+        use crate::number_theory::{
+            blum_fourth_root, find_residue, mod_inverse, sample_neg_jacobi,
+        };
+
+        let expected_n = Integer::from(p * q);
+        if expected_n != *n {
+            return None;
+        }
+
+        if !tecdsa_bigint::is_safe_prime(p) || !tecdsa_bigint::is_safe_prime(q) {
+            return None;
+        }
+        if p.mod_u(4) != 3 || q.mod_u(4) != 3 {
+            return None;
+        }
+
+        let w = sample_neg_jacobi(n, rng);
+
+        let phi_n = Integer::from(p - 1) * Integer::from(q - 1);
+
+        let n_inv = mod_inverse(n, &phi_n)?;
+
+        let challenges = Self::derive_challenges(n, &w);
+
+        let proof_points: Vec<PiModPoint> = challenges
+            .iter()
+            .map(|y_i| {
+                let z = y_i.clone().pow_mod(&n_inv, n).unwrap();
+
+                let (a, b, y_prime) = find_residue(y_i, &w, p, q, n)
+                    .expect("find_residue must succeed for valid Blum modulus");
+
+                let x = blum_fourth_root(&y_prime, p, q, n);
+
+                PiModPoint { x, a, b, z }
+            })
+            .collect();
+
+        Some(Self { w, proof_points })
+    }
+
+    /// Convenience wrapper: prove ring-Pedersen modulus is Blum.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `find_residue` fails (see [`prove_modulus`](Self::prove_modulus)).
+    pub fn prove(
+        params: &PedersenModParams,
+        secret: &PedersenModSecret,
+        rng: &mut impl CryptoRngCore,
+    ) -> Option<Self> {
+        Self::prove_modulus(&params.n, &secret.p, &secret.q, rng)
+    }
+
+    /// Verify `PiMod` proof against a raw modulus N (CGGMP20 Figure 12).
+    ///
+    /// The `rng` parameter is used for probabilistic Miller-Rabin composite
+    /// testing (25 rounds). For deterministic benchmark results, pass a
+    /// seeded CSPRNG.
+    #[must_use]
+    pub fn verify_modulus(&self, n: &Integer, rng: &mut impl CryptoRngCore) -> bool {
+        use crate::number_theory::is_probably_composite;
+
+        if n.is_even() {
+            return false;
+        }
+
+        if !is_probably_composite(n, 25, rng) {
+            return false;
+        }
+
+        if *n <= 1 {
+            return false;
+        }
+
+        if self.w == 0 || self.w >= *n {
+            return false;
+        }
+        if self.w.clone().gcd(n) != 1 {
+            return false;
+        }
+        if tecdsa_bigint::jacobi(&self.w, n) != -1 {
+            return false;
+        }
+
+        if self.proof_points.len() != SECURITY_PARAM {
+            return false;
+        }
+
+        let challenges = Self::derive_challenges(n, &self.w);
+
+        for (point, y_i) in self.proof_points.iter().zip(challenges.iter()) {
+            if point.x == 0 || point.x >= *n {
+                return false;
+            }
+            if point.x.clone().gcd(n) != 1 {
+                return false;
+            }
+            if point.z == 0 || point.z >= *n {
+                return false;
+            }
+            if point.z.clone().gcd(n) != 1 {
+                return false;
+            }
+
+            let z_pow_n = point.z.clone().pow_mod(n, n).unwrap();
+            if z_pow_n != *y_i {
+                return false;
+            }
+
+            let mut expected = y_i.clone();
+            if point.a {
+                expected = Integer::from(n - &expected);
+            }
+            if point.b {
+                expected = expected * &self.w % n;
+            }
+
+            let x_pow_4 = point.x.clone().pow_mod(&Integer::from(4), n).unwrap();
+            if x_pow_4 != expected {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Convenience wrapper: verify against ring-Pedersen modulus.
+    #[must_use]
+    pub fn verify(&self, params: &PedersenModParams, rng: &mut impl CryptoRngCore) -> bool {
+        self.verify_modulus(&params.n, rng)
+    }
+
+    fn derive_challenges(n: &Integer, w: &Integer) -> Vec<Integer> {
+        use sha2::{Digest, Sha256};
+
+        let n_bytes = integer_to_bytes(n);
+        let n_byte_len = n_bytes.len();
+
+        let mut challenges = Vec::with_capacity(SECURITY_PARAM);
+        let mut counter: u32 = 0;
+
+        while challenges.len() < SECURITY_PARAM {
+            let mut hasher = Sha256::new();
+            hasher.update(b"pi_mod_challenge");
+            hasher.update(&n_bytes);
+            hasher.update(integer_to_bytes(w));
+            hasher.update(counter.to_be_bytes());
+            let seed = hasher.finalize();
+
+            let mut expanded = Vec::with_capacity(n_byte_len);
+            let mut block_input = seed.to_vec();
+            while expanded.len() < n_byte_len {
+                let mut h = Sha256::new();
+                h.update(&block_input);
+                let block = h.finalize();
+                expanded.extend_from_slice(&block);
+                block_input = block.to_vec();
+            }
+            expanded.truncate(n_byte_len);
+
+            let candidate = Integer::from_digits(&expanded, rug::integer::Order::Msf) % n;
+            if candidate > 1 && candidate.clone().gcd(n) == 1 {
+                challenges.push(candidate);
+            }
+            counter += 1;
+        }
+
+        challenges
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

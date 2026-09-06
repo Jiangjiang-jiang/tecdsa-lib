@@ -63,10 +63,7 @@ impl NICorrectKeyProof {
         for i in 0..SECURITY_PARAM {
             let y_i = derive_challenge(n, domain, i);
             // x_i = y_i^{N^{-1} mod phi(N)} mod N
-            let x_i = y_i
-                .pow_mod_ref(&n_inv_phi, n)
-                .expect("pow_mod must succeed")
-                .complete();
+            let x_i = y_i.pow_mod(&n_inv_phi, n).expect("pow_mod must succeed");
             responses.push(x_i);
         }
 
@@ -128,7 +125,7 @@ fn derive_challenge(n: &Integer, domain: &[u8], index: usize) -> Integer {
         }
 
         let candidate = Integer::from_bytes_msf(&hash_bytes[..n_byte_len]);
-        let reduced = candidate.modulo_ref(n).complete();
+        let reduced = candidate.modulo(n);
 
         // Ensure we get a value in Z*_N (nonzero and coprime to N)
         if reduced.cmp0().is_gt() && reduced.gcd_ref(n).complete().is_one() {

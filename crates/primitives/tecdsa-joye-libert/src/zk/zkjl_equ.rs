@@ -83,7 +83,7 @@ impl ZkJlEquProof {
 
         // Commitment under pk: d = y^{2^k*v} * h^{2^k*w} mod N
         let exp_y = Integer::from(&two_pow_k * &v);
-        let exp_h = Integer::from(&two_pow_k * &w);
+        let exp_h = two_pow_k * &w;
         let y_v = pow_mod(&pk.y, &exp_y, &pk.n);
         let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
         let d = mul_mod(&y_v, &h_w, &pk.n);
@@ -91,7 +91,7 @@ impl ZkJlEquProof {
         // Commitment under pk0: d' = y0^{2^k*v} * h0^{2^k*w0} mod N0
         let two_pow_k0 = Integer::from(1) << pk0.k;
         let exp_y0 = Integer::from(&two_pow_k0 * &v);
-        let exp_h0 = Integer::from(&two_pow_k0 * &w0);
+        let exp_h0 = two_pow_k0 * &w0;
         let y0_v = pow_mod(&pk0.y, &exp_y0, &pk0.n);
         let h0_w0 = pow_mod(&pk0.h, &exp_h0, &pk0.n);
         let d_prime = mul_mod(&y0_v, &h0_w0, &pk0.n);
@@ -102,7 +102,7 @@ impl ZkJlEquProof {
         // Responses
         let z_m = Integer::from(&e * m) + &v;
         let z_r = Integer::from(&e * r) + &w;
-        let z_r0 = Integer::from(&e * r0) + &w0;
+        let z_r0 = e * r0 + &w0;
 
         Self {
             d,
@@ -130,7 +130,7 @@ impl ZkJlEquProof {
 
         // Check 1: y^{2^k*z_m} * h^{2^k*z_r} == c^e * d mod N
         let exp_y = Integer::from(&two_pow_k * &self.z_m);
-        let exp_h = Integer::from(&two_pow_k * &self.z_r);
+        let exp_h = two_pow_k * &self.z_r;
         let lhs1_y = pow_mod(&pk.y, &exp_y, &pk.n);
         let lhs1_h = pow_mod(&pk.h, &exp_h, &pk.n);
         let lhs1 = mul_mod(&lhs1_y, &lhs1_h, &pk.n);
@@ -144,7 +144,7 @@ impl ZkJlEquProof {
 
         // Check 2: y0^{2^k0*z_m} * h0^{2^k0*z_r0} == c'^e * d' mod N0
         let exp_y0 = Integer::from(&two_pow_k0 * &self.z_m);
-        let exp_h0 = Integer::from(&two_pow_k0 * &self.z_r0);
+        let exp_h0 = two_pow_k0 * &self.z_r0;
         let lhs2_y = pow_mod(&pk0.y, &exp_y0, &pk0.n);
         let lhs2_h = pow_mod(&pk0.h, &exp_h0, &pk0.n);
         let lhs2 = mul_mod(&lhs2_y, &lhs2_h, &pk0.n);

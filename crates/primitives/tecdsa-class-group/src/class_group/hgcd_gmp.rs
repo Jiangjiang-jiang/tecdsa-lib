@@ -494,14 +494,14 @@ mod tests {
                 let (by0, bx0) = balanced_pair(&mut rng, bits); // by0 > bx0
                 let (mut bx, mut by) = (bx0.clone(), by0.clone());
                 let (y, x, parity) = partial_reduce_hgcd2(&mut bx, &mut by, &l);
-                let det_rel = Integer::from(&x * &by) - Integer::from(&y * &bx);
+                let det_rel = Integer::from(&x * &by) - y * &bx;
                 assert_eq!(det_rel.clone().abs(), by0, "det invariant ({bits} bits)");
                 assert_eq!(
                     det_rel.cmp0() == Ordering::Less,
                     parity,
                     "parity ({bits} bits)"
                 );
-                let r = (Integer::from(&bx) - Integer::from(&x * &bx0)) % &by0;
+                let r = (Integer::from(&bx) - x * bx0) % &by0;
                 assert_eq!(r, 0, "bx ≡ x·bx0 (mod by0) ({bits} bits)");
                 assert!(
                     bx <= l || bx.cmp0() == Ordering::Equal,
@@ -523,14 +523,14 @@ mod tests {
                 let (by0, bx0) = balanced_pair(&mut rng, bits);
                 let (mut bx, mut by) = (bx0.clone(), by0.clone());
                 let (y, x, parity) = partial_reduce_mpn(&mut bx, &mut by, &l);
-                let det_rel = Integer::from(&x * &by) - Integer::from(&y * &bx);
+                let det_rel = Integer::from(&x * &by) - y * &bx;
                 assert_eq!(det_rel.clone().abs(), by0, "det invariant ({bits} bits)");
                 assert_eq!(
                     det_rel.cmp0() == Ordering::Less,
                     parity,
                     "parity ({bits} bits)"
                 );
-                let r = (Integer::from(&bx) - Integer::from(&x * &bx0)) % &by0;
+                let r = (Integer::from(&bx) - x * bx0) % &by0;
                 assert_eq!(r, 0, "bx == x*bx0 mod by0 ({bits} bits)");
                 assert!(
                     bx <= l || bx.cmp0() == Ordering::Equal,

@@ -240,7 +240,7 @@ pub fn sign_round2(
             let r_val =
                 Integer::from_digits(&tecdsa_curve::conv::scalar_to_bytes(&r_scalar), Order::Msf);
             let lid_val = Integer::from_digits(&p.l_i_delta_i, Order::Msf);
-            let alpha_z = Integer::from(&r_val * &lid_val).to_digits::<u8>(Order::Msf);
+            let alpha_z = (r_val * lid_val).to_digits::<u8>(Order::Msf);
 
             ScaledDecryptPartyInput {
                 alpha_i: alpha_z,

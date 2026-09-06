@@ -126,7 +126,7 @@ where
     // Compute x_hat_1_new = x_1_new + t' * q
     let x1_new_bytes = x1_new.to_repr();
     let x1_new_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_new_bytes.as_ref());
-    let x_hat_1_new = tecdsa_paillier::backend::Integer::from(&x1_new_int + &t_prime * &q_int);
+    let x_hat_1_new = x1_new_int + t_prime * q_int;
 
     // Encrypt: C' = Enc_{N'}(x_hat_1_new; rho)
     let (c_key_new, enc_nonce) = dk_new.encrypt_with_random(rng, &x_hat_1_new).map_err(|e| {
@@ -291,7 +291,7 @@ mod tests {
         // Verify the new ciphertext decrypts to x_1_new mod q
         let decrypted = p1.dk.decrypt(&p2.c_key).expect("decryption failed");
         let q_int = curve_order::<Secp256k1>();
-        let decrypted_mod_q = tecdsa_paillier::backend::Integer::from(decrypted.modulo_ref(&q_int));
+        let decrypted_mod_q = decrypted.modulo(&q_int);
 
         let x1_bytes = p1.secret_share.to_repr();
         let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());

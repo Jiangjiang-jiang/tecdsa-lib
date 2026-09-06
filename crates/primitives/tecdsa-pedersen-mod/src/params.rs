@@ -74,7 +74,7 @@ impl PedersenModParams {
         // phi(N) = (p-1)(q-1)
         let p_minus_1 = Integer::from(&p - 1);
         let q_minus_1 = Integer::from(&q - 1);
-        let phi_n = Integer::from(&p_minus_1 * &q_minus_1);
+        let phi_n = p_minus_1 * q_minus_1;
 
         // Sample r in Z*_N, compute t = r^2 mod N (quadratic residue)
         let r = sample_coprime(rng, &n);

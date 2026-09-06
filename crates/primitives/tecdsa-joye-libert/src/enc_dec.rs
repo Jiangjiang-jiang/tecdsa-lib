@@ -105,10 +105,7 @@ pub fn decrypt(sk: &JlSecretKey, pk: &JlPublicKey, ct: &JlCiphertext) -> Integer
         .clone()
         .invert(p)
         .expect("generator invertible mod p");
-    let g_w = g
-        .pow_mod_ref(&(Integer::ONE << (k - w)).complete(), p)
-        .unwrap()
-        .complete();
+    let g_w = g.pow_mod(&(Integer::ONE << (k - w)).complete(), p).unwrap();
 
     // Baby-step table: g_w^j -> j for j in [0, 2^w).
     let mut table: BTreeMap<Integer, u64> = BTreeMap::new();

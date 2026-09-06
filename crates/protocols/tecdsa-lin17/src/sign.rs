@@ -330,7 +330,7 @@ where
     // We extract q from the scalar field: q = order of the group
     // A scalar of value -1 has repr = q - 1, so q = repr(-1) + 1
     let q_minus_1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes);
-    let q_int = Integer::from(&q_minus_1_int + 1u8);
+    let q_int = q_minus_1_int + 1u8;
     let q_squared = Integer::from(&q_int * &q_int);
 
     // rho <- Z_{q^2}: sample a random value in [0, q^2)
@@ -347,7 +347,7 @@ where
     let k2inv_m = Integer::from(&k2_inv_int * &m_prime_int) % &q_int;
 
     // partial_sig = rho * q + (k_2^{-1} * m' mod q)
-    let partial_sig = Integer::from(&rho * &q_int) + &k2inv_m;
+    let partial_sig = rho * &q_int + &k2inv_m;
 
     // Step 5: Encrypt partial_sig: c_1 = Enc(partial_sig)
     let (c1, _nonce) = key_share
@@ -362,8 +362,8 @@ where
     let x2_bytes = scalar_to_bytes(&key_share.secret_share);
     let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&x2_bytes);
 
-    let r_x2_mod_q = Integer::from(&r_int * &x2_int) % &q_int;
-    let v = Integer::from(&k2_inv_int * &r_x2_mod_q) % &q_int;
+    let r_x2_mod_q = (r_int * x2_int) % &q_int;
+    let v = (k2_inv_int * r_x2_mod_q) % q_int;
 
     // Step 7: c_2 = c_key ^ v (Paillier homomorphic scalar multiplication)
     let c2 = key_share

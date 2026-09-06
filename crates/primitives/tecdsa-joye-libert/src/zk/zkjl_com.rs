@@ -67,7 +67,7 @@ impl ZkJlComProof {
 
         // Commitment: d = y^{2^k * v} * h^{2^k * w} mod N
         let exp_y = Integer::from(&two_pow_k * &v);
-        let exp_h = Integer::from(&two_pow_k * &w);
+        let exp_h = two_pow_k * &w;
         let y_v = pow_mod(&pk.y, &exp_y, &pk.n);
         let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
         let d = mul_mod(&y_v, &h_w, &pk.n);
@@ -77,7 +77,7 @@ impl ZkJlComProof {
 
         // Responses
         let z_m = Integer::from(&e * m) + &v;
-        let z_r = Integer::from(&e * r) + &w;
+        let z_r = e * r + &w;
 
         Self { d, z_m, z_r }
     }
@@ -92,7 +92,7 @@ impl ZkJlComProof {
 
         // Check: y^{2^k * z_m} * h^{2^k * z_r} == c^e * d mod N
         let exp_y = Integer::from(&two_pow_k * &self.z_m);
-        let exp_h = Integer::from(&two_pow_k * &self.z_r);
+        let exp_h = two_pow_k * &self.z_r;
         let lhs_1 = pow_mod(&pk.y, &exp_y, &pk.n);
         let lhs_2 = pow_mod(&pk.h, &exp_h, &pk.n);
         let lhs = mul_mod(&lhs_1, &lhs_2, &pk.n);
@@ -124,7 +124,7 @@ fn fiat_shamir_challenge(pk: &JlPublicKey, c: &Integer, d: &Integer) -> Integer 
 pub fn jl_commit(pk: &JlPublicKey, m: &Integer, r: &Integer) -> Integer {
     let two_pow_k = Integer::from(1) << pk.k;
     let exp_y = Integer::from(&two_pow_k * m);
-    let exp_h = Integer::from(&two_pow_k * r);
+    let exp_h = two_pow_k * r;
     let y_m = pow_mod(&pk.y, &exp_y, &pk.n);
     let h_r = pow_mod(&pk.h, &exp_h, &pk.n);
     mul_mod(&y_m, &h_r, &pk.n)

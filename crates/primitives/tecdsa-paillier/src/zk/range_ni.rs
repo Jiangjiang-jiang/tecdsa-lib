@@ -120,23 +120,18 @@ fn extract_nonce(
     };
 
     // (1 + x*N) mod N^2
-    let one_plus_xn = (Integer::one() + (&x * n).complete())
-        .modulo_ref(nn)
-        .complete();
+    let one_plus_xn = (Integer::one() + x * n).modulo(nn);
 
     // r^N = c * (1 + x*N)^{-1} mod N^2
-    let one_plus_xn_inv = one_plus_xn.invert_ref(nn)?.complete();
-    let r_to_n = (ciphertext * &one_plus_xn_inv)
-        .complete()
-        .modulo_ref(nn)
-        .complete();
+    let one_plus_xn_inv = one_plus_xn.invert(nn).ok()?;
+    let r_to_n = (ciphertext * &one_plus_xn_inv).complete().modulo(nn);
 
     // Compute d = N^{-1} mod lambda(N)
     let lambda = dk.lambda();
     let d = n.invert_ref(lambda)?.complete();
 
     // r = (r^N)^d mod N
-    let r = r_to_n.pow_mod_ref(&d, n)?.complete();
+    let r = r_to_n.pow_mod(&d, n).ok()?;
 
     Some(r)
 }

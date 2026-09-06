@@ -121,11 +121,9 @@ pub fn generate_n_tilde(
         h1.pow_mod_ref(&xhi, &n_tilde)
             .expect("pow_mod must succeed"),
     );
-    let h2 = Integer::from(
-        h1_xhi
-            .invert_ref(&n_tilde)
-            .expect("h1^xhi must be invertible mod N_tilde"),
-    );
+    let h2 = h1_xhi
+        .invert(&n_tilde)
+        .expect("h1^xhi must be invertible mod N_tilde");
 
     NTildeParams {
         N_tilde: n_tilde,

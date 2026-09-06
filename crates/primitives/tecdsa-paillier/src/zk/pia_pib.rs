@@ -96,7 +96,7 @@ impl PiBProof {
             .pow_mod_ref(&e, n)
             .expect("modular exponentiation should succeed")
             .complete();
-        let z2 = (&beta * &r_to_e).complete().modulo(n);
+        let z2 = (beta * r_to_e).modulo(n);
 
         PiBProof { A, z1, z2 }
     }
@@ -218,7 +218,7 @@ impl PiAProof {
             .expect("modular exponentiation should succeed")
             .complete();
         let enc_delta = paillier_encrypt_raw(n, nn, &delta, &mu);
-        let A = (&c_B_gamma * &enc_delta).complete().modulo(nn);
+        let A = (c_B_gamma * enc_delta).modulo(nn);
 
         // Challenge: e = H("xal21-pi-a", N, q, c_A, c_B, A) mod 2^kappa
         let e = compute_challenge_pia(n, q, c_A, c_B, &A);
@@ -234,7 +234,7 @@ impl PiAProof {
             .pow_mod_ref(&e, n)
             .expect("modular exponentiation should succeed")
             .complete();
-        let z3 = (&mu * &r_prime_to_e).complete().modulo(n);
+        let z3 = (mu * r_prime_to_e).modulo(n);
 
         PiAProof { A, z1, z2, z3 }
     }
@@ -281,7 +281,7 @@ impl PiAProof {
             .expect("modular exponentiation should succeed")
             .complete();
         let enc_z2 = paillier_encrypt_raw(n, nn, &self.z2, &self.z3);
-        let lhs = (&c_B_z1 * &enc_z2).complete().modulo(nn);
+        let lhs = (c_B_z1 * enc_z2).modulo(nn);
 
         let c_A_e = c_A
             .pow_mod_ref(&e, nn)
@@ -310,7 +310,7 @@ pub(crate) fn paillier_encrypt_raw(n: &Integer, nn: &Integer, x: &Integer, r: &I
         .pow_mod_ref(n, nn)
         .expect("modular exponentiation should succeed")
         .complete();
-    (&one_plus_xN * &r_to_N).complete().modulo(nn)
+    (one_plus_xN * r_to_N).modulo(nn)
 }
 
 /// Compute Fiat-Shamir challenge for PiB.

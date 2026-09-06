@@ -162,7 +162,7 @@ fn wire_ggn16_keygen() {
     // Ring-Pedersen parameters.
     let p = Integer::generate_safe_prime(&mut rng, 256);
     let q = Integer::generate_safe_prime(&mut rng, 256);
-    let n_tilde = Integer::from(&p * &q);
+    let n_tilde = p * q;
     let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
     let xhi_bound = Integer::one() << 256u32;
     let xhi = xhi_bound.sample_below_ref(&mut rng);
@@ -170,11 +170,9 @@ fn wire_ggn16_keygen() {
         h1.pow_mod_ref(&xhi, &n_tilde)
             .expect("pow_mod must succeed"),
     );
-    let h2 = Integer::from(
-        h1_xhi
-            .invert_ref(&n_tilde)
-            .expect("h1^xhi must be invertible mod N_tilde"),
-    );
+    let h2 = h1_xhi
+        .invert(&n_tilde)
+        .expect("h1^xhi must be invertible mod N_tilde");
 
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 

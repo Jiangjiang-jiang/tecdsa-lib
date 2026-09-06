@@ -139,7 +139,7 @@ pub fn presign_round1(
     // Compute as Integer: l_i_val * delta_i_val
     let l_i_val = Integer::from_digits(&l_i_bytes, Order::Msf);
     let delta_i_val = Integer::from_digits(&share.delta_i, Order::Msf);
-    let l_i_delta_i = Integer::from(&l_i_val * &delta_i_val).to_digits::<u8>(Order::Msf);
+    let l_i_delta_i = (l_i_val * delta_i_val).to_digits::<u8>(Order::Msf);
 
     // 6. Prove R_{CL-EC}: K_tilde_i encrypts same k_i as R_i
     let pi_cl_ec = RClDlEcProof::prove(setup, cl_pk, &kt_ct, &r_i_bytes, &k_i_bytes, &alpha_i)?;

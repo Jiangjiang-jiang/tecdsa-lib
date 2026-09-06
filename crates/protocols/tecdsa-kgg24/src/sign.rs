@@ -250,19 +250,18 @@ where
     let ell_bound = tecdsa_paillier::backend::Integer::from(&q_int * &q_int)
         * tecdsa_paillier::backend::Integer::from(1u8).shl_ref(TAU + KAPPA);
     let ell = ell_bound.sample_below_ref(rng);
-    let s2_int = tecdsa_paillier::backend::Integer::from(&s0_int - &s1_int)
-        + tecdsa_paillier::backend::Integer::from(&ell * &q_int);
+    let s2_int = (s0_int - &s1_int) + (ell * &q_int);
 
     // Check: s_2 < N / 2^{tau + 2*kappa}
     let n = key_share.dk.encryption_key().n().clone();
     let divisor = tecdsa_paillier::backend::Integer::from(1u8).shl_ref(TAU + 2 * KAPPA);
-    let threshold = tecdsa_paillier::backend::Integer::from(&n / &divisor);
+    let threshold = n / divisor;
 
     let needs_refresh = if s2_int.cmp_abs(&threshold) == std::cmp::Ordering::Greater {
         true
     } else {
         // Check: s_2 == 0 (mod q)
-        let s2_mod_q = tecdsa_paillier::backend::Integer::from(s2_int.modulo_ref(&q_int));
+        let s2_mod_q = s2_int.modulo(&q_int);
         s2_mod_q != tecdsa_paillier::backend::Integer::zero()
     };
 
@@ -394,7 +393,7 @@ where
     let rho_bar = q_int.sample_below_ref(rng);
     let k2_inv_bytes = scalar_to_bytes(&k2_inv);
     let k2_inv_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&k2_inv_bytes);
-    let k_tilde_2_inv = tecdsa_paillier::backend::Integer::from(&k2_inv_int + &rho_bar * &q_int);
+    let k_tilde_2_inv = k2_inv_int + rho_bar * &q_int;
 
     // Step 5: Compute the message digest as integer
     let m_prime = *message.digest();
@@ -411,16 +410,15 @@ where
 
     // Sample rho from [0, 3*q^3 * 2^{4*tau + 2*kappa}) for masking
     let q_cubed = tecdsa_paillier::backend::Integer::from(&q_int * &q_int) * &q_int;
-    let rho_bound = tecdsa_paillier::backend::Integer::from(&q_cubed * 3u8)
-        * tecdsa_paillier::backend::Integer::from(1u8).shl_ref(4 * TAU + 2 * KAPPA);
+    let rho_bound =
+        (q_cubed * 3u8) * tecdsa_paillier::backend::Integer::from(1u8).shl_ref(4 * TAU + 2 * KAPPA);
     let rho = rho_bound.sample_below_ref(rng);
 
     // Compute: partial_plaintext = rho * q + k_tilde_2_inv * m' + k_tilde_2_inv * r * x_2
     // This is the "message + P_2's share contribution" part
     let k_tilde_m = tecdsa_paillier::backend::Integer::from(&k_tilde_2_inv * &m_prime_int);
     let k_tilde_r_x2 = tecdsa_paillier::backend::Integer::from(&k_tilde_2_inv * &r_int) * &x2_int;
-    let partial_plaintext =
-        tecdsa_paillier::backend::Integer::from(&rho * &q_int) + &k_tilde_m + &k_tilde_r_x2;
+    let partial_plaintext = rho * q_int + &k_tilde_m + &k_tilde_r_x2;
 
     // Step 6: Encrypt partial_plaintext: c_1 = Enc(partial_plaintext)
     let (c1, _nonce) = key_share
@@ -430,7 +428,7 @@ where
 
     // Step 7: Compute c_2 = C ^ (r * k_tilde_2_inv) (homomorphic scalar mult on c_key)
     // This extracts r * k_tilde_2_inv * (x_1 + t*q) from C = Enc(x_1 + t*q)
-    let scalar_for_c = tecdsa_paillier::backend::Integer::from(&r_int * &k_tilde_2_inv);
+    let scalar_for_c = r_int * k_tilde_2_inv;
     let c2 = key_share
         .ek
         .omul(&scalar_for_c, &key_share.c_key)

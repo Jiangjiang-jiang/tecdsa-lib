@@ -137,10 +137,7 @@ pub fn tonelli_shanks(n: &Integer, p: &Integer) -> Option<Integer> {
     let mut m_val = s;
     let mut c = z.pow_mod(&q, p).unwrap();
     let mut t = n.clone().pow_mod(&q, p).unwrap();
-    let mut r = n
-        .clone()
-        .pow_mod(&(Integer::from(&q + &one) >> 1u32), p)
-        .unwrap();
+    let mut r = n.clone().pow_mod(&((q + one) >> 1u32), p).unwrap();
 
     loop {
         if t == 1 {
@@ -162,8 +159,8 @@ pub fn tonelli_shanks(n: &Integer, p: &Integer) -> Option<Integer> {
             .unwrap();
         m_val = i;
         c = Integer::from(&b * &b) % p;
-        t = Integer::from(&t * &c) % p;
-        r = Integer::from(&r * &b) % p;
+        t = t * &c % p;
+        r = r * b % p;
     }
 }
 

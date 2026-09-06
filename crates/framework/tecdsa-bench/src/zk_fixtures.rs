@@ -83,10 +83,7 @@ pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integ
             .expect("base must be invertible")
             .complete();
         let pos_exp = -exp.clone();
-        base_inv
-            .pow_mod_ref(&pos_exp, modulus)
-            .expect("pow_mod")
-            .complete()
+        base_inv.pow_mod(&pos_exp, modulus).expect("pow_mod")
     } else {
         base.pow_mod_ref(exp, modulus).expect("pow_mod").complete()
     }

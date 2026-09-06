@@ -37,7 +37,6 @@ fn hash_message(msg: &[u8]) -> tecdsa_protocol::DataToSign<C> {
 /// Test the JL MtA correctness in isolation with secp256k1 scalars.
 #[test]
 fn xal23_mta_correctness_secp256k1() {
-    use rug::Integer;
     use tecdsa_curve::{
         conv::{curve_order, scalar_to_integer},
         TecdsaCurve,
@@ -66,7 +65,7 @@ fn xal23_mta_correctness_secp256k1() {
         mta_sender_step_with_sec(&sender, &pk, &recv_msg, &q, TEST_S, TEST_T, &mut rng);
     let receiver_out = mta_receiver_step2(&sk, &pk, &send_msg, &q);
 
-    let sum = Integer::from(&sender_out.alpha + &receiver_out.beta) % &q;
+    let sum = (sender_out.alpha + receiver_out.beta) % q;
     assert_eq!(sum, ab_uint, "MtA failed with secp256k1 scalars");
 }
 

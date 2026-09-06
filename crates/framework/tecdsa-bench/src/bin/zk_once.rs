@@ -702,8 +702,8 @@ fn class_group_zk_once(
             let mut val = Integer::ZERO;
             let mut x_pow = Integer::from(1u32);
             for coeff in &coeffs {
-                val = (&val + coeff * &x_pow).complete().modulo(&q_bu);
-                x_pow = (&x_pow * &x).complete().modulo(&q_bu);
+                val = (val + coeff * &x_pow).modulo(&q_bu);
+                x_pow = (x_pow * &x).modulo(&q_bu);
             }
             let share_bytes = val.to_digits(Order::Msf);
             let pk_elt = pks[idx].elt();
@@ -937,7 +937,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let gamma_paillier = ek.n() + Integer::one();
         let w_i = {
             let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
-            let q_eta2 = (&q * &eta2).complete();
+            let q_eta2 = q * &eta2;
             let g_q_eta2 = pow_mod_signed(&gamma_paillier, &q_eta2, ek.nn());
             let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
@@ -1322,7 +1322,7 @@ fn joye_libert_zk_once(jl: &JlFixture, jl_ex: &JlExtraFixture) {
         let c_a = ct_b.c.pow_mod_ref(&a, &jl_pk.n).unwrap().complete();
         let y_alpha = jl_pk.y.pow_mod_ref(&alpha, &jl_pk.n).unwrap().complete();
         let h_r = jl_pk.h.pow_mod_ref(&r_aff, &jl_pk.n).unwrap().complete();
-        let c_aff = ((&c_a * &y_alpha).complete() * &h_r) % &jl_pk.n;
+        let c_aff = (c_a * y_alpha * &h_r) % &jl_pk.n;
         let proof = time_once("zk/joye_libert/zkjl_aff/prove", || {
             ZkJlAffProof::prove(
                 jl_pk, &ct_b.c, &c_aff, &a, &alpha, &r_aff, jl_pk.k, jl_pk.k, rng,
