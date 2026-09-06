@@ -19,7 +19,8 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize,
     PrimeField,
 };
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
+use rug::Complete;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 
@@ -271,13 +272,13 @@ where
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
-        let q5 = &q3 * &q * &q;
-        let q8 = &q5 * &q * &q * &q;
-        let q_N_tilde = &q * &statement.N_tilde;
-        let q3_N_tilde = &q3 * &statement.N_tilde;
-        let q5_N_tilde = &q5 * &statement.N_tilde;
-        let q8_N_tilde = &q8 * &statement.N_tilde;
+        let q3 = (&q * &q).complete() * &q;
+        let q5 = (&q3 * &q).complete() * &q;
+        let q8 = (&q5 * &q).complete() * &q * &q;
+        let q_N_tilde = (&q * &statement.N_tilde).complete();
+        let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
+        let q5_N_tilde = (&q5 * &statement.N_tilde).complete();
+        let q8_N_tilde = (&q8 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values
         let alpha = sample_below(&q3, rng);
@@ -318,7 +319,8 @@ where
         let _gamma_paillier = &statement.ek_n + Integer::one();
         let u2 = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
-            let g_alpha = (Integer::one() + &alpha * &statement.ek_n).modulo(&statement.ek_nn);
+            let g_alpha =
+                (Integer::one() + (&alpha * &statement.ek_n).complete()).modulo(&statement.ek_nn);
             let beta_n = pow_mod_signed(&beta, &statement.ek_n, &statement.ek_nn);
             (g_alpha * beta_n).modulo(&statement.ek_nn)
         };
@@ -335,8 +337,9 @@ where
         // v1 = u^alpha * Gamma^{q*theta} * mu^N mod N^2
         let v1 = {
             let u_alpha = pow_mod_signed(&statement.u, &alpha, &statement.ek_nn);
-            let q_theta = &q * &theta;
-            let g_q_theta = (Integer::one() + &q_theta * &statement.ek_n).modulo(&statement.ek_nn);
+            let q_theta = (&q * &theta).complete();
+            let g_q_theta =
+                (Integer::one() + (&q_theta * &statement.ek_n).complete()).modulo(&statement.ek_nn);
             let mu_n = pow_mod_signed(&mu, &statement.ek_n, &statement.ek_nn);
             (u_alpha * g_q_theta % &statement.ek_nn * mu_n).modulo(&statement.ek_nn)
         };
@@ -364,10 +367,10 @@ where
 
         // 4. Compute responses
         // s1 = e * eta1 + alpha
-        let s1 = &e * &witness.eta1 + &alpha;
+        let s1 = (&e * &witness.eta1).complete() + &alpha;
 
         // s2 = e * rho1 + gamma
-        let s2 = &e * &rho1 + &gamma;
+        let s2 = (&e * &rho1).complete() + &gamma;
 
         // t1 = r_c^e * mu mod N
         let t1 = {
@@ -376,10 +379,10 @@ where
         };
 
         // t2 = e * eta2 + theta
-        let t2 = &e * &witness.eta2 + &theta;
+        let t2 = (&e * &witness.eta2).complete() + &theta;
 
         // t3 = e * rho2 + tau
-        let t3 = &e * &rho2 + &tau;
+        let t3 = (&e * &rho2).complete() + &tau;
 
         NonceConsistProof {
             z1,
@@ -404,7 +407,7 @@ where
     /// Returns [`NonceConsistError::Verify`] if the proof does not verify.
     pub fn verify(&self, statement: &NonceConsistStatement<C>) -> Result<(), NonceConsistError> {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
+        let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
         let e = compute_challenge(
@@ -417,7 +420,7 @@ where
         let s1_scalar = integer_to_scalar::<C>(&self.s1);
         let g_s1 = statement.G * s1_scalar;
 
-        let e_neg_int = &q - (&e % &q);
+        let e_neg_int = &q - (&e % &q).complete();
         let e_neg_scalar = integer_to_scalar::<C>(&e_neg_int);
         let r_i_neg_e = statement.r_i * e_neg_scalar;
         let u1_check = g_s1 + r_i_neg_e;
@@ -426,8 +429,9 @@ where
         let _gamma_paillier = &statement.ek_n + Integer::one();
         let v1_check = {
             let u_s1 = pow_mod_signed(&statement.u, &self.s1, &statement.ek_nn);
-            let q_t2 = &q * &self.t2;
-            let g_q_t2 = (Integer::one() + &q_t2 * &statement.ek_n).modulo(&statement.ek_nn);
+            let q_t2 = (&q * &self.t2).complete();
+            let g_q_t2 =
+                (Integer::one() + (&q_t2 * &statement.ek_n).complete()).modulo(&statement.ek_nn);
             let t1_n = pow_mod_signed(&self.t1, &statement.ek_n, &statement.ek_nn);
             let w_neg_e = pow_mod_signed(&statement.w_i, &neg_e, &statement.ek_nn);
             (u_s1 * g_q_t2 % &statement.ek_nn * t1_n % &statement.ek_nn * w_neg_e)
@@ -486,14 +490,17 @@ mod tests {
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> (Integer, Integer, Integer) {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
+        let n_tilde = (&p * &q).complete();
 
         let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = (&r * &r).modulo(&n_tilde);
+        let h2 = (&r * &r).complete().modulo(&n_tilde);
 
         let phi_n = (&p - Integer::one()) * (&q - Integer::one());
         let lambda = sample_below(&phi_n, rng);
-        let h1 = h2.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let h1 = h2
+            .pow_mod_ref(&lambda, &n_tilde)
+            .expect("pow_mod defined")
+            .complete();
 
         (n_tilde, h1, h2)
     }
@@ -526,8 +533,8 @@ mod tests {
         let _gamma_paillier = ek.n() + Integer::one();
         let w_i = {
             let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
-            let q_eta2 = &q * &eta2;
-            let g_q_eta2 = (Integer::one() + &q_eta2 * ek.n()).modulo(ek.nn());
+            let q_eta2 = (&q * &eta2).complete();
+            let g_q_eta2 = (Integer::one() + (&q_eta2 * ek.n()).complete()).modulo(ek.nn());
             let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
         };
@@ -575,8 +582,8 @@ mod tests {
         let _gamma_paillier = ek.n() + Integer::one();
         let w_i = {
             let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
-            let q_eta2 = &q * &eta2;
-            let g_q_eta2 = (Integer::one() + &q_eta2 * ek.n()).modulo(ek.nn());
+            let q_eta2 = (&q * &eta2).complete();
+            let g_q_eta2 = (Integer::one() + (&q_eta2 * ek.n()).complete()).modulo(ek.nn());
             let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
         };

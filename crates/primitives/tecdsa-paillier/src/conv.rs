@@ -2,7 +2,7 @@
 //! Conversions between EC scalars and `fast_paillier::backend::Integer`.
 
 use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
 use tecdsa_curve::TecdsaCurve;
 
 /// Convert an EC scalar to a Paillier `Integer` (big-endian unsigned).

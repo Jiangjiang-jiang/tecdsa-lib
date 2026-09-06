@@ -27,8 +27,12 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
+use fast_paillier::{
+    backend::{BigIntExt, Integer},
+    DecryptionKey, EncryptionKey,
+};
 use rand_core::CryptoRngCore;
+use rug::Complete;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 
@@ -103,8 +107,9 @@ where
         let q_int = curve_order::<C>();
 
         // Step 1: Sample b from [0, q^2 * 2^{2(tau+kappa)})
-        let b_bound = &q_int * &q_int * Integer::u_pow_u(2, 2 * (TAU + KAPPA));
-        let b = b_bound.random_below_ref(rng);
+        let b_bound =
+            (&q_int * &q_int).complete() * Integer::u_pow_u(2, 2 * (TAU + KAPPA)).complete();
+        let b = b_bound.sample_below_ref(rng);
 
         // Sample delta from Z*_N (nonzero, coprime to N)
         let delta = sample_coprime_to_n(n, rng);
@@ -119,14 +124,15 @@ where
         let sigma_int = Integer::from_bytes_msf(sigma_bytes.as_ref());
 
         // Step 4: z1 = x_hat_1 * sigma + b (over integers, no mod)
-        let z1 = x_hat_1 * &sigma_int + &b;
+        let z1 = (x_hat_1 * &sigma_int).complete() + &b;
 
         // Step 5: z2 = rho^sigma * delta mod N
         let z2 = enc_nonce
             .pow_mod_ref(&sigma_int, n)
             .expect("pow_mod for z2 must succeed")
+            .complete()
             * &delta;
-        let z2 = z2.modulo_ref(n);
+        let z2 = z2.modulo_ref(n).complete();
 
         Self {
             gamma_1,
@@ -162,7 +168,7 @@ where
         }
 
         // Check 2: gcd(C, N) = 1
-        if !c.gcd_ref(n).is_one() {
+        if !c.gcd_ref(n).complete().is_one() {
             return false;
         }
 
@@ -170,8 +176,10 @@ where
         // z1 must be in [0, q^2 * 2^{2(tau+kappa)} + (q^2 - q) * 2^{tau+2kappa}]
         // This is the maximum value z1 can take: x_hat_1 * sigma + b
         // where x_hat_1 <= q * 2^{tau+2kappa} (approximately) and sigma < q, b < q^2 * 2^{2(tau+kappa)}
-        let z1_upper = &q_int * &q_int * &Integer::u_pow_u(2, 2 * (TAU + KAPPA))
-            + (&q_int * &q_int - &q_int) * &Integer::u_pow_u(2, TAU + 2 * KAPPA);
+        let z1_upper = (&q_int * &q_int).complete()
+            * Integer::u_pow_u(2, 2 * (TAU + KAPPA)).complete()
+            + ((&q_int * &q_int).complete() - &q_int)
+                * Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
         if self.z1.cmp0().is_lt() {
             return false;
         }
@@ -189,8 +197,12 @@ where
         // gamma_1 * C^sigma == Enc_N(z1; z2) (mod N^2)
         let c_to_sigma = c
             .pow_mod_ref(&sigma_int, nn)
-            .expect("pow_mod for C^sigma must succeed");
-        let lhs = (&self.gamma_1 * &c_to_sigma).modulo_ref(nn);
+            .expect("pow_mod for C^sigma must succeed")
+            .complete();
+        let lhs = (&self.gamma_1 * &c_to_sigma)
+            .complete()
+            .modulo_ref(nn)
+            .complete();
         let rhs = raw_encrypt(n, &self.z1, &self.z2);
         if lhs != rhs {
             return false;
@@ -222,7 +234,7 @@ where
     let neg_one = -C::Scalar::ONE;
     let neg_one_bytes = neg_one.to_repr();
     let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    &q_minus_1 + 1u8
+    (&q_minus_1 + 1u8).complete()
 }
 
 /// Raw Paillier encryption: `Enc_N(m; r) = (1 + m*N) * r^N mod N^2`.
@@ -231,21 +243,24 @@ where
 /// `EncryptionKey` API, which is needed for the ZK proof verification
 /// where we must reconstruct the ciphertext from components.
 fn raw_encrypt(n: &Integer, plaintext: &Integer, nonce: &Integer) -> Integer {
-    let nn = n * n;
+    let nn = (n * n).complete();
     // (1 + m*N) mod N^2
-    let term1 = (Integer::one() + plaintext * n).modulo_ref(&nn);
+    let term1 = (Integer::one() + (plaintext * n).complete())
+        .modulo_ref(&nn)
+        .complete();
     // r^N mod N^2
     let term2 = nonce
         .pow_mod_ref(n, &nn)
-        .expect("pow_mod for r^N must succeed");
-    (&term1 * &term2).modulo_ref(&nn)
+        .expect("pow_mod for r^N must succeed")
+        .complete();
+    (&term1 * &term2).complete().modulo_ref(&nn).complete()
 }
 
 /// Sample a random element from Z*_N (coprime to N and nonzero).
 fn sample_coprime_to_n(n: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
     loop {
-        let candidate = n.random_below_ref(rng);
-        if candidate.cmp0().is_gt() && candidate.gcd_ref(n).is_one() {
+        let candidate = n.sample_below_ref(rng);
+        if candidate.cmp0().is_gt() && candidate.gcd_ref(n).complete().is_one() {
             return candidate;
         }
     }
@@ -318,9 +333,9 @@ mod tests {
         let q_int = curve_order::<Secp256k1>();
         let x1_bytes = x1.to_repr();
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
-        let noise_bound = Integer::u_pow_u(2, TAU + 2 * KAPPA);
-        let t = noise_bound.random_below_ref(&mut rng);
-        let x_hat_1 = &x1_int + &t * &q_int;
+        let noise_bound = Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
+        let t = noise_bound.sample_below_ref(&mut rng);
+        let x_hat_1 = &x1_int + (&t * &q_int).complete();
 
         // Encrypt x_hat_1
         let (c, enc_nonce) = dk

@@ -15,7 +15,8 @@
 #![allow(non_snake_case)]
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize, PrimeField};
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
+use rug::Complete;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 
@@ -194,9 +195,9 @@ impl HomoMultProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
-        let q_N_tilde = &q * &statement.N_tilde;
-        let q3_N_tilde = &q3 * &statement.N_tilde;
+        let q3 = (&q * &q).complete() * &q;
+        let q_N_tilde = (&q * &statement.N_tilde).complete();
+        let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values
         let alpha = sample_below(&q3, rng);
@@ -219,7 +220,8 @@ impl HomoMultProof {
         let _gamma_paillier = &statement.ek_n + Integer::one(); // Gamma = 1 + N
         let u2 = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
-            let g_alpha = (Integer::one() + &alpha * &statement.ek_n).modulo(&statement.ek_nn);
+            let g_alpha =
+                (Integer::one() + (&alpha * &statement.ek_n).complete()).modulo(&statement.ek_nn);
             let beta_n = pow_mod_signed(&beta, &statement.ek_n, &statement.ek_nn);
             (g_alpha * beta_n).modulo(&statement.ek_nn)
         };
@@ -245,7 +247,7 @@ impl HomoMultProof {
 
         // 4. Compute responses
         // s1 = e * eta + alpha
-        let s1 = &e * &witness.eta + &alpha;
+        let s1 = (&e * &witness.eta).complete() + &alpha;
 
         // s2 = r_c1^e * beta mod N
         let s2 = {
@@ -254,7 +256,7 @@ impl HomoMultProof {
         };
 
         // s3 = e * rho + gamma
-        let s3 = &e * &rho + &gamma;
+        let s3 = (&e * &rho).complete() + &gamma;
 
         // t_c = r_c3^e * mu mod N
         let t_c = {
@@ -285,7 +287,7 @@ impl HomoMultProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
         let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
+        let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
         let e = compute_challenge(statement, &self.z, &self.u2, &self.u3, &self.v);
@@ -295,7 +297,8 @@ impl HomoMultProof {
         let _gamma_paillier = &statement.ek_n + Integer::one();
         let u2_check = {
             // (1 + N)^s1 = (1 + s1*N) mod N^2 (binomial) — one mul, no modexp.
-            let g_s1 = (Integer::one() + &self.s1 * &statement.ek_n).modulo(&statement.ek_nn);
+            let g_s1 =
+                (Integer::one() + (&self.s1 * &statement.ek_n).complete()).modulo(&statement.ek_nn);
             let s2_n = pow_mod_signed(&self.s2, &statement.ek_n, &statement.ek_nn);
             let c1_neg_e = pow_mod_signed(&statement.c1, &neg_e, &statement.ek_nn);
             (g_s1 * s2_n % &statement.ek_nn * c1_neg_e).modulo(&statement.ek_nn)
@@ -349,14 +352,17 @@ mod tests {
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> (Integer, Integer, Integer) {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
+        let n_tilde = (&p * &q).complete();
 
         let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = (&r * &r).modulo(&n_tilde);
+        let h2 = (&r * &r).complete().modulo(&n_tilde);
 
         let phi_n = (&p - Integer::one()) * (&q - Integer::one());
         let lambda = sample_below(&phi_n, rng);
-        let h1 = h2.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let h1 = h2
+            .pow_mod_ref(&lambda, &n_tilde)
+            .expect("pow_mod defined")
+            .complete();
 
         (n_tilde, h1, h2)
     }

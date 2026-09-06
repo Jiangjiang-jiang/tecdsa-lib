@@ -29,14 +29,13 @@ pub mod zk;
 // Re-export core types from fast-paillier.
 // Re-export the backend Integer for callers that need to construct
 // plaintexts / nonces directly.
-pub use fast_paillier::{
-    backend, AnyEncryptionKey, AnyEncryptionKeyExt, Ciphertext, DecryptionKey, EncryptionKey,
-    Error as PaillierError, Nonce, Plaintext,
-};
 // `backend::Integer` is a re-export of `rug::Integer`; the helper methods this
 // crate's callers need (`from_bytes_msf`, `one`, `combine`, ...) live on this
 // extension trait and must be in scope to be used.
-pub use fast_paillier::backend::BigIntExt;
+pub use fast_paillier::{
+    backend, backend::BigIntExt, AnyEncryptionKey, AnyEncryptionKeyExt, Ciphertext, DecryptionKey,
+    EncryptionKey, Error as PaillierError, Nonce, Plaintext,
+};
 use rand_core::{CryptoRng, RngCore};
 
 /// Generate a fresh Paillier key pair.

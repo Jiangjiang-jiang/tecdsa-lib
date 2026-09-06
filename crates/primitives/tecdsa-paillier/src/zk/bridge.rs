@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::sec1::ToSec1Point;
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
 use rug::Integer as RugInteger;
 use tecdsa_curve::TecdsaCurve;
 

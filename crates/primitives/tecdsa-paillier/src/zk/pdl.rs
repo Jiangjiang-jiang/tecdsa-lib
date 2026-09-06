@@ -22,8 +22,12 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
+use fast_paillier::{
+    backend::{BigIntExt, Integer},
+    DecryptionKey, EncryptionKey,
+};
 use rand_core::CryptoRngCore;
+use rug::Complete;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 use thiserror::Error;
@@ -159,12 +163,12 @@ where
     // Compute q (group order)
     let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
     let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
-    let q_squared = &q_int * &q_int;
+    let q_squared = (&q_int * &q_int).complete();
 
     // Sample a from Z_q
-    let a = q_int.random_below_ref(rng);
+    let a = q_int.sample_below_ref(rng);
     // Sample b from Z_{q^2}
-    let b = q_squared.random_below_ref(rng);
+    let b = q_squared.sample_below_ref(rng);
 
     // Compute c_tag = (a (*) c_key) (+) Enc(b)
     let c_a = ek
@@ -304,7 +308,7 @@ where
     let x1_bytes = scalar_to_bytes(x1);
     let x1_int = Integer::from_bytes_msf(&x1_bytes);
 
-    let expected = &verifier_msg2.a * &x1_int + &verifier_msg2.b;
+    let expected = (&verifier_msg2.a * &x1_int).complete() + &verifier_msg2.b;
 
     // The alpha from Paillier decryption might be in {-N/2, ..., N/2}.
     // If Paillier gave back a negative, the original plaintext was

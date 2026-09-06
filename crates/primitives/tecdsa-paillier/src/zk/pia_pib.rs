@@ -14,8 +14,12 @@
 //! - `kappa = 80` (statistical security parameter)
 //! - `K = q^2 * 2^{tau + 2*kappa}` (range for alpha')
 
-use fast_paillier::{backend::Integer, EncryptionKey};
+use fast_paillier::{
+    backend::{BigIntExt, Integer},
+    EncryptionKey,
+};
 use rand_core::CryptoRngCore;
+use rug::Complete;
 use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
@@ -68,10 +72,10 @@ impl PiBProof {
         let n = ek.n();
 
         // Sampling range: q * 2^{tau + kappa}
-        let sample_bound = q * &Integer::u_pow_u(2, TAU + KAPPA);
+        let sample_bound = q * Integer::u_pow_u(2, TAU + KAPPA).complete();
 
         // alpha <- Z_{q * 2^{tau+kappa}}
-        let alpha = sample_bound.random_below_ref(rng);
+        let alpha = sample_bound.sample_below_ref(rng);
 
         // beta <- Z*_N
         let beta = Integer::sample_in_mult_group_of(rng, n);
@@ -85,13 +89,14 @@ impl PiBProof {
         let e = compute_challenge_pib(n, q, c_B, &A);
 
         // z1 = alpha + e * b (integer arithmetic)
-        let z1 = &alpha + &e * b;
+        let z1 = &alpha + (&e * b).complete();
 
         // z2 = beta * r^e mod N
         let r_to_e = r
             .pow_mod_ref(&e, n)
-            .expect("modular exponentiation should succeed");
-        let z2 = (&beta * &r_to_e).modulo(n);
+            .expect("modular exponentiation should succeed")
+            .complete();
+        let z2 = (&beta * &r_to_e).complete().modulo(n);
 
         PiBProof { A, z1, z2 }
     }
@@ -115,7 +120,8 @@ impl PiBProof {
         let e = compute_challenge_pib(n, q, c_B, &self.A);
 
         // Range check: z1 in [0, q * 2^{tau+kappa} + q * 2^kappa]
-        let upper_bound = q * &Integer::u_pow_u(2, TAU + KAPPA) + q * &Integer::u_pow_u(2, KAPPA);
+        let upper_bound = q * Integer::u_pow_u(2, TAU + KAPPA).complete()
+            + q * Integer::u_pow_u(2, KAPPA).complete();
         let z1_in_range = self.z1.cmp0().is_ge() && self.z1 <= upper_bound;
 
         // z2 must be in Z*_N (positive, coprime to N)
@@ -131,8 +137,9 @@ impl PiBProof {
         // RHS: A * c_B^e mod N^2
         let c_B_to_e = c_B
             .pow_mod_ref(&e, n2)
-            .expect("modular exponentiation should succeed");
-        let rhs = (&self.A * &c_B_to_e).modulo(n2);
+            .expect("modular exponentiation should succeed")
+            .complete();
+        let rhs = (&self.A * &c_B_to_e).complete().modulo(n2);
 
         z1_in_range && z2_valid && lhs == rhs
     }
@@ -190,17 +197,17 @@ impl PiAProof {
         let nn = ek.nn();
 
         // K = q^2 * 2^{tau + 2*kappa}
-        let K = q * q * &Integer::u_pow_u(2, TAU + 2 * KAPPA);
+        let K = (q * q).complete() * Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
 
         // Sampling ranges
-        let gamma_bound = q * &Integer::u_pow_u(2, TAU + KAPPA);
-        let delta_bound = &K * &Integer::u_pow_u(2, TAU + KAPPA);
+        let gamma_bound = q * Integer::u_pow_u(2, TAU + KAPPA).complete();
+        let delta_bound = &K * Integer::u_pow_u(2, TAU + KAPPA).complete();
 
         // gamma <- Z_{q * 2^{tau+kappa}}
-        let gamma = gamma_bound.random_below_ref(rng);
+        let gamma = gamma_bound.sample_below_ref(rng);
 
         // delta <- Z_{K * 2^{tau+kappa}}
-        let delta = delta_bound.random_below_ref(rng);
+        let delta = delta_bound.sample_below_ref(rng);
 
         // mu <- Z*_N
         let mu = Integer::sample_in_mult_group_of(rng, n);
@@ -208,24 +215,26 @@ impl PiAProof {
         // A = c_B^gamma * Enc(pk, delta; mu) mod N^2
         let c_B_gamma = c_B
             .pow_mod_ref(&gamma, nn)
-            .expect("modular exponentiation should succeed");
+            .expect("modular exponentiation should succeed")
+            .complete();
         let enc_delta = paillier_encrypt_raw(n, nn, &delta, &mu);
-        let A = (&c_B_gamma * &enc_delta).modulo(nn);
+        let A = (&c_B_gamma * &enc_delta).complete().modulo(nn);
 
         // Challenge: e = H("xal21-pi-a", N, q, c_A, c_B, A) mod 2^kappa
         let e = compute_challenge_pia(n, q, c_A, c_B, &A);
 
         // z1 = gamma + e * a (integer)
-        let z1 = &gamma + &e * a;
+        let z1 = &gamma + (&e * a).complete();
 
         // z2 = delta + e * alpha' (integer)
-        let z2 = &delta + &e * alpha_prime;
+        let z2 = &delta + (&e * alpha_prime).complete();
 
         // z3 = mu * r'^e mod N
         let r_prime_to_e = r_prime
             .pow_mod_ref(&e, n)
-            .expect("modular exponentiation should succeed");
-        let z3 = (&mu * &r_prime_to_e).modulo(n);
+            .expect("modular exponentiation should succeed")
+            .complete();
+        let z3 = (&mu * &r_prime_to_e).complete().modulo(n);
 
         PiAProof { A, z1, z2, z3 }
     }
@@ -248,17 +257,19 @@ impl PiAProof {
         let nn = ek.nn();
 
         // K = q^2 * 2^{tau + 2*kappa}
-        let K = q * q * &Integer::u_pow_u(2, TAU + 2 * KAPPA);
+        let K = (q * q).complete() * Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
 
         // Recompute challenge
         let e = compute_challenge_pia(n, q, c_A, c_B, &self.A);
 
         // Range check on z1: z1 in [0, q * 2^{tau+kappa} + q * 2^kappa]
-        let z1_upper = q * &Integer::u_pow_u(2, TAU + KAPPA) + q * &Integer::u_pow_u(2, KAPPA);
+        let z1_upper = q * Integer::u_pow_u(2, TAU + KAPPA).complete()
+            + q * Integer::u_pow_u(2, KAPPA).complete();
         let z1_in_range = self.z1.cmp0().is_ge() && self.z1 <= z1_upper;
 
         // Range check on z2: z2 in [0, K * 2^{tau+kappa} + K * 2^kappa]
-        let z2_upper = &K * &Integer::u_pow_u(2, TAU + KAPPA) + &K * &Integer::u_pow_u(2, KAPPA);
+        let z2_upper = &K * Integer::u_pow_u(2, TAU + KAPPA).complete()
+            + &K * Integer::u_pow_u(2, KAPPA).complete();
         let z2_in_range = self.z2.cmp0().is_ge() && self.z2 <= z2_upper;
 
         // z3 must be in Z*_N
@@ -267,14 +278,16 @@ impl PiAProof {
         // Verification equation: c_B^z1 * Enc(pk, z2; z3) == A * c_A^e mod N^2
         let c_B_z1 = c_B
             .pow_mod_ref(&self.z1, nn)
-            .expect("modular exponentiation should succeed");
+            .expect("modular exponentiation should succeed")
+            .complete();
         let enc_z2 = paillier_encrypt_raw(n, nn, &self.z2, &self.z3);
-        let lhs = (&c_B_z1 * &enc_z2).modulo(nn);
+        let lhs = (&c_B_z1 * &enc_z2).complete().modulo(nn);
 
         let c_A_e = c_A
             .pow_mod_ref(&e, nn)
-            .expect("modular exponentiation should succeed");
-        let rhs = (&self.A * &c_A_e).modulo(nn);
+            .expect("modular exponentiation should succeed")
+            .complete();
+        let rhs = (&self.A * &c_A_e).complete().modulo(nn);
 
         z1_in_range && z2_in_range && z3_valid && lhs == rhs
     }
@@ -291,12 +304,13 @@ impl PiAProof {
 /// for ZK responses that can exceed the normal encryption range.
 pub(crate) fn paillier_encrypt_raw(n: &Integer, nn: &Integer, x: &Integer, r: &Integer) -> Integer {
     // (1 + N)^x mod N^2 = (1 + x*N) mod N^2  (by binomial theorem)
-    let one_plus_xN = (Integer::one() + x * n).modulo(nn);
+    let one_plus_xN = (Integer::one() + (x * n).complete()).modulo(nn);
     // r^N mod N^2
     let r_to_N = r
         .pow_mod_ref(n, nn)
-        .expect("modular exponentiation should succeed");
-    (&one_plus_xN * &r_to_N).modulo(nn)
+        .expect("modular exponentiation should succeed")
+        .complete();
+    (&one_plus_xN * &r_to_N).complete().modulo(nn)
 }
 
 /// Compute Fiat-Shamir challenge for PiB.
@@ -313,7 +327,7 @@ fn compute_challenge_pib(n: &Integer, q: &Integer, c_B: &Integer, A: &Integer) -
 
     // Interpret hash as integer and reduce mod 2^kappa
     let hash_int = Integer::from_bytes_msf(&hash);
-    let modulus = Integer::u_pow_u(2, KAPPA);
+    let modulus = Integer::u_pow_u(2, KAPPA).complete();
     hash_int.modulo(&modulus)
 }
 
@@ -337,6 +351,6 @@ fn compute_challenge_pia(
     let hash = hasher.finalize();
 
     let hash_int = Integer::from_bytes_msf(&hash);
-    let modulus = Integer::u_pow_u(2, KAPPA);
+    let modulus = Integer::u_pow_u(2, KAPPA).complete();
     hash_int.modulo(&modulus)
 }

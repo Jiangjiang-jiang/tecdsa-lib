@@ -18,7 +18,11 @@
 //! The `domain` parameter provides protocol-specific domain separation for the
 //! Fiat-Shamir challenges (e.g. `b"lin17-correct-key-challenge"`).
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
+use fast_paillier::{
+    backend::{BigIntExt, Integer},
+    DecryptionKey, EncryptionKey,
+};
+use rug::Complete;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -45,13 +49,14 @@ impl NICorrectKeyProof {
     #[must_use]
     pub fn prove(dk: &DecryptionKey, domain: &[u8]) -> Self {
         let n = dk.n();
-        let phi_n = (dk.p() - 1u8) * (dk.q() - 1u8);
+        let phi_n = (dk.p() - 1u8).complete() * (dk.q() - 1u8).complete();
 
         // Compute N^{-1} mod phi(N). This exists iff gcd(N, phi(N)) = 1,
         // which holds when N = p*q with p, q safe primes.
         let n_inv_phi = n
             .invert_ref(&phi_n)
-            .expect("gcd(N, phi(N)) must be 1 for safe primes");
+            .expect("gcd(N, phi(N)) must be 1 for safe primes")
+            .complete();
 
         let mut responses = Vec::with_capacity(SECURITY_PARAM);
         for i in 0..SECURITY_PARAM {
@@ -59,7 +64,8 @@ impl NICorrectKeyProof {
             // x_i = y_i^{N^{-1} mod phi(N)} mod N
             let x_i = y_i
                 .pow_mod_ref(&n_inv_phi, n)
-                .expect("pow_mod must succeed");
+                .expect("pow_mod must succeed")
+                .complete();
             responses.push(x_i);
         }
 
@@ -85,6 +91,7 @@ impl NICorrectKeyProof {
             let Some(lhs) = x_i.pow_mod_ref(n, n) else {
                 return false;
             };
+            let lhs = lhs.complete();
             if lhs != y_i {
                 return false;
             }
@@ -120,10 +127,10 @@ fn derive_challenge(n: &Integer, domain: &[u8], index: usize) -> Integer {
         }
 
         let candidate = Integer::from_bytes_msf(&hash_bytes[..n_byte_len]);
-        let reduced = candidate.modulo_ref(n);
+        let reduced = candidate.modulo_ref(n).complete();
 
         // Ensure we get a value in Z*_N (nonzero and coprime to N)
-        if reduced.cmp0().is_gt() && reduced.gcd_ref(n).is_one() {
+        if reduced.cmp0().is_gt() && reduced.gcd_ref(n).complete().is_one() {
             return reduced;
         }
         attempt += 1;

@@ -22,8 +22,12 @@
 //! Security parameter: `SECURITY_PARAM` repetitions for `2^{-SECURITY_PARAM}`
 //! soundness.
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
+use fast_paillier::{
+    backend::{BigIntExt, Integer},
+    DecryptionKey, EncryptionKey,
+};
 use rand_core::CryptoRngCore;
+use rug::Complete;
 use sha2::{Digest, Sha256};
 
 /// Number of repetitions for the range proof.
@@ -104,24 +108,29 @@ fn extract_nonce(
 
     // Handle negative plaintext (Paillier convention: x + N for negatives)
     let x = if plaintext.cmp0().is_lt() {
-        plaintext + n
+        (plaintext + n).complete()
     } else {
         plaintext.clone()
     };
 
     // (1 + x*N) mod N^2
-    let one_plus_xn = (Integer::one() + &x * n).modulo_ref(nn);
+    let one_plus_xn = (Integer::one() + (&x * n).complete())
+        .modulo_ref(nn)
+        .complete();
 
     // r^N = c * (1 + x*N)^{-1} mod N^2
-    let one_plus_xn_inv = one_plus_xn.invert_ref(nn)?;
-    let r_to_n = (ciphertext * &one_plus_xn_inv).modulo_ref(nn);
+    let one_plus_xn_inv = one_plus_xn.invert_ref(nn)?.complete();
+    let r_to_n = (ciphertext * &one_plus_xn_inv)
+        .complete()
+        .modulo_ref(nn)
+        .complete();
 
     // Compute d = N^{-1} mod lambda(N)
     let lambda = dk.lambda();
-    let d = n.invert_ref(lambda)?;
+    let d = n.invert_ref(lambda)?.complete();
 
     // r = (r^N)^d mod N
-    let r = r_to_n.pow_mod_ref(&d, n)?;
+    let r = r_to_n.pow_mod_ref(&d, n)?.complete();
 
     Some(r)
 }
@@ -147,7 +156,7 @@ impl RangeProofNi {
         rng: &mut impl CryptoRngCore,
     ) -> Result<Self, RangeProofNiError> {
         // Range bound: masks sampled from [0, q * 2^{128}).
-        let range_bound = q * &Integer::u_pow_u(2, 128);
+        let range_bound = q * Integer::u_pow_u(2, 128).complete();
 
         let mut encrypted_pairs = Vec::with_capacity(SECURITY_PARAM);
         let mut masks = Vec::with_capacity(SECURITY_PARAM);
@@ -155,7 +164,7 @@ impl RangeProofNi {
 
         for _ in 0..SECURITY_PARAM {
             // Sample rho_i from [0, range_bound)
-            let rho_i = range_bound.random_below_ref(rng);
+            let rho_i = range_bound.sample_below_ref(rng);
 
             // Encrypt rho_i: c_mask_i = Enc(rho_i; t_i)
             let (c_mask, t_i) = dk.encrypt_with_random(rng, &rho_i)?;
@@ -175,7 +184,7 @@ impl RangeProofNi {
         for (i, bit) in challenges.iter().enumerate() {
             if *bit == 0 {
                 // Reveal (w_i, s_i) where w_i = x + rho_i
-                let w_i = x + &masks[i];
+                let w_i = (x + &masks[i]).complete();
                 // Extract nonce s_i of c_masked_i using the secret key
                 let s_i = extract_nonce(dk, &encrypted_pairs[i].c_masked, &w_i)
                     .ok_or(RangeProofNiError::NonceExtraction)?;
@@ -209,8 +218,8 @@ impl RangeProofNi {
             return false;
         }
 
-        let range_bound = q * &Integer::u_pow_u(2, 128);
-        let upper_bound = q + &range_bound;
+        let range_bound = q * Integer::u_pow_u(2, 128).complete();
+        let upper_bound = (q + &range_bound).complete();
 
         // Re-derive challenge bits
         let challenges = derive_challenges(ek, c, &self.encrypted_pairs);
