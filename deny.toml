@@ -9,17 +9,16 @@ unmaintained = "workspace"
 ignore = ["RUSTSEC-2025-0141"]
 
 [licenses]
-unused-allowed-license = "allow"
+# Kept in sync with what the dependency tree actually uses, so cargo-deny warns
+# when an entry stops matching any crate. Add a license here only once some
+# dependency actually needs it.
 allow = [
     "MIT",
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
-    "ISC",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "Zlib",
-    "0BSD",
     "LGPL-3.0-or-later",
 ]
 
