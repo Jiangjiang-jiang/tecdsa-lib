@@ -11,7 +11,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -70,10 +70,10 @@ impl ZkJlEquProof {
         msg_bits: u32,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
 
         // Upper bounds
-        let v_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + msg_bits);
+        let v_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + msg_bits);
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
         let w0_bound = Integer::from(&pk0.n << (STAT_SEC + CHALLENGE_BITS));
 
@@ -89,7 +89,7 @@ impl ZkJlEquProof {
         let d = mul_mod(&y_v, &h_w, &pk.n);
 
         // Commitment under pk0: d' = y0^{2^k*v} * h0^{2^k*w0} mod N0
-        let two_pow_k0 = Integer::from(1) << pk0.k;
+        let two_pow_k0 = Integer::two_pow(pk0.k);
         let exp_y0 = Integer::from(&two_pow_k0 * &v);
         let exp_h0 = two_pow_k0 * &w0;
         let y0_v = pow_mod(&pk0.y, &exp_y0, &pk0.n);
@@ -122,8 +122,8 @@ impl ZkJlEquProof {
         c: &Integer,
         c_prime: &Integer,
     ) -> bool {
-        let two_pow_k = Integer::from(1) << pk.k;
-        let two_pow_k0 = Integer::from(1) << pk0.k;
+        let two_pow_k = Integer::two_pow(pk.k);
+        let two_pow_k0 = Integer::two_pow(pk0.k);
 
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, pk0, c, c_prime, &self.d, &self.d_prime);

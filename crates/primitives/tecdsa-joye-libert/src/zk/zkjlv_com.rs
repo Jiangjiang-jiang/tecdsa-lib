@@ -12,7 +12,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -64,7 +64,7 @@ impl ZkJlvComProof {
         assert_eq!(y_vec.len(), b_bits_vec.len());
 
         let ell = y_vec.len();
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
 
         // Sample blinding values
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
@@ -74,7 +74,7 @@ impl ZkJlvComProof {
         let mut y_items = Vec::with_capacity(ell);
 
         for i in 0..ell {
-            let v_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
+            let v_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
             let v = random_below(&v_bound, rng);
 
             let exp_y = Integer::from(&two_pow_k * &v);
@@ -111,7 +111,7 @@ impl ZkJlvComProof {
         assert_eq!(y_vec.len(), self.z_vec.len());
 
         let ell = y_vec.len();
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
 
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, y_vec, c, &self.d);
@@ -162,7 +162,7 @@ pub fn jl_vec_commit(
     r: &Integer,
 ) -> Integer {
     assert_eq!(y_vec.len(), m_vec.len());
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
     let mut c = Integer::from(1);
     for i in 0..y_vec.len() {
         let exp = Integer::from(&two_pow_k * &m_vec[i]);

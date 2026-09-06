@@ -28,7 +28,7 @@
 
 use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::pow_mod;
+use tecdsa_bigint::{pow_mod, BigIntExt};
 
 use super::sample_random;
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
@@ -68,7 +68,7 @@ fn c_from_hash(c2s: &[&Qfi], pk_j: &Qfi, j: u16) -> ClResult<Integer> {
 
     let hash = hasher.finalize();
     let hash_uint = Integer::from_digits(&hash, Order::Msf);
-    let modulus = Integer::from(1) << SOUNDNESS_BITS;
+    let modulus = Integer::two_pow(SOUNDNESS_BITS);
     Ok(hash_uint % modulus)
 }
 
@@ -206,7 +206,7 @@ fn schnorr_challenge(prod_u: &Qfi, prod_v: &Qfi, r0: &Qfi, v0: &Qfi) -> ClResult
 
     let hash = hasher.finalize();
     let k_full = Integer::from_digits(&hash, Order::Msf);
-    let modulus = Integer::from(1) << SOUNDNESS_BITS;
+    let modulus = Integer::two_pow(SOUNDNESS_BITS);
     let k = k_full % modulus;
     Ok(k.to_digits::<u8>(Order::Msf))
 }
@@ -304,7 +304,7 @@ impl RShProof {
         // 1. Check rho_response is in range: 0 <= rho_response <= bound.
         //    bound = (1 + 2^lambda_distance) * 2^soundness * secretkey_bound
         let sk_bound = Integer::from_digits(&setup.secretkey_bound_bytes()?, Order::Msf);
-        let factor = (Integer::from(1) << LAMBDA_DISTANCE) + 1;
+        let factor = Integer::two_pow(LAMBDA_DISTANCE) + 1;
         let upper_bound = Integer::from(&sk_bound << SOUNDNESS_BITS) * &factor;
 
         let rho_resp = Integer::from_digits(&self.rho_response, Order::Msf);
