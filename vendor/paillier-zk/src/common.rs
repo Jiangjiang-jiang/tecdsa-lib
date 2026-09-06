@@ -2,7 +2,7 @@ pub mod sqrt;
 
 use std::sync::Arc;
 
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
 use generic_ec::Scalar;
 
 /// Auxiliary data known to both prover and verifier
@@ -35,7 +35,10 @@ impl Aux {
                 Some(res) => return Ok(res),
                 None if cfg!(debug_assertions) => {
                     return Err(BadExponentReason::ExpSize {
-                        exp_size: (x.significant_bits(), y.significant_bits()),
+                        exp_size: (
+                            u64::from(x.significant_bits()),
+                            u64::from(y.significant_bits()),
+                        ),
                         max_exp_size: table.max_exponents_size(),
                     }
                     .into())
@@ -61,6 +64,7 @@ impl Aux {
             }
             None => Ok(x
                 .pow_mod_ref(e, &self.rsa_modulo)
+                .map(Integer::from)
                 .ok_or_else(BadExponent::undefined)?),
         }
     }
@@ -192,14 +196,14 @@ impl IntegerExt for Integer {
 
     fn from_rng_half_pm<R: rand_core::RngCore>(rng: &mut R, range: &Self) -> Self {
         if range.is_even() {
-            let half_range = range >> 1;
-            let range_plus_one = range + 1u32;
-            range_plus_one.random_below(rng) - half_range
+            let half_range = Integer::from(range >> 1);
+            let range_plus_one = Integer::from(range + 1u32);
+            range_plus_one.sample_below(rng) - half_range
         } else {
             // range is odd, so half of the range minus one (that is `(range -
             // 1) / 2`) is range / 2
-            let half_range_minus_one = range >> 1;
-            range.random_below_ref(rng) - half_range_minus_one
+            let half_range_minus_one = Integer::from(range >> 1);
+            range.sample_below_ref(rng) - half_range_minus_one
         }
     }
 
@@ -207,7 +211,7 @@ impl IntegerExt for Integer {
         // If range is even, range >> 1 is exactly range / 2
         // If range is odd, range >> 1 == (range - 1) >> 1 == (range - 1) / 2 as
         // the lowest bit is discarded either way
-        let bound = range >> 1;
+        let bound = Integer::from(range >> 1);
         self.cmp_abs(&bound).is_le()
     }
 }
@@ -256,6 +260,8 @@ pub fn fail_if_ne<T: PartialEq, E>(err: E, lhs: T, rhs: T) -> Result<(), E> {
 }
 
 pub mod encoding {
+    use fast_paillier::backend::BigIntExt;
+
     /// Digests a fast-paillier backend integer
     pub struct Integer;
     impl udigest::DigestAs<fast_paillier::backend::Integer> for Integer {
@@ -283,7 +289,7 @@ pub mod encoding {
 /// A common logic shared across tests and doctests
 #[cfg(test)]
 pub mod test {
-    use fast_paillier::backend::Integer;
+    use fast_paillier::backend::{BigIntExt, Integer};
 
     pub fn random_key<R: rand_core::RngCore>(rng: &mut R) -> Option<fast_paillier::DecryptionKey> {
         let p = generate_blum_prime(rng, 1536);
@@ -299,10 +305,10 @@ pub mod test {
         let (s, t) = {
             let phi_n = (p - 1u8) * (q - 1u8);
             let r = Integer::sample_in_mult_group_of(rng, &n);
-            let lambda = phi_n.random_below(rng);
+            let lambda = phi_n.sample_below(rng);
 
             let t = r.square().modulo(&n);
-            let s = t.pow_mod_ref(&lambda, &n).unwrap();
+            let s = Integer::from(t.pow_mod_ref(&lambda, &n).unwrap());
 
             (s, t)
         };
@@ -328,7 +334,7 @@ pub mod test {
 
 #[cfg(test)]
 mod _test {
-    use fast_paillier::backend::Integer;
+    use fast_paillier::backend::{BigIntExt, Integer};
 
     use super::IntegerExt;
 
@@ -374,8 +380,8 @@ mod _test {
         assert_eq!(actual, expected);
 
         // Corner case: lower bound
-        let x_min = -&x_max;
-        let y_min = -&y_max;
+        let x_min = Integer::from(-&x_max);
+        let y_min = Integer::from(-&y_max);
         let actual = aux.combine(&x_min, &y_min).unwrap();
         let expected = aux
             .rsa_modulo
@@ -385,8 +391,8 @@ mod _test {
 
         // Random integers within the range
         for _ in 0..100 {
-            let x = (&x_max + 1u8).random_below(&mut rng);
-            let y = (&y_max + 1u8).random_below(&mut rng);
+            let x = Integer::from(&x_max + 1u8).sample_below(&mut rng);
+            let y = Integer::from(&y_max + 1u8).sample_below(&mut rng);
 
             let x = if rand::Rng::gen(&mut rng) { x } else { -x };
             let y = if rand::Rng::gen(&mut rng) { y } else { -y };
@@ -405,8 +411,8 @@ mod _test {
         let mut rng = rand_dev::DevRng::new();
         // Testing even case
         let range = Integer::from(10);
-        let upper_bound = &range >> 1;
-        let lower_bound = -&upper_bound;
+        let upper_bound = Integer::from(&range >> 1);
+        let lower_bound = Integer::from(-&upper_bound);
         let mut min = Integer::from(0);
         let mut max = Integer::from(0);
 
@@ -434,7 +440,7 @@ mod _test {
         let range = Integer::from(9);
         let range_minus_one = &range - Integer::one();
         let upper_bound = range_minus_one >> 1;
-        let lower_bound = -&upper_bound;
+        let lower_bound = Integer::from(-&upper_bound);
         let mut min = Integer::from(0);
         let mut max = Integer::from(0);
 

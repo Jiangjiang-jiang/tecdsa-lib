@@ -20,9 +20,9 @@
 //! ## Example
 //!
 //! ```
-//! use paillier_zk::{paillier_encryption_in_range_with_el_gamal as p, IntegerExt};
 //! use fast_paillier::backend::Integer;
-//! use generic_ec::{Point, Scalar, curves::Secp256k1 as E};
+//! use generic_ec::{curves::Secp256k1 as E, Point, Scalar};
+//! use paillier_zk::{paillier_encryption_in_range_with_el_gamal as p, IntegerExt};
 //! # mod pregenerated {
 //! #     use super::*;
 //! #     paillier_zk::load_pregenerated_data!(
@@ -44,8 +44,7 @@
 //!     epsilon: 512,
 //! };
 //! // ...and someone's encryption key
-//! let key: fast_paillier::EncryptionKey =
-//!     pregenerated::someone_encryption_key();
+//! let key: fast_paillier::EncryptionKey = pregenerated::someone_encryption_key();
 //!
 //! // Prover knows its secret `pdata` and `a`
 //! let a = Scalar::random(&mut rng);
@@ -58,9 +57,7 @@
 //! // Both parties know the public data
 //! let data = p::Data {
 //!     key: &key,
-//!     ciphertext: &key
-//!         .encrypt_with(pdata.plaintext, pdata.nonce)
-//!         .unwrap(),
+//!     ciphertext: &key.encrypt_with(pdata.plaintext, pdata.nonce).unwrap(),
 //!     a: &(Point::generator() * a),
 //!     b: &(Point::generator() * pdata.b),
 //!     x: &(Point::generator() * (a * pdata.b + pdata.plaintext.to_scalar())),
@@ -84,27 +81,18 @@
 //! // Verifier receives the data and the proof and verifies it
 //! # let recv = || (data, proof);
 //! let (data, proof) = recv();
-//! p::non_interactive::verify::<E, sha2::Sha256>(
-//!     &shared_state,
-//!     &aux,
-//!     data,
-//!     &proof,
-//!     &security,
-//! );
+//! p::non_interactive::verify::<E, sha2::Sha256>(&shared_state, &aux, data, &proof, &security);
 //! # Ok(()) }
 //! ```
 //!
 //! If the verification succeeded, verifier can continue communication with prover
 
-use fast_paillier::backend::Integer;
-use fast_paillier::{AnyEncryptionKey, Ciphertext, Nonce, Plaintext};
+use fast_paillier::{backend::Integer, AnyEncryptionKey, Ciphertext, Nonce, Plaintext};
 use generic_ec::{Curve, Point, Scalar};
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-pub use crate::common::Aux;
-pub use crate::common::InvalidProof;
+pub use crate::common::{Aux, InvalidProof};
 
 /// Security parameters for proof. Choosing the values is a tradeoff between
 /// security, speed and correctness
@@ -198,19 +186,16 @@ pub struct NiProof<E: Curve> {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use fast_paillier::backend::Integer;
+    use fast_paillier::backend::{BigIntExt, Integer};
     use generic_ec::{Curve, Point, Scalar};
     use rand_core::RngCore;
 
-    use crate::{
-        common::{fail_if, fail_if_ne, InvalidProofReason},
-        BadExponent, Error,
-    };
-
-    use crate::common::{IntegerExt, InvalidProof};
-
     use super::{
         Aux, Challenge, Commitment, Data, PrivateCommitment, PrivateData, Proof, SecurityParams,
+    };
+    use crate::{
+        common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason},
+        BadExponent, Error,
     };
 
     /// Create random commitment
@@ -223,7 +208,7 @@ pub mod interactive {
     ) -> Result<(Commitment<E>, PrivateCommitment<E>), Error> {
         let two_to_l_plus_e = Integer::one() << (security.l + security.epsilon);
         let n_j_at_two_to_l = (Integer::one() << security.l) * &aux.rsa_modulo;
-        let n_j_at_two_to_l_plus_e = &two_to_l_plus_e * &aux.rsa_modulo;
+        let n_j_at_two_to_l_plus_e = Integer::from(&two_to_l_plus_e * &aux.rsa_modulo);
 
         let alpha = Integer::from_rng_half_pm(rng, &two_to_l_plus_e);
         let mu = Integer::from_rng_half_pm(rng, &n_j_at_two_to_l);
@@ -256,15 +241,16 @@ pub mod interactive {
         private_commitment: &PrivateCommitment<E>,
         challenge: &Challenge,
     ) -> Result<Proof<E>, Error> {
-        let z1 = &private_commitment.alpha + (challenge * pdata.plaintext);
+        let z1 = Integer::from(&private_commitment.alpha + (challenge * pdata.plaintext));
         let z2 = {
             let nonce_to_challenge_mod_n: Integer = pdata
                 .nonce
                 .pow_mod_ref(challenge, data.key.n())
+                .map(Integer::from)
                 .ok_or(BadExponent::undefined())?;
             (&private_commitment.r * nonce_to_challenge_mod_n).modulo(data.key.n())
         };
-        let z3 = &private_commitment.gamma + (challenge * &private_commitment.mu);
+        let z3 = Integer::from(&private_commitment.gamma + (challenge * &private_commitment.mu));
         let w = private_commitment.beta + (challenge.to_scalar() * pdata.b);
         Ok(Proof { z1, z2, z3, w })
     }
@@ -356,9 +342,8 @@ pub mod non_interactive {
     use digest::Digest;
     use generic_ec::Curve;
 
-    use crate::{Error, InvalidProof};
-
     use super::{Aux, Challenge, Commitment, Data, NiProof, PrivateData, SecurityParams};
+    use crate::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving deterministic challenge.

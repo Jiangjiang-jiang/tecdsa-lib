@@ -13,8 +13,8 @@
 //! ## Example
 //!
 //! ```
-//! use paillier_zk::{paillier_encryption_in_range as p, IntegerExt};
 //! use fast_paillier::backend::Integer;
+//! use paillier_zk::{paillier_encryption_in_range as p, IntegerExt};
 //! # mod pregenerated {
 //! #     use super::*;
 //! #     paillier_zk::load_pregenerated_data!(
@@ -40,8 +40,7 @@
 //!
 //! // 1. Setup: prover prepares the paillier keys
 //!
-//! let private_key: fast_paillier::DecryptionKey =
-//!     pregenerated::prover_decryption_key();
+//! let private_key: fast_paillier::DecryptionKey = pregenerated::prover_decryption_key();
 //! let key = private_key.encryption_key();
 //!
 //! // 2. Setup: prover has some plaintext and encrypts it
@@ -51,7 +50,10 @@
 //!
 //! // 3. Prover computes a non-interactive proof that plaintext is at most 1024 bits:
 //!
-//! let data = p::Data { key, ciphertext: &ciphertext };
+//! let data = p::Data {
+//!     key,
+//!     ciphertext: &ciphertext,
+//! };
 //! let proof = p::non_interactive::prove::<sha2::Sha256>(
 //!     &shared_state,
 //!     &aux,
@@ -73,26 +75,17 @@
 //!
 //! # let recv = || (data, proof);
 //! let (data, proof) = recv();
-//! p::non_interactive::verify::<sha2::Sha256>(
-//!     &shared_state,
-//!     &aux,
-//!     data,
-//!     &security,
-//!     &proof,
-//! );
+//! p::non_interactive::verify::<sha2::Sha256>(&shared_state, &aux, data, &security, &proof);
 //! # Ok(()) }
 //! ```
 //!
 //! If the verification succeeded, verifier can continue communication with prover
 
-use fast_paillier::backend::Integer;
-use fast_paillier::{AnyEncryptionKey, Ciphertext, Nonce};
-
+use fast_paillier::{backend::Integer, AnyEncryptionKey, Ciphertext, Nonce};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-pub use crate::common::Aux;
-pub use crate::common::InvalidProof;
+pub use crate::common::{Aux, InvalidProof};
 
 /// Security parameters for proof. Choosing the values is a tradeoff between
 /// speed and chance of rejecting a valid proof or accepting an invalid proof
@@ -181,17 +174,14 @@ pub struct NiProof {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use fast_paillier::backend::Integer;
-
-    use crate::{
-        common::{fail_if, fail_if_ne, InvalidProofReason},
-        BadExponent, Error,
-    };
-
-    use crate::common::{IntegerExt, InvalidProof};
+    use fast_paillier::backend::{BigIntExt, Integer};
 
     use super::{
         Aux, Challenge, Commitment, Data, PrivateCommitment, PrivateData, Proof, SecurityParams,
+    };
+    use crate::{
+        common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason},
+        BadExponent, Error,
     };
 
     /// Create random commitment
@@ -234,13 +224,14 @@ pub mod interactive {
         private_commitment: &PrivateCommitment,
         challenge: &Challenge,
     ) -> Result<Proof, Error> {
-        let z1 = &private_commitment.alpha + (challenge * pdata.plaintext);
+        let z1 = Integer::from(&private_commitment.alpha + (challenge * pdata.plaintext));
         let nonce_to_challenge_mod_n: Integer = pdata
             .nonce
             .pow_mod_ref(challenge, data.key.n())
+            .map(Integer::from)
             .ok_or(BadExponent::undefined())?;
         let z2 = (&private_commitment.r * nonce_to_challenge_mod_n).modulo(data.key.n());
-        let z3 = &private_commitment.gamma + (challenge * &private_commitment.mu);
+        let z3 = Integer::from(&private_commitment.gamma + (challenge * &private_commitment.mu));
         Ok(Proof { z1, z2, z3 })
     }
 
@@ -323,9 +314,8 @@ pub mod interactive {
 pub mod non_interactive {
     use digest::Digest;
 
-    use crate::{Error, InvalidProof};
-
     use super::{Aux, Challenge, Commitment, Data, NiProof, PrivateData, SecurityParams};
+    use crate::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.
