@@ -117,7 +117,7 @@ where
         let delta = Integer::sample_in_mult_group_of(rng, n);
 
         // Step 2: gamma_1 = Enc_N(b; delta), gamma_2 = b * G
-        let gamma_1 = raw_encrypt(n, &b, &delta);
+        let gamma_1 = super::paillier_encrypt_raw(n, &(n * n).complete(), &b, &delta);
         let gamma_2 = scalar_mul_generator::<C>(&b);
 
         // Step 3: Fiat-Shamir challenge sigma = H(ssid, C, X1, gamma_1, gamma_2) mod q
@@ -200,7 +200,7 @@ where
             .expect("pow_mod for C^sigma must succeed")
             .complete();
         let lhs = (&self.gamma_1 * c_to_sigma).modulo(nn);
-        let rhs = raw_encrypt(n, &self.z1, &self.z2);
+        let rhs = super::paillier_encrypt_raw(n, &(n * n).complete(), &self.z1, &self.z2);
         if lhs != rhs {
             return false;
         }
@@ -220,23 +220,6 @@ where
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
-
-/// Raw Paillier encryption: `Enc_N(m; r) = (1 + m*N) * r^N mod N^2`.
-///
-/// This computes the Paillier ciphertext directly without using the
-/// `EncryptionKey` API, which is needed for the ZK proof verification
-/// where we must reconstruct the ciphertext from components.
-fn raw_encrypt(n: &Integer, plaintext: &Integer, nonce: &Integer) -> Integer {
-    let nn = (n * n).complete();
-    // (1 + m*N) mod N^2
-    let term1 = (Integer::one() + plaintext * n).modulo(&nn);
-    // r^N mod N^2
-    let term2 = nonce
-        .pow_mod_ref(n, &nn)
-        .expect("pow_mod for r^N must succeed")
-        .complete();
-    (term1 * term2).modulo(&nn)
-}
 
 /// Multiply the generator by a big integer: `b * G` where b is reduced mod q.
 fn scalar_mul_generator<C: TecdsaCurve>(b: &Integer) -> C::ProjectivePoint

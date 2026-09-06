@@ -131,7 +131,7 @@ impl PiBProof {
         // LHS: z2^N * (1+N)^z1 mod N^2
         // We need z1 to be in the valid encryption range. Since z1 could be
         // larger than N/2, we compute the encryption manually.
-        let lhs = paillier_encrypt_raw(n, n2, &self.z1, &self.z2);
+        let lhs = super::paillier_encrypt_raw(n, n2, &self.z1, &self.z2);
 
         // RHS: A * c_B^e mod N^2
         let c_B_to_e = c_B
@@ -216,7 +216,7 @@ impl PiAProof {
             .pow_mod_ref(&gamma, nn)
             .expect("modular exponentiation should succeed")
             .complete();
-        let enc_delta = paillier_encrypt_raw(n, nn, &delta, &mu);
+        let enc_delta = super::paillier_encrypt_raw(n, nn, &delta, &mu);
         let A = (c_B_gamma * enc_delta).modulo(nn);
 
         // Challenge: e = H("xal21-pi-a", N, q, c_A, c_B, A) mod 2^kappa
@@ -277,7 +277,7 @@ impl PiAProof {
             .pow_mod_ref(&self.z1, nn)
             .expect("modular exponentiation should succeed")
             .complete();
-        let enc_z2 = paillier_encrypt_raw(n, nn, &self.z2, &self.z3);
+        let enc_z2 = super::paillier_encrypt_raw(n, nn, &self.z2, &self.z3);
         let lhs = (c_B_z1 * enc_z2).modulo(nn);
 
         let c_A_e = c_A
@@ -293,22 +293,6 @@ impl PiAProof {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/// Raw Paillier encryption without the signed-group check.
-///
-/// Computes `(1 + x*N) * r^N mod N^2`. Unlike the standard `encrypt_with`,
-/// this function does not enforce that `x in [-N/2, N/2]`, which is required
-/// for ZK responses that can exceed the normal encryption range.
-pub(crate) fn paillier_encrypt_raw(n: &Integer, nn: &Integer, x: &Integer, r: &Integer) -> Integer {
-    // (1 + N)^x mod N^2 = (1 + x*N) mod N^2  (by binomial theorem)
-    let one_plus_xN = (Integer::one() + x * n).modulo(nn);
-    // r^N mod N^2
-    let r_to_N = r
-        .pow_mod_ref(n, nn)
-        .expect("modular exponentiation should succeed")
-        .complete();
-    (one_plus_xN * r_to_N).modulo(nn)
-}
 
 /// Compute Fiat-Shamir challenge for PiB.
 ///
