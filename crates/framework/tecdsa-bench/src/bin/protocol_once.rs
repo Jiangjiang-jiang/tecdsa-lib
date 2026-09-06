@@ -984,7 +984,7 @@ fn ggn16_dealer_setup(
     let lambda = p_minus_1.lcm(&q_minus_1);
     let beta = loop {
         let candidate = n_int.sample_below_ref(&mut rng);
-        if candidate > Integer::zero() && candidate.gcd_ref(&n_int).complete() == Integer::one() {
+        if candidate.cmp0().is_gt() && candidate.gcd_ref(&n_int).complete().is_one() {
             break candidate;
         }
     };
