@@ -29,10 +29,11 @@ use fast_paillier::{
 use rand_core::CryptoRngCore;
 use rug::Complete;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{
+    conv::{integer_to_scalar, scalar_to_bytes},
+    TecdsaCurve,
+};
 use thiserror::Error;
-
-use crate::conv::integer_to_scalar;
 
 // ---------------------------------------------------------------------------
 // Error type

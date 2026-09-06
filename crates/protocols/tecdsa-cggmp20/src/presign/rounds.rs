@@ -11,15 +11,17 @@ use rand_core::CryptoRngCore;
 use rug::Complete;
 use sha2::Sha256;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{
+    conv::{integer_to_scalar, scalar_to_integer},
+    TecdsaCurve,
+};
 use tecdsa_paillier::{
     backend::Integer,
-    conv::scalar_to_integer,
     zk::paillier_zk::{
         dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
         paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
     },
-    BigIntExt, Ciphertext, DecryptionKey, EncryptionKey,
+    Ciphertext, DecryptionKey, EncryptionKey,
 };
 use tecdsa_pedersen_mod::PedersenModParams;
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
@@ -81,43 +83,6 @@ struct ProofElogTag {
     session_id: [u8; 32],
     prover: u16,
     prime: bool,
-}
-
-// ---------------------------------------------------------------------------
-// Signed Integer → Scalar conversion
-// ---------------------------------------------------------------------------
-
-/// Convert a (possibly negative, possibly large) Paillier `Integer` to an EC
-/// scalar by reducing modulo the group order `q`.
-fn paillier_int_to_scalar<C>(i: &Integer) -> C::Scalar
-where
-    C: TecdsaCurve,
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let neg_one = -C::Scalar::ONE;
-    let q = scalar_to_integer::<C>(&neg_one) + Integer::one();
-    let reduced = i.modulo_ref(&q).complete();
-    let red_bytes = reduced.to_bytes_msf();
-    let fb = bytes_to_field_bytes::<C>(&red_bytes);
-    <C::Scalar as PrimeField>::from_repr(fb)
-        .into_option()
-        .expect("modular-reduced value must be < group order")
-}
-
-fn bytes_to_field_bytes<C: TecdsaCurve>(bytes: &[u8]) -> FieldBytes<C>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    let scalar_len = C::SCALAR_BYTES;
-    let mut fb = FieldBytes::<C>::default();
-    let out = fb.as_mut_slice();
-    if bytes.len() >= scalar_len {
-        out.copy_from_slice(&bytes[bytes.len() - scalar_len..]);
-    } else {
-        out[scalar_len - bytes.len()..].copy_from_slice(bytes);
-    }
-    fb
 }
 
 // ---------------------------------------------------------------------------
@@ -840,14 +805,14 @@ where
                 .dk
                 .decrypt(&round2.big_d)
                 .map_err(|e| TecdsaError::Other(format!("decrypt alpha from {peer_index}: {e}")))?;
-            let alpha_ij = paillier_int_to_scalar::<C>(&alpha_int);
+            let alpha_ij = integer_to_scalar::<C>(&alpha_int);
             alpha_sum += alpha_ij;
 
             // Decrypt hat_D to get hat_alpha_ij
             let hat_alpha_int = self.dk.decrypt(&round2.hat_big_d).map_err(|e| {
                 TecdsaError::Other(format!("decrypt hat_alpha from {peer_index}: {e}"))
             })?;
-            let hat_alpha_ij = paillier_int_to_scalar::<C>(&hat_alpha_int);
+            let hat_alpha_ij = integer_to_scalar::<C>(&hat_alpha_int);
             hat_alpha_sum += hat_alpha_ij;
         }
 

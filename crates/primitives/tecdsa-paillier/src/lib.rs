@@ -20,7 +20,6 @@
 //! - [`add_ciphertexts`] — homomorphic addition of two ciphertexts.
 //! - [`scalar_mul_ciphertext`] — homomorphic scalar multiplication.
 
-pub mod conv;
 #[allow(non_snake_case)]
 pub mod mta;
 pub mod threshold;

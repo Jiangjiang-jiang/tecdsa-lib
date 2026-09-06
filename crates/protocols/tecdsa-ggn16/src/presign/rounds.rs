@@ -31,10 +31,12 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{
+    conv::{curve_order, integer_to_scalar, scalar_to_integer},
+    TecdsaCurve,
+};
 use tecdsa_paillier::{
     backend::Integer,
-    conv::{group_order_integer, integer_to_scalar, scalar_to_integer},
     threshold::{combine_partials, partial_decrypt, PartialDecryption},
     zk::{
         homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness},
@@ -118,7 +120,7 @@ where
         let alpha = &config.key_share.alpha;
 
         // 1. Sample rho_i in Z_q
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let rho_i = q.sample_below_ref(rng);
 
         // 2. u_i = E(rho_i; r_u) -- encrypt under shared Paillier key
@@ -343,7 +345,7 @@ where
         // Now u = E(rho) and v = E(rho * x) where rho = sum(rho_i)
 
         // Round 3: sample k_i, c_i, compute r_i = k_i*G and w_i
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
 
         // k_i in Z_q (nonzero)
         let k_i_scalar = C::random_scalar(rng);
@@ -733,7 +735,7 @@ where
             .map_err(|e| TecdsaError::Other(format!("threshold decryption of w failed: {e}")))?;
 
         // Reduce eta mod q to get k*rho mod q
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let eta_mod_q = Integer::from(eta.modulo_ref(&q));
 
         // Compute psi = (k*rho)^{-1} mod q
