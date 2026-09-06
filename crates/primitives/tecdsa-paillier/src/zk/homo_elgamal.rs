@@ -18,7 +18,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 
 /// Error type for HomoElGamal proof verification.
 #[derive(Debug, thiserror::Error)]
@@ -176,8 +176,8 @@ where
 
                 let A = decode_point::<C2>(&a_bytes).map_err(de::Error::custom)?;
                 let B = decode_point::<C2>(&b_bytes).map_err(de::Error::custom)?;
-                let z1 = decode_scalar::<C2>(&z1_bytes).map_err(de::Error::custom)?;
-                let z2 = decode_scalar::<C2>(&z2_bytes).map_err(de::Error::custom)?;
+                let z1 = scalar_from_canonical_bytes::<C2>(&z1_bytes).map_err(de::Error::custom)?;
+                let z2 = scalar_from_canonical_bytes::<C2>(&z2_bytes).map_err(de::Error::custom)?;
 
                 Ok(HomoElGamalProof { A, B, z1, z2 })
             }
@@ -192,20 +192,15 @@ fn decode_point<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::ProjectivePoint, Stri
 where
     FieldBytesSize<C>: ModulusSize,
 {
-    let mut repr = <C::ProjectivePoint as GroupEncoding>::Repr::default();
-    let repr_slice = repr.as_mut();
-    if bytes.len() != repr_slice.len() {
-        return Err(format!(
-            "point: expected {} bytes, got {}",
-            repr_slice.len(),
-            bytes.len()
-        ));
-    }
-    repr_slice.copy_from_slice(bytes);
-    Option::from(C::ProjectivePoint::from_bytes(&repr)).ok_or_else(|| "invalid point".to_string())
+    C::ProjectivePoint::from_bytes_slice(bytes).ok_or_else(|| "invalid point".to_string())
 }
 
-fn decode_scalar<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::Scalar, String>
+/// Parse a scalar from exact-width, canonical big-endian bytes.
+///
+/// Strict on purpose: unlike `TecdsaCurve::scalar_from_bytes`, this rejects
+/// wrong-length or out-of-range input instead of reducing it, since these
+/// bytes come from a deserialized proof and should round-trip exactly.
+fn scalar_from_canonical_bytes<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::Scalar, String>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,

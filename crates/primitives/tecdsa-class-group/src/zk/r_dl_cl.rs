@@ -18,9 +18,8 @@
 //! deterministic scalar multiplication of input ciphertext `c_0 = (c_{01}, c_{02})`
 //! by the same secret `x` that is committed on the elliptic curve as `X = x * G`.
 
-use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Secp256k1};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
@@ -40,25 +39,8 @@ pub struct RDlClProof {
 }
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
-    if bytes.len() != 33 {
-        return Err(crate::cl::ClError::InvalidParam(format!(
-            "expected 33-byte compressed point, got {} bytes",
-            bytes.len()
-        )));
-    }
-    let mut repr = <ProjectivePoint as GroupEncoding>::Repr::default();
-    AsMut::<[u8]>::as_mut(&mut repr).copy_from_slice(bytes);
-    let opt = ProjectivePoint::from_bytes(&repr);
-    if bool::from(opt.is_none()) {
-        return Err(crate::cl::ClError::InvalidParam(
-            "invalid EC point encoding".into(),
-        ));
-    }
-    Ok(opt.unwrap())
-}
-
-fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
-    p.to_bytes().to_vec()
+    ProjectivePoint::from_bytes_slice(bytes)
+        .ok_or_else(|| crate::cl::ClError::InvalidParam("invalid EC point encoding".into()))
 }
 
 impl RDlClProof {
@@ -81,10 +63,10 @@ impl RDlClProof {
         let t2 = setup.exp_bytes(&c02, &a)?;
         let a_scalar = Secp256k1::scalar_from_bytes(&a);
         let t_ec = ProjectivePoint::GENERATOR * a_scalar;
-        let t_ec_bytes = point_to_bytes(&t_ec);
+        let t_ec_bytes = t_ec.to_bytes_vec();
 
         // 3. Fiat-Shamir challenge.
-        let x_pt_bytes = point_to_bytes(x_point);
+        let x_pt_bytes = x_point.to_bytes_vec();
 
         let e = challenge_from_qfi(
             setup,
@@ -119,7 +101,7 @@ impl RDlClProof {
         let t_ec = decode_point(&self.t_ec_bytes)?;
 
         // Recompute Fiat-Shamir challenge.
-        let x_pt_bytes = point_to_bytes(x_point);
+        let x_pt_bytes = x_point.to_bytes_vec();
 
         let e_check = challenge_from_qfi(
             setup,

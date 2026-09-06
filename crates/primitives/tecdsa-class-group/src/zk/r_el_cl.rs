@@ -20,10 +20,9 @@
 //! The proof uses z1 unbounded (for CL checks) and z1 mod q (for EC checks),
 //! z2 mod q (for EC checks only).
 
-use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Secp256k1};
 use rug::{integer::Order, Integer};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
 use crate::cl::{ClResult, ClSetup, Qfi};
@@ -47,25 +46,8 @@ pub struct RElClProof {
 }
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
-    if bytes.len() != 33 {
-        return Err(crate::cl::ClError::InvalidParam(format!(
-            "expected 33-byte compressed point, got {} bytes",
-            bytes.len()
-        )));
-    }
-    let mut repr = <ProjectivePoint as GroupEncoding>::Repr::default();
-    AsMut::<[u8]>::as_mut(&mut repr).copy_from_slice(bytes);
-    let opt = ProjectivePoint::from_bytes(&repr);
-    if bool::from(opt.is_none()) {
-        return Err(crate::cl::ClError::InvalidParam(
-            "invalid EC point encoding".into(),
-        ));
-    }
-    Ok(opt.unwrap())
-}
-
-fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
-    p.to_bytes().to_vec()
+    ProjectivePoint::from_bytes_slice(bytes)
+        .ok_or_else(|| crate::cl::ClError::InvalidParam("invalid EC point encoding".into()))
 }
 
 impl RElClProof {
@@ -92,12 +74,12 @@ impl RElClProof {
         // EC: R_elg = a2 * G
         let a2_scalar = Secp256k1::scalar_from_bytes(&a2);
         let r_elg = ProjectivePoint::GENERATOR * a2_scalar;
-        let r_elg_bytes = point_to_bytes(&r_elg);
+        let r_elg_bytes = r_elg.to_bytes_vec();
 
         // EC: S_elg = a1 * D + a2 * elek
         let a1_scalar = Secp256k1::scalar_from_bytes(&a1);
         let s_elg = *d * a1_scalar + *elek * a2_scalar;
-        let s_elg_bytes = point_to_bytes(&s_elg);
+        let s_elg_bytes = s_elg.to_bytes_vec();
 
         // CL: R_ck = ck_0^{a1}
         let r_ck = setup.exp_bytes(ck_0, &a1)?;
@@ -105,10 +87,10 @@ impl RElClProof {
         let s_ck = setup.exp_bytes(ck_1, &a1)?;
 
         // 3. Fiat-Shamir challenge.
-        let d_bytes = point_to_bytes(d);
-        let elek_bytes = point_to_bytes(elek);
-        let elg_0_bytes = point_to_bytes(elg_0);
-        let elg_1_bytes = point_to_bytes(elg_1);
+        let d_bytes = d.to_bytes_vec();
+        let elek_bytes = elek.to_bytes_vec();
+        let elg_0_bytes = elg_0.to_bytes_vec();
+        let elg_1_bytes = elg_1.to_bytes_vec();
 
         let e = challenge_from_qfi(
             setup,
@@ -167,10 +149,10 @@ impl RElClProof {
         let s_elg = decode_point(&self.s_elg_bytes)?;
 
         // Recompute Fiat-Shamir challenge.
-        let d_bytes = point_to_bytes(d);
-        let elek_bytes = point_to_bytes(elek);
-        let elg_0_bytes = point_to_bytes(elg_0);
-        let elg_1_bytes = point_to_bytes(elg_1);
+        let d_bytes = d.to_bytes_vec();
+        let elek_bytes = elek.to_bytes_vec();
+        let elg_0_bytes = elg_0.to_bytes_vec();
+        let elg_1_bytes = elg_1.to_bytes_vec();
 
         let e_check = challenge_from_qfi(
             setup,

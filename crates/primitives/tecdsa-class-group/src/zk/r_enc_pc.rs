@@ -19,8 +19,8 @@
 //! check, binding the EC Pedersen commitment plaintext to the CL ciphertext
 //! plaintext (WMC24 Figure 1, Z_Enc-PC).
 
-use elliptic_curve::group::GroupEncoding;
 use k256::ProjectivePoint;
+use tecdsa_curve::PointExt;
 
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
@@ -84,7 +84,7 @@ impl REncPcProof {
         let g_ec = ProjectivePoint::GENERATOR;
         let h_ec = <k256::Secp256k1 as tecdsa_curve::TecdsaCurve>::nums_pedersen_h();
         let r_pc = g_ec * a1_scalar + h_ec * a2_scalar;
-        let r_pc_bytes = r_pc.to_bytes().to_vec();
+        let r_pc_bytes = r_pc.to_bytes_vec();
 
         // --- CL commitments ---
         // R_c0 = g_q^{a3} (= h^{a3} in CL notation)
@@ -208,14 +208,8 @@ fn bytes_to_k256_scalar(bytes: &[u8]) -> k256::Scalar {
 
 /// Parses a compressed secp256k1 point from bytes (33 bytes SEC1 compressed).
 fn point_from_compressed(bytes: &[u8]) -> ClResult<ProjectivePoint> {
-    let repr = k256::CompressedPoint::try_from(bytes).map_err(|_| {
-        crate::cl::ClError::InvalidParam(format!(
-            "expected 33-byte compressed point, got {}",
-            bytes.len()
-        ))
-    })?;
-    let opt: Option<ProjectivePoint> = ProjectivePoint::from_bytes(&repr).into();
-    opt.ok_or_else(|| crate::cl::ClError::InvalidParam("failed to decode compressed point".into()))
+    ProjectivePoint::from_bytes_slice(bytes)
+        .ok_or_else(|| crate::cl::ClError::InvalidParam("failed to decode compressed point".into()))
 }
 
 #[cfg(test)]

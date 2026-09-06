@@ -19,10 +19,9 @@
 //! generators instead of the CL F-subgroup generator `f`.  There is NO
 //! rerandomisation parameter `rho`.
 
-use elliptic_curve::group::GroupEncoding;
 use k256::{ProjectivePoint, Secp256k1};
 use rug::{integer::Order, Integer};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 
 use super::{
     challenge_from_qfi, response_mod_q, response_unbounded, sample_random, sample_random_mod_q,
@@ -48,25 +47,8 @@ pub struct RMAffDlEcProof {
 }
 
 fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
-    if bytes.len() != 33 {
-        return Err(crate::cl::ClError::InvalidParam(format!(
-            "expected 33-byte compressed point, got {} bytes",
-            bytes.len()
-        )));
-    }
-    let mut repr = <ProjectivePoint as GroupEncoding>::Repr::default();
-    AsMut::<[u8]>::as_mut(&mut repr).copy_from_slice(bytes);
-    let opt = ProjectivePoint::from_bytes(&repr);
-    if bool::from(opt.is_none()) {
-        return Err(crate::cl::ClError::InvalidParam(
-            "invalid EC point encoding".into(),
-        ));
-    }
-    Ok(opt.unwrap())
-}
-
-fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
-    p.to_bytes().to_vec()
+    ProjectivePoint::from_bytes_slice(bytes)
+        .ok_or_else(|| crate::cl::ClError::InvalidParam("invalid EC point encoding".into()))
 }
 
 /// Negates a byte value modulo `q`, returning `(q - val) mod q` as big-endian bytes.
@@ -112,15 +94,15 @@ impl RMAffDlEcProof {
         // 3. Compute EC commitments.
         let beta0_scalar = Secp256k1::scalar_from_bytes(&beta0);
         let b0 = ProjectivePoint::GENERATOR * beta0_scalar;
-        let b0_bytes = point_to_bytes(&b0);
+        let b0_bytes = b0.to_bytes_vec();
 
         let k0_scalar = Secp256k1::scalar_from_bytes(&k0_star);
         let r0 = ProjectivePoint::GENERATOR * k0_scalar;
-        let r0_bytes = point_to_bytes(&r0);
+        let r0_bytes = r0.to_bytes_vec();
 
         // 4. Fiat-Shamir challenge.
-        let r_pt_bytes = point_to_bytes(r_point);
-        let b_pt_bytes = point_to_bytes(b_point);
+        let r_pt_bytes = r_point.to_bytes_vec();
+        let b_pt_bytes = b_point.to_bytes_vec();
 
         let e = challenge_from_qfi(
             setup,
@@ -161,8 +143,8 @@ impl RMAffDlEcProof {
         let r0 = decode_point(&self.r0_bytes)?;
 
         // Recompute Fiat-Shamir challenge.
-        let r_pt_bytes = point_to_bytes(r_point);
-        let b_pt_bytes = point_to_bytes(b_point);
+        let r_pt_bytes = r_point.to_bytes_vec();
+        let b_pt_bytes = b_point.to_bytes_vec();
 
         let e_check = challenge_from_qfi(
             setup,

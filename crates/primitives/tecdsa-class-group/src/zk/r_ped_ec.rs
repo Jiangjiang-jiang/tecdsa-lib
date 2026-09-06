@@ -20,7 +20,7 @@
 
 use k256::Secp256k1;
 use rug::{integer::Order, Integer};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
@@ -163,30 +163,16 @@ fn ec_schnorr_check_bytes(
 
     let lhs = k256::ProjectivePoint::GENERATOR * u2_scalar;
 
-    let v_tilde = match point_from_compressed(v_tilde_bytes) {
+    let v_tilde = match k256::ProjectivePoint::from_bytes_slice(v_tilde_bytes) {
         Some(p) => p,
         None => return false,
     };
-    let big_v = match point_from_compressed(big_v_bytes) {
+    let big_v = match k256::ProjectivePoint::from_bytes_slice(big_v_bytes) {
         Some(p) => p,
         None => return false,
     };
     let rhs = v_tilde + big_v * e_scalar;
     lhs == rhs
-}
-
-fn point_from_compressed(bytes: &[u8]) -> Option<k256::ProjectivePoint> {
-    use elliptic_curve::group::GroupEncoding;
-    if bytes.len() == 33 {
-        let repr = k256::CompressedPoint::try_from(bytes).ok()?;
-        Option::from(k256::ProjectivePoint::from_bytes(&repr))
-    } else if bytes.len() == 65 {
-        use elliptic_curve::sec1::{FromSec1Point, Sec1Point};
-        let ep = Sec1Point::<k256::Secp256k1>::from_bytes(bytes).ok()?;
-        Option::from(k256::ProjectivePoint::from_sec1_point(&ep))
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]

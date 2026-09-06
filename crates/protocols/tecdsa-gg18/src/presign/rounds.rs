@@ -36,7 +36,7 @@ use rand_core::CryptoRngCore;
 use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, PointExt, ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{
     mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtaProofs},
     zk::mta_range::BobProofExt,
@@ -143,7 +143,7 @@ where
         let sign_keys = SignKeys::<C>::create(&config.key_share.secret_share, &lambda_i, rng);
 
         // Commit to g_gamma_i
-        let commit_data = point_to_bytes::<C>(&sign_keys.g_gamma_i);
+        let commit_data = sign_keys.g_gamma_i.to_bytes_vec();
         let (commitment, decommit_nonce) = HashCommitment::commit(&commit_data, rng);
 
         // Schnorr ephemeral for gamma_i proof (used in Round 3)
@@ -637,14 +637,6 @@ where
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Serialize a projective point to bytes.
-fn point_to_bytes<C: TecdsaCurve>(p: &C::ProjectivePoint) -> Vec<u8>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    p.to_bytes().as_ref().to_vec()
-}
 
 fn validate_sender(from: PartyId, my_id: PartyId, parties: &[PartyId]) -> tecdsa_core::Result<()> {
     if from == my_id {
