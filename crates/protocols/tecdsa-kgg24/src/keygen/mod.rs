@@ -25,6 +25,7 @@ pub use interactive::{
 pub use machine::{Kgg24KeyShare, Kgg24KeygenMachine, Kgg24KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::BigIntExt;
 
 use crate::key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare};
 
@@ -69,12 +70,12 @@ where
 
     // Sample noise t from [0, 2^{tau + 2*kappa})
     let noise_bound = tecdsa_paillier::backend::Integer::from(1u8) << (TAU + 2 * KAPPA);
-    let t = noise_bound.random_below_ref(rng);
+    let t = noise_bound.sample_below_ref(rng);
 
     // Compute x_hat_1 = x_1 + t * q (the noised share)
     let x1_bytes = x1.to_repr();
     let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
-    let x_hat_1 = &x1_int + &t * &q_int;
+    let x_hat_1 = tecdsa_paillier::backend::Integer::from(&x1_int + &t * &q_int);
 
     // Encrypt x_hat_1: C = Enc_pk(x_1 + t*q)
     let (c_key, _nonce) = dk
@@ -107,7 +108,7 @@ where
     let neg_one = -C::Scalar::ONE;
     let neg_one_bytes = neg_one.to_repr();
     let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    &q_minus_1 + 1u8
+    q_minus_1 + 1u8
 }
 
 #[cfg(test)]
@@ -142,7 +143,7 @@ mod tests {
 
         // The decrypted value is x_1 + t*q, so (decrypted mod q) should equal x_1
         let q_int = curve_order::<Secp256k1>();
-        let decrypted_mod_q = decrypted.modulo_ref(&q_int);
+        let decrypted_mod_q = tecdsa_paillier::backend::Integer::from(decrypted.modulo_ref(&q_int));
         assert_eq!(decrypted_mod_q, x1_int);
     }
 }

@@ -26,6 +26,7 @@ pub use interactive::{
 pub use machine::{Lin17KeyShare, Lin17KeygenMachine, Lin17KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::BigIntExt;
 
 use crate::key_share::{Lin17Party1KeyShare, Lin17Party2KeyShare};
 

@@ -26,6 +26,7 @@ pub use interactive::{
 pub use machine::{Abc24KeyShare, Abc24KeygenMachine, Abc24KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::BigIntExt;
 
 use crate::{
     key_share::{Abc24ClientKeyShare, Abc24ServerKeyShare},

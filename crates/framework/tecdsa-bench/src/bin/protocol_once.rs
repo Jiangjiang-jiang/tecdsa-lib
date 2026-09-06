@@ -29,9 +29,11 @@ use std::{
 
 use elliptic_curve::{ops::Reduce, PrimeField};
 use k256::Secp256k1;
+use rug::Complete;
 use sha2::{Digest, Sha256};
 use tecdsa_bench::{config, per_party};
 use tecdsa_ln18::sign::Ln18MtaBackend;
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{DataToSign, PartyId, PartyInfo, SessionConfig, SessionId};
 
 type C = Secp256k1;
@@ -964,23 +966,23 @@ fn ggn16_dealer_setup(
     let n_int = ek.n().clone();
     let p_minus_1 = &p - Integer::one();
     let q_minus_1 = &q - Integer::one();
-    let lambda = p_minus_1.lcm_ref(&q_minus_1);
+    let lambda = p_minus_1.lcm_ref(&q_minus_1).complete();
     let beta = loop {
-        let candidate = n_int.random_below_ref(&mut rng);
-        if candidate > Integer::zero() && candidate.gcd_ref(&n_int) == Integer::one() {
+        let candidate = n_int.sample_below_ref(&mut rng);
+        if candidate > Integer::zero() && candidate.gcd_ref(&n_int).complete() == Integer::one() {
             break candidate;
         }
     };
-    let d = &lambda * &beta;
-    let theta = d.modulo_ref(&n_int);
+    let d = (&lambda * &beta).complete();
+    let theta = d.modulo_ref(&n_int).complete();
     let mut delta = Integer::one();
     for i in 2..=n as u32 {
         delta *= Integer::from(i);
     }
-    let m = &n_int * &delta;
+    let m = (&n_int * &delta).complete();
     let mut coeffs = vec![d];
     for _ in 0..corruption_t {
-        coeffs.push(m.random_below_ref(&mut rng));
+        coeffs.push(m.sample_below_ref(&mut rng));
     }
     let mut shares = Vec::with_capacity(n as usize);
     for i in 1..=n {
@@ -1004,10 +1006,13 @@ fn ggn16_dealer_setup(
     // Ring-Pedersen
     let rp = Integer::generate_safe_prime(&mut rng, 1536);
     let rq = Integer::generate_safe_prime(&mut rng, 1536);
-    let n_tilde = &rp * &rq;
+    let n_tilde = (&rp * &rq).complete();
     let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
     let rlambda = (&rp - Integer::one()) * (&rq - Integer::one());
-    let h2 = h1.pow_mod_ref(&rlambda, &n_tilde).expect("pow_mod");
+    let h2 = h1
+        .pow_mod_ref(&rlambda, &n_tilde)
+        .expect("pow_mod")
+        .complete();
 
     (setup, shares, n_tilde, h1, h2)
 }

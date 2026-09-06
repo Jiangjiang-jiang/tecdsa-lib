@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use tecdsa_cggmp20::{aux_info::AuxInfoMachine, security_level::Cggmp20SecurityParams};
 use tecdsa_core::Csprng;
-use tecdsa_paillier::backend::Integer;
+use tecdsa_paillier::{backend::Integer, BigIntExt};
 use tecdsa_protocol::{PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine};
 
 /// Test-only security level with small primes for fast tests.

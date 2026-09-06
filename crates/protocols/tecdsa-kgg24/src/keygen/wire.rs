@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
-use tecdsa_paillier::zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof};
+use tecdsa_paillier::{
+    zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof},
+    BigIntExt,
+};
 
 use crate::keygen::interactive::{KeyGenP1Round2Msg, KeyGenP2Round1Msg, KeyGenP2Round3Msg};
 

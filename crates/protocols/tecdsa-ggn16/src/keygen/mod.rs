@@ -202,8 +202,9 @@ where
 #[cfg(test)]
 mod tests {
     use elliptic_curve::group::GroupEncoding;
-    use tecdsa_paillier::threshold::{
-        combine_partials, partial_decrypt, DecryptionShare, ThresholdSetup,
+    use tecdsa_paillier::{
+        threshold::{combine_partials, partial_decrypt, DecryptionShare, ThresholdSetup},
+        BigIntExt,
     };
     use tecdsa_testkit::Orchestrator;
 
@@ -230,17 +231,18 @@ mod tests {
 
         let p_minus_1 = &p - Integer::one();
         let q_minus_1 = &q - Integer::one();
-        let lambda = p_minus_1.lcm_ref(&q_minus_1);
+        let lambda = Integer::from(p_minus_1.lcm_ref(&q_minus_1));
 
         let beta = loop {
-            let candidate = n.random_below_ref(rng);
-            if candidate > Integer::zero() && candidate.gcd_ref(&n) == Integer::one() {
+            let candidate = n.sample_below_ref(rng);
+            if candidate > Integer::zero() && Integer::from(candidate.gcd_ref(&n)) == Integer::one()
+            {
                 break candidate;
             }
         };
 
-        let d = &lambda * &beta;
-        let theta = d.modulo_ref(&n);
+        let d = Integer::from(&lambda * &beta);
+        let theta = Integer::from(d.modulo_ref(&n));
 
         // delta = n!
         let mut delta = Integer::one();
@@ -249,10 +251,10 @@ mod tests {
         }
 
         // Shamir share d over Z with coefficient modulus M = N * delta
-        let m = &n * &delta;
+        let m = Integer::from(&n * &delta);
         let mut coeffs = vec![d.clone()];
         for _ in 0..corruption_threshold {
-            coeffs.push(m.random_below_ref(rng));
+            coeffs.push(m.sample_below_ref(rng));
         }
         let mut shares = Vec::with_capacity(total as usize);
         for i in 1..=total {
@@ -260,7 +262,7 @@ mod tests {
             let mut val = Integer::zero();
             let mut x_pow = Integer::one();
             for coeff in &coeffs {
-                val += coeff * &x_pow;
+                val += Integer::from(coeff * &x_pow);
                 x_pow *= &x;
             }
             shares.push(DecryptionShare { index: i, d_i: val });
@@ -281,17 +283,20 @@ mod tests {
     fn generate_ring_pedersen(rng: &mut impl CryptoRngCore) -> (Integer, Integer, Integer) {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
+        let n_tilde = Integer::from(&p * &q);
 
         let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
         let xhi_bound = Integer::one() << 256u32;
-        let xhi = xhi_bound.random_below_ref(rng);
-        let h1_xhi = h1
-            .pow_mod_ref(&xhi, &n_tilde)
-            .expect("pow_mod must succeed");
-        let h2 = h1_xhi
-            .invert_ref(&n_tilde)
-            .expect("h1^xhi must be invertible mod N_tilde");
+        let xhi = xhi_bound.sample_below_ref(rng);
+        let h1_xhi = Integer::from(
+            h1.pow_mod_ref(&xhi, &n_tilde)
+                .expect("pow_mod must succeed"),
+        );
+        let h2 = Integer::from(
+            h1_xhi
+                .invert_ref(&n_tilde)
+                .expect("h1^xhi must be invertible mod N_tilde"),
+        );
 
         (n_tilde, h1, h2)
     }
@@ -479,7 +484,7 @@ mod tests {
             .map(|s| partial_decrypt(&ct_xsum, s, &setup))
             .collect();
         let result = combine_partials(&partials[0..2], &setup).expect("combine xsum");
-        let expected = &x1 + &x2;
+        let expected = Integer::from(&x1 + &x2);
         assert_eq!(result, expected, "threshold decryption of large sum");
     }
 

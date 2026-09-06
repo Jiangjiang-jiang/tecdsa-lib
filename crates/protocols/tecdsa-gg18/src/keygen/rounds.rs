@@ -22,6 +22,7 @@ use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
     backend::Integer,
     zk::{mta_range::NTildeParams, paillier_zk::paillier_blum_modulus},
+    BigIntExt,
 };
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 use tecdsa_vss::feldman;
@@ -114,14 +115,17 @@ pub fn generate_n_tilde(
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
     // xhi is a random value in [0, 2^256)
     let xhi_bound = Integer::one() << 256u32;
-    let xhi = xhi_bound.random_below_ref(rng);
+    let xhi = xhi_bound.sample_below_ref(rng);
     // h2 = h1^(-xhi) mod N'
-    let h1_xhi = h1
-        .pow_mod_ref(&xhi, &n_tilde)
-        .expect("pow_mod must succeed");
-    let h2 = h1_xhi
-        .invert_ref(&n_tilde)
-        .expect("h1^xhi must be invertible mod N_tilde");
+    let h1_xhi = Integer::from(
+        h1.pow_mod_ref(&xhi, &n_tilde)
+            .expect("pow_mod must succeed"),
+    );
+    let h2 = Integer::from(
+        h1_xhi
+            .invert_ref(&n_tilde)
+            .expect("h1^xhi must be invertible mod N_tilde"),
+    );
 
     NTildeParams {
         N_tilde: n_tilde,

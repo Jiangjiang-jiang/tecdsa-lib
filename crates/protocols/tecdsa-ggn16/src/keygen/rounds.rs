@@ -29,6 +29,7 @@ use tecdsa_paillier::{
     backend::Integer,
     threshold::{DecryptionShare, ThresholdSetup},
     zk::pdl_slack::{PdlSlackProof, PdlSlackStatement, PdlSlackWitness},
+    BigIntExt,
 };
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 

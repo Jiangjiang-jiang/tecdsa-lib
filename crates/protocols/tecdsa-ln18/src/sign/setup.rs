@@ -252,15 +252,15 @@ where
     outputs
 }
 
-fn generate_ntilde(rng: &mut impl CryptoRngCore, prime_bits: u32) -> NTildeParams {
-    use tecdsa_paillier::backend::Integer;
-    let p = Integer::generate_safe_prime(rng, prime_bits);
-    let q = Integer::generate_safe_prime(rng, prime_bits);
-    let n_tilde = &p * &q;
+fn generate_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
+    use tecdsa_paillier::{backend::Integer, BigIntExt};
+    let p = Integer::generate_safe_prime(rng, 256);
+    let q = Integer::generate_safe_prime(rng, 256);
+    let n_tilde = Integer::from(&p * &q);
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
     let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-    let lambda = phi_n.random_below_ref(rng);
-    let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod");
+    let lambda = phi_n.sample_below_ref(rng);
+    let h2 = Integer::from(h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod"));
     NTildeParams {
         N_tilde: n_tilde,
         h1,

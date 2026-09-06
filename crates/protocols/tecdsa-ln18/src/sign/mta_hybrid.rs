@@ -502,7 +502,7 @@ mod tests {
 
     #[cfg(feature = "secp256k1")]
     fn test_paillier_dk(rng: &mut impl CryptoRngCore) -> DecryptionKey {
-        use tecdsa_paillier::backend::Integer;
+        use tecdsa_paillier::{backend::Integer, BigIntExt};
         let p = Integer::generate_safe_prime(rng, 512);
         let q = Integer::generate_safe_prime(rng, 512);
         DecryptionKey::from_primes(p, q).expect("valid primes")
@@ -510,14 +510,14 @@ mod tests {
 
     #[cfg(feature = "secp256k1")]
     fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
-        use tecdsa_paillier::backend::Integer;
+        use tecdsa_paillier::{backend::Integer, BigIntExt};
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
+        let n_tilde = Integer::from(&p * &q);
         let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
         let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-        let lambda = phi_n.random_below_ref(rng);
-        let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let lambda = phi_n.sample_below_ref(rng);
+        let h2 = Integer::from(h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined"));
         NTildeParams {
             N_tilde: n_tilde,
             h1,

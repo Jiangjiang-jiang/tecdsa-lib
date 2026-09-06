@@ -20,6 +20,7 @@ use tecdsa_paillier::{
         pdl::{PdlProverMsg1, PdlProverMsg2, PdlVerifierMsg1, PdlVerifierMsg2},
         range_ni::RangeProofNi,
     },
+    BigIntExt,
 };
 
 use crate::keygen::interactive::{KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP2Round2Msg};

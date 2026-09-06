@@ -46,6 +46,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::MtA;
 
 use crate::{

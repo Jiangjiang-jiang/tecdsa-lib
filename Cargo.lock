@@ -1698,6 +1698,7 @@ dependencies = [
  "sha2",
  "tecdsa",
  "tecdsa-abc24",
+ "tecdsa-bigint",
  "tecdsa-cggmp20",
  "tecdsa-class-group",
  "tecdsa-core",
