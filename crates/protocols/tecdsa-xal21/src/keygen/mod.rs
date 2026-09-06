@@ -34,7 +34,7 @@ fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
     let q = Integer::generate_safe_prime(rng, 1536);
     let n_tilde = Integer::from(&p * &q);
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    let lambda = (&p - Integer::one()) * (&q - Integer::one());
+    let lambda = (p - Integer::one()) * (q - Integer::one());
     let h2 = Integer::from(h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2"));
     NTildeParams {
         N_tilde: n_tilde,
@@ -117,21 +117,7 @@ where
     (p1_share, p2_share)
 }
 
-/// Compute the curve order q as a big integer.
-pub(crate) fn curve_order<C: TecdsaCurve>() -> tecdsa_paillier::backend::Integer
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    use elliptic_curve::Field;
-    // q - 1 is the repr of -1 in the scalar field
-    let neg_one = -C::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    q_minus_1 + 1u8
-}
-
-pub(crate) use tecdsa_curve::conv::scalar_to_bytes;
+pub(crate) use tecdsa_curve::conv::{curve_order, scalar_to_bytes};
 
 #[allow(dead_code)]
 pub(crate) fn scalar_to_int<C: TecdsaCurve>(s: &C::Scalar) -> tecdsa_paillier::backend::Integer

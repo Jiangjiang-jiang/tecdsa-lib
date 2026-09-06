@@ -820,11 +820,7 @@ mod tests {
 
     /// Helper: compute curve order q as a big integer.
     fn curve_order_int() -> Integer {
-        use elliptic_curve::PrimeField;
-        let neg_one = -k256::Scalar::ONE;
-        let neg_one_bytes = neg_one.to_repr();
-        let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-        q_minus_1 + 1u8
+        tecdsa_curve::conv::curve_order::<k256::Secp256k1>()
     }
 
     #[test]
@@ -1000,7 +996,7 @@ mod tests {
         let q2 = Integer::generate_safe_prime(&mut rng, 256);
         let n_tilde = (&p2 * &q2).complete();
         let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-        let phi_n = (&p2 - Integer::one()) * (&q2 - Integer::one());
+        let phi_n = (p2 - Integer::one()) * (q2 - Integer::one());
         let lambda = sample_below(&phi_n, &mut rng);
         let h2 = h1
             .pow_mod_ref(&lambda, &n_tilde)
@@ -1080,7 +1076,7 @@ mod tests {
             let p = generate_blum_prime(&mut rng, 1024);
             let q_rp = generate_blum_prime(&mut rng, 1024);
             let n = (&p * &q_rp).complete();
-            let phi_n = (&p - Integer::one()) * (&q_rp - Integer::one());
+            let phi_n = (p - Integer::one()) * (q_rp - Integer::one());
             let r = Integer::sample_in_mult_group_of(&mut rng, &n);
             let lambda = phi_n.sample_below(&mut rng);
             let t = r.square().modulo(&n);

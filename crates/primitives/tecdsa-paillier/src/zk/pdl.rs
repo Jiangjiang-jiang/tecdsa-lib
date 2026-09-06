@@ -20,7 +20,7 @@
 //! same PDL verification).
 
 use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
+    group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use fast_paillier::{
     backend::{BigIntExt, Integer},
@@ -165,8 +165,7 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     // Compute q (group order)
-    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = tecdsa_curve::conv::curve_order::<C>();
     let q_squared = (&q_int * &q_int).complete();
 
     // Sample a from Z_q
@@ -312,7 +311,7 @@ where
     let x1_bytes = scalar_to_bytes(x1);
     let x1_int = Integer::from_bytes_msf(&x1_bytes);
 
-    let expected = (&verifier_msg2.a * &x1_int).complete() + &verifier_msg2.b;
+    let expected = Integer::from(&verifier_msg2.a * &x1_int + &verifier_msg2.b);
 
     // The alpha from Paillier decryption might be in {-N/2, ..., N/2}.
     // If Paillier gave back a negative, the original plaintext was

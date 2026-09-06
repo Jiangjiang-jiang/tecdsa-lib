@@ -29,7 +29,7 @@ fn hash_message(msg: &[u8]) -> k256::Scalar {
         .into_option()
         .unwrap_or_else(|| {
             use rug::{integer::Order, Integer};
-            let q = Integer::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
+            let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
             let val = Integer::from_digits(&bytes, Order::Msf) % &q;
             let mut padded = [0u8; 32];
             let be = val.to_digits::<u8>(Order::Msf);

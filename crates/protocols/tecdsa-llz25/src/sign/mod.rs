@@ -61,7 +61,7 @@ fn hash_with_prefix(prefix: &[u8], data: &[u8]) -> k256::Scalar {
     bytes.copy_from_slice(&hash);
     use rug::{integer::Order, Integer};
     let val = Integer::from_digits(&bytes, Order::Msf);
-    let q = Integer::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10).unwrap();
+    let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
     let reduced = val % &q;
     tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&reduced)
 }

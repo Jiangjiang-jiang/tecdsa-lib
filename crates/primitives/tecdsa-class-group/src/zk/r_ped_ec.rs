@@ -140,7 +140,7 @@ fn ec_scalar_base_mul_bytes(scalar_bytes: &[u8]) -> Vec<u8> {
     use elliptic_curve::group::GroupEncoding;
 
     let val = Integer::from_digits(scalar_bytes, Order::Msf);
-    let q = Integer::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
+    let q = conv::curve_order::<k256::Secp256k1>();
     let reduced = val % &q;
     let scalar = integer_to_scalar(&reduced);
     let point = k256::ProjectivePoint::GENERATOR * scalar;
@@ -153,7 +153,7 @@ fn ec_schnorr_check_bytes(
     e_bytes: &[u8],
     big_v_bytes: &[u8],
 ) -> bool {
-    let q = Integer::from_str_radix(crate::cl::SECP256K1_ORDER, 10).expect("valid order");
+    let q = conv::curve_order::<k256::Secp256k1>();
     let u2_val = Integer::from_digits(u2_bytes, Order::Msf) % &q;
     let e_val = Integer::from_digits(e_bytes, Order::Msf) % &q;
 
