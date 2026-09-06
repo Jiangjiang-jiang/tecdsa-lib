@@ -114,7 +114,7 @@ where
         let b = b_bound.sample_below_ref(rng);
 
         // Sample delta from Z*_N (nonzero, coprime to N)
-        let delta = sample_coprime_to_n(n, rng);
+        let delta = Integer::sample_in_mult_group_of(rng, n);
 
         // Step 2: gamma_1 = Enc_N(b; delta), gamma_2 = b * G
         let gamma_1 = raw_encrypt(n, &b, &delta);
@@ -236,16 +236,6 @@ fn raw_encrypt(n: &Integer, plaintext: &Integer, nonce: &Integer) -> Integer {
         .expect("pow_mod for r^N must succeed")
         .complete();
     (term1 * term2).modulo(&nn)
-}
-
-/// Sample a random element from Z*_N (coprime to N and nonzero).
-fn sample_coprime_to_n(n: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
-    loop {
-        let candidate = n.sample_below_ref(rng);
-        if candidate.cmp0().is_gt() && candidate.gcd_ref(n).complete().is_one() {
-            return candidate;
-        }
-    }
 }
 
 /// Multiply the generator by a big integer: `b * G` where b is reduced mod q.
