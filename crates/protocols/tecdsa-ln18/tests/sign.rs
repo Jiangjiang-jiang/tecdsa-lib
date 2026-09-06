@@ -269,7 +269,9 @@ fn build_signing_setup(
     signers: &[PartyId],
     rng: &mut impl CryptoRngCore,
 ) -> Vec<Ln18PresignParams<C>> {
-    tecdsa_ln18::sign::build_signing_setup::<C>(key_shares, signers, rng)
+    // 256-bit primes keep these tests fast. Production uses
+    // `build_signing_setup`, which defaults to `NTILDE_PRIME_BITS` (1536).
+    tecdsa_ln18::sign::build_signing_setup_with_ntilde_bits::<C>(key_shares, signers, 256, rng)
         .expect("LN18 signing setup")
 }
 

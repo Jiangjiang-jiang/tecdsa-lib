@@ -29,5 +29,5 @@ pub use rounds::{
     ln18_full_sign_parallel_ot, ln18_online_sign_parallel_ot, ln18_presign_parallel_ot,
     ln18_sign_parallel_ot, Ln18OtOnlineSignParams, Ln18OtPresignParams, Ln18OtSignParams,
 };
-pub use setup::build_signing_setup;
+pub use setup::{build_signing_setup, build_signing_setup_with_ntilde_bits, NTILDE_PRIME_BITS};
 pub use state_rounds::{Ln18OfflineSignParams, Ln18OnlineSignParams};
