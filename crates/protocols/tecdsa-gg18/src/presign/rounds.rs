@@ -35,10 +35,13 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{
+    conv::{integer_to_scalar, scalar_to_integer},
+    zk::dlog::DlogProof,
+    TecdsaCurve,
+};
 use tecdsa_paillier::{
     backend::Integer,
-    conv::{integer_to_scalar, scalar_to_integer},
     mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtaProofs},
     zk::mta_range::BobProofExt,
     BigIntExt,
@@ -454,7 +457,7 @@ where
                 .dk
                 .decrypt(&bob_msg.c_b_gamma.0)
                 .expect("decrypt c_b_gamma");
-            let alpha = signed_integer_to_scalar::<C>(&alpha_int);
+            let alpha = integer_to_scalar::<C>(&alpha_int);
             alpha_vec.push(alpha);
 
             let mu_int = self
@@ -463,7 +466,7 @@ where
                 .dk
                 .decrypt(&bob_msg.c_b_w.0)
                 .expect("decrypt c_b_w");
-            let mu = signed_integer_to_scalar::<C>(&mu_int);
+            let mu = integer_to_scalar::<C>(&mu_int);
             mu_vec.push(mu);
         }
 
@@ -645,23 +648,6 @@ where
     FieldBytesSize<C>: ModulusSize,
 {
     p.to_bytes().as_ref().to_vec()
-}
-
-/// Convert a Paillier `Integer` (which may be negative) to an EC scalar mod q.
-fn signed_integer_to_scalar<C: TecdsaCurve>(
-    i: &Integer,
-) -> <C as elliptic_curve::CurveArithmetic>::Scalar
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    if i.cmp0().is_lt() {
-        let abs_val = -i.clone();
-        let pos_scalar = integer_to_scalar::<C>(&abs_val);
-        -pos_scalar
-    } else {
-        integer_to_scalar::<C>(i)
-    }
 }
 
 fn validate_sender(from: PartyId, my_id: PartyId, parties: &[PartyId]) -> tecdsa_core::Result<()> {

@@ -22,10 +22,12 @@ use elliptic_curve::{
 use fast_paillier::backend::{BigIntExt, Integer};
 use rug::Complete;
 use sha2::{Digest, Sha256};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{
+    conv::{curve_order, integer_to_scalar},
+    TecdsaCurve,
+};
 
 use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
-use crate::conv::{group_order_integer, integer_to_scalar};
 
 /// Verification error for the nonce consistency proof.
 #[derive(Debug, thiserror::Error)]
@@ -271,7 +273,7 @@ where
         statement: &NonceConsistStatement<C>,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
         let q5 = (&q3 * &q).complete() * &q;
         let q8 = (&q5 * &q).complete() * &q * &q;
@@ -406,7 +408,7 @@ where
     /// # Errors
     /// Returns [`NonceConsistError::Verify`] if the proof does not verify.
     pub fn verify(&self, statement: &NonceConsistStatement<C>) -> Result<(), NonceConsistError> {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
@@ -511,7 +513,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         let G = Point::GENERATOR;
 
         // eta1 = k_i (nonce share)
@@ -566,7 +568,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         let G = Point::GENERATOR;
 
         let eta1 = sample_below(&q, &mut rng);

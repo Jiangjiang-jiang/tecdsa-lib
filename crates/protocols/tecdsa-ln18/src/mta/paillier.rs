@@ -35,10 +35,12 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{
+    conv::{integer_to_scalar, scalar_to_integer},
+    TecdsaCurve,
+};
 use tecdsa_paillier::{
     backend::Integer,
-    conv::{integer_to_scalar, scalar_to_integer},
     zk::mta_range::{AliceProof, BobProofExt, NTildeParams},
     BigIntExt, DecryptionKey, EncryptionKey,
 };
@@ -382,7 +384,7 @@ where
                 .dk
                 .decrypt(&msg.c_b)
                 .map_err(|e| format!("decrypt failed for party {}: {}", msg.from, e))?;
-            let alpha = signed_integer_to_scalar::<C>(&alpha_int);
+            let alpha = integer_to_scalar::<C>(&alpha_int);
             alpha_sum += alpha;
         }
 
@@ -413,24 +415,6 @@ where
         let c_i = self.a_i * self.b_i + alpha_sum + beta_sum;
 
         Ok(c_i)
-    }
-}
-
-/// Convert a Paillier `Integer` (which may be negative, in the range
-/// `{-N/2, ..., N/2}`) to an EC scalar mod q.
-fn signed_integer_to_scalar<C: TecdsaCurve>(
-    i: &Integer,
-) -> <C as elliptic_curve::CurveArithmetic>::Scalar
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    if i.cmp0().is_lt() {
-        let abs_val = -i.clone();
-        let pos_scalar = integer_to_scalar::<C>(&abs_val);
-        -pos_scalar
-    } else {
-        integer_to_scalar::<C>(i)
     }
 }
 

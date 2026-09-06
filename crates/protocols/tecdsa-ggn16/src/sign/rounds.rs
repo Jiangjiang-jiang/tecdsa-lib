@@ -15,10 +15,12 @@ use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{
+    conv::{integer_to_scalar, scalar_to_integer},
+    TecdsaCurve,
+};
 use tecdsa_paillier::{
     backend::Integer,
-    conv::{integer_to_scalar, scalar_to_integer},
     threshold::{combine_partials, partial_decrypt, PartialDecryption},
 };
 use tecdsa_protocol::{

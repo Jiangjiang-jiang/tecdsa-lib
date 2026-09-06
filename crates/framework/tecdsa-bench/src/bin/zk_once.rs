@@ -853,7 +853,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let q = group_order();
         let x = sample_below(&q);
         let (ciphertext, r) = paillier_encrypt(ek, &x);
-        let x_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&x);
+        let x_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&x);
         let gen = C::generator();
         let q_pt = gen * x_scalar;
         let stmt = PdlSlackStatement::<C> {
@@ -893,7 +893,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let a = sample_below(&q);
         let (enc_a, _) = paillier_encrypt(ek, &a);
         let b_val = sample_below(&q);
-        let b_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&b_val);
+        let b_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&b_val);
         let x_pt = C::generator() * b_scalar;
         let beta_prim = sample_below(&Integer::from_bytes_msf(&ek.half_n().to_bytes_msf()));
         let r_bob = Integer::sample_in_mult_group_of(rng, ek.n());
@@ -928,7 +928,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let q = group_order();
         let gen = C::generator();
         let eta1 = sample_below(&q);
-        let eta1_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&eta1);
+        let eta1_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&eta1);
         let r_i = gen * eta1_scalar;
         let rho = sample_below(&q);
         let (u_ct, _) = paillier_encrypt(ek, &rho);
@@ -1131,7 +1131,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
             let enc_y = ek.encrypt_with(&y_val, &nonce_aff).expect("enc_y");
             (c_x * enc_y).modulo(ek.nn())
         };
-        let x_scalar = tecdsa_paillier::conv::integer_to_scalar::<C>(&x_val);
+        let x_scalar = tecdsa_curve::conv::integer_to_scalar::<C>(&x_val);
         let x_point = C::generator() * x_scalar;
         let x_ge = point_to_ge(&x_point);
         let data = pi_aff::Data::<GE> {

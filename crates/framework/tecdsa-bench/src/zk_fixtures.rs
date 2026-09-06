@@ -58,7 +58,7 @@ pub fn sample_below(bound: &Integer) -> Integer {
 }
 
 pub fn group_order() -> Integer {
-    tecdsa_paillier::conv::group_order_integer::<C>()
+    tecdsa_curve::conv::curve_order::<C>()
 }
 
 /// Ring-Pedersen auxiliary parameters (N_tilde, h1, h2).

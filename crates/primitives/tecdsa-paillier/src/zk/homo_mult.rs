@@ -18,10 +18,9 @@ use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesS
 use fast_paillier::backend::{BigIntExt, Integer};
 use rug::Complete;
 use sha2::{Digest, Sha256};
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{conv::curve_order, TecdsaCurve};
 
 use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
-use crate::conv::group_order_integer;
 
 /// Verification error for the homomorphic multiplication proof.
 #[derive(Debug, thiserror::Error)]
@@ -194,7 +193,7 @@ impl HomoMultProof {
         FieldBytesSize<C>: ModulusSize,
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
         let q_N_tilde = (&q * &statement.N_tilde).complete();
         let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
@@ -286,7 +285,7 @@ impl HomoMultProof {
         FieldBytesSize<C>: ModulusSize,
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
@@ -373,7 +372,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
 
         // eta: the scalar multiplier (plaintext of c1)
         let eta = sample_below(&q, &mut rng);
@@ -420,7 +419,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
 
         let eta = sample_below(&q, &mut rng);
         let (c1, r_c1) = ek.encrypt_with_random(&mut rng, &eta).expect("encrypt c1");

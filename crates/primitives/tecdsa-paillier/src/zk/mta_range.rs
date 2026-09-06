@@ -47,8 +47,9 @@ mod ser_integer {
     }
 }
 
+use tecdsa_curve::conv::{curve_order, integer_to_scalar};
+
 use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
-use crate::conv::{group_order_integer, integer_to_scalar};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -129,7 +130,7 @@ impl AliceProof {
         FieldBytesSize<C>: ModulusSize,
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
         let q_N_tilde = (&q * &ntilde.N_tilde).complete();
         let q3_N_tilde = (&q3 * &ntilde.N_tilde).complete();
@@ -195,7 +196,7 @@ impl AliceProof {
         FieldBytesSize<C>: ModulusSize,
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
     {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
 
         // Range check: s1 < q^3
@@ -312,7 +313,7 @@ impl BobProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
         <C as CurveArithmetic>::ProjectivePoint: GroupEncoding,
     {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
         let q_N_tilde = (&q * &ntilde.N_tilde).complete();
         let q3_N_tilde = (&q3 * &ntilde.N_tilde).complete();
@@ -456,7 +457,7 @@ impl BobProof {
         <C as CurveArithmetic>::Scalar: PrimeField<Repr = FieldBytes<C>>,
         <C as CurveArithmetic>::ProjectivePoint: GroupEncoding,
     {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
 
         // Range check: s1 < q^3
@@ -808,7 +809,7 @@ mod tests {
         let ntilde = setup_ntilde(&mut rng);
 
         // Alice's secret: a small value in [1, q)
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         let a = sample_below(&q, &mut rng);
 
         // Encrypt a
@@ -829,7 +830,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         let a = sample_below(&q, &mut rng);
         let (cipher, _r) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt");
 
@@ -864,7 +865,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
         let a = sample_below(&q, &mut rng);
@@ -906,7 +907,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
         let a = sample_below(&q, &mut rng);
@@ -955,7 +956,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
         let a = sample_below(&q, &mut rng);
@@ -1001,7 +1002,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let ntilde = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
 
         // Alice encrypts her secret
         let a = sample_below(&q, &mut rng);
@@ -1060,7 +1061,7 @@ mod tests {
 
         let ntilde = setup_ntilde(&mut rng);
 
-        let q_order = group_order_integer::<TestCurve>();
+        let q_order = curve_order::<TestCurve>();
 
         let a = sample_below(&q_order, &mut rng);
         let (enc_a, _r_a) = ek.encrypt_with_random(&mut rng, &a).expect("encrypt a");

@@ -24,9 +24,10 @@ use elliptic_curve::{
 use fast_paillier::backend::{BigIntExt, Integer};
 use rug::Complete;
 use sha2::{Digest, Sha256};
-use tecdsa_curve::TecdsaCurve;
-
-use crate::conv::{group_order_integer, integer_to_scalar};
+use tecdsa_curve::{
+    conv::{curve_order, integer_to_scalar},
+    TecdsaCurve,
+};
 
 /// Fiat-Shamir challenge error.
 #[derive(Debug, thiserror::Error)]
@@ -290,7 +291,7 @@ where
         statement: &PdlSlackStatement<C>,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
         let q_N_tilde = (&q * &statement.N_tilde).complete();
         let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
@@ -363,7 +364,7 @@ where
     /// # Errors
     /// Returns `PdlSlackError::Verify` if the proof does not verify.
     pub fn verify(&self, statement: &PdlSlackStatement<C>) -> Result<(), PdlSlackError> {
-        let q = group_order_integer::<C>();
+        let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
 
         // Recompute challenge
@@ -478,7 +479,7 @@ mod tests {
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
         // Sample a secret x (as an Integer, must fit in the Paillier plaintext range)
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         // x should be a small value relative to N, let's pick something in [1, q)
         let x = sample_range_one_to(&q, &mut rng);
 
@@ -516,7 +517,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         let x = sample_range_one_to(&q, &mut rng);
 
         let x_scalar = integer_to_scalar::<TestCurve>(&x);
@@ -554,7 +555,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         let x = sample_range_one_to(&q, &mut rng);
 
         let x_scalar = integer_to_scalar::<TestCurve>(&x);
@@ -594,7 +595,7 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
+        let q = curve_order::<TestCurve>();
         let x = sample_range_one_to(&q, &mut rng);
 
         let x_scalar = integer_to_scalar::<TestCurve>(&x);
