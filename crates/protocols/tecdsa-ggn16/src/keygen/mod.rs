@@ -235,8 +235,7 @@ mod tests {
 
         let beta = loop {
             let candidate = n.sample_below_ref(rng);
-            if candidate > Integer::zero() && Integer::from(candidate.gcd_ref(&n)) == Integer::one()
-            {
+            if candidate.cmp0().is_gt() && Integer::from(candidate.gcd_ref(&n)).is_one() {
                 break candidate;
             }
         };

@@ -133,7 +133,7 @@ pub fn trusted_dealer_setup(
 
     let beta = loop {
         let candidate = sample_below(&n, rng);
-        if candidate > Integer::zero() && candidate.gcd_ref(&n).complete() == Integer::one() {
+        if candidate.cmp0().is_gt() && candidate.gcd_ref(&n).complete().is_one() {
             break candidate;
         }
     };
