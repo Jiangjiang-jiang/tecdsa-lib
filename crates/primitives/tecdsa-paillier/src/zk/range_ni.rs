@@ -124,7 +124,7 @@ fn extract_nonce(
 
     // r^N = c * (1 + x*N)^{-1} mod N^2
     let one_plus_xn_inv = one_plus_xn.invert(nn).ok()?;
-    let r_to_n = (ciphertext * &one_plus_xn_inv).complete().modulo(nn);
+    let r_to_n = (ciphertext * one_plus_xn_inv).modulo(nn);
 
     // Compute d = N^{-1} mod lambda(N)
     let lambda = dk.lambda();
@@ -359,9 +359,7 @@ mod tests {
         let ek = dk.encryption_key().clone();
 
         // Use actual secp256k1 group order
-        let q_bytes =
-            scalar_to_bytes(&(-<k256::Secp256k1 as elliptic_curve::CurveArithmetic>::Scalar::ONE));
-        let q = Integer::from_bytes_msf(&q_bytes) + 1u8;
+        let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
 
         // Random x < q
         let x1 = k256::Secp256k1::random_scalar(&mut rng);

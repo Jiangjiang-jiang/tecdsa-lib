@@ -526,12 +526,7 @@ mod tests {
     }
 
     fn secp256k1_order_bytes() -> Vec<u8> {
-        let q = Integer::from_str_radix(
-            "115792089237316195423570985008687907852837564279074904382605163141518161494337",
-            10,
-        )
-        .unwrap();
-        q.to_digits::<u8>(Order::Msf)
+        tecdsa_curve::conv::curve_order::<k256::Secp256k1>().to_digits::<u8>(Order::Msf)
     }
 
     #[test]

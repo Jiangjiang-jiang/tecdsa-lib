@@ -25,7 +25,7 @@
 //! 5. EC check: `gamma_2 + sigma * X1 = z1 * G` (mod q on scalar)
 
 use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
+    group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use fast_paillier::{
     backend::{BigIntExt, Integer},
@@ -107,7 +107,7 @@ where
         rng: &mut impl CryptoRngCore,
     ) -> Self {
         let n = ek.n();
-        let q_int = curve_order::<C>();
+        let q_int = tecdsa_curve::conv::curve_order::<C>();
 
         // Step 1: Sample b from [0, q^2 * 2^{2(tau+kappa)})
         let b_bound = (&q_int * &q_int).complete() * Integer::two_pow(2 * (TAU + KAPPA));
@@ -126,7 +126,7 @@ where
         let sigma_int = Integer::from_bytes_msf(sigma_bytes.as_ref());
 
         // Step 4: z1 = x_hat_1 * sigma + b (over integers, no mod)
-        let z1 = (x_hat_1 * &sigma_int).complete() + &b;
+        let z1 = b + x_hat_1 * &sigma_int;
 
         // Step 5: z2 = rho^sigma * delta mod N
         let z2 = enc_nonce
@@ -162,7 +162,7 @@ where
     ) -> bool {
         let n = ek.n();
         let nn = ek.nn();
-        let q_int = curve_order::<C>();
+        let q_int = tecdsa_curve::conv::curve_order::<C>();
 
         // Check 1: z2 != 0
         if self.z2.cmp0().is_eq() {
@@ -221,19 +221,6 @@ where
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Compute the elliptic curve group order as a `fast_paillier::backend::Integer`.
-fn curve_order<C: TecdsaCurve>() -> Integer
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    // q - 1 is the repr of -1 in the scalar field
-    let neg_one = -C::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    q_minus_1 + 1u8
-}
-
 /// Raw Paillier encryption: `Enc_N(m; r) = (1 + m*N) * r^N mod N^2`.
 ///
 /// This computes the Paillier ciphertext directly without using the
@@ -242,7 +229,7 @@ where
 fn raw_encrypt(n: &Integer, plaintext: &Integer, nonce: &Integer) -> Integer {
     let nn = (n * n).complete();
     // (1 + m*N) mod N^2
-    let term1 = (Integer::one() + (plaintext * n).complete()).modulo(&nn);
+    let term1 = (Integer::one() + plaintext * n).modulo(&nn);
     // r^N mod N^2
     let term2 = nonce
         .pow_mod_ref(n, &nn)
@@ -325,7 +312,7 @@ mod tests {
         let x1_point = <Secp256k1 as TecdsaCurve>::generator() * x1;
 
         // Compute x_hat_1 = x1 + t * q
-        let q_int = curve_order::<Secp256k1>();
+        let q_int = tecdsa_curve::conv::curve_order::<Secp256k1>();
         let x1_bytes = x1.to_repr();
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
         let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);

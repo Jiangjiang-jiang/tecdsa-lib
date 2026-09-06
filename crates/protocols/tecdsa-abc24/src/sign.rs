@@ -24,7 +24,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{backend::Integer, BigIntExt};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -274,8 +274,7 @@ where
         .ok_or_else(|| Abc24Error::ProtocolState("k_1 is zero".into()))?;
 
     // Get curve order q
-    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = tecdsa_curve::conv::curve_order::<C>();
 
     // Compute u = [k_1^{-1} * (m + r * x_1)]_q + mu_mask * q
     let k1_inv_m_rx1 = k1_inv * (m + r * key_share.secret_share);

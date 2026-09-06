@@ -186,8 +186,7 @@ fn fiat_shamir_challenge(
 
     let hash = hasher.finalize();
     let hash_uint = Integer::from_digits(&hash, Order::Msf);
-    let q = Integer::from_str_radix(tecdsa_class_group::cl::SECP256K1_ORDER, 10)
-        .map_err(|e| Tx25Error::InvalidInput(format!("parse q: {e}")))?;
+    let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
     let e = hash_uint % &q;
     Ok(e.to_digits::<u8>(Order::Msf))
 }

@@ -324,13 +324,7 @@ where
 
     // Sample rho from Z_{q^2} for masking
     // q is the curve order. We need q^2 as the sampling range.
-    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
-    // q = -(-1) in the field, but we need the actual order.
-    // For secp256k1, the order is a known constant.
-    // We extract q from the scalar field: q = order of the group
-    // A scalar of value -1 has repr = q - 1, so q = repr(-1) + 1
-    let q_minus_1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes);
-    let q_int = q_minus_1_int + 1u8;
+    let q_int = tecdsa_curve::conv::curve_order::<C>();
     let q_squared = Integer::from(&q_int * &q_int);
 
     // rho <- Z_{q^2}: sample a random value in [0, q^2)

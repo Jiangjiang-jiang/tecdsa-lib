@@ -22,10 +22,7 @@ static NTILDE: LazyLock<NTildeFixture> = LazyLock::new(NTildeFixture::generate);
 static PEDERSEN: LazyLock<PedersenFixture> = LazyLock::new(PedersenFixture::generate);
 
 fn q_bytes() -> Vec<u8> {
-    let neg_one = -k256::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_int = Integer::from_bytes_msf(neg_one_bytes.as_ref()) + 1u8;
-    q_int.to_bytes_msf()
+    tecdsa_curve::conv::curve_order::<Secp256k1>().to_bytes_msf()
 }
 
 // ---------------------------------------------------------------------------

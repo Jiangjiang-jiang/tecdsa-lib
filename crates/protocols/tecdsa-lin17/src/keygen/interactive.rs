@@ -26,11 +26,11 @@
 //! where `Q = x_1 * x_2 * G`.
 
 use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
+    group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{conv::scalar_to_bytes, zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
     backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pdl, range_ni::RangeProofNi},
@@ -211,8 +211,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = tecdsa_curve::conv::curve_order::<C>();
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
     Ok(KeyGenP1Round3Msg {
@@ -310,8 +309,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = tecdsa_curve::conv::curve_order::<C>();
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
     let msg = KeyGenP1Round3Msg {
@@ -383,8 +381,7 @@ where
     }
 
     // Step 5: Verify range proof
-    let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = tecdsa_curve::conv::curve_order::<C>();
     if !p1_round3
         .range_proof
         .verify(&p1_round3.ek, &p1_round3.c_key, &q_int)

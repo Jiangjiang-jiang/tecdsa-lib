@@ -151,7 +151,7 @@ mod tests {
     use rug::{integer::Order, Integer};
 
     use super::*;
-    use crate::cl::{ClSetup, SECP256K1_ORDER};
+    use crate::cl::ClSetup;
 
     #[test]
     fn r_m_aff_dl_honest_verifies() {
@@ -174,7 +174,7 @@ mod tests {
             .encrypt_with_r(&pk, "100", &r_base_dec)
             .expect("enc_in");
 
-        let q = Integer::from_str_radix(SECP256K1_ORDER, 10).unwrap();
+        let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
         let m_out = (Integer::from(3u32) * Integer::from(100u32) + Integer::from(7u32)) % &q;
         let m_out_dec = m_out.to_string_radix(10);
 
@@ -217,7 +217,7 @@ mod tests {
             .encrypt_with_r(&pk, "100", &r_base_dec)
             .expect("enc_in");
 
-        let q = Integer::from_str_radix(SECP256K1_ORDER, 10).unwrap();
+        let q = tecdsa_curve::conv::curve_order::<k256::Secp256k1>();
         let m_out = (Integer::from(3u32) * Integer::from(100u32) + Integer::from(7u32)) % &q;
         let m_out_dec = m_out.to_string_radix(10);
 

@@ -351,11 +351,7 @@ mod tests {
 
     /// Helper: secp256k1 curve order as an integer.
     fn curve_order() -> Integer {
-        Integer::from_str_radix(
-            "115792089237316195423570985008687907852837564279074904382605163141518161494337",
-            10,
-        )
-        .expect("valid order")
+        conv::curve_order::<Secp256k1>()
     }
 
     #[test]
