@@ -1,6 +1,7 @@
 use rand_core::{CryptoRng, RngCore};
+use rug::Complete;
 
-use crate::backend::Integer;
+use crate::backend::{BigIntExt, Integer};
 use crate::{Bug, Error, Reason};
 use crate::{Ciphertext, Nonce, Plaintext};
 
@@ -44,7 +45,7 @@ impl EncryptionKey {
 
     /// `l(x) = (x-1)/n`
     pub(crate) fn l(&self, x: &Integer) -> Option<Integer> {
-        if !(x % self.n()).is_one() {
+        if !(x % self.n()).complete().is_one() {
             return None;
         }
         if !x.in_mult_group_of(self.nn()) {
@@ -66,7 +67,7 @@ impl EncryptionKey {
         let x = if x.cmp0().is_ge() {
             x.clone()
         } else {
-            x + self.n()
+            (x + self.n()).complete()
         };
 
         // a = (1 + N)^x mod N^2 = (1 + xN) mod N^2
@@ -74,7 +75,7 @@ impl EncryptionKey {
         // b = nonce^N mod N^2
         let b = nonce
             .pow_mod_ref(self.n(), self.nn())
-            .ok_or(Bug::PowModUndef)?;
+            .ok_or(Bug::PowModUndef)?.complete();
 
         let c = (a * b).modulo(self.nn());
         Ok(c)
@@ -104,7 +105,7 @@ impl EncryptionKey {
         if !c1.in_mult_group_of(self.nn()) || !c2.in_mult_group_of(self.nn()) {
             return Err(Reason::Ops.into());
         }
-        Ok((c1 * c2) % self.nn())
+        Ok((c1 * c2).complete() % self.nn())
     }
 
     /// Homomorphic subtraction of two ciphertexts
@@ -132,7 +133,7 @@ impl EncryptionKey {
 
         Ok(ciphertext
             .pow_mod_ref(scalar, self.nn())
-            .ok_or(Reason::Ops)?)
+            .ok_or(Reason::Ops)?.complete())
     }
 
     /// Homomorphic negation of a ciphertext
@@ -141,7 +142,7 @@ impl EncryptionKey {
     /// oneg(Enc(a)) = Enc(-a)
     /// ```
     pub fn oneg(&self, ciphertext: &Ciphertext) -> Result<Ciphertext, Error> {
-        Ok(ciphertext.invert_ref(self.nn()).ok_or(Reason::Ops)?)
+        Ok(ciphertext.invert_ref(self.nn()).ok_or(Reason::Ops)?.complete())
     }
 
     /// Checks whether `x` is `{-N/2, .., N/2}`

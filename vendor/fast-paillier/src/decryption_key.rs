@@ -1,6 +1,7 @@
 use rand_core::{CryptoRng, RngCore};
+use rug::Complete;
 
-use crate::backend::Integer;
+use crate::backend::{BigIntExt, Integer};
 use crate::{utils, Ciphertext, EncryptionKey, Nonce, Plaintext};
 use crate::{Error, Reason};
 
@@ -44,16 +45,16 @@ impl DecryptionKey {
         if p == q {
             return Err(Reason::InvalidPQ.into());
         }
-        let pm1 = &p - 1u8;
-        let qm1 = &q - 1u8;
-        let ek = EncryptionKey::from_n(&p * &q);
-        let lambda = pm1.lcm_ref(&qm1);
+        let pm1 = (&p - 1u8).complete();
+        let qm1 = (&q - 1u8).complete();
+        let ek = EncryptionKey::from_n((&p * &q).complete());
+        let lambda = pm1.lcm_ref(&qm1).complete();
         if lambda.cmp0().is_eq() {
             return Err(Reason::InvalidPQ.into());
         }
 
         // u = lambda^-1 mod N
-        let u = lambda.invert_ref(ek.n()).ok_or(Reason::InvalidPQ)?;
+        let u = lambda.invert_ref(ek.n()).ok_or(Reason::InvalidPQ)?.complete();
 
         let crt_mod_nn = utils::CrtExp::build_nn(&p, &q).ok_or(Reason::BuildFastExp)?;
         let exp_n = crt_mod_nn.prepare_exponent(ek.n());
@@ -89,7 +90,7 @@ impl DecryptionKey {
         // m = lu = L(a)*u = L(c^\lamba*)u mod n
         let plaintext = (l * &self.mu) % self.ek.n();
 
-        if (&plaintext << 1) >= *self.n() {
+        if (&plaintext << 1u32).complete() >= *self.n() {
             Ok(plaintext - self.n())
         } else {
             Ok(plaintext)
@@ -109,7 +110,7 @@ impl DecryptionKey {
         let x = if x.cmp0().is_ge() {
             x.clone()
         } else {
-            x + self.n()
+            (x + self.n()).complete()
         };
 
         // a = (1 + N)^x mod N^2 = (1 + xN) mod N^2
@@ -187,7 +188,7 @@ impl DecryptionKey {
 
     /// Bits length of smaller prime (`p` or `q`)
     pub fn bits_length(&self) -> u64 {
-        self.p.significant_bits().min(self.q.significant_bits())
+        self.p.significant_bits().min(self.q.significant_bits()) as u64
     }
 }
 

@@ -2,14 +2,29 @@
 
 use alloc::{string::String, vec::Vec};
 
-use super::IsPrime;
 use rug::Complete;
+/// Big integer type used in this crate.
+///
+/// This is a plain re-export of [`rug::Integer`] rather than a newtype, so that
+/// the whole workspace shares a single big-integer type. The helper methods that
+/// used to be inherent on the newtype now live on the [`BigIntExt`] extension
+/// trait below.
+///
+/// Note that methods which would collide with an inherent `rug::Integer` method
+/// are deliberately *not* on the trait: Rust resolves inherent methods before
+/// trait methods, so such a method could never be called and would silently
+/// diverge from the inherent one. Use rug's own API for those.
+pub use rug::Integer;
 
-/// Big integer type used in this crate
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
-pub struct Integer(rug::Integer);
+use crate::backend::{inv_mod, small_odd_primes};
 
-impl Integer {
+/// Extension methods on [`Integer`] used throughout this crate.
+///
+/// Import this trait to bring them into scope:
+/// ```rust
+/// use fast_paillier::backend::BigIntExt;
+/// ```
+pub trait BigIntExt: Sized {
     /// Converts to bytes, with bytes representing _least_ significant base256
     /// digits appearing first. Discards the sign
     ///
@@ -19,9 +34,7 @@ impl Integer {
     /// let x = Integer::from(0x11223344);
     /// assert_eq!(x.to_bytes_lsf(), vec![0x44, 0x33, 0x22, 0x11]);
     /// ```
-    pub fn to_bytes_lsf(&self) -> Vec<u8> {
-        self.0.to_digits(rug::integer::Order::Lsf)
-    }
+    fn to_bytes_lsf(&self) -> Vec<u8>;
     /// Converts to bytes, with bytes representing _most_ significant base256
     /// digits appearing first. Discards the sign
     ///
@@ -31,9 +44,7 @@ impl Integer {
     /// let x = Integer::from(0x11223344);
     /// assert_eq!(x.to_bytes_msf(), vec![0x11, 0x22, 0x33, 0x44]);
     /// ```
-    pub fn to_bytes_msf(&self) -> Vec<u8> {
-        self.0.to_digits(rug::integer::Order::Msf)
-    }
+    fn to_bytes_msf(&self) -> Vec<u8>;
     /// Converts to bytes, with bytes representing _most_ significant base256
     /// digits appearing first
     ///
@@ -41,240 +52,330 @@ impl Integer {
     /// ```rust
     /// # use fast_paillier::backend::{rug::Integer, Sign};
     /// let x = Integer::from(-0x11223344);
-    /// assert_eq!(x.to_bytes_msf_signed(), (vec![0x11, 0x22, 0x33, 0x44],
-    /// Sign::Negative));
+    /// assert_eq!(
+    ///     x.to_bytes_msf_signed(),
+    ///     (vec![0x11, 0x22, 0x33, 0x44], Sign::Negative)
+    /// );
     /// ```
-    pub fn to_bytes_msf_signed(&self) -> (Vec<u8>, super::Sign) {
-        (self.0.to_digits(rug::integer::Order::Msf), self.sign())
-    }
+    fn to_bytes_msf_signed(&self) -> (Vec<u8>, super::Sign);
     /// Converts bytes to Integer. Inverse of [`Integer::to_bytes_msf`]
-    pub fn from_bytes_msf(bytes: &[u8]) -> Self {
-        Integer(rug::Integer::from_digits(bytes, rug::integer::Order::Msf))
-    }
+    fn from_bytes_msf(bytes: &[u8]) -> Self;
     /// Converts bytes to Integer. Inverse of [`Integer::to_bytes_msf_signed`]
-    pub fn from_bytes_msf_signed(bytes: &[u8], sign: super::Sign) -> Self {
-        let r = Integer(rug::Integer::from_digits(bytes, rug::integer::Order::Msf));
+    fn from_bytes_msf_signed(bytes: &[u8], sign: super::Sign) -> Self;
+    /// Returns a string representation of the number for the specified radix
+    fn to_str_radix(&self, radix: u16) -> String;
+
+    fn one() -> Self;
+    fn zero() -> Self;
+    fn is_one(&self) -> bool;
+
+    fn sign(&self) -> super::Sign;
+
+    fn significant_dwords(&self) -> usize;
+
+    /// Uniform sample in `[0, self)`, consuming `self`.
+    ///
+    /// Named `sample_*` rather than `random_*` to avoid shadowing by
+    /// [`rug::Integer::random_below`], which takes rug's own RNG type and
+    /// returns a lazy value. This variant adapts a [`rand_core`] RNG and
+    /// returns an owned `Integer`.
+    fn sample_below(self, rng: &mut impl rand_core::RngCore) -> Self;
+    /// Uniform sample in `[0, self)`. See [`BigIntExt::sample_below`].
+    fn sample_below_ref(&self, rng: &mut impl rand_core::RngCore) -> Self;
+    /// Uniform sample of `bits` random bits. See [`BigIntExt::sample_below`].
+    fn sample_bits(bits: u32, rng: &mut impl rand_core::RngCore) -> Self;
+    fn random_bits_signed(bits: u32, rng: &mut impl rand_core::RngCore) -> Self;
+
+    fn assign_random_below(
+        &mut self,
+        modulo: &Self,
+        rng: &mut impl rand_core::RngCore,
+    ) -> &mut Self;
+
+    fn assign_random_bits(&mut self, bits: u32, rng: &mut impl rand_core::RngCore) -> &mut Self;
+
+    fn generate_prime(rng: &mut impl rand_core::RngCore, bit_size: u32) -> Self;
+
+    /// Compute l^le * r^re modulo self
+    fn combine(&self, l: &Self, le: &Self, r: &Self, re: &Self) -> Option<Self>;
+
+    /// Checks that `self` is in Z<super>*</super><sub>n</sub>
+    fn in_mult_group_of(&self, n: &Self) -> bool;
+
+    /// Checks that `abs(self)` is in Z<super>*</super><sub>n</sub>
+    fn abs_in_mult_group_of(&self, n: &Self) -> bool;
+
+    /// Samples `x` in Z*_n
+    fn sample_in_mult_group_of(rng: &mut impl rand_core::RngCore, n: &Self) -> Self;
+
+    /// Samples `x` such that abs(x) is in `Z*_n`
+    fn sample_pm_in_mult_group_of(rng: &mut impl rand_core::RngCore, n: &Self) -> Self;
+
+    /// Generate a random safe prime using a windowed double sieve.
+    ///
+    /// Generates a Sophie Germain prime `q` of `bits - 1` bits and returns the safe
+    /// prime `p = 2q + 1` of `bits` bits.
+    ///
+    /// Rather than testing random candidates one at a time, this draws a single
+    /// random odd base and sieves a whole window of candidates `q = base + 2j`
+    /// against every odd prime below the sieve limit, ruling out in one pass any
+    /// position where either `q` or `2q + 1` is divisible by a small prime. Survivors
+    /// are first cheaply filtered with a single Miller-Rabin round; `p = 2q + 1` is
+    /// then checked with one base-2 Fermat test which, by Pocklington's criterion
+    /// (`q` prime and `q > sqrt(p)`), *proves* `p` prime, so the full confidence
+    /// rounds are spent only on `q`. This minimises the big-integer primality checks
+    /// per safe prime found.
+    ///
+    /// The sieve limit grows with `bits`: a larger limit removes more composite
+    /// candidates up front at the cost of a bigger sieve.
+    fn generate_safe_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self;
+}
+
+impl BigIntExt for rug::Integer {
+    fn to_bytes_lsf(&self) -> Vec<u8> {
+        self.to_digits(rug::integer::Order::Lsf)
+    }
+
+    fn to_bytes_msf(&self) -> Vec<u8> {
+        self.to_digits(rug::integer::Order::Msf)
+    }
+
+    fn to_bytes_msf_signed(&self) -> (Vec<u8>, super::Sign) {
+        (
+            self.to_digits(rug::integer::Order::Msf),
+            match self.cmp0() {
+                core::cmp::Ordering::Less => super::Sign::Negative,
+                _ => super::Sign::NonNegative,
+            },
+        )
+    }
+
+    fn from_bytes_msf(bytes: &[u8]) -> Self {
+        rug::Integer::from_digits(bytes, rug::integer::Order::Msf)
+    }
+
+    fn from_bytes_msf_signed(bytes: &[u8], sign: super::Sign) -> Self {
+        let r = rug::Integer::from_digits(bytes, rug::integer::Order::Msf);
         if sign == super::Sign::Negative {
             -r
         } else {
             r
         }
     }
-    /// Returns a string representation of the number for the specified radix
-    pub fn to_str_radix(&self, radix: u16) -> String {
-        self.0.to_string_radix(radix.into())
-    }
-    /// Parses the integer using the given radix
-    pub fn from_str_radix(s: &str, radix: u16) -> Option<Self> {
-        rug::Integer::from_str_radix(s, radix.into())
-            .ok()
-            .map(Integer)
-    }
-    /// Convert the number to the underlying backend representation
-    pub fn to_rug(self) -> rug::Integer {
-        self.0
-    }
-    /// Convert the number from the underlying backend representation
-    pub fn from_rug(x: rug::Integer) -> Self {
-        Self(x)
-    }
-}
 
-use super::macro_defs;
-
-macro_defs::make_all_ops!(Integer, complete);
-macro_defs::make_all_bitops!(Integer);
-
-///// Methods from rug /////
-
-impl Integer {
-    pub fn one() -> Self {
-        Integer(rug::Integer::ONE.clone())
-    }
-    pub fn zero() -> Self {
-        Integer(rug::Integer::new())
-    }
-    pub fn is_one(&self) -> bool {
-        &self.0 == rug::Integer::ONE
+    fn to_str_radix(&self, radix: u16) -> String {
+        self.to_string_radix(radix.into())
     }
 
-    pub fn is_even(&self) -> bool {
-        self.0.is_even()
+    fn one() -> Self {
+        rug::Integer::ONE.clone()
     }
 
-    pub fn abs(self) -> Self {
-        Self(self.0.abs())
-    }
-    pub fn cmp_abs(&self, other: &Self) -> core::cmp::Ordering {
-        self.0.cmp_abs(&other.0)
+    fn zero() -> Self {
+        rug::Integer::new()
     }
 
-    pub fn lcm_ref(&self, other: &Self) -> Self {
-        Integer(self.0.lcm_ref(&other.0).complete())
-    }
-    pub fn gcd_ref(&self, other: &Self) -> Self {
-        Integer(self.0.gcd_ref(&other.0).complete())
+    fn is_one(&self) -> bool {
+        self == rug::Integer::ONE
     }
 
-    pub fn cmp0(&self) -> core::cmp::Ordering {
-        self.0.cmp0()
-    }
-    pub fn sign(&self) -> super::Sign {
+    fn sign(&self) -> super::Sign {
         match self.cmp0() {
             core::cmp::Ordering::Less => super::Sign::Negative,
             _ => super::Sign::NonNegative,
         }
     }
 
-    pub fn pow_mod(self, exponent: &Self, modulo: &Self) -> Option<Self> {
-        self.0.pow_mod(&exponent.0, &modulo.0).map(Integer).ok()
-    }
-    pub fn pow_mod_ref(&self, exponent: &Self, modulo: &Self) -> Option<Self> {
-        self.0
-            .pow_mod_ref(&exponent.0, &modulo.0)
-            .map(Complete::complete)
-            .map(Integer)
-    }
-    pub fn u_pow_u(base: u32, exponent: u32) -> Self {
-        Integer(rug::Integer::u_pow_u(base, exponent).complete())
+    fn significant_dwords(&self) -> usize {
+        self.significant_digits::<u32>()
     }
 
-    pub fn square(self) -> Self {
-        Integer(self.0.square())
-    }
-    pub fn square_ref(&self) -> Self {
-        Integer(self.0.square_ref().complete())
-    }
-    pub fn sqrt(self) -> Option<Self> {
-        if self.cmp0().is_lt() {
-            None
-        } else {
-            Some(Integer(self.0.sqrt()))
-        }
-    }
-    pub fn sqrt_ref(&self) -> Option<Self> {
-        if self.cmp0().is_lt() {
-            None
-        } else {
-            Some(Integer(self.0.sqrt_ref().complete()))
-        }
-    }
-
-    pub fn modulo(self, divisor: &Self) -> Self {
-        Integer(self.0.modulo(&divisor.0))
-    }
-    pub fn modulo_ref(&self, divisor: &Self) -> Self {
-        Integer(self.0.modulo_ref(&divisor.0).complete())
-    }
-    pub fn modulo_mut(&mut self, divisor: &Self) -> &mut Self {
-        self.0.modulo_mut(&divisor.0);
-        self
-    }
-    pub fn mod_u(&self, modulo: u32) -> u32 {
-        self.0.mod_u(modulo)
-    }
-
-    pub fn significant_bits(&self) -> u64 {
-        self.0.significant_bits().into()
-    }
-    pub fn significant_dwords(&self) -> usize {
-        self.0.significant_digits::<u32>()
-    }
-
-    pub fn invert(self, modulo: &Self) -> Option<Self> {
-        self.0.invert(&modulo.0).ok().map(Integer)
-    }
-    pub fn invert_ref(&self, modulo: &Self) -> Option<Self> {
-        self.0
-            .invert_ref(&modulo.0)
-            .map(Complete::complete)
-            .map(Integer)
-    }
-
-    pub fn set_bit(&mut self, index: u32, value: bool) -> &mut Self {
-        self.0.set_bit(index, value);
-        self
-    }
-
-    pub fn random_below(self, rng: &mut impl rand_core::RngCore) -> Self {
+    fn sample_below(self, rng: &mut impl rand_core::RngCore) -> Self {
         let mut rng = external_rand(rng);
-        Integer(self.0.random_below(&mut rng))
+        self.random_below(&mut rng)
     }
-    pub fn random_below_ref(&self, rng: &mut impl rand_core::RngCore) -> Self {
+
+    fn sample_below_ref(&self, rng: &mut impl rand_core::RngCore) -> Self {
         let mut rng = external_rand(rng);
-        Integer(self.0.random_below_ref(&mut rng).complete())
+        self.random_below_ref(&mut rng).complete()
     }
-    pub fn random_bits(bits: u32, rng: &mut impl rand_core::RngCore) -> Self {
+
+    fn sample_bits(bits: u32, rng: &mut impl rand_core::RngCore) -> Self {
         let mut rng = external_rand(rng);
-        Integer(rug::Integer::random_bits(bits, &mut rng).complete())
+        rug::Integer::random_bits(bits, &mut rng).complete()
     }
-    pub fn random_bits_signed(bits: u32, rng: &mut impl rand_core::RngCore) -> Self {
+
+    fn random_bits_signed(bits: u32, rng: &mut impl rand_core::RngCore) -> Self {
         let mut rng = external_rand(rng);
         let r = rug::Integer::random_bits(bits, &mut rng).complete();
         let negative = rng.bits(1);
         if negative == 0 {
-            Integer(r)
+            r
         } else {
-            Integer(-r)
+            -r
         }
     }
 
-    pub fn assign_random_below(
+    fn assign_random_below(
         &mut self,
         modulo: &Self,
         rng: &mut impl rand_core::RngCore,
     ) -> &mut Self {
         let mut rng = external_rand(rng);
-        let r = modulo.0.random_below_ref(&mut rng);
-        rug::Assign::assign(&mut self.0, r);
+        let r = modulo.random_below_ref(&mut rng);
+        rug::Assign::assign(self, r);
         self
     }
 
-    pub fn assign_random_bits(
-        &mut self,
-        bits: u32,
-        rng: &mut impl rand_core::RngCore,
-    ) -> &mut Self {
+    fn assign_random_bits(&mut self, bits: u32, rng: &mut impl rand_core::RngCore) -> &mut Self {
         let mut rng = external_rand(rng);
         let r = rug::Integer::random_bits(bits, &mut rng);
-        rug::Assign::assign(&mut self.0, r);
+        rug::Assign::assign(self, r);
         self
     }
 
-    pub fn is_probably_prime(&self, reps: u32, _rng: &mut impl rand_core::RngCore) -> IsPrime {
-        if self.cmp0().is_le() {
-            return IsPrime::No;
-        }
-        let r = self.0.is_probably_prime(reps);
-        match r {
-            rug::integer::IsPrime::No => IsPrime::No,
-            rug::integer::IsPrime::Probably => IsPrime::Probably,
-            rug::integer::IsPrime::Yes => IsPrime::Yes,
-        }
-    }
-
-    pub fn generate_prime(rng: &mut impl rand_core::RngCore, bit_size: u32) -> Self {
-        let mut x = Integer::zero();
+    fn generate_prime(rng: &mut impl rand_core::RngCore, bit_size: u32) -> Self {
+        let mut x = rug::Integer::zero();
         loop {
             x.assign_random_bits(bit_size, rng);
             x.set_bit(bit_size - 1, true);
             x |= 1u32;
-            if let IsPrime::Yes | IsPrime::Probably = x.is_probably_prime(25, rng) {
+            if let rug::integer::IsPrime::Yes | rug::integer::IsPrime::Probably =
+                x.is_probably_prime(25)
+            {
                 return x;
             }
         }
     }
 
-    pub fn jacobi(&self, n: &Self) -> i32 {
-        self.0.jacobi(&n.0)
+    fn combine(&self, l: &Self, le: &Self, r: &Self, re: &Self) -> Option<Self> {
+        let l_to_le = l.pow_mod_ref(&le, &self)?.complete();
+        let r_to_re = r.pow_mod_ref(&re, &self)?.complete();
+        let r = (l_to_le * r_to_re).modulo(&self);
+        Some(r)
     }
 
-    /// Compute l^le * r^re modulo self
-    pub fn combine(&self, l: &Self, le: &Self, r: &Self, re: &Self) -> Option<Self> {
-        let l_to_le = l.0.pow_mod_ref(&le.0, &self.0)?.complete();
-        let r_to_re = r.0.pow_mod_ref(&re.0, &self.0)?.complete();
-        let r = (l_to_le * r_to_re).modulo(&self.0);
-        Some(Integer(r))
+    fn in_mult_group_of(&self, n: &Self) -> bool {
+        self.cmp0().is_gt() && self < n && self.gcd_ref(n).complete().is_one()
+    }
+
+    fn abs_in_mult_group_of(&self, n: &Self) -> bool {
+        self.cmp_abs(n).is_lt() && self.gcd_ref(n).complete().is_one()
+    }
+
+    fn sample_in_mult_group_of(rng: &mut impl rand_core::RngCore, n: &Self) -> Self {
+        let mut x = Self::zero();
+        loop {
+            x.assign_random_below(n, rng);
+            if x.in_mult_group_of(n) {
+                return x;
+            }
+        }
+    }
+
+    fn sample_pm_in_mult_group_of(rng: &mut impl rand_core::RngCore, n: &Self) -> Self {
+        let mut x = Self::zero();
+        let mut sign_buf = [0u8; 1];
+        loop {
+            x.assign_random_below(n, rng);
+            rng.fill_bytes(&mut sign_buf);
+            if sign_buf[0] & 1 == 1 {
+                x = -x;
+            }
+            if x.abs_in_mult_group_of(n) {
+                return x;
+            }
+        }
+    }
+
+    fn generate_safe_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self {
+        // Sieve bound grows with size: small primes barely need sieving, while large ones
+        // benefit from removing far more composite candidates up front (tuned by benchmark).
+        let sieve_limit = if bits <= 512 {
+            50_000
+        } else if bits <= 1024 {
+            200_000
+        } else {
+            500_000
+        };
+        /// Width (in bits) of the candidate window scanned per random base.
+        const WINDOW_BITS: u32 = 15;
+        /// Cheap pre-filter: one Miller-Rabin round rejects almost all composites.
+        const FILTER_ROUNDS: u32 = 1;
+        /// Final confidence for the accepted Sophie Germain prime `q` (25 as in `mpz_nextprime`).
+        const CONFIRM_ROUNDS: u32 = 25;
+
+        let window: usize = 1 << WINDOW_BITS;
+        let seed_bits = bits - 1;
+        let small_primes = small_odd_primes(sieve_limit);
+
+        loop {
+            // Random odd base; the window holds candidates q = base + 2*j, j in [0, window).
+            let mut base = rug::Integer::zero();
+            base.assign_random_bits(seed_bits, rng);
+            base.set_bit(seed_bits - 1, true);
+            base |= 1u32;
+
+            // `true` marks a candidate position ruled out by the small-prime sieve.
+            let mut ruled_out = alloc::vec![false; window];
+
+            for &l in &small_primes {
+                let base_l = u64::from(base.mod_u(l as u32));
+                let inv2 = (l + 1) / 2; // 2^-1 mod l, for odd l
+
+                // Kill positions where q = base + 2j == 0 (mod l).
+                let j0 = ((l - base_l) % l * inv2 % l) as usize;
+                let mut idx = j0;
+                while idx < window {
+                    ruled_out[idx] = true;
+                    idx += l as usize;
+                }
+
+                // Kill positions where 2q + 1 == 0 (mod l): 4j == -(2*base + 1) (mod l).
+                let c = (2 * base_l + 1) % l;
+                let jf = ((l - c) % l * inv_mod(4 % l, l) % l) as usize;
+                let mut idx = jf;
+                while idx < window {
+                    ruled_out[idx] = true;
+                    idx += l as usize;
+                }
+            }
+
+            for j in 0..window {
+                if ruled_out[j] {
+                    continue;
+                }
+                let q = (&base + 2 * (j as u64)).complete();
+                // Cheap filter: one Miller-Rabin round rejects almost all composite `q`
+                // before we pay for the full confirmation or touch `p`.
+                if q.is_probably_prime(FILTER_ROUNDS) == rug::integer::IsPrime::No {
+                    continue;
+                }
+                let mut p = q.clone();
+                p <<= 1;
+                p += 1; // p = 2q + 1
+                        // Pocklington: `q = (p-1)/2` is a (probable) prime with `q > sqrt(p)`, and
+                        // `gcd(2^2 - 1, p) = gcd(3, p) = 1` (3 is in the sieve), so a single base-2
+                        // Fermat test is a primality *proof* for `p` given `q` is prime.
+                if p.mod_u(3) == 0 {
+                    continue; // 3 | p => p composite (defensive; the sieve already drops these)
+                }
+                let p_minus_1 = (&p - 1i32).complete();
+                if !rug::Integer::from(2u32)
+                    .pow_mod(&p_minus_1, &p)
+                    .unwrap()
+                    .is_one()
+                {
+                    continue;
+                }
+                // `p` is prime provided `q` is; spend the confidence rounds on `q` only.
+                if q.is_probably_prime(CONFIRM_ROUNDS) == rug::integer::IsPrime::No {
+                    continue;
+                }
+                return p;
+            }
+            // Window exhausted without success: draw a fresh random base.
+        }
     }
 }
 

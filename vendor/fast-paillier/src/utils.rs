@@ -2,6 +2,8 @@
 
 use core::fmt;
 
+use rug::Complete;
+
 use crate::backend::Integer;
 
 /// Faster algorithm for modular exponentiation based on Chinese remainder theorem when modulo factorization is known
@@ -48,9 +50,9 @@ impl CrtExp {
             return None;
         }
 
-        let beta = n1.invert_ref(&n2)?;
+        let beta = n1.invert_ref(&n2)?.complete();
         Some(Self {
-            n: &n1 * &n2,
+            n: (&n1 * &n2).complete(),
             n1,
             phi_n1,
             n2,
@@ -63,15 +65,15 @@ impl CrtExp {
     pub fn build_n(p: &Integer, q: &Integer) -> Option<Self> {
         let phi_p = p - 1u8;
         let phi_q = q - 1u8;
-        Self::build(p.clone(), phi_p, q.clone(), phi_q)
+        Self::build(p.clone(), phi_p.complete(), q.clone(), phi_q.complete())
     }
 
     /// Builds a `CrtExp` for exponentiation modulo `nn = (p * q)^2` where `p`, `q` are primes
     pub fn build_nn(p: &Integer, q: &Integer) -> Option<Self> {
-        let pp = p.square_ref();
-        let qq = q.square_ref();
-        let phi_pp = &pp - p;
-        let phi_qq = &qq - q;
+        let pp = p.square_ref().complete();
+        let qq = q.square_ref().complete();
+        let phi_pp = (&pp - p).complete();
+        let phi_qq = (&qq - q).complete();
         Self::build(pp, phi_pp, qq, phi_qq)
     }
 
@@ -79,9 +81,9 @@ impl CrtExp {
     pub fn prepare_exponent(&self, e: &Integer) -> Exponent {
         let neg_e = -e;
         let is_negative = e.cmp0().is_lt();
-        let e = if is_negative { &neg_e } else { e };
-        let e_mod_phi_pp = e.modulo_ref(&self.phi_n1);
-        let e_mod_phi_qq = e.modulo_ref(&self.phi_n2);
+        let e = if is_negative { &neg_e.complete() } else { e };
+        let e_mod_phi_pp = e.modulo_ref(&self.phi_n1).complete();
+        let e_mod_phi_qq = e.modulo_ref(&self.phi_n2).complete();
         Exponent {
             e_mod_phi_pp,
             e_mod_phi_qq,
@@ -93,8 +95,8 @@ impl CrtExp {
     ///
     /// Exponent needs to be output of [`CrtExp::prepare_exponent`]
     pub fn exp(&self, x: &Integer, e: &Exponent) -> Option<Integer> {
-        let s1 = x.modulo_ref(&self.n1);
-        let s2 = x.modulo_ref(&self.n2);
+        let s1 = x.modulo_ref(&self.n1).complete();
+        let s2 = x.modulo_ref(&self.n2).complete();
 
         // `e_mod_phi_pp` and `e_mod_phi_qq` are guaranteed to be non-negative by construction
         #[allow(clippy::expect_used)]
@@ -109,7 +111,7 @@ impl CrtExp {
         let result = ((r2 - &r1) * &self.beta).modulo(&self.n2) * &self.n1 + &r1;
 
         if e.is_negative {
-            result.invert(&self.n)
+            result.invert(&self.n).ok()
         } else {
             Some(result)
         }
