@@ -49,7 +49,6 @@ use std::collections::BTreeMap;
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod};
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
     t_cl::{final_decrypt as threshold_cl_combine, PartialDecryption as ClPartialDecryption},
@@ -419,9 +418,9 @@ impl Jtx25OnlineSignMachine {
         let p1 = Integer::from_digits(&p1_bytes, Order::Msf);
 
         let q_minus_2 = Integer::from(&q - 2);
-        let p0_inv = pow_mod(&p0, &q_minus_2, &q);
+        let p0_inv = p0.pow_mod(&q_minus_2, &q).expect("q - 2 is non-negative");
 
-        let s_big = mul_mod(&p1, &p0_inv, &q);
+        let s_big = (p1 * p0_inv).modulo(&q);
         let s_raw = tecdsa_curve::conv::integer_to_scalar::<k256::Secp256k1>(&s_big);
         let s = low_s_normalize::<k256::Secp256k1>(s_raw);
 

@@ -5,10 +5,10 @@
 //! This is a Sigma-protocol-style proof made non-interactive via
 //! the Fiat-Shamir heuristic (using SHA-256).
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below, BigIntExt};
+use tecdsa_bigint::{random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -62,7 +62,7 @@ impl ZkJlEncProof {
         let blind_w = random_below(&w_bound, rng);
 
         // Commitment: a = y^v * h^w mod N
-        let commit_a = multi_exp(&[&pk.y, &pk.h], &[&blind_v, &blind_w], &pk.n);
+        let commit_a = pk.n.multi_exp(&[&pk.y, &pk.h], &[&blind_v, &blind_w]);
 
         // Fiat-Shamir challenge
         let challenge = fiat_shamir_challenge(pk, ct, &commit_a);
@@ -85,10 +85,13 @@ impl ZkJlEncProof {
         let challenge = fiat_shamir_challenge(pk, ct, &self.a);
 
         // Check: y^{z_m} * h^{z_r} == a * c^e mod N
-        let lhs = multi_exp(&[&pk.y, &pk.h], &[&self.z_m, &self.z_r], &pk.n);
+        let lhs = pk.n.multi_exp(&[&pk.y, &pk.h], &[&self.z_m, &self.z_r]);
 
-        let c_e = pow_mod(ct, &challenge, &pk.n);
-        let rhs = mul_mod(&self.a, &c_e, &pk.n);
+        let c_e = ct
+            .pow_mod_ref(&challenge, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs = (c_e * &self.a).modulo(&pk.n);
 
         lhs == rhs
     }
@@ -158,7 +161,7 @@ impl ZkJlEncProof {
         let blind_v = random_below(&v_bound, rng);
         let blind_w = random_below(&w_bound, rng);
 
-        let commit_a = multi_exp(&[&pk.y, &pk.h], &[&blind_v, &blind_w], &pk.n);
+        let commit_a = pk.n.multi_exp(&[&pk.y, &pk.h], &[&blind_v, &blind_w]);
 
         let challenge = fiat_shamir_challenge_with_prefix(prefix, pk, ct, &commit_a);
 
@@ -178,10 +181,13 @@ impl ZkJlEncProof {
     pub fn verify_with_prefix(&self, prefix: &[u8], pk: &JlPublicKey, ct: &Integer) -> bool {
         let challenge = fiat_shamir_challenge_with_prefix(prefix, pk, ct, &self.a);
 
-        let lhs = multi_exp(&[&pk.y, &pk.h], &[&self.z_m, &self.z_r], &pk.n);
+        let lhs = pk.n.multi_exp(&[&pk.y, &pk.h], &[&self.z_m, &self.z_r]);
 
-        let c_e = pow_mod(ct, &challenge, &pk.n);
-        let rhs = mul_mod(&self.a, &c_e, &pk.n);
+        let c_e = ct
+            .pow_mod_ref(&challenge, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs = (c_e * &self.a).modulo(&pk.n);
 
         lhs == rhs
     }

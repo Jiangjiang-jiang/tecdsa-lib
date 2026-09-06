@@ -333,7 +333,6 @@ impl MtAWithCheck for ClMtA {
 
 #[cfg(test)]
 mod tests {
-    use tecdsa_bigint::mul_mod;
 
     use super::*;
 
@@ -389,7 +388,7 @@ mod tests {
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
         let sum = (alpha + beta) % &q;
-        let expected = mul_mod(&a, &b, &q);
+        let expected = Integer::from(&a * &b).modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -429,7 +428,7 @@ mod tests {
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
             let sum = (alpha + beta) % &q;
-            let expected = mul_mod(&a, &b, &q);
+            let expected = Integer::from(&a * &b).modulo(&q);
 
             assert_eq!(
                 sum, expected,
@@ -471,7 +470,7 @@ mod tests {
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
         let sum = (alpha + beta) % &q;
-        let expected = mul_mod(&a, &b, &q);
+        let expected = Integer::from(&a * &b).modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -537,7 +536,7 @@ mod tests {
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
         let sum = (alpha + beta) % &q;
-        let expected = mul_mod(&a, &b, &q);
+        let expected = Integer::from(&a * &b).modulo(&q);
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
 
@@ -601,7 +600,7 @@ mod tests {
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
             let sum = (alpha + beta) % &q;
-            let expected = mul_mod(&a, &b, &q);
+            let expected = Integer::from(&a * &b).modulo(&q);
             assert_eq!(sum, expected, "MtA correctness for a={a_val}, b={b_val}");
         }
     }

@@ -15,10 +15,10 @@
 //!   if e_i = 1: z_i = r_i * x  (i.e. z_i^{2^k} = a_i * h mod N)
 //! Verify: z_i^{2^k} == a_i * h^{e_i} mod N
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
+use tecdsa_bigint::{random_below, BigIntExt};
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -66,7 +66,10 @@ impl ZkQr2kProof {
 
         for _ in 0..REPEAT {
             let r = random_below(n, rng);
-            let a = pow_mod(&r, &two_pow_k, n);
+            let a = r
+                .pow_mod_ref(&two_pow_k, n)
+                .expect("exponent is non-negative")
+                .complete();
             a_vec.push(a);
             r_vec.push(r);
         }
@@ -79,7 +82,7 @@ impl ZkQr2kProof {
         for i in 0..REPEAT {
             if e.get_bit(i as u32) {
                 // z_i = r_i * x mod N
-                let z = mul_mod(&r_vec[i], x, n);
+                let z = Integer::from(&r_vec[i] * x).modulo(n);
                 z_vec.push(z);
             } else {
                 z_vec.push(r_vec[i].clone());
@@ -106,10 +109,13 @@ impl ZkQr2kProof {
         let e = compute_challenge(&self.a_vec);
 
         for i in 0..REPEAT {
-            let z_pow = pow_mod(&self.z_vec[i], &two_pow_k, &self.n);
+            let z_pow = self.z_vec[i]
+                .pow_mod_ref(&two_pow_k, &self.n)
+                .expect("exponent is non-negative")
+                .complete();
 
             let expected = if e.get_bit(i as u32) {
-                mul_mod(&self.a_vec[i], &self.h, &self.n)
+                Integer::from(&self.a_vec[i] * &self.h).modulo(&self.n)
             } else {
                 self.a_vec[i].clone()
             };
@@ -158,7 +164,10 @@ mod tests {
         // our own test case.
         let x = random_below(&pk.n, &mut rng);
         let two_pow_k = Integer::two_pow(pk.k);
-        let h = pow_mod(&x, &two_pow_k, &pk.n);
+        let h = x
+            .pow_mod_ref(&two_pow_k, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
 
         let proof = ZkQr2kProof::prove(&pk.n, pk.k, &x, &h, &mut rng);
         assert!(proof.verify());
@@ -179,7 +188,10 @@ mod tests {
         n.set_bit(0, true);
 
         let two_pow_k = Integer::two_pow(k);
-        let h = pow_mod(&x, &two_pow_k, &n);
+        let h = x
+            .pow_mod_ref(&two_pow_k, &n)
+            .expect("exponent is non-negative")
+            .complete();
 
         let proof = ZkQr2kProof::prove(&n, k, &x, &h, &mut rng);
         assert!(proof.verify());

@@ -14,10 +14,10 @@
 //!   z_i = beta_i + e_i * alpha
 //! Verify: h^{z_i} == a_i * y^{2^k * e_i} mod N
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
+use tecdsa_bigint::{random_below, BigIntExt};
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -73,7 +73,10 @@ impl ZkQr2kDlProof {
 
         for _ in 0..REPEAT {
             let beta = random_below(&beta_bound, rng);
-            let a = pow_mod(h, &beta, n);
+            let a = h
+                .pow_mod_ref(&beta, n)
+                .expect("exponent is non-negative")
+                .complete();
             a_vec.push(a);
             beta_vec.push(beta);
         }
@@ -114,12 +117,20 @@ impl ZkQr2kDlProof {
 
         for i in 0..REPEAT {
             // LHS: h^{z_i} mod N
-            let lhs = pow_mod(&self.h, &self.z_vec[i], &self.n);
+            let lhs = self
+                .h
+                .pow_mod_ref(&self.z_vec[i], &self.n)
+                .expect("exponent is non-negative")
+                .complete();
 
             // RHS: a_i * y^{2^k * e_i} mod N
             let rhs = if e.get_bit(i as u32) {
-                let y_exp = pow_mod(&self.y, &two_pow_k, &self.n);
-                mul_mod(&self.a_vec[i], &y_exp, &self.n)
+                let y_exp = self
+                    .y
+                    .pow_mod_ref(&two_pow_k, &self.n)
+                    .expect("exponent is non-negative")
+                    .complete();
+                (y_exp * &self.a_vec[i]).modulo(&self.n)
             } else {
                 self.a_vec[i].clone()
             };

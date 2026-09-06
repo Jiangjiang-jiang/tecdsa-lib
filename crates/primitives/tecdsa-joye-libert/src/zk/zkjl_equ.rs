@@ -8,10 +8,10 @@
 //!
 //! Proves that the same plaintext `m` is committed in two different JL instances.
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
+use tecdsa_bigint::{random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -84,17 +84,31 @@ impl ZkJlEquProof {
         // Commitment under pk: d = y^{2^k*v} * h^{2^k*w} mod N
         let exp_y = Integer::from(&two_pow_k * &v);
         let exp_h = two_pow_k * &w;
-        let y_v = pow_mod(&pk.y, &exp_y, &pk.n);
-        let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
-        let d = mul_mod(&y_v, &h_w, &pk.n);
+        let y_v =
+            pk.y.pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let h_w =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let d = (y_v * h_w).modulo(&pk.n);
 
         // Commitment under pk0: d' = y0^{2^k*v} * h0^{2^k*w0} mod N0
         let two_pow_k0 = Integer::two_pow(pk0.k);
         let exp_y0 = Integer::from(&two_pow_k0 * &v);
         let exp_h0 = two_pow_k0 * &w0;
-        let y0_v = pow_mod(&pk0.y, &exp_y0, &pk0.n);
-        let h0_w0 = pow_mod(&pk0.h, &exp_h0, &pk0.n);
-        let d_prime = mul_mod(&y0_v, &h0_w0, &pk0.n);
+        let y0_v = pk0
+            .y
+            .pow_mod_ref(&exp_y0, &pk0.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let h0_w0 = pk0
+            .h
+            .pow_mod_ref(&exp_h0, &pk0.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let d_prime = (y0_v * h0_w0).modulo(&pk0.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, pk0, c, c_prime, &d, &d_prime);
@@ -131,12 +145,21 @@ impl ZkJlEquProof {
         // Check 1: y^{2^k*z_m} * h^{2^k*z_r} == c^e * d mod N
         let exp_y = Integer::from(&two_pow_k * &self.z_m);
         let exp_h = two_pow_k * &self.z_r;
-        let lhs1_y = pow_mod(&pk.y, &exp_y, &pk.n);
-        let lhs1_h = pow_mod(&pk.h, &exp_h, &pk.n);
-        let lhs1 = mul_mod(&lhs1_y, &lhs1_h, &pk.n);
+        let lhs1_y =
+            pk.y.pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let lhs1_h =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let lhs1 = (lhs1_y * lhs1_h).modulo(&pk.n);
 
-        let c_e = pow_mod(c, &e, &pk.n);
-        let rhs1 = mul_mod(&c_e, &self.d, &pk.n);
+        let c_e = c
+            .pow_mod_ref(&e, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs1 = (c_e * &self.d).modulo(&pk.n);
 
         if lhs1 != rhs1 {
             return false;
@@ -145,12 +168,23 @@ impl ZkJlEquProof {
         // Check 2: y0^{2^k0*z_m} * h0^{2^k0*z_r0} == c'^e * d' mod N0
         let exp_y0 = Integer::from(&two_pow_k0 * &self.z_m);
         let exp_h0 = two_pow_k0 * &self.z_r0;
-        let lhs2_y = pow_mod(&pk0.y, &exp_y0, &pk0.n);
-        let lhs2_h = pow_mod(&pk0.h, &exp_h0, &pk0.n);
-        let lhs2 = mul_mod(&lhs2_y, &lhs2_h, &pk0.n);
+        let lhs2_y = pk0
+            .y
+            .pow_mod_ref(&exp_y0, &pk0.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let lhs2_h = pk0
+            .h
+            .pow_mod_ref(&exp_h0, &pk0.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let lhs2 = (lhs2_y * lhs2_h).modulo(&pk0.n);
 
-        let c_prime_e = pow_mod(c_prime, &e, &pk0.n);
-        let rhs2 = mul_mod(&c_prime_e, &self.d_prime, &pk0.n);
+        let c_prime_e = c_prime
+            .pow_mod_ref(&e, &pk0.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs2 = (c_prime_e * &self.d_prime).modulo(&pk0.n);
 
         lhs2 == rhs2
     }

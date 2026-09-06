@@ -22,7 +22,6 @@
 //!   then extract plaintext from `c2 * combined^{-1}`.
 
 use rug::{integer::Order, Integer};
-use tecdsa_bigint::{mul_mod, pow_mod};
 
 use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
 
@@ -161,9 +160,11 @@ pub fn final_decrypt(
 
     // delta2_inv = delta^{-2} mod q  (via Fermat's little theorem)
     let q_minus_2 = Integer::from(&q - 2);
-    let delta2_inv = pow_mod(&delta2, &q_minus_2, &q);
+    let delta2_inv = delta2
+        .pow_mod(&q_minus_2, &q)
+        .expect("q - 2 is non-negative");
 
-    let m = mul_mod(&m_scaled, &delta2_inv, &q);
+    let m = (m_scaled * delta2_inv).modulo(&q);
     Ok(m.to_digits::<u8>(Order::Msf))
 }
 

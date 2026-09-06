@@ -35,8 +35,8 @@ pub fn find_residue(
 ) -> Option<(bool, bool, Integer)> {
     let y_mod_p = Integer::from(y % p);
     let y_mod_q = Integer::from(y % q);
-    let jp = tecdsa_bigint::jacobi(&y_mod_p, p);
-    let jq = tecdsa_bigint::jacobi(&y_mod_q, q);
+    let jp = y_mod_p.jacobi(p);
+    let jq = y_mod_q.jacobi(q);
 
     match (jp, jq) {
         (1, 1) => return Some((false, false, y.clone())),
@@ -50,8 +50,8 @@ pub fn find_residue(
     let wy = Integer::from(w * y) % n;
     let wy_mod_p = Integer::from(&wy % p);
     let wy_mod_q = Integer::from(&wy % q);
-    let jp = tecdsa_bigint::jacobi(&wy_mod_p, p);
-    let jq = tecdsa_bigint::jacobi(&wy_mod_q, q);
+    let jp = wy_mod_p.jacobi(p);
+    let jq = wy_mod_q.jacobi(q);
 
     match (jp, jq) {
         (1, 1) => Some((false, true, wy)),
@@ -76,7 +76,7 @@ pub fn sample_neg_jacobi(n: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
         if w.clone().gcd(n) != 1 {
             continue;
         }
-        if tecdsa_bigint::jacobi(&w, n) == -1 {
+        if w.jacobi(n) == -1 {
             return w;
         }
     }

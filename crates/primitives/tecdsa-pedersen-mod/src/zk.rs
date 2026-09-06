@@ -288,7 +288,7 @@ impl PiMod {
         if self.w.clone().gcd(n) != 1 {
             return false;
         }
-        if tecdsa_bigint::jacobi(&self.w, n) != -1 {
+        if self.w.jacobi(n) != -1 {
             return false;
         }
 

@@ -28,7 +28,7 @@
 
 use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{pow_mod, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 use super::sample_random;
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
@@ -172,7 +172,7 @@ fn aggregate_products(
         }
 
         // Invert via Fermat's little theorem.
-        den = pow_mod(&den, &q_minus_2, &q);
+        den = den.pow_mod(&q_minus_2, &q).expect("q - 2 is non-negative");
 
         // If dual code is active, multiply by polynomial evaluation.
         if degree_signed >= 0 {

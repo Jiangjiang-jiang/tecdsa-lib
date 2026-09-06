@@ -14,7 +14,7 @@ use rug::{
     Complete, Integer,
 };
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{gen_pair, pow_mod, small_odd_primes, BigIntExt, SyncRng};
+use tecdsa_bigint::{gen_pair, small_odd_primes, BigIntExt, SyncRng};
 use zeroize::Zeroize;
 
 /// Public key for the Joye-Libert encryption scheme.
@@ -154,11 +154,17 @@ pub fn generate_keypair_with_qnr(
     alpha.set_bit(0, true);
 
     // Step 5: Compute y = x^alpha mod N
-    let gen_y = pow_mod(&qnr, &alpha, &n);
+    let gen_y = qnr
+        .pow_mod_ref(&alpha, &n)
+        .expect("alpha is non-negative")
+        .complete();
 
     // Step 6: Compute h = x^{2^k} mod N
     let two_pow_k = Integer::two_pow(msg_space_bits);
-    let elem_h = pow_mod(&qnr, &two_pow_k, &n);
+    let elem_h = qnr
+        .pow_mod_ref(&two_pow_k, &n)
+        .expect("2^k is non-negative")
+        .complete();
 
     let y_to_neg_pp = gen_y
         .pow_mod_ref(&pp, &p)
