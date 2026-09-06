@@ -618,7 +618,7 @@ fn test_cl_homomorphic_math() {
     let rx_bu = Integer::from(19u32);
     let k_bu = Integer::from(11u32);
     let k_inv = pow_mod(&k_bu, &q_minus_2, &q);
-    let expected_s = ((&m_bu + Integer::from(&x_bu * &rx_bu)) * &k_inv) % &q;
+    let expected_s = (m_bu + x_bu * rx_bu) * k_inv % q;
     eprintln!(
         "[test_cl_homo] expected s = {}",
         expected_s.to_string_radix(10)

@@ -169,11 +169,11 @@ impl MtA for ClMtA {
         let c_a = cl_setup.add_ciphertexts(&setup.pk, &c_scaled, &c_alpha)?;
 
         // 5. Compute receiver's output: alpha = -alpha' mod q = q - (alpha' mod q)
-        let alpha_mod_q = Integer::from(&alpha_prime % &q);
+        let alpha_mod_q = alpha_prime % &q;
         let alpha = if alpha_mod_q == 0 {
             Integer::new()
         } else {
-            Integer::from(&q - &alpha_mod_q)
+            q - alpha_mod_q
         };
         let alpha_bytes = alpha.to_digits::<u8>(Order::Msf);
 
@@ -265,7 +265,7 @@ impl MtAWithCheck for ClMtA {
         // Compute g^alpha as an EC point for the consistency check.
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let q = Integer::from_digits(q_bytes, Order::Msf);
-        let alpha_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&alpha % &q));
+        let alpha_scalar = conv::integer_to_scalar::<Secp256k1>(&(alpha % q));
 
         let g_alpha = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * alpha_scalar;
         let g_alpha_bytes = g_alpha.to_bytes().to_vec();
@@ -312,12 +312,12 @@ impl MtAWithCheck for ClMtA {
 
         // Compute g^beta from beta_bytes.
         let beta = Integer::from_digits(beta_bytes, Order::Msf);
-        let beta_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&beta % &q));
+        let beta_scalar = conv::integer_to_scalar::<Secp256k1>(&(beta % &q));
         let g_beta = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * beta_scalar;
 
         // Compute b as scalar.
         let b = Integer::from_digits(&state.b_bytes, Order::Msf);
-        let b_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&b % &q));
+        let b_scalar = conv::integer_to_scalar::<Secp256k1>(&(b % q));
 
         // Check: g^alpha * g^beta == (g^a)^b
         let lhs = g_alpha + g_beta;
@@ -392,7 +392,7 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
+        let sum = (alpha + beta) % &q;
         let expected = mul_mod(&a, &b, &q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
@@ -432,7 +432,7 @@ mod tests {
 
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-            let sum = Integer::from(&alpha + &beta) % &q;
+            let sum = (alpha + beta) % &q;
             let expected = mul_mod(&a, &b, &q);
 
             assert_eq!(
@@ -474,7 +474,7 @@ mod tests {
 
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
+        let sum = (alpha + beta) % &q;
         let expected = mul_mod(&a, &b, &q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
@@ -540,7 +540,7 @@ mod tests {
         // Also verify MtA correctness: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
+        let sum = (alpha + beta) % &q;
         let expected = mul_mod(&a, &b, &q);
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -604,7 +604,7 @@ mod tests {
             // Correctness check.
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-            let sum = Integer::from(&alpha + &beta) % &q;
+            let sum = (alpha + beta) % &q;
             let expected = mul_mod(&a, &b, &q);
             assert_eq!(sum, expected, "MtA correctness for a={a_val}, b={b_val}");
         }

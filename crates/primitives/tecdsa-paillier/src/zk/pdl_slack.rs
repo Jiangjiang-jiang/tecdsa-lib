@@ -209,9 +209,8 @@ pub(crate) fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -
             .complete();
         let pos_exp = -exp.clone();
         base_inv
-            .pow_mod_ref(&pos_exp, modulus)
+            .pow_mod(&pos_exp, modulus)
             .expect("pow_mod defined")
-            .complete()
     } else {
         base.pow_mod_ref(exp, modulus)
             .expect("pow_mod defined")
@@ -293,7 +292,7 @@ where
     ) -> Self {
         let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
-        let q_N_tilde = (&q * &statement.N_tilde).complete();
+        let q_N_tilde = q * &statement.N_tilde;
         let q3_N_tilde = (&q3 * &statement.N_tilde).complete();
 
         // 1. Sample blinding values
@@ -346,7 +345,7 @@ where
         let s2 = commitment_unknown_order(&witness.r, &beta, &statement.ek_n, &e, &Integer::one());
 
         // 9. s3 = gamma + e*rho
-        let s3 = &gamma + (&e * &rho).complete();
+        let s3 = &gamma + e * &rho;
 
         PdlSlackProof {
             z,

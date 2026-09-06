@@ -140,7 +140,7 @@ where
             r_v.pow_mod_ref(ek.n(), ek.nn())
                 .expect("r_v^N mod N^2 must succeed"),
         );
-        let v_i = Integer::from(&v_i_raw * &r_v_n).modulo(ek.nn());
+        let v_i = (v_i_raw * r_v_n).modulo(ek.nn());
 
         // 4. Hash commitment: C_{1,i} = Com(u_i || v_i)
         let commit_data = serialize_for_commit_r1(&u_i, &v_i);
@@ -365,7 +365,7 @@ where
         let ki_times_u = ek
             .omul(&k_i, &u)
             .map_err(|e| TecdsaError::Other(format!("omul k_i*u failed: {e}")))?;
-        let c_i_q = Integer::from(&c_i * &q);
+        let c_i_q = &c_i * q;
         let (enc_ciq, enc_nonce) = ek
             .encrypt_with_random(rng, &c_i_q)
             .map_err(|e| TecdsaError::Other(format!("encrypt c_i*q failed: {e}")))?;
@@ -736,7 +736,7 @@ where
 
         // Reduce eta mod q to get k*rho mod q
         let q = curve_order::<C>();
-        let eta_mod_q = Integer::from(eta.modulo_ref(&q));
+        let eta_mod_q = eta.modulo(&q);
 
         // Compute psi = (k*rho)^{-1} mod q
         let eta_scalar = integer_to_scalar::<C>(&eta_mod_q);

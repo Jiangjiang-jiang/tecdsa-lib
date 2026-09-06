@@ -339,9 +339,8 @@ where
         // v1 = u^alpha * Gamma^{q*theta} * mu^N mod N^2
         let v1 = {
             let u_alpha = pow_mod_signed(&statement.u, &alpha, &statement.ek_nn);
-            let q_theta = (&q * &theta).complete();
-            let g_q_theta =
-                (Integer::one() + (&q_theta * &statement.ek_n).complete()).modulo(&statement.ek_nn);
+            let q_theta = q * &theta;
+            let g_q_theta = (Integer::one() + q_theta * &statement.ek_n).modulo(&statement.ek_nn);
             let mu_n = pow_mod_signed(&mu, &statement.ek_n, &statement.ek_nn);
             (u_alpha * g_q_theta % &statement.ek_nn * mu_n).modulo(&statement.ek_nn)
         };
@@ -384,7 +383,7 @@ where
         let t2 = (&e * &witness.eta2).complete() + &theta;
 
         // t3 = e * rho2 + tau
-        let t3 = (&e * &rho2).complete() + &tau;
+        let t3 = e * &rho2 + &tau;
 
         NonceConsistProof {
             z1,
@@ -422,7 +421,7 @@ where
         let s1_scalar = integer_to_scalar::<C>(&self.s1);
         let g_s1 = statement.G * s1_scalar;
 
-        let e_neg_int = &q - (&e % &q).complete();
+        let e_neg_int = &q - (e % &q);
         let e_neg_scalar = integer_to_scalar::<C>(&e_neg_int);
         let r_i_neg_e = statement.r_i * e_neg_scalar;
         let u1_check = g_s1 + r_i_neg_e;
@@ -431,9 +430,8 @@ where
         let _gamma_paillier = &statement.ek_n + Integer::one();
         let v1_check = {
             let u_s1 = pow_mod_signed(&statement.u, &self.s1, &statement.ek_nn);
-            let q_t2 = (&q * &self.t2).complete();
-            let g_q_t2 =
-                (Integer::one() + (&q_t2 * &statement.ek_n).complete()).modulo(&statement.ek_nn);
+            let q_t2 = q * &self.t2;
+            let g_q_t2 = (Integer::one() + q_t2 * &statement.ek_n).modulo(&statement.ek_nn);
             let t1_n = pow_mod_signed(&self.t1, &statement.ek_n, &statement.ek_nn);
             let w_neg_e = pow_mod_signed(&statement.w_i, &neg_e, &statement.ek_nn);
             (u_s1 * g_q_t2 % &statement.ek_nn * t1_n % &statement.ek_nn * w_neg_e)
@@ -535,8 +533,8 @@ mod tests {
         let _gamma_paillier = ek.n() + Integer::one();
         let w_i = {
             let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
-            let q_eta2 = (&q * &eta2).complete();
-            let g_q_eta2 = (Integer::one() + (&q_eta2 * ek.n()).complete()).modulo(ek.nn());
+            let q_eta2 = q * &eta2;
+            let g_q_eta2 = (Integer::one() + q_eta2 * ek.n()).modulo(ek.nn());
             let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
         };
@@ -585,7 +583,7 @@ mod tests {
         let w_i = {
             let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
             let q_eta2 = (&q * &eta2).complete();
-            let g_q_eta2 = (Integer::one() + (&q_eta2 * ek.n()).complete()).modulo(ek.nn());
+            let g_q_eta2 = (Integer::one() + q_eta2 * ek.n()).modulo(ek.nn());
             let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
         };

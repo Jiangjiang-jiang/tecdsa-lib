@@ -78,7 +78,7 @@ fn cl_homomorphic_add() {
         Order::Msf,
     );
 
-    let expected = Integer::from(&a + &b) % q();
+    let expected = (a + b) % q();
     assert_eq!(sum, expected, "homomorphic add failed: {sum} != {expected}");
 }
 

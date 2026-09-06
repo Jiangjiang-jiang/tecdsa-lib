@@ -118,7 +118,7 @@ impl ZkJlvEquProof {
         for y_item in &y_items {
             d = mul_mod(&d, y_item, &pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &w);
+        let exp_h = two_pow_k * &w;
         let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
         d = mul_mod(&d, &h_w, &pk.n);
 
@@ -173,7 +173,7 @@ impl ZkJlvEquProof {
             let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
             lhs1 = mul_mod(&lhs1, &y_item, &pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &self.z_r);
+        let exp_h = two_pow_k * &self.z_r;
         let h_item = pow_mod(&pk.h, &exp_h, &pk.n);
         lhs1 = mul_mod(&lhs1, &h_item, &pk.n);
 

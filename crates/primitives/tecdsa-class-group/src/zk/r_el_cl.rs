@@ -143,7 +143,7 @@ impl RElClProof {
         let a2_big = Integer::from_digits(&a2, Order::Msf);
         let e_big = Integer::from_digits(&e, Order::Msf);
         let r_big = Integer::from_digits(r_bytes, Order::Msf);
-        let z2_big = (&a2_big + Integer::from(&e_big * &r_big)) % &q;
+        let z2_big = (a2_big + e_big * r_big) % q;
         let z2 = z2_big.to_digits::<u8>(Order::Msf);
 
         Ok(Self {

@@ -289,7 +289,7 @@ pub fn mpmta_round2(
 
     let k_bu = Integer::from_digits(k_bytes, Order::Msf);
     let e_bu = Integer::from_digits(&e_bytes_raw, Order::Msf);
-    let k_star_bu = &k_bu + Integer::from(&e_bu * &q);
+    let k_star_bu = k_bu + e_bu * q;
     let k_star_bytes = k_star_bu.to_digits::<u8>(Order::Msf);
 
     // Compute R_i = (k mod q) * G.

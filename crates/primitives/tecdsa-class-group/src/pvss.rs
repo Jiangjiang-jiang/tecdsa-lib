@@ -89,8 +89,8 @@ pub fn deal(
         let mut val = Integer::new();
         let mut x_pow = Integer::from(1);
         for coeff in &coeffs {
-            val = (&val + Integer::from(coeff * &x_pow)) % &q;
-            x_pow = Integer::from(&x_pow * &x) % &q;
+            val = (val + coeff * &x_pow) % &q;
+            x_pow = x_pow * &x % &q;
         }
         shares.push(val);
     }
@@ -163,7 +163,7 @@ pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String
             }
             let i_j_big = Integer::from(idx_j as i64);
             num *= Integer::from(-&i_j_big);
-            den *= Integer::from(&i_k_big - &i_j_big);
+            den *= &i_k_big - i_j_big;
         }
 
         // lambda_k = num * den^{-1} mod q (Euclidean reduction -> non-negative)
@@ -176,7 +176,7 @@ pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String
 
         let lambda = mul_mod(&num_mod, &den_inv, &q);
 
-        secret = (&secret + Integer::from(&share_val * &lambda)) % &q;
+        secret = (secret + share_val * lambda) % &q;
     }
 
     Ok(secret.to_string_radix(10))

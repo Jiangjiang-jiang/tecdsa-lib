@@ -40,7 +40,7 @@ impl RPcDlProof {
         let a_val = Integer::from_digits(&a, Order::Msf);
         let e_val = Integer::from_digits(&e, Order::Msf);
         let x_val = Integer::from_digits(x_bytes, Order::Msf);
-        let z_val = (&a_val + Integer::from(&e_val * &x_val)) % &q;
+        let z_val = (a_val + e_val * x_val) % q;
 
         Ok(Self {
             t,
@@ -69,7 +69,7 @@ impl RPcDlProof {
         let ev = Integer::from_digits(&self.e, Order::Msf);
         let zv = Integer::from_digits(&self.z, Order::Msf);
 
-        let expected = (&dt + Integer::from(&ev * &dy)) % &q;
+        let expected = (dt + ev * dy) % &q;
         let z_mod = zv % &q;
 
         Ok(expected == z_mod)

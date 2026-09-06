@@ -569,7 +569,7 @@ mod tests {
 
         let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
         let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
-        let sum = Integer::from(&z_a + &z_b) % &q;
+        let sum = (z_a + z_b) % &q;
         let expected = mul_mod(&x, &y, &q);
 
         assert_eq!(sum, expected, "NIM MtABroadcast: z_A + z_B != x*y mod q");
@@ -601,7 +601,7 @@ mod tests {
 
         let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
         let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
-        let sum = Integer::from(&z_a + &z_b) % &q;
+        let sum = (z_a + z_b) % &q;
         let expected = mul_mod(&x, &y, &q);
 
         assert_eq!(
@@ -714,7 +714,7 @@ mod tests {
         let result_bytes =
             ScaledDecryptMtA::aggregate_f_shares(&setup, &f_shares).expect("aggregate_f_shares");
         let result = Integer::from_digits(&result_bytes, Order::Msf);
-        let result_mod_q = Integer::from(&result % &q);
+        let result_mod_q = result % q;
 
         assert_eq!(
             result_mod_q, expected,

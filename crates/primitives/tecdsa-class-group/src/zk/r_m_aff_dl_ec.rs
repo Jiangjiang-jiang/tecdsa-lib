@@ -82,11 +82,11 @@ fn point_to_bytes(p: &ProjectivePoint) -> Vec<u8> {
 fn negate_mod_q_bytes(val: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
     let val_big = Integer::from_digits(val, Order::Msf);
     let q_big = Integer::from_digits(q, Order::Msf);
-    let val_mod = Integer::from(&val_big % &q_big);
+    let val_mod = val_big % &q_big;
     if val_mod == 0 {
         Ok(vec![0])
     } else {
-        Ok(Integer::from(&q_big - &val_mod).to_digits::<u8>(Order::Msf))
+        Ok((q_big - val_mod).to_digits::<u8>(Order::Msf))
     }
 }
 

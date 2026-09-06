@@ -89,7 +89,7 @@ impl ZkJlvComProof {
         for y_item in &y_items {
             d = mul_mod(&d, y_item, &pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &w);
+        let exp_h = two_pow_k * &w;
         let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
         d = mul_mod(&d, &h_w, &pk.n);
 
@@ -100,7 +100,7 @@ impl ZkJlvComProof {
         let z_vec: Vec<Integer> = (0..ell)
             .map(|i| Integer::from(&e * &m_vec[i]) + &v_vec[i])
             .collect();
-        let z_r = Integer::from(&e * r) + &w;
+        let z_r = e * r + &w;
 
         Self { d, z_r, z_vec }
     }
@@ -123,7 +123,7 @@ impl ZkJlvComProof {
             let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
             lhs = mul_mod(&lhs, &y_item, &pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &self.z_r);
+        let exp_h = two_pow_k * &self.z_r;
         let h_item = pow_mod(&pk.h, &exp_h, &pk.n);
         lhs = mul_mod(&lhs, &h_item, &pk.n);
 
@@ -169,7 +169,7 @@ pub fn jl_vec_commit(
         let item = pow_mod(&y_vec[i], &exp, &pk.n);
         c = mul_mod(&c, &item, &pk.n);
     }
-    let exp_h = Integer::from(&two_pow_k * r);
+    let exp_h = two_pow_k * r;
     let h_r = pow_mod(&pk.h, &exp_h, &pk.n);
     mul_mod(&c, &h_r, &pk.n)
 }

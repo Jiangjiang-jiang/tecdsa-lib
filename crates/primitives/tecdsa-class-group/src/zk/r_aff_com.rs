@@ -209,7 +209,7 @@ mod tests {
 
         let r_base_val = Integer::from_digits(&r_base, Order::Msf);
         let r1_val = Integer::from_digits(&r1, Order::Msf);
-        let r_out_val = Integer::from(&x_val * &r_base_val) + &r1_val;
+        let r_out_val = x_val * r_base_val + &r1_val;
         let r_out_dec = r_out_val.to_string_radix(10);
 
         let ct_out2 = setup
@@ -269,7 +269,7 @@ mod tests {
 
         let r_base_val = Integer::from_digits(&r_base, Order::Msf);
         let r1_val = Integer::from_digits(&r1, Order::Msf);
-        let r_out = (Integer::from(&x_val * &r_base_val) + &r1_val).to_string_radix(10);
+        let r_out = (x_val * r_base_val + &r1_val).to_string_radix(10);
 
         let ct_in = setup
             .encrypt_with_r(&pk, "100", &r_base_dec)

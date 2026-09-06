@@ -224,11 +224,11 @@ pub fn mta_sender_step_with_sec(
     };
 
     // Sender's share: alpha = -alpha' mod q
-    let alpha_mod_q = Integer::from(&alpha_prime % q);
+    let alpha_mod_q = alpha_prime % q;
     let alpha = if alpha_mod_q == 0 {
         Integer::new()
     } else {
-        Integer::from(q - &alpha_mod_q)
+        q - alpha_mod_q
     };
 
     (msg, MtaSenderOutput { alpha })
@@ -244,7 +244,7 @@ pub fn mta_receiver_step2(
     q: &Integer,
 ) -> MtaReceiverOutput {
     let plaintext = decrypt(sk, pk, &sender_msg.ct);
-    let beta = Integer::from(&plaintext % q);
+    let beta = plaintext % q;
     MtaReceiverOutput { beta }
 }
 
@@ -459,7 +459,7 @@ impl MtA for JlMtA {
         let alpha = if alpha_mod_q == 0 {
             Integer::new()
         } else {
-            Integer::from(&q - &alpha_mod_q)
+            &q - alpha_mod_q
         };
 
         // ------------------------------------------------------------------
@@ -532,7 +532,7 @@ impl MtA for JlMtA {
         }
 
         let plaintext = decrypt(&setup.sk, &setup.pk, &receiver_msg.ciphertext);
-        let beta = Integer::from(&plaintext % &q);
+        let beta = plaintext % q;
 
         Ok(beta.to_digits::<u8>(Order::Msf))
     }
@@ -598,7 +598,7 @@ mod tests {
         let (send_msg, sender_out) = mta_sender_step(&sender, &pk, &recv_msg, &q, &mut rng);
         let receiver_out = mta_receiver_step2(&sk, &pk, &send_msg, &q);
 
-        let sum = Integer::from(&sender_out.alpha + &receiver_out.beta) % &q;
+        let sum = (sender_out.alpha + receiver_out.beta) % &q;
         assert_eq!(sum, ab_mod_q);
     }
 
@@ -653,7 +653,7 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
+        let sum = (alpha + beta) % &q;
         let expected = mul_mod(&a, &b, &q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
@@ -704,7 +704,7 @@ mod tests {
 
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-            let sum = Integer::from(&alpha + &beta) % &q;
+            let sum = (alpha + beta) % &q;
             let expected = mul_mod(&a, &b, &q);
 
             assert_eq!(

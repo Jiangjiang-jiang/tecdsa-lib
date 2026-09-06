@@ -132,7 +132,7 @@ pub(crate) fn response_mod_q(a: &[u8], e: &[u8], w: &[u8], q: &[u8]) -> ClResult
     let e = Integer::from_digits(e, Order::Msf);
     let w = Integer::from_digits(w, Order::Msf);
     let q = Integer::from_digits(q, Order::Msf);
-    let resp = (&a + Integer::from(&e * &w)) % &q;
+    let resp = (a + e * w) % q;
     Ok(resp.to_digits::<u8>(Order::Msf))
 }
 
@@ -142,7 +142,7 @@ pub(crate) fn response_unbounded(a: &[u8], e: &[u8], w: &[u8]) -> ClResult<Vec<u
     let a = Integer::from_digits(a, Order::Msf);
     let e = Integer::from_digits(e, Order::Msf);
     let w = Integer::from_digits(w, Order::Msf);
-    let resp = &a + Integer::from(&e * &w);
+    let resp = a + e * w;
     Ok(resp.to_digits::<u8>(Order::Msf))
 }
 
@@ -169,7 +169,7 @@ pub(crate) fn verify_f_check(
     let ev = Integer::from_digits(e_bytes, Order::Msf);
     let zv = Integer::from_digits(z_bytes, Order::Msf);
 
-    let expected = (&dt + Integer::from(&ev * &dy)) % &q;
+    let expected = (dt + ev * dy) % &q;
     let z_mod = zv % &q;
 
     Ok(expected == z_mod)

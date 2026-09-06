@@ -132,7 +132,7 @@ impl AliceProof {
     {
         let q = curve_order::<C>();
         let q3 = (&q * &q).complete() * &q;
-        let q_N_tilde = (&q * &ntilde.N_tilde).complete();
+        let q_N_tilde = q * &ntilde.N_tilde;
         let q3_N_tilde = (&q3 * &ntilde.N_tilde).complete();
 
         // Round 1: sample blinding values and compute commitments

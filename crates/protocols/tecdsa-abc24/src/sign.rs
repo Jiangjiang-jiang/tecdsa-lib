@@ -284,7 +284,7 @@ where
 
     // mu_mask: statistical masking to hide u mod q
     let mu_mask = q_int.sample_below_ref(rng);
-    let u = &u_base + Integer::from(&mu_mask * &q_int);
+    let u = u_base + mu_mask * &q_int;
 
     // Compute v = [k_1^{-1} * r]_q + mu'_mask * q
     let k1_inv_r = k1_inv * r;
@@ -292,7 +292,7 @@ where
     let v_base = tecdsa_paillier::backend::Integer::from_bytes_msf(&v_base_bytes);
 
     let mu_prime_mask = q_int.sample_below_ref(rng);
-    let v = &v_base + Integer::from(&mu_prime_mask * &q_int);
+    let v = v_base + mu_prime_mask * q_int;
 
     // Step 5: Compute S = enc_N(u) * E^v mod N^2
     // enc_N(u) with fresh randomness

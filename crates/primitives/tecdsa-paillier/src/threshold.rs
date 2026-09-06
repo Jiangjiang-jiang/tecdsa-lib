@@ -105,7 +105,7 @@ fn factorial(n: u16) -> Integer {
 /// L(u) = (u - 1) / N for u in {u in Z_{N^2} : u = 1 mod N}.
 fn l_function(u: &Integer, n: &Integer) -> Integer {
     let u_minus_1 = u - Integer::one();
-    (&u_minus_1 / n).complete()
+    u_minus_1 / n
 }
 
 /// Generate threshold Paillier keys using a trusted dealer.
@@ -138,12 +138,12 @@ pub fn trusted_dealer_setup(
         }
     };
 
-    let d = (&lambda * &beta).complete();
+    let d = lambda * beta;
     let theta = d.modulo_ref(&n).complete();
     let delta = factorial(total);
 
     // Shamir share d over Z with coefficient modulus M = N * delta.
-    let m = (&n * &delta).complete();
+    let m = n * &delta;
     let shares = shamir_split_integer(&d, corruption_threshold, total, &m, rng);
 
     let setup = ThresholdSetup {
@@ -218,7 +218,7 @@ pub fn combine_partials(
             }
             mu *= Integer::from(-j);
             let denom = Integer::from(i - j);
-            mu = (&mu / &denom).complete();
+            mu /= denom;
         }
 
         let exp = Integer::from(2i32) * &mu;
@@ -227,18 +227,17 @@ pub fn combine_partials(
             .pow_mod_ref(&exp, nn)
             .expect("pow_mod defined")
             .complete();
-        c_prime = (&c_prime * &contrib).complete().modulo(nn);
+        c_prime = (c_prime * contrib).modulo(nn);
     }
 
     // m = L(c') * (4 * delta^2 * theta)^{-1} mod N
     let l_val = l_function(&c_prime, n);
     let denom = (Integer::from(4i32) * &setup.delta * &setup.delta * &setup.theta).modulo(n);
     let denom_inv = denom
-        .invert_ref(n)
-        .ok_or(ThresholdError::ThetaNotInvertible)?
-        .complete();
+        .invert(n)
+        .map_err(|_| ThresholdError::ThetaNotInvertible)?;
 
-    let mut m = (&l_val * &denom_inv).complete().modulo(n);
+    let mut m = (l_val * denom_inv).modulo(n);
 
     // Normalize to {-N/2, ..., N/2}
     let half_n = n / Integer::from(2u32);

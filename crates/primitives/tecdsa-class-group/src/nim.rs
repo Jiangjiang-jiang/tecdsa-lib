@@ -268,7 +268,7 @@ mod tests {
         let x_val = Integer::from(7u32);
         let y_val = Integer::from(11u32);
         let xy = mul_mod(&x_val, &y_val, &q);
-        let sum = Integer::from(&z_a + &z_b) % &q;
+        let sum = (z_a + z_b) % q;
 
         assert_eq!(sum, xy, "NIM correctness: z_A + z_B != x*y mod q");
     }

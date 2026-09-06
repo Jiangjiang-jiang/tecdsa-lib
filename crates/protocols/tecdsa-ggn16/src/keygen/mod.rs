@@ -231,7 +231,7 @@ mod tests {
 
         let p_minus_1 = &p - Integer::one();
         let q_minus_1 = &q - Integer::one();
-        let lambda = Integer::from(p_minus_1.lcm_ref(&q_minus_1));
+        let lambda = p_minus_1.lcm(&q_minus_1);
 
         let beta = loop {
             let candidate = n.sample_below_ref(rng);
@@ -241,7 +241,7 @@ mod tests {
             }
         };
 
-        let d = Integer::from(&lambda * &beta);
+        let d = lambda * beta;
         let theta = Integer::from(d.modulo_ref(&n));
 
         // delta = n!
@@ -251,7 +251,7 @@ mod tests {
         }
 
         // Shamir share d over Z with coefficient modulus M = N * delta
-        let m = Integer::from(&n * &delta);
+        let m = n * &delta;
         let mut coeffs = vec![d.clone()];
         for _ in 0..corruption_threshold {
             coeffs.push(m.sample_below_ref(rng));
@@ -283,7 +283,7 @@ mod tests {
     fn generate_ring_pedersen(rng: &mut impl CryptoRngCore) -> (Integer, Integer, Integer) {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = Integer::from(&p * &q);
+        let n_tilde = p * q;
 
         let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
         let xhi_bound = Integer::one() << 256u32;
@@ -292,11 +292,9 @@ mod tests {
             h1.pow_mod_ref(&xhi, &n_tilde)
                 .expect("pow_mod must succeed"),
         );
-        let h2 = Integer::from(
-            h1_xhi
-                .invert_ref(&n_tilde)
-                .expect("h1^xhi must be invertible mod N_tilde"),
-        );
+        let h2 = h1_xhi
+            .invert(&n_tilde)
+            .expect("h1^xhi must be invertible mod N_tilde");
 
         (n_tilde, h1, h2)
     }
@@ -484,7 +482,7 @@ mod tests {
             .map(|s| partial_decrypt(&ct_xsum, s, &setup))
             .collect();
         let result = combine_partials(&partials[0..2], &setup).expect("combine xsum");
-        let expected = Integer::from(&x1 + &x2);
+        let expected = x1 + x2;
         assert_eq!(result, expected, "threshold decryption of large sum");
     }
 

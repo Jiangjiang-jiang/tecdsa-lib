@@ -1184,7 +1184,7 @@ pub fn shamir_share_delta(
     for i in 2..=n {
         delta *= Integer::from(i as u64);
     }
-    let delta_sk = Integer::from(&delta * &sk);
+    let delta_sk = delta * sk;
 
     let mut coeffs: Vec<Integer> = vec![delta_sk];
     for _ in 1..t {

@@ -307,7 +307,7 @@ impl TroutSignMachine {
         let alpha_z = {
             let r_val = Integer::from_digits(&r_bytes, Order::Msf);
             let lid_val = Integer::from_digits(&my_presign.l_i_delta_i, Order::Msf);
-            Integer::from(&r_val * &lid_val).to_digits::<u8>(Order::Msf)
+            (r_val * lid_val).to_digits::<u8>(Order::Msf)
         };
         let sd2_input = ScaledDecryptPartyInput {
             alpha_i: alpha_z,

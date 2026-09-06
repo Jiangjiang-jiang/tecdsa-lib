@@ -65,7 +65,7 @@ impl RBintProof {
         let sk_bound = Integer::from_digits(&sk_bound_bytes, Order::Msf);
         // z should be bounded by sk_bound + e * bound, which for our test params is fine.
         let e_val = Integer::from_digits(&self.e, Order::Msf);
-        let max_z = &sk_bound + Integer::from(&e_val * &bound);
+        let max_z = sk_bound + e_val * bound;
         if z_val > max_z {
             return Ok(false);
         }
