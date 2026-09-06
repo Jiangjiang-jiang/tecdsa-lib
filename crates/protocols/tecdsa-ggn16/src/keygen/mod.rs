@@ -27,12 +27,10 @@ use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use msg::Ggn16KeygenMsg;
 use rand_core::CryptoRngCore;
 use rounds::{KeygenConfig, KeygenRound, Round1State};
+use rug::Integer;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{
-    backend::Integer,
-    threshold::{DecryptionShare, ThresholdSetup},
-};
+use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, StateMachine};
 
 use crate::key_share::Ggn16KeyShare;

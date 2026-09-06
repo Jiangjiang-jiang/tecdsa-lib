@@ -55,13 +55,13 @@ where
     let public_key = C::generator() * x;
 
     // Generate Paillier key pair for P_1
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
     // Encrypt x_1 under the Paillier key: c_key = Enc_pk(x_1)
     // Convert scalar x_1 to a Paillier plaintext (big integer)
     let x1_bytes = x1.to_repr();
-    let x1_plaintext = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
+    let x1_plaintext = rug::Integer::from_bytes_msf(x1_bytes.as_ref());
 
     let (c_key, _nonce) = dk
         .encrypt_with_random(rng, &x1_plaintext)
@@ -111,7 +111,7 @@ mod tests {
         // Decrypt c_key and verify it equals x_1
         let decrypted = p1.dk.decrypt(&p2.c_key).expect("decryption failed");
         let x1_bytes = p1.secret_share.to_repr();
-        let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
+        let x1_int = rug::Integer::from_bytes_msf(x1_bytes.as_ref());
         assert_eq!(decrypted, x1_int);
     }
 }

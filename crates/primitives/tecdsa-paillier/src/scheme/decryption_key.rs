@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/fast-paillier>
 use rand_core::{CryptoRng, RngCore};
-use rug::Complete;
+use rug::{Complete, Integer};
+use tecdsa_bigint::BigIntExt;
 
-use crate::backend::{BigIntExt, Integer};
-use crate::{utils, Ciphertext, EncryptionKey, Nonce, Plaintext};
-use crate::{Error, Reason};
+use crate::scheme::{utils, Ciphertext, EncryptionKey, Error, Nonce, Plaintext, Reason};
 
 /// Paillier decryption key
 #[derive(Clone)]
@@ -54,7 +55,10 @@ impl DecryptionKey {
         }
 
         // u = lambda^-1 mod N
-        let u = lambda.invert_ref(ek.n()).ok_or(Reason::InvalidPQ)?.complete();
+        let u = lambda
+            .invert_ref(ek.n())
+            .ok_or(Reason::InvalidPQ)?
+            .complete();
 
         let crt_mod_nn = utils::CrtExp::build_nn(&p, &q).ok_or(Reason::BuildFastExp)?;
         let exp_n = crt_mod_nn.prepare_exponent(ek.n());
@@ -184,11 +188,6 @@ impl DecryptionKey {
     /// Prime `q`
     pub fn q(&self) -> &Integer {
         &self.q
-    }
-
-    /// Bits length of smaller prime (`p` or `q`)
-    pub fn bits_length(&self) -> u64 {
-        self.p.significant_bits().min(self.q.significant_bits()) as u64
     }
 }
 

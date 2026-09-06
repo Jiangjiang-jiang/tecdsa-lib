@@ -56,7 +56,7 @@ fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
 pub fn generate_setup(
     rng: &mut impl CryptoRngCore,
 ) -> (tecdsa_paillier::DecryptionKey, NTildeParams) {
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ntilde = generate_ntilde_params(rng);
     (dk, ntilde)
 }
@@ -89,7 +89,7 @@ where
     let q1 = C::generator() * x1;
 
     // Generate Paillier key pair for P_2 (P_2 owns the decryption key)
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
     // Generate Ring-Pedersen auxiliary parameters for MtA range proofs
@@ -118,15 +118,15 @@ where
 pub(crate) use tecdsa_curve::conv::{curve_order, scalar_to_bytes};
 
 #[allow(dead_code)]
-pub(crate) fn scalar_to_int<C: TecdsaCurve>(s: &C::Scalar) -> tecdsa_paillier::backend::Integer
+pub(crate) fn scalar_to_int<C: TecdsaCurve>(s: &C::Scalar) -> rug::Integer
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    tecdsa_paillier::backend::Integer::from_bytes_msf(&scalar_to_bytes(s))
+    rug::Integer::from_bytes_msf(&scalar_to_bytes(s))
 }
 
-pub(crate) fn int_to_scalar<C: TecdsaCurve>(value: &tecdsa_paillier::backend::Integer) -> C::Scalar
+pub(crate) fn int_to_scalar<C: TecdsaCurve>(value: &rug::Integer) -> C::Scalar
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,

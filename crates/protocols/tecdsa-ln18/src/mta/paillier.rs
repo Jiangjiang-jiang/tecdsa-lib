@@ -35,12 +35,12 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_curve::{
     conv::{integer_to_scalar, scalar_to_integer},
     TecdsaCurve,
 };
 use tecdsa_paillier::{
-    backend::Integer,
     zk::mta_range::{AliceProof, BobProofExt, NTildeParams},
     BigIntExt, DecryptionKey, EncryptionKey,
 };

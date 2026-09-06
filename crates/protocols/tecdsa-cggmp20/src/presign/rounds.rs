@@ -8,6 +8,7 @@ use elliptic_curve::{
 };
 use generic_ec::curves::Secp256k1 as GE;
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use sha2::Sha256;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
@@ -15,11 +16,7 @@ use tecdsa_curve::{
     TecdsaCurve,
 };
 use tecdsa_paillier::{
-    backend::Integer,
-    zk::paillier_zk::{
-        dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
-        paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
-    },
+    zk::{pi_aff_g as pi_aff, pi_elog, pi_enc_elg},
     Ciphertext, DecryptionKey, EncryptionKey,
 };
 use tecdsa_pedersen_mod::PedersenModParams;

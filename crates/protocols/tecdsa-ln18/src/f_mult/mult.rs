@@ -936,9 +936,8 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use tecdsa_paillier::{
-        backend::Integer, zk::mta_range::NTildeParams, BigIntExt, DecryptionKey, EncryptionKey,
-    };
+    use rug::Integer;
+    use tecdsa_paillier::{zk::mta_range::NTildeParams, BigIntExt, DecryptionKey, EncryptionKey};
 
     use super::*;
     use crate::{

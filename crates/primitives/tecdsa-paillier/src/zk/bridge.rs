@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use elliptic_curve::sec1::ToSec1Point;
-use fast_paillier::backend::{BigIntExt, Integer};
-use rug::Integer as RugInteger;
+use rug::{Integer, Integer as RugInteger};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_curve::TecdsaCurve;
 
 /// Bridge between `elliptic-curve` types (used in tecdsa) and `generic_ec` types
@@ -48,14 +48,10 @@ pub fn dynint_to_integer(d: &RugInteger) -> Integer {
 }
 
 #[must_use]
-pub fn pedersen_to_aux(
-    params: &tecdsa_pedersen_mod::PedersenModParams,
-) -> paillier_zk::paillier_encryption_in_range::Aux {
-    paillier_zk::paillier_encryption_in_range::Aux {
+pub fn pedersen_to_aux(params: &tecdsa_pedersen_mod::PedersenModParams) -> crate::zk::pi_enc::Aux {
+    crate::zk::pi_enc::Aux {
         s: dynint_to_integer(&params.s),
         t: dynint_to_integer(&params.t),
         rsa_modulo: dynint_to_integer(&params.n),
-        multiexp: None,
-        crt: None,
     }
 }

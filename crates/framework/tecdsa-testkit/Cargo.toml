@@ -27,6 +27,7 @@ rand_core = { workspace = true }
 tecdsa-curve = { workspace = true }
 tecdsa-paillier = { workspace = true }
 tecdsa-bigint = { workspace = true }
+rug = { workspace = true }
 tecdsa-class-group = { workspace = true }
 tecdsa-vss = { workspace = true }
 tecdsa-evrf = { workspace = true }

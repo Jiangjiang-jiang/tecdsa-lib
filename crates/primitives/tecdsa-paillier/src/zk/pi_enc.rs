@@ -1,91 +1,11 @@
-//! ZK-proof of paillier encryption in range. Called Пenc or Renc in the CGGMP24
-//! paper.
-//!
-//! ## Description
-//!
-//! A party P has `key`, `pkey` - public and private keys in paillier
-//! cryptosystem. P also has `plaintext`, `nonce`, and
-//! `ciphertext = key.encrypt_with(plaintext, nonce)`.
-//!
-//! P wants to prove that `plaintext` is at most `l` bits, without disclosing
-//! it, the `pkey`, and `nonce`
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 
-//! ## Example
-//!
-//! ```
-//! use fast_paillier::backend::Integer;
-//! use paillier_zk::{paillier_encryption_in_range as p, IntegerExt};
-//! # mod pregenerated {
-//! #     use super::*;
-//! #     paillier_zk::load_pregenerated_data!(
-//! #         verifier_aux: p::Aux,
-//! #         prover_decryption_key: fast_paillier::DecryptionKey,
-//! #     );
-//! # }
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!
-//! let shared_state = "some shared state";
-//!
-//! let mut rng = rand_core::OsRng;
-//! # let mut rng = rand_dev::DevRng::new();
-//!
-//! // 0. Setup: prover and verifier share common Ring-Pedersen parameters:
-//!
-//! let aux: p::Aux = pregenerated::verifier_aux();
-//! let security = p::SecurityParams {
-//!     l: 256,
-//!     epsilon: 512,
-//!     q: Integer::curve_order::<generic_ec::curves::Secp256k1>(),
-//! };
-//!
-//! // 1. Setup: prover prepares the paillier keys
-//!
-//! let private_key: fast_paillier::DecryptionKey = pregenerated::prover_decryption_key();
-//! let key = private_key.encryption_key();
-//!
-//! // 2. Setup: prover has some plaintext and encrypts it
-//!
-//! let plaintext = Integer::from_rng_half_pm(&mut rng, &(Integer::one() << security.l));
-//! let (ciphertext, nonce) = key.encrypt_with_random(&mut rng, &plaintext)?;
-//!
-//! // 3. Prover computes a non-interactive proof that plaintext is at most 1024 bits:
-//!
-//! let data = p::Data {
-//!     key,
-//!     ciphertext: &ciphertext,
-//! };
-//! let proof = p::non_interactive::prove::<sha2::Sha256>(
-//!     &shared_state,
-//!     &aux,
-//!     data,
-//!     p::PrivateData {
-//!         plaintext: &plaintext,
-//!         nonce: &nonce,
-//!     },
-//!     &security,
-//!     &mut rng,
-//! )?;
-//!
-//! // 4. Prover sends this data to verifier
-//!
-//! # fn send(_: &p::Data, _: &p::NiProof) {  }
-//! send(&data, &proof);
-//!
-//! // 5. Verifier receives the data and the proof and verifies it
-//!
-//! # let recv = || (data, proof);
-//! let (data, proof) = recv();
-//! p::non_interactive::verify::<sha2::Sha256>(&shared_state, &aux, data, &security, &proof);
-//! # Ok(()) }
-//! ```
-//!
-//! If the verification succeeded, verifier can continue communication with prover
-
-use fast_paillier::{backend::Integer, AnyEncryptionKey, Ciphertext, Nonce};
-#[cfg(feature = "serde")]
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 
-pub use crate::common::{Aux, InvalidProof};
+use crate::scheme::{AnyEncryptionKey, Ciphertext, Nonce};
+pub use crate::zk::common::{Aux, InvalidProof};
 
 /// Security parameters for proof. Choosing the values is a tradeoff between
 /// speed and chance of rejecting a valid proof or accepting an invalid proof
@@ -100,7 +20,7 @@ pub struct SecurityParams {
     /// Determines a domain of challenges
     ///
     /// Must be equal to order of the curve
-    #[udigest(as = crate::common::encoding::Integer)]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
     pub q: Integer,
 }
 
@@ -108,10 +28,10 @@ pub struct SecurityParams {
 #[derive(Debug, Clone, Copy, udigest::Digestable)]
 pub struct Data<'a> {
     /// N0 in paper, public key that k -> K was encrypted on
-    #[udigest(as = crate::common::encoding::AnyEncryptionKey)]
+    #[udigest(as = crate::zk::common::encoding::AnyEncryptionKey)]
     pub key: &'a dyn AnyEncryptionKey,
     /// K in paper
-    #[udigest(as = &crate::common::encoding::Integer)]
+    #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub ciphertext: &'a Ciphertext,
 }
 
@@ -126,17 +46,16 @@ pub struct PrivateData<'a> {
 
 // As described in cggmp24 at page 33
 /// Prover's first message, obtained by [`interactive::commit`]
-#[derive(Debug, Clone, udigest::Digestable)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, udigest::Digestable, Serialize, Deserialize)]
 pub struct Commitment {
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub s: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub a: Integer,
-    #[udigest(as = crate::common::encoding::Integer)]
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[udigest(as = crate::zk::common::encoding::Integer)]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub c: Integer,
 }
 
@@ -156,21 +75,19 @@ pub type Challenge = Integer;
 
 // As described in cggmp24 at page 33
 /// The ZK proof. Computed by [`interactive::prove`].
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proof {
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z1: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z2: Integer,
-    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z3: Integer,
 }
 
 /// The non-interactive ZK proof. Computed by [`non_interactive::prove`].
 /// Combines commitment and proof.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NiProof {
     pub commitment: Commitment,
     pub proof: Proof,
@@ -180,12 +97,13 @@ pub struct NiProof {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use fast_paillier::backend::{BigIntExt, Integer};
+    use rug::Integer;
+    use tecdsa_bigint::BigIntExt;
 
     use super::{
         Aux, Challenge, Commitment, Data, PrivateCommitment, PrivateData, Proof, SecurityParams,
     };
-    use crate::{
+    use crate::zk::{
         common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason},
         BadExponent, Error,
     };
@@ -321,7 +239,7 @@ pub mod non_interactive {
     use digest::Digest;
 
     use super::{Aux, Challenge, Commitment, Data, NiProof, PrivateData, SecurityParams};
-    use crate::{Error, InvalidProof};
+    use crate::zk::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.
@@ -383,18 +301,19 @@ pub mod non_interactive {
 
 #[cfg(test)]
 mod test {
-    use fast_paillier::backend::Integer;
+    use rug::Integer;
     use sha2::Digest;
+    use tecdsa_bigint::BigIntExt;
 
-    use crate::common::{IntegerExt, InvalidProofReason};
+    use crate::zk::common::{IntegerExt, InvalidProofReason};
 
     fn run_with<D: Digest>(
         mut rng: &mut impl rand_core::CryptoRngCore,
         security: super::SecurityParams,
         plaintext: Integer,
-    ) -> Result<(), crate::common::InvalidProof> {
-        let aux = crate::common::test::aux(&mut rng);
-        let private_key = crate::common::test::random_key(&mut rng).unwrap();
+    ) -> Result<(), crate::zk::common::InvalidProof> {
+        let aux = crate::zk::common::test::aux(&mut rng);
+        let private_key = crate::zk::common::test::random_key(&mut rng).unwrap();
         let key = private_key.encryption_key();
         let (ciphertext, nonce) = key.encrypt_with_random(&mut rng, &plaintext).unwrap();
         let data = super::Data {

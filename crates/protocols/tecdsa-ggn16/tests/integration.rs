@@ -5,12 +5,13 @@
 
 use elliptic_curve::{group::GroupEncoding, PrimeField};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use sha2::{Digest, Sha256};
 use tecdsa_ggn16::{
     key_share::Ggn16KeyShare, keygen::Ggn16KeygenMachine, presign::Ggn16PresignMachine,
     sign::Ggn16OnlineSignMachine,
 };
-use tecdsa_paillier::{backend::Integer, threshold::trusted_dealer_setup, BigIntExt};
+use tecdsa_paillier::{threshold::trusted_dealer_setup, BigIntExt};
 use tecdsa_protocol::{verify_ecdsa, DataToSign, PartyId};
 use tecdsa_testkit::Orchestrator;
 

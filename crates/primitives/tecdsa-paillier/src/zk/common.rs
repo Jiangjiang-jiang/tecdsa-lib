@@ -1,65 +1,26 @@
-use std::sync::Arc;
-
-use fast_paillier::backend::{BigIntExt, Integer};
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 use generic_ec::Scalar;
+use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 
 /// Auxiliary data known to both prover and verifier
-#[cfg_attr(
-    feature = "__internal_doctest",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Aux {
     /// ring-pedersen parameter
-    #[cfg_attr(
-        feature = "__internal_doctest",
-        serde(with = "fast_paillier::backend::int_wire")
-    )]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub s: Integer,
     /// ring-pedersen parameter
-    #[cfg_attr(
-        feature = "__internal_doctest",
-        serde(with = "fast_paillier::backend::int_wire")
-    )]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub t: Integer,
     /// N^ in paper
-    #[cfg_attr(
-        feature = "__internal_doctest",
-        serde(with = "fast_paillier::backend::int_wire")
-    )]
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub rsa_modulo: Integer,
-    /// Precomuted table for computing `s^x t^y mod rsa_modulo` faster
-    ///
-    /// If absent, optimization is disabled.
-    #[cfg_attr(feature = "__internal_doctest", serde(skip))]
-    pub multiexp: Option<Arc<crate::multiexp::MultiexpTable>>,
-    #[cfg_attr(feature = "__internal_doctest", serde(skip))]
-    pub crt: Option<fast_paillier::utils::CrtExp>,
 }
 
 impl Aux {
     /// Returns `s^x t^y mod rsa_modulo`
     pub fn combine(&self, x: &Integer, y: &Integer) -> Result<Integer, BadExponent> {
-        if let Some(table) = &self.multiexp {
-            match table.prod_exp(x, y) {
-                Some(res) => return Ok(res),
-                None if cfg!(debug_assertions) => {
-                    return Err(BadExponentReason::ExpSize {
-                        exp_size: (
-                            u64::from(x.significant_bits()),
-                            u64::from(y.significant_bits()),
-                        ),
-                        max_exp_size: table.max_exponents_size(),
-                    }
-                    .into())
-                }
-                None => {
-                    // When debug assertions are disabled, we fallback to naive exponentiation
-                }
-            }
-        }
-
-        // Naive exponentiation when optimizations are not enabled
         self.rsa_modulo
             .combine(&self.s, x, &self.t, y)
             .ok_or_else(BadExponent::undefined)
@@ -67,16 +28,9 @@ impl Aux {
 
     /// Returns `x^e mod rsa_modulo`
     pub fn pow_mod(&self, x: &Integer, e: &Integer) -> Result<Integer, BadExponent> {
-        match &self.crt {
-            Some(crt) => {
-                let e = crt.prepare_exponent(e);
-                crt.exp(x, &e).ok_or_else(BadExponent::undefined)
-            }
-            None => Ok(x
-                .pow_mod_ref(e, &self.rsa_modulo)
-                .map(Integer::from)
-                .ok_or_else(BadExponent::undefined)?),
-        }
+        x.pow_mod_ref(e, &self.rsa_modulo)
+            .map(Integer::from)
+            .ok_or_else(BadExponent::undefined)
     }
 
     /// Checks if `x` is in multiplicative group Z<super>*</super><sub>N</sub> where `N = ` [`rsa_modulo`](Self::rsa_modulo)
@@ -244,11 +198,6 @@ impl BadExponent {
 enum BadExponentReason {
     #[error("exponent is undefined")]
     Undefined,
-    #[error("multiexp error: exponent size is too large (exponents size: {exp_size:?}, max exponent size: {max_exp_size:?})")]
-    ExpSize {
-        exp_size: (u64, u64),
-        max_exp_size: (usize, usize),
-    },
 }
 
 /// Returns `Err(err)` if `assertion` is false
@@ -270,28 +219,83 @@ pub fn fail_if_ne<T: PartialEq, E>(err: E, lhs: T, rhs: T) -> Result<(), E> {
 }
 
 pub mod encoding {
-    use fast_paillier::backend::BigIntExt;
+    use tecdsa_bigint::{BigIntExt, Sign};
 
-    /// Digests a fast-paillier backend integer
+    /// Digests a big integer as a sign byte followed by the big-endian magnitude.
+    ///
+    /// The sign byte is load-bearing: `to_bytes_msf` returns the magnitude only,
+    /// so encoding it alone would digest `x` and `-x` identically. Every value
+    /// reached today is non-negative (ciphertexts mod `N^2`, Ring-Pedersen
+    /// commitments mod `N^`, moduli, the curve order), but nothing enforces
+    /// that, and a Fiat-Shamir transcript must bind its inputs injectively.
+    /// Since the magnitude is minimal big-endian, `(sign, magnitude)` is
+    /// injective over the integers.
     pub struct Integer;
-    impl udigest::DigestAs<fast_paillier::backend::Integer> for Integer {
+    impl udigest::DigestAs<rug::Integer> for Integer {
         fn digest_as<B: udigest::Buffer>(
-            value: &fast_paillier::backend::Integer,
+            value: &rug::Integer,
             encoder: udigest::encoding::EncodeValue<B>,
         ) {
-            let digits = value.to_bytes_msf();
-            encoder.encode_leaf_value(digits)
+            let (magnitude, sign) = value.to_bytes_msf_signed();
+            let mut bytes = Vec::with_capacity(magnitude.len() + 1);
+            bytes.push(u8::from(sign == Sign::Negative));
+            bytes.extend_from_slice(&magnitude);
+            encoder.encode_leaf_value(bytes);
         }
     }
 
-    /// Digests any encryption key
+    /// Digests any encryption key by its modulus.
     pub struct AnyEncryptionKey;
-    impl udigest::DigestAs<&dyn fast_paillier::AnyEncryptionKey> for AnyEncryptionKey {
+    impl udigest::DigestAs<&dyn crate::scheme::AnyEncryptionKey> for AnyEncryptionKey {
         fn digest_as<B: udigest::Buffer>(
-            value: &&dyn fast_paillier::AnyEncryptionKey,
+            value: &&dyn crate::scheme::AnyEncryptionKey,
             encoder: udigest::encoding::EncodeValue<B>,
         ) {
-            Integer::digest_as(value.n(), encoder)
+            Integer::digest_as(value.n(), encoder);
+        }
+    }
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use rug::Integer;
+
+    use super::encoding;
+
+    #[derive(udigest::Digestable)]
+    struct Wrap {
+        #[udigest(as = encoding::Integer)]
+        v: Integer,
+    }
+
+    fn hash(v: Integer) -> Vec<u8> {
+        udigest::hash::<sha2::Sha256>(&Wrap { v }).to_vec()
+    }
+
+    /// `to_bytes_msf` drops the sign, so digesting the magnitude alone made
+    /// `x` and `-x` collide. A Fiat-Shamir transcript has to bind its inputs
+    /// injectively, so the encoding carries a sign byte.
+    #[test]
+    fn sign_is_bound() {
+        assert_ne!(hash(Integer::from(12345)), hash(Integer::from(-12345)));
+        assert_ne!(hash(Integer::from(1)), hash(Integer::from(-1)));
+    }
+
+    /// Zero has an empty magnitude and is not negative, so it must not collide
+    /// with anything else.
+    #[test]
+    fn zero_is_distinct() {
+        assert_ne!(hash(Integer::ZERO), hash(Integer::from(1)));
+        assert_ne!(hash(Integer::ZERO), hash(Integer::from(-1)));
+    }
+
+    /// The magnitude is minimal big-endian, so no two distinct integers share
+    /// an encoding.
+    #[test]
+    fn distinct_values_do_not_collide() {
+        let mut seen = std::collections::HashSet::new();
+        for i in -260i32..=260 {
+            assert!(seen.insert(hash(Integer::from(i))), "collision at {i}");
         }
     }
 }
@@ -299,18 +303,19 @@ pub mod encoding {
 /// A common logic shared across tests and doctests
 #[cfg(test)]
 pub mod test {
-    use fast_paillier::backend::{BigIntExt, Integer};
+    use rug::{Complete, Integer};
+    use tecdsa_bigint::BigIntExt;
 
-    pub fn random_key<R: rand_core::RngCore>(rng: &mut R) -> Option<fast_paillier::DecryptionKey> {
+    pub fn random_key<R: rand_core::RngCore>(rng: &mut R) -> Option<crate::scheme::DecryptionKey> {
         let p = generate_blum_prime(rng, 1536);
         let q = generate_blum_prime(rng, 1536);
-        fast_paillier::DecryptionKey::from_primes(p, q).ok()
+        crate::scheme::DecryptionKey::from_primes(p, q).ok()
     }
 
     pub fn aux<R: rand_core::RngCore>(rng: &mut R) -> super::Aux {
         let p = generate_blum_prime(rng, 1536);
         let q = generate_blum_prime(rng, 1536);
-        let n = &p * &q;
+        let n = (&p * &q).complete();
 
         let (s, t) = {
             let phi_n = (p - 1u8) * (q - 1u8);
@@ -327,8 +332,6 @@ pub mod test {
             s,
             t,
             rsa_modulo: n,
-            multiexp: None,
-            crt: None,
         }
     }
 
@@ -344,7 +347,8 @@ pub mod test {
 
 #[cfg(test)]
 mod _test {
-    use fast_paillier::backend::{BigIntExt, Integer};
+    use rug::Integer;
+    use tecdsa_bigint::BigIntExt;
 
     use super::IntegerExt;
 
@@ -366,54 +370,6 @@ mod _test {
             (curve_order - 1u8).to_scalar(),
             -generic_ec::Scalar::<E>::one()
         );
-    }
-
-    #[test]
-    fn multiexp() {
-        let mut rng = rand_dev::DevRng::new();
-        let mut aux = super::test::aux(&mut rng);
-        let table = std::sync::Arc::new(
-            crate::multiexp::MultiexpTable::build(&aux.s, &aux.t, 512, 448, aux.rsa_modulo.clone())
-                .unwrap(),
-        );
-        let (x_bits, y_bits) = table.max_exponents_size();
-        aux.multiexp = Some(table);
-
-        // Corner case: upper bound
-        let x_max = (Integer::one() << x_bits) - 1;
-        let y_max = (Integer::one() << y_bits) - 1;
-        let actual = aux.combine(&x_max, &y_max).unwrap();
-        let expected = aux
-            .rsa_modulo
-            .combine(&aux.s, &x_max, &aux.t, &y_max)
-            .unwrap();
-        assert_eq!(actual, expected);
-
-        // Corner case: lower bound
-        let x_min = Integer::from(-&x_max);
-        let y_min = Integer::from(-&y_max);
-        let actual = aux.combine(&x_min, &y_min).unwrap();
-        let expected = aux
-            .rsa_modulo
-            .combine(&aux.s, &x_min, &aux.t, &y_min)
-            .unwrap();
-        assert_eq!(actual, expected);
-
-        // Random integers within the range
-        for _ in 0..100 {
-            let x = Integer::from(&x_max + 1u8).sample_below(&mut rng);
-            let y = Integer::from(&y_max + 1u8).sample_below(&mut rng);
-
-            let x = if rand::Rng::gen(&mut rng) { x } else { -x };
-            let y = if rand::Rng::gen(&mut rng) { y } else { -y };
-
-            println!("x: {x}");
-            println!("y: {y}");
-
-            let actual = aux.combine(&x, &y).unwrap();
-            let expected = aux.rsa_modulo.combine(&aux.s, &x, &aux.t, &y).unwrap();
-            assert_eq!(actual, expected);
-        }
     }
 
     #[test]

@@ -14,10 +14,7 @@ use generic_ec::curves::Secp256k1 as GE;
 use serde::{Deserialize, Serialize};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::{
-    zk::paillier_zk::{
-        dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
-        paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
-    },
+    zk::{pi_aff_g as pi_aff, pi_elog, pi_enc_elg},
     Ciphertext,
 };
 

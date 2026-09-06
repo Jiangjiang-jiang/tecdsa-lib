@@ -19,9 +19,9 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize,
     PrimeField,
 };
-use fast_paillier::backend::{BigIntExt, Integer};
-use rug::Complete;
+use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_curve::{
     conv::{curve_order, integer_to_scalar},
     TecdsaCurve,
@@ -500,16 +500,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use fast_paillier::DecryptionKey;
-
     use super::*;
+    use crate::scheme::DecryptionKey;
 
     type TestCurve = k256::Secp256k1;
     type Point = <TestCurve as CurveArithmetic>::ProjectivePoint;
 
     fn setup_paillier(
         rng: &mut impl rand_core::CryptoRngCore,
-    ) -> (DecryptionKey, fast_paillier::EncryptionKey) {
+    ) -> (DecryptionKey, crate::scheme::EncryptionKey) {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
         let dk = DecryptionKey::from_primes(p, q).expect("valid primes");

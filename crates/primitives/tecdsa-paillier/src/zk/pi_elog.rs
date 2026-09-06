@@ -1,84 +1,10 @@
-//! ZK-proof of discrete log with El-Gamal commitment.
-//! Called Пelog or Relog in the CGGMP24 papers.
-//!
-//! ## Description
-//!
-//! Common inputs:
-//! - Curve `E` with generator $G$ of prime subgroup of size $q$
-//! - $L, M, X, Y, H$ are points on curve `E`
-//!
-//! Prover has secret inputs $y, \lambda$ (scalars modulo $q$) such that $L = \lambda G,
-//! M = \lambda X + y G, Y = y H$
-//!
-//! ## Example
-//!
-//! ```rust
-//! use paillier_zk::{dlog_with_el_gamal_commitment as p};
-//! use generic_ec::{Point, Scalar, curves::Secp256k1 as E};
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Prover and verifier have a shared protocol state
-//! let shared_state = "some shared state";
-//!
-//! let mut rng = rand_core::OsRng;
-//! # let mut rng = rand_dev::DevRng::new();
-//!
-//! // Prover knows lambda, y
-//!
-//! let pdata = p::PrivateData {
-//!     lambda: &Scalar::random(&mut rng),
-//!     y: &Scalar::random(&mut rng),
-//! };
-//!
-//! // Common data known by both prover and verifier:
-//!
-//! let x = Point::generator() * Scalar::random(&mut rng);
-//! let h = Point::generator() * Scalar::random(&mut rng);
-//!
-//! let data = p::Data {
-//!     l: &(Point::generator() * pdata.lambda),
-//!     m: &(Point::generator() * pdata.y + x * pdata.lambda),
-//!     x: &x,
-//!     y: &(h * pdata.y),
-//!     h: &h,
-//! };
-//!
-//! // Generate non-interactive proof
-//! let proof =
-//!     p::non_interactive::prove::<E, sha2::Sha256>(
-//!         &shared_state,
-//!         data,
-//!         pdata,
-//!         &mut rng,
-//!     )?;
-//!
-//! // Proof and the data are sent to the verifier
-//!
-//! # use generic_ec::Curve;
-//! # fn send<E: Curve>(_: &p::Data<E>, _: &p::NiProof<E>) {  }
-//! send(&data, &proof);
-//!
-//! // Verifier receives the data and the proof and verifies them
-//!
-//! # let recv = || (data, proof);
-//! let (data, proof) = recv();
-//! let r = p::non_interactive::verify::<E, sha2::Sha256>(
-//!     &shared_state,
-//!     data,
-//!     &proof,
-//! )?;
-//! #
-//! # Ok(()) }
-//! ```
-//!
-//! If the verification succeeded, verifier can continue communication with prover
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 
 use generic_ec::{Curve, Point, Scalar};
-
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-pub use crate::common::{Aux, InvalidProof};
+pub use crate::zk::common::{Aux, InvalidProof};
 
 /// Public data that both parties know
 #[derive(Debug, Clone, Copy, udigest::Digestable)]
@@ -108,7 +34,8 @@ pub struct PrivateData<'a, E: Curve> {
 /// Prover's first message, obtained by [`interactive::commit`]
 #[derive(Debug, Clone, udigest::Digestable)]
 #[udigest(bound = "")]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct Commitment<E: Curve> {
     pub a: Point<E>,
     pub n: Point<E>,
@@ -128,16 +55,16 @@ pub struct PrivateCommitment<E: Curve> {
 pub type Challenge<E> = Scalar<E>;
 
 /// The ZK proof. Computed by [`interactive::prove`].
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct Proof<E: Curve> {
     pub z: Scalar<E>,
     pub u: Scalar<E>,
 }
 
 /// The non-interactive ZK proof. Computed by [`non_interactive::prove`].
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct NiProof<E: Curve> {
     pub commitment: Commitment<E>,
     pub proof: Proof<E>,
@@ -150,10 +77,11 @@ pub mod interactive {
     use generic_ec::{Curve, Point, Scalar};
     use rand_core::RngCore;
 
-    use crate::common::{fail_if_ne, InvalidProof, InvalidProofReason};
-    use crate::Error;
-
     use super::*;
+    use crate::zk::{
+        common::{fail_if_ne, InvalidProof, InvalidProofReason},
+        Error,
+    };
 
     /// Create random commitment
     pub fn commit<E: Curve>(
@@ -222,9 +150,8 @@ pub mod non_interactive {
     use digest::Digest;
     use generic_ec::Curve;
 
-    use crate::{Error, InvalidProof};
-
     use super::{Challenge, Commitment, Data, NiProof, PrivateData};
+    use crate::zk::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving deterministic challenge.
@@ -274,13 +201,13 @@ mod test {
     use generic_ec::{Curve, Point, Scalar};
     use sha2::Digest;
 
-    use crate::common::InvalidProofReason;
+    use crate::zk::common::InvalidProofReason;
 
     fn run<E: Curve, D: Digest>(
         rng: &mut impl rand_core::CryptoRngCore,
         data: super::Data<E>,
         pdata: super::PrivateData<E>,
-    ) -> Result<(), crate::common::InvalidProof> {
+    ) -> Result<(), crate::zk::common::InvalidProof> {
         let shared_state = "shared state";
 
         let proof = super::non_interactive::prove::<E, D>(&shared_state, data, pdata, rng).unwrap();
@@ -377,7 +304,7 @@ mod test {
 
     #[test]
     fn passing_million() {
-        passing_test::<crate::curve::C, sha2::Sha256>()
+        passing_test::<crate::zk::curve::C, sha2::Sha256>()
     }
     #[test]
     fn failing_check_1_p256() {
@@ -386,7 +313,7 @@ mod test {
 
     #[test]
     fn failing_check_1_million() {
-        failing_check_lambda_::<crate::curve::C, sha2::Sha256>()
+        failing_check_lambda_::<crate::zk::curve::C, sha2::Sha256>()
     }
     #[test]
     fn failing_check_2_p256() {
@@ -395,6 +322,6 @@ mod test {
 
     #[test]
     fn failing_check_2_million() {
-        failing_check_y_::<crate::curve::C, sha2::Sha256>()
+        failing_check_y_::<crate::zk::curve::C, sha2::Sha256>()
     }
 }

@@ -22,17 +22,17 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::{
-    backend::{BigIntExt, Integer},
-    DecryptionKey, EncryptionKey,
-};
 use rand_core::CryptoRngCore;
+use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{
     conv::{integer_to_scalar, scalar_to_bytes},
     TecdsaCurve,
 };
 use thiserror::Error;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -65,7 +65,7 @@ pub enum PdlError {
 pub struct PdlVerifierMsg1 {
     /// `c' = (a (*) c_key) (+) Enc(b)` -- Paillier ciphertext encoding `a*x_1 + b`.
     #[serde(with = "tecdsa_bigint::int_wire")]
-    pub c_tag: fast_paillier::Ciphertext,
+    pub c_tag: crate::scheme::Ciphertext,
     /// Commitment to `(a, b)`.
     pub c_tag_tag: HashCommitment,
 }
@@ -155,7 +155,7 @@ where
 /// 5. Committing to `(a, b)`.
 pub fn verifier_step1<C: TecdsaCurve>(
     ek: &EncryptionKey,
-    c_key: &fast_paillier::Ciphertext,
+    c_key: &crate::scheme::Ciphertext,
     q1: &C::ProjectivePoint,
     rng: &mut impl CryptoRngCore,
 ) -> Result<(PdlVerifierMsg1, PdlVerifierState<C>), PdlError>
@@ -358,7 +358,7 @@ pub fn pdl_verify<C: TecdsaCurve>(
     dk: &DecryptionKey,
     ek: &EncryptionKey,
     x1: &C::Scalar,
-    c_key: &fast_paillier::Ciphertext,
+    c_key: &crate::scheme::Ciphertext,
     q1: &C::ProjectivePoint,
     rng: &mut impl CryptoRngCore,
 ) -> Result<(), PdlError>
@@ -395,7 +395,7 @@ mod tests {
         let mut rng = rand_core::OsRng;
 
         // Generate Paillier keys
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         // Generate EC key
@@ -417,7 +417,7 @@ mod tests {
     fn pdl_proof_wrong_ckey() {
         let mut rng = rand_core::OsRng;
 
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let x1 = Secp256k1::random_scalar(&mut rng);
@@ -441,7 +441,7 @@ mod tests {
     fn pdl_proof_wrong_q1() {
         let mut rng = rand_core::OsRng;
 
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let x1 = Secp256k1::random_scalar(&mut rng);

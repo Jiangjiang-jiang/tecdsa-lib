@@ -10,9 +10,10 @@
 
 use k256::Secp256k1;
 use rand_core::OsRng;
+use rug::Integer;
 pub use tecdsa_curve::conv::scalar_to_bytes;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{backend::Integer, BigIntExt};
+use tecdsa_paillier::BigIntExt;
 
 pub type C = Secp256k1;
 

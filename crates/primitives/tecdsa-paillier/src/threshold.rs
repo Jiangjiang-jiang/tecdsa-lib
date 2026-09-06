@@ -23,14 +23,13 @@
 
 #![allow(non_snake_case)]
 
-use fast_paillier::{
-    backend::{BigIntExt, Integer},
-    DecryptionKey, EncryptionKey,
-};
 use rand_core::CryptoRngCore;
-use rug::Complete;
+use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
+use tecdsa_bigint::BigIntExt;
 use zeroize::Zeroize;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThresholdError {

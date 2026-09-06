@@ -7,9 +7,7 @@ use rand_core::CryptoRngCore;
 use rug::{integer::Order, Integer};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_paillier::{
-    zk::paillier_zk::no_small_factor as pi_fac, BigIntExt, DecryptionKey, EncryptionKey,
-};
+use tecdsa_paillier::{zk::pi_fac, BigIntExt, DecryptionKey, EncryptionKey};
 use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 
@@ -105,8 +103,8 @@ impl<L: Cggmp20SecurityParams> Round1State<L> {
         let party_index = config.local_party.index;
 
         // 1. Generate Paillier key pair with primes of the configured size
-        let p = tecdsa_paillier::backend::Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
-        let q = tecdsa_paillier::backend::Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
+        let p = Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
+        let q = Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
         let dk = DecryptionKey::from_primes(p, q).expect("valid paillier key");
         let ek = dk.encryption_key().clone();
 

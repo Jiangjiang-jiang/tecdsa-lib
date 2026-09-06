@@ -502,7 +502,8 @@ mod tests {
 
     #[cfg(feature = "secp256k1")]
     fn test_paillier_dk(rng: &mut impl CryptoRngCore) -> DecryptionKey {
-        use tecdsa_paillier::{backend::Integer, BigIntExt};
+        use rug::Integer;
+        use tecdsa_paillier::BigIntExt;
         let p = Integer::generate_safe_prime(rng, 512);
         let q = Integer::generate_safe_prime(rng, 512);
         DecryptionKey::from_primes(p, q).expect("valid primes")

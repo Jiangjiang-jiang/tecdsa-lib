@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::{FieldBytes, PrimeField};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use sha2::{Digest, Sha256};
 use tecdsa_core::Csprng;
 use tecdsa_ln18::{
@@ -24,9 +25,7 @@ use tecdsa_ln18::{
         Ln18LegacyOnlineSignParams, Ln18PresignParams,
     },
 };
-use tecdsa_paillier::{
-    backend::Integer, zk::mta_range::NTildeParams, BigIntExt, DecryptionKey, EncryptionKey,
-};
+use tecdsa_paillier::{zk::mta_range::NTildeParams, BigIntExt, DecryptionKey, EncryptionKey};
 use tecdsa_protocol::{
     ecdsa::{verify_ecdsa, DataToSign},
     PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine,

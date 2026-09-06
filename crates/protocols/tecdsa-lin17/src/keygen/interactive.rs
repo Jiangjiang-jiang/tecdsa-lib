@@ -29,10 +29,10 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pdl, range_ni::RangeProofNi},
     BigIntExt,
 };
@@ -196,7 +196,7 @@ where
     }
 
     // Generate Paillier key pair
-    let dk = tecdsa_paillier::keygen(rng)
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Lin17Error::Paillier(format!("Paillier keygen failed: {e}")))?;
     let ek = dk.encryption_key().clone();
 
@@ -251,7 +251,7 @@ where
     }
 
     // Generate Paillier key pair (one-time setup; see the precomputed variant).
-    let dk = tecdsa_paillier::keygen(rng)
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Lin17Error::Paillier(format!("Paillier keygen failed: {e}")))?;
 
     party1_keygen_round3_core::<C>(state, dk, rng)

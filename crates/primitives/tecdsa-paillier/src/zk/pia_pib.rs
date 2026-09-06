@@ -14,13 +14,12 @@
 //! - `kappa = 80` (statistical security parameter)
 //! - `K = q^2 * 2^{tau + 2*kappa}` (range for alpha')
 
-use fast_paillier::{
-    backend::{BigIntExt, Integer},
-    EncryptionKey,
-};
 use rand_core::CryptoRngCore;
-use rug::Complete;
+use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
+
+use crate::scheme::EncryptionKey;
 
 // ---------------------------------------------------------------------------
 // Security parameters

@@ -28,9 +28,9 @@
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::{
-    backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof},
     BigIntExt,
 };
@@ -115,7 +115,7 @@ where
     let x1_new_point = C::generator() * x1_new;
 
     // Generate fresh Paillier keypair
-    let dk_new = tecdsa_paillier::keygen(rng)
+    let dk_new = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Kgg24Error::Refresh(format!("Paillier keygen failed: {e}")))?;
     let ek_new = dk_new.encryption_key().clone();
 
@@ -126,7 +126,7 @@ where
 
     // Compute x_hat_1_new = x_1_new + t' * q
     let x1_new_bytes = x1_new.to_repr();
-    let x1_new_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_new_bytes.as_ref());
+    let x1_new_int = Integer::from_bytes_msf(x1_new_bytes.as_ref());
     let x_hat_1_new = x1_new_int + t_prime * q_int;
 
     // Encrypt: C' = Enc_{N'}(x_hat_1_new; rho)
@@ -295,7 +295,7 @@ mod tests {
         let decrypted_mod_q = decrypted.modulo(&q_int);
 
         let x1_bytes = p1.secret_share.to_repr();
-        let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
+        let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
         assert_eq!(decrypted_mod_q, x1_int);
     }
 }

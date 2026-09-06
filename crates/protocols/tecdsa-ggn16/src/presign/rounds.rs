@@ -29,6 +29,7 @@ use elliptic_curve::{
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
@@ -36,7 +37,6 @@ use tecdsa_curve::{
     TecdsaCurve,
 };
 use tecdsa_paillier::{
-    backend::Integer,
     threshold::{combine_partials, partial_decrypt, PartialDecryption},
     zk::{
         homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness},

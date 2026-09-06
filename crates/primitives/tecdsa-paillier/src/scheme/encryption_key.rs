@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/fast-paillier>
 use rand_core::{CryptoRng, RngCore};
-use rug::Complete;
+use rug::{Complete, Integer};
+use tecdsa_bigint::BigIntExt;
 
-use crate::backend::{BigIntExt, Integer};
-use crate::{Bug, Error, Reason};
-use crate::{Ciphertext, Nonce, Plaintext};
+use crate::scheme::{Bug, Ciphertext, Error, Nonce, Plaintext, Reason};
 
 /// Paillier encryption key
 #[derive(Clone, Debug)]
@@ -75,7 +76,8 @@ impl EncryptionKey {
         // b = nonce^N mod N^2
         let b = nonce
             .pow_mod_ref(self.n(), self.nn())
-            .ok_or(Bug::PowModUndef)?.complete();
+            .ok_or(Bug::PowModUndef)?
+            .complete();
 
         let c = (a * b).modulo(self.nn());
         Ok(c)
@@ -133,7 +135,8 @@ impl EncryptionKey {
 
         Ok(ciphertext
             .pow_mod_ref(scalar, self.nn())
-            .ok_or(Reason::Ops)?.complete())
+            .ok_or(Reason::Ops)?
+            .complete())
     }
 
     /// Homomorphic negation of a ciphertext
@@ -142,7 +145,10 @@ impl EncryptionKey {
     /// oneg(Enc(a)) = Enc(-a)
     /// ```
     pub fn oneg(&self, ciphertext: &Ciphertext) -> Result<Ciphertext, Error> {
-        Ok(ciphertext.invert_ref(self.nn()).ok_or(Reason::Ops)?.complete())
+        Ok(ciphertext
+            .invert_ref(self.nn())
+            .ok_or(Reason::Ops)?
+            .complete())
     }
 
     /// Checks whether `x` is `{-N/2, .., N/2}`
