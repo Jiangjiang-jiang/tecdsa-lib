@@ -10,7 +10,6 @@
 
 use k256::Secp256k1;
 use rand_core::OsRng;
-use rug::Complete;
 pub use tecdsa_curve::conv::scalar_to_bytes;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::{backend::Integer, BigIntExt};
@@ -66,10 +65,6 @@ pub fn group_order() -> Integer {
 pub fn ntilde_params() -> (Integer, Integer, Integer) {
     let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(1536, &mut OsRng);
     (params.n, params.t, params.s)
-}
-
-pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
-    base.pow_mod_ref(exp, modulus).expect("pow_mod").complete()
 }
 
 /// JL keys: Profile B = N=3360 bit (p_bits=1680), k=712.

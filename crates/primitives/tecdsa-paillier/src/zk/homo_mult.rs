@@ -20,8 +20,6 @@ use rug::{ops::Pow, Complete};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::{conv::curve_order, TecdsaCurve};
 
-use super::pdl_slack::{commitment_unknown_order, pow_mod_signed};
-
 /// Verification error for the homomorphic multiplication proof.
 #[derive(Debug, thiserror::Error)]
 pub enum HomoMultError {
@@ -205,36 +203,40 @@ impl HomoMultProof {
 
         // 2. Compute commitments
         // z = h1^eta * h2^rho mod N_tilde
-        let z = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &witness.eta,
-            &rho,
-        );
+        let z = statement
+            .N_tilde
+            .combine(&statement.h1, &witness.eta, &statement.h2, &rho)
+            .expect("bases are invertible modulo n");
 
         // u2 = Gamma^alpha * beta^N mod N^2  (Paillier encryption of alpha)
         let _gamma_paillier = &statement.ek_n + Integer::one(); // Gamma = 1 + N
         let u2 = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
             let g_alpha = (Integer::one() + &alpha * &statement.ek_n).modulo(&statement.ek_nn);
-            let beta_n = pow_mod_signed(&beta, &statement.ek_n, &statement.ek_nn);
+            let beta_n = beta
+                .pow_mod_ref(&statement.ek_n, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (g_alpha * beta_n).modulo(&statement.ek_nn)
         };
 
         // u3 = h1^alpha * h2^gamma mod N_tilde  (Ring-Pedersen range commitment)
-        let u3 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &alpha,
-            &gamma,
-        );
+        let u3 = statement
+            .N_tilde
+            .combine(&statement.h1, &alpha, &statement.h2, &gamma)
+            .expect("bases are invertible modulo n");
 
         // v = c2^alpha * mu^N mod N^2  (homomorphic mul of c2 by alpha, rerandomized)
         let v = {
-            let c2_alpha = pow_mod_signed(&statement.c2, &alpha, &statement.ek_nn);
-            let mu_n = pow_mod_signed(&mu, &statement.ek_n, &statement.ek_nn);
+            let c2_alpha = statement
+                .c2
+                .pow_mod_ref(&alpha, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
+            let mu_n = mu
+                .pow_mod_ref(&statement.ek_n, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (c2_alpha * mu_n).modulo(&statement.ek_nn)
         };
 
@@ -247,7 +249,11 @@ impl HomoMultProof {
 
         // s2 = r_c1^e * beta mod N
         let s2 = {
-            let r_e = pow_mod_signed(&witness.r_c1, &e, &statement.ek_n);
+            let r_e = witness
+                .r_c1
+                .pow_mod_ref(&e, &statement.ek_n)
+                .expect("base is invertible modulo n")
+                .complete();
             (r_e * &beta).modulo(&statement.ek_n)
         };
 
@@ -256,7 +262,11 @@ impl HomoMultProof {
 
         // t_c = r_c3^e * mu mod N
         let t_c = {
-            let r_e = pow_mod_signed(&witness.r_c3, &e, &statement.ek_n);
+            let r_e = witness
+                .r_c3
+                .pow_mod_ref(&e, &statement.ek_n)
+                .expect("base is invertible modulo n")
+                .complete();
             (r_e * &mu).modulo(&statement.ek_n)
         };
 
@@ -294,24 +304,56 @@ impl HomoMultProof {
         let u2_check = {
             // (1 + N)^s1 = (1 + s1*N) mod N^2 (binomial) — one mul, no modexp.
             let g_s1 = (Integer::one() + &self.s1 * &statement.ek_n).modulo(&statement.ek_nn);
-            let s2_n = pow_mod_signed(&self.s2, &statement.ek_n, &statement.ek_nn);
-            let c1_neg_e = pow_mod_signed(&statement.c1, &neg_e, &statement.ek_nn);
+            let s2_n = self
+                .s2
+                .pow_mod_ref(&statement.ek_n, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
+            let c1_neg_e = statement
+                .c1
+                .pow_mod_ref(&neg_e, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (g_s1 * s2_n % &statement.ek_nn * c1_neg_e).modulo(&statement.ek_nn)
         };
 
         // --- Ring-Pedersen check: h1^{s1} * h2^{s3} * z^{-e} == u3 mod N_tilde ---
         let u3_check = {
-            let h1_s1 = pow_mod_signed(&statement.h1, &self.s1, &statement.N_tilde);
-            let h2_s3 = pow_mod_signed(&statement.h2, &self.s3, &statement.N_tilde);
-            let z_neg_e = pow_mod_signed(&self.z, &neg_e, &statement.N_tilde);
+            let h1_s1 = statement
+                .h1
+                .pow_mod_ref(&self.s1, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let h2_s3 = statement
+                .h2
+                .pow_mod_ref(&self.s3, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let z_neg_e = self
+                .z
+                .pow_mod_ref(&neg_e, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
             (h1_s1 * h2_s3 % &statement.N_tilde * z_neg_e).modulo(&statement.N_tilde)
         };
 
         // --- Paillier check 2: c2^{s1} * t_c^N * c3^{-e} == v mod N^2 ---
         let v_check = {
-            let c2_s1 = pow_mod_signed(&statement.c2, &self.s1, &statement.ek_nn);
-            let tc_n = pow_mod_signed(&self.t_c, &statement.ek_n, &statement.ek_nn);
-            let c3_neg_e = pow_mod_signed(&statement.c3, &neg_e, &statement.ek_nn);
+            let c2_s1 = statement
+                .c2
+                .pow_mod_ref(&self.s1, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
+            let tc_n = self
+                .t_c
+                .pow_mod_ref(&statement.ek_n, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
+            let c3_neg_e = statement
+                .c3
+                .pow_mod_ref(&neg_e, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (c2_s1 * tc_n % &statement.ek_nn * c3_neg_e).modulo(&statement.ek_nn)
         };
 
@@ -372,8 +414,14 @@ mod tests {
         // c3 = c2^eta * r_c3^N mod N^2  (homomorphic scalar mul + rerandomize)
         let r_c3 = Integer::sample_in_mult_group_of(&mut rng, ek.n());
         let c3 = {
-            let c2_eta = pow_mod_signed(&c2, &eta, ek.nn());
-            let r_c3_n = pow_mod_signed(&r_c3, ek.n(), ek.nn());
+            let c2_eta = c2
+                .pow_mod_ref(&eta, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
+            let r_c3_n = r_c3
+                .pow_mod_ref(ek.n(), ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             (c2_eta * r_c3_n).modulo(ek.nn())
         };
 
@@ -414,8 +462,14 @@ mod tests {
 
         let r_c3 = Integer::sample_in_mult_group_of(&mut rng, ek.n());
         let c3 = {
-            let c2_eta = pow_mod_signed(&c2, &eta, ek.nn());
-            let r_c3_n = pow_mod_signed(&r_c3, ek.n(), ek.nn());
+            let c2_eta = c2
+                .pow_mod_ref(&eta, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
+            let r_c3_n = r_c3
+                .pow_mod_ref(ek.n(), ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             (c2_eta * r_c3_n).modulo(ek.nn())
         };
 

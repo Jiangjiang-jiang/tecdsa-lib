@@ -797,8 +797,14 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let (c2, _) = paillier_encrypt(ek, &some_val);
         let r_c3 = Integer::sample_in_mult_group_of(rng, ek.n());
         let c3 = {
-            let c2_eta = pow_mod_signed(&c2, &eta, ek.nn());
-            let r_n = pow_mod_signed(&r_c3, ek.n(), ek.nn());
+            let c2_eta = c2
+                .pow_mod_ref(&eta, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
+            let r_n = r_c3
+                .pow_mod_ref(ek.n(), ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             (c2_eta * r_n).modulo(ek.nn())
         };
         let stmt = HomoMultStatement {
@@ -936,10 +942,19 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let r_c = Integer::sample_in_mult_group_of(rng, ek.n());
         let gamma_paillier = ek.n() + Integer::one();
         let w_i = {
-            let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
+            let u_eta1 = u_ct
+                .pow_mod_ref(&eta1, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             let q_eta2 = q * &eta2;
-            let g_q_eta2 = pow_mod_signed(&gamma_paillier, &q_eta2, ek.nn());
-            let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
+            let g_q_eta2 = gamma_paillier
+                .pow_mod_ref(&q_eta2, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
+            let r_c_n = r_c
+                .pow_mod_ref(ek.n(), ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
         };
         let stmt = NonceConsistStatement::<C> {
@@ -970,7 +985,10 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let a = sample_below(&q);
         let alpha_prime = sample_below(&q);
         let r_prime = Integer::sample_in_mult_group_of(rng, ek.n());
-        let c_b_a = pow_mod_signed(&c_b, &a, ek.nn());
+        let c_b_a = c_b
+            .pow_mod_ref(&a, ek.nn())
+            .expect("base is invertible modulo n")
+            .complete();
         let enc_alpha = ek.encrypt_with(&alpha_prime, &r_prime).expect("enc");
         let c_a = (c_b_a * enc_alpha).modulo(ek.nn());
         let proof = time_once("zk/paillier/pia/prove", || {
@@ -1127,7 +1145,10 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
         let (ct_y, nonce_y) = paillier_encrypt(ek, &y_val);
         let nonce_aff = Integer::sample_in_mult_group_of(rng, ek.n());
         let d_val = {
-            let c_x = pow_mod_signed(&ct_c, &x_val, ek.nn());
+            let c_x = ct_c
+                .pow_mod_ref(&x_val, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             let enc_y = ek.encrypt_with(&y_val, &nonce_aff).expect("enc_y");
             (c_x * enc_y).modulo(ek.nn())
         };

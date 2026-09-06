@@ -49,8 +49,6 @@ mod ser_integer {
 
 use tecdsa_curve::conv::{curve_order, integer_to_scalar};
 
-use super::pdl_slack::{commitment_unknown_order, pow_mod_signed};
-
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -140,7 +138,10 @@ impl AliceProof {
         let rho = (q * &ntilde.N_tilde).sample_below_ref(rng);
 
         // z = h1^a * h2^rho mod N_tilde
-        let z = commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, a, &rho);
+        let z = ntilde
+            .N_tilde
+            .combine(&ntilde.h1, a, &ntilde.h2, &rho)
+            .expect("bases are invertible modulo n");
 
         // u = (1 + N)^alpha * beta^N mod N^2
         //   = (1 + alpha*N) * beta^N mod N^2
@@ -148,12 +149,18 @@ impl AliceProof {
         let u = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
             let g_alpha = (Integer::one() + (&alpha * ek_n)).modulo(ek_nn);
-            let beta_n = pow_mod_signed(&beta, ek_n, ek_nn);
+            let beta_n = beta
+                .pow_mod_ref(ek_n, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (g_alpha * beta_n).modulo(ek_nn)
         };
 
         // w = h1^alpha * h2^gamma mod N_tilde
-        let w = commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, &alpha, &gamma);
+        let w = ntilde
+            .N_tilde
+            .combine(&ntilde.h1, &alpha, &ntilde.h2, &gamma)
+            .expect("bases are invertible modulo n");
 
         // Fiat-Shamir challenge
         let e = alice_challenge(ek_n, &g_paillier, cipher, &z, &u, &w);
@@ -161,7 +168,10 @@ impl AliceProof {
         // Round 2: compute responses
         // s = r^e * beta mod N
         let s = {
-            let r_e = pow_mod_signed(r, &e, ek_n);
+            let r_e = r
+                .pow_mod_ref(&e, ek_n)
+                .expect("base is invertible modulo n")
+                .complete();
             (r_e * &beta).modulo(ek_n)
         };
         // s1 = e*a + alpha
@@ -206,18 +216,37 @@ impl AliceProof {
         let u = {
             // (1 + N)^s1 = (1 + s1*N) mod N^2 (binomial) — one mul, no modexp.
             let gs1 = (Integer::one() + &self.s1 * ek_n).modulo(ek_nn);
-            let s_n = pow_mod_signed(&self.s, ek_n, ek_nn);
+            let s_n = self
+                .s
+                .pow_mod_ref(ek_n, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             let neg_e = -self.e.clone();
-            let c_neg_e = pow_mod_signed(cipher, &neg_e, ek_nn);
+            let c_neg_e = cipher
+                .pow_mod_ref(&neg_e, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (gs1 * s_n % ek_nn * c_neg_e).modulo(ek_nn)
         };
 
         // Reconstruct w: w = h1^s1 * h2^s2 * z^{-e} mod N_tilde
         let w = {
-            let h1_s1 = pow_mod_signed(&ntilde.h1, &self.s1, &ntilde.N_tilde);
-            let h2_s2 = pow_mod_signed(&ntilde.h2, &self.s2, &ntilde.N_tilde);
+            let h1_s1 = ntilde
+                .h1
+                .pow_mod_ref(&self.s1, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let h2_s2 = ntilde
+                .h2
+                .pow_mod_ref(&self.s2, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
             let neg_e = -self.e.clone();
-            let z_neg_e = pow_mod_signed(&self.z, &neg_e, &ntilde.N_tilde);
+            let z_neg_e = self
+                .z
+                .pow_mod_ref(&neg_e, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
             (h1_s1 * h2_s2 % &ntilde.N_tilde * z_neg_e).modulo(&ntilde.N_tilde)
         };
 
@@ -326,25 +355,40 @@ impl BobProof {
         let tau = q3_N_tilde.sample_below_ref(rng);
 
         // z = h1^b * h2^rho mod N_tilde
-        let z = commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, b, &rho);
+        let z = ntilde
+            .N_tilde
+            .combine(&ntilde.h1, b, &ntilde.h2, &rho)
+            .expect("bases are invertible modulo n");
 
         // z' = h1^alpha * h2^rho' mod N_tilde
-        let z_prim =
-            commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, &alpha, &rho_prim);
+        let z_prim = ntilde
+            .N_tilde
+            .combine(&ntilde.h1, &alpha, &ntilde.h2, &rho_prim)
+            .expect("bases are invertible modulo n");
 
         // t = h1^beta_prim * h2^sigma mod N_tilde
-        let t =
-            commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, beta_prim, &sigma);
+        let t = ntilde
+            .N_tilde
+            .combine(&ntilde.h1, beta_prim, &ntilde.h2, &sigma)
+            .expect("bases are invertible modulo n");
 
         // w = h1^gamma * h2^tau mod N_tilde
-        let w_commit =
-            commitment_unknown_order(&ntilde.h1, &ntilde.h2, &ntilde.N_tilde, &gamma, &tau);
+        let w_commit = ntilde
+            .N_tilde
+            .combine(&ntilde.h1, &gamma, &ntilde.h2, &tau)
+            .expect("bases are invertible modulo n");
 
         // v = C_a^alpha * (1 + gamma*N) * beta^N mod N^2
         let v = {
-            let ca_alpha = pow_mod_signed(a_encrypted, &alpha, ek_nn);
+            let ca_alpha = a_encrypted
+                .pow_mod_ref(&alpha, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             let g_gamma = (&gamma * ek_n + Integer::one()).modulo(ek_nn);
-            let beta_n = pow_mod_signed(&beta, ek_n, ek_nn);
+            let beta_n = beta
+                .pow_mod_ref(ek_n, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (ca_alpha * g_gamma % ek_nn * beta_n).modulo(ek_nn)
         };
 
@@ -388,7 +432,10 @@ impl BobProof {
 
         // Round 2: compute responses
         let s = {
-            let r_e = pow_mod_signed(r, &e, ek_n);
+            let r_e = r
+                .pow_mod_ref(&e, ek_n)
+                .expect("base is invertible modulo n")
+                .complete();
             (r_e * &beta).modulo(ek_n)
         };
         let s1 = alpha + &e * b;
@@ -465,26 +512,60 @@ impl BobProof {
 
         // Reconstruct z': z' = h1^s1 * h2^s2 * z^{-e} mod N_tilde
         let z_prim = {
-            let h1_s1 = pow_mod_signed(&ntilde.h1, &self.s1, &ntilde.N_tilde);
-            let h2_s2 = pow_mod_signed(&ntilde.h2, &self.s2, &ntilde.N_tilde);
-            let z_neg_e = pow_mod_signed(&self.z, &neg_e, &ntilde.N_tilde);
+            let h1_s1 = ntilde
+                .h1
+                .pow_mod_ref(&self.s1, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let h2_s2 = ntilde
+                .h2
+                .pow_mod_ref(&self.s2, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let z_neg_e = self
+                .z
+                .pow_mod_ref(&neg_e, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
             (h1_s1 * h2_s2 % &ntilde.N_tilde * z_neg_e).modulo(&ntilde.N_tilde)
         };
 
         // Reconstruct v: v = C_a^s1 * s^N * (1+t1*N) * C_b^{-e} mod N^2
         let v = {
-            let ca_s1 = pow_mod_signed(a_enc, &self.s1, ek_nn);
-            let s_n = pow_mod_signed(&self.s, ek_n, ek_nn);
+            let ca_s1 = a_enc
+                .pow_mod_ref(&self.s1, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
+            let s_n = self
+                .s
+                .pow_mod_ref(ek_n, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             let g_t1 = (&self.t1 * ek_n + Integer::one()).modulo(ek_nn);
-            let mta_neg_e = pow_mod_signed(mta_out, &neg_e, ek_nn);
+            let mta_neg_e = mta_out
+                .pow_mod_ref(&neg_e, ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (ca_s1 * s_n % ek_nn * g_t1 % ek_nn * mta_neg_e).modulo(ek_nn)
         };
 
         // Reconstruct w: w = h1^t1 * h2^t2 * t^{-e} mod N_tilde
         let w_commit = {
-            let h1_t1 = pow_mod_signed(&ntilde.h1, &self.t1, &ntilde.N_tilde);
-            let h2_t2 = pow_mod_signed(&ntilde.h2, &self.t2, &ntilde.N_tilde);
-            let t_neg_e = pow_mod_signed(&self.t, &neg_e, &ntilde.N_tilde);
+            let h1_t1 = ntilde
+                .h1
+                .pow_mod_ref(&self.t1, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let h2_t2 = ntilde
+                .h2
+                .pow_mod_ref(&self.t2, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let t_neg_e = self
+                .t
+                .pow_mod_ref(&neg_e, &ntilde.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
             (h1_t1 * h2_t2 % &ntilde.N_tilde * t_neg_e).modulo(&ntilde.N_tilde)
         };
 
@@ -745,7 +826,10 @@ mod tests {
 
         let t0 = Instant::now();
         for _ in 0..ITERS {
-            let _ = pow_mod_signed(&g, &alpha, &nn);
+            let _ = g
+                .pow_mod_ref(&alpha, &nn)
+                .expect("base is invertible modulo n")
+                .complete();
         }
         let t_modexp = t0.elapsed() / ITERS;
 
