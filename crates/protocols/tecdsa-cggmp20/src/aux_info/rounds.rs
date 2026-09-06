@@ -27,13 +27,6 @@ struct AuxInfoProofTag {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn integer_to_bytes(val: &Integer) -> Vec<u8> {
-    let n = val.significant_digits::<u8>();
-    let mut bytes = vec![0u8; n];
-    val.write_digits(&mut bytes, Order::Msf);
-    bytes
-}
-
 /// Serialise the commitment payload: ek || pedersen_params || pi_prm || rho.
 ///
 /// We concatenate deterministic byte representations of the public data.
@@ -46,9 +39,9 @@ fn commitment_data(msg: &MsgRound2) -> Vec<u8> {
     // EncryptionKey → serialise N as big-endian bytes
     data.extend_from_slice(&msg.paillier_ek.n().to_bytes_msf());
     // PedersenModParams → serialise n, s, t
-    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.n));
-    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.s));
-    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.t));
+    data.extend_from_slice(&msg.pedersen_params.n.to_bytes_msf());
+    data.extend_from_slice(&msg.pedersen_params.s.to_bytes_msf());
+    data.extend_from_slice(&msg.pedersen_params.t.to_bytes_msf());
     // PiPrm → hash the debug representation as a deterministic fingerprint.
     // Both prover and verifier call this function with the same data, so
     // determinism is all that matters.

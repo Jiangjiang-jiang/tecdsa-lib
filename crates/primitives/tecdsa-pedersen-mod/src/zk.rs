@@ -14,18 +14,11 @@
 use rand_core::CryptoRngCore;
 use rug::Integer;
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::SyncRng;
+use tecdsa_bigint::{BigIntExt, SyncRng};
 
 use crate::params::{PedersenModParams, PedersenModSecret};
 
 const SECURITY_PARAM: usize = 80;
-
-fn integer_to_bytes(val: &Integer) -> Vec<u8> {
-    let n = val.significant_digits::<u8>();
-    let mut bytes = vec![0u8; n];
-    val.write_digits(&mut bytes, rug::integer::Order::Msf);
-    bytes
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Pi_prm — ring-Pedersen parameter proof (CGGMP20 Figure 13)
@@ -132,11 +125,11 @@ impl PiPrm {
         use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
-        hasher.update(integer_to_bytes(&params.n));
-        hasher.update(integer_to_bytes(&params.s));
-        hasher.update(integer_to_bytes(&params.t));
+        hasher.update(params.n.to_bytes_msf());
+        hasher.update(params.s.to_bytes_msf());
+        hasher.update(params.t.to_bytes_msf());
         for a_i in commitment {
-            hasher.update(integer_to_bytes(a_i));
+            hasher.update(a_i.to_bytes_msf());
         }
         let hash = hasher.finalize();
 
@@ -207,9 +200,7 @@ impl PiMod {
         q: &Integer,
         rng: &mut impl CryptoRngCore,
     ) -> Option<Self> {
-        use crate::number_theory::{
-            blum_fourth_root, find_residue, mod_inverse, sample_neg_jacobi,
-        };
+        use crate::number_theory::{blum_fourth_root, find_residue, sample_neg_jacobi};
 
         let expected_n = Integer::from(p * q);
         if expected_n != *n {
@@ -227,7 +218,7 @@ impl PiMod {
 
         let phi_n = Integer::from(p - 1) * Integer::from(q - 1);
 
-        let n_inv = mod_inverse(n, &phi_n)?;
+        let n_inv = n.clone().invert(&phi_n).ok()?;
 
         let challenges = Self::derive_challenges(n, &w);
 
@@ -263,18 +254,15 @@ impl PiMod {
 
     /// Verify `PiMod` proof against a raw modulus N (CGGMP20 Figure 12).
     ///
-    /// The `rng` parameter is used for probabilistic Miller-Rabin composite
-    /// testing (25 rounds). For deterministic benchmark results, pass a
-    /// seeded CSPRNG.
+    /// The `rng` parameter is unused (Miller-Rabin composite testing is
+    /// deterministic in `rug`) but kept for API stability.
     #[must_use]
-    pub fn verify_modulus(&self, n: &Integer, rng: &mut impl CryptoRngCore) -> bool {
-        use crate::number_theory::is_probably_composite;
-
+    pub fn verify_modulus(&self, n: &Integer, _rng: &mut impl CryptoRngCore) -> bool {
         if n.is_even() {
             return false;
         }
 
-        if !is_probably_composite(n, 25, rng) {
+        if n.is_probably_prime(25) != rug::integer::IsPrime::No {
             return false;
         }
 
@@ -343,7 +331,7 @@ impl PiMod {
     fn derive_challenges(n: &Integer, w: &Integer) -> Vec<Integer> {
         use sha2::{Digest, Sha256};
 
-        let n_bytes = integer_to_bytes(n);
+        let n_bytes = n.to_bytes_msf();
         let n_byte_len = n_bytes.len();
 
         let mut challenges = Vec::with_capacity(SECURITY_PARAM);
@@ -353,7 +341,7 @@ impl PiMod {
             let mut hasher = Sha256::new();
             hasher.update(b"pi_mod_challenge");
             hasher.update(&n_bytes);
-            hasher.update(integer_to_bytes(w));
+            hasher.update(w.to_bytes_msf());
             hasher.update(counter.to_be_bytes());
             let seed = hasher.finalize();
 

@@ -11,7 +11,7 @@
 //!
 //! Annotate wire-struct fields with:
 //!
-//! ```ignore
+//! ```text
 //! #[serde(with = "tecdsa_bigint::int_wire")]
 //! pub n: rug::Integer,
 //! // For vectors of integers:
