@@ -200,8 +200,6 @@ impl PiMod {
         q: &Integer,
         rng: &mut impl CryptoRngCore,
     ) -> Option<Self> {
-        use crate::number_theory::{blum_fourth_root, find_residue, sample_neg_jacobi};
-
         let expected_n = Integer::from(p * q);
         if expected_n != *n {
             return None;
@@ -214,7 +212,7 @@ impl PiMod {
             return None;
         }
 
-        let w = sample_neg_jacobi(n, rng);
+        let w = Integer::sample_neg_jacobi(rng, n);
 
         let phi_n = Integer::from(p - 1) * Integer::from(q - 1);
 
@@ -227,10 +225,11 @@ impl PiMod {
             .map(|y_i| {
                 let z = y_i.clone().pow_mod(&n_inv, n).unwrap();
 
-                let (a, b, y_prime) = find_residue(y_i, &w, p, q, n)
+                let (a, b, y_prime) = y_i
+                    .find_residue(&w, p, q, n)
                     .expect("find_residue must succeed for valid Blum modulus");
 
-                let x = blum_fourth_root(&y_prime, p, q, n);
+                let x = y_prime.blum_fourth_root(p, q, n);
 
                 PiModPoint { x, a, b, z }
             })

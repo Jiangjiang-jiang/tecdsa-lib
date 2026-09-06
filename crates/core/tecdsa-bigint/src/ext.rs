@@ -162,6 +162,28 @@ pub trait BigIntExt: Sized {
     /// Samples `x` such that abs(x) is in `Z*_n`
     fn sample_pm_in_mult_group_of(rng: &mut impl rand_core::RngCore, n: &Self) -> Self;
 
+    /// Samples `w` in `Z*_n` with Jacobi symbol `(w/n) = -1`.
+    fn sample_neg_jacobi(rng: &mut impl rand_core::RngCore, n: &Self) -> Self;
+
+    /// Principal square root of `self` modulo a Blum integer `n = p*q`.
+    ///
+    /// Uses the exponent `((p-1)(q-1) + 4) / 8` from [Handbook of Applied
+    /// Cryptography, p. 75, Fact 2.160](https://cacr.uwaterloo.ca/hac/about/chap2.pdf).
+    ///
+    /// Requires `self` to be a quadratic residue mod `n` and `p`, `q` to be Blum
+    /// primes; otherwise the result is a meaningless element of `Z_n`.
+    fn blum_sqrt(&self, p: &Self, q: &Self, n: &Self) -> Self;
+
+    /// Fourth root of `self` modulo a Blum integer, i.e. [`BigIntExt::blum_sqrt`] twice.
+    fn blum_fourth_root(&self, p: &Self, q: &Self, n: &Self) -> Self;
+
+    /// Finds `(a, b, y')` with `y' = (-1)^a * w^b * self` a quadratic residue mod `n`,
+    /// where `a` and `b` are `false = 0` / `true = 1`.
+    ///
+    /// Requires `n = p*q` with `p`, `q` Blum primes and `jacobi(w, n) = -1`. Returns
+    /// `None` when no such `y'` exists, which cannot happen if those hold.
+    fn find_residue(&self, w: &Self, p: &Self, q: &Self, n: &Self) -> Option<(bool, bool, Self)>;
+
     /// Generate a random safe prime using a windowed double sieve.
     ///
     /// Generates a Sophie Germain prime `q` of `bits - 1` bits and returns the safe
@@ -457,6 +479,56 @@ impl BigIntExt for rug::Integer {
             if x.abs_in_mult_group_of(n) {
                 return x;
             }
+        }
+    }
+
+    fn sample_neg_jacobi(rng: &mut impl rand_core::RngCore, n: &Self) -> Self {
+        loop {
+            let w = Self::sample_in_mult_group_of(rng, n);
+            // jacobi(1, n) == 1, so w == 1 is rejected here rather than by an
+            // explicit guard.
+            if w.jacobi(n) == -1 {
+                return w;
+            }
+        }
+    }
+
+    fn blum_sqrt(&self, p: &Self, q: &Self, n: &Self) -> Self {
+        let e = ((p - 1u32).complete() * (q - 1u32).complete() + 4u32) / 8u32;
+        // e is non-negative because p and q are Blum primes.
+        self.pow_mod_ref(&e, n)
+            .expect("e is non-negative")
+            .complete()
+    }
+
+    fn blum_fourth_root(&self, p: &Self, q: &Self, n: &Self) -> Self {
+        self.blum_sqrt(p, q, n).blum_sqrt(p, q, n)
+    }
+
+    fn find_residue(&self, w: &Self, p: &Self, q: &Self, n: &Self) -> Option<(bool, bool, Self)> {
+        // Euclidean reduction, so the Jacobi symbols are taken on non-negative
+        // representatives even when `self` is negative.
+        let jacobi_pair = |y: &Self| {
+            (
+                y.modulo_ref(p).complete().jacobi(p),
+                y.modulo_ref(q).complete().jacobi(q),
+            )
+        };
+
+        match jacobi_pair(self) {
+            (1, 1) => return Some((false, false, self.clone())),
+            (-1, -1) => return Some((true, false, (n - self).complete())),
+            _ => {}
+        }
+
+        let wy = (self * w).complete().modulo(n);
+        match jacobi_pair(&wy) {
+            (1, 1) => Some((false, true, wy)),
+            (-1, -1) => {
+                let neg = (n - &wy).complete();
+                Some((true, true, neg))
+            }
+            _ => None,
         }
     }
 
