@@ -20,8 +20,8 @@
 ///
 /// Provides encrypt, decrypt, and homomorphic operations over a
 /// message space $\mathbb{Z}_q$. Messages and scalars are passed as
-/// decimal strings to accommodate different bigint backends
-/// (num-bigint for CL, tecdsa-paillier Integer for Paillier).
+/// decimal strings, a leftover from when the CL and Paillier backends used
+/// different big-integer types; both are `rug::Integer` now.
 pub trait LheScheme: 'static {
     /// Encryption context / setup parameters.
     type Setup;
