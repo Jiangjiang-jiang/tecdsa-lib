@@ -110,8 +110,7 @@ where
         let q_int = curve_order::<C>();
 
         // Step 1: Sample b from [0, q^2 * 2^{2(tau+kappa)})
-        let b_bound =
-            (&q_int * &q_int).complete() * Integer::u_pow_u(2, 2 * (TAU + KAPPA)).complete();
+        let b_bound = (&q_int * &q_int).complete() * Integer::two_pow(2 * (TAU + KAPPA));
         let b = b_bound.sample_below_ref(rng);
 
         // Sample delta from Z*_N (nonzero, coprime to N)
@@ -179,10 +178,8 @@ where
         // z1 must be in [0, q^2 * 2^{2(tau+kappa)} + (q^2 - q) * 2^{tau+2kappa}]
         // This is the maximum value z1 can take: x_hat_1 * sigma + b
         // where x_hat_1 <= q * 2^{tau+2kappa} (approximately) and sigma < q, b < q^2 * 2^{2(tau+kappa)}
-        let z1_upper = (&q_int * &q_int).complete()
-            * Integer::u_pow_u(2, 2 * (TAU + KAPPA)).complete()
-            + ((&q_int * &q_int).complete() - &q_int)
-                * Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
+        let z1_upper = (&q_int * &q_int).complete() * Integer::two_pow(2 * (TAU + KAPPA))
+            + ((&q_int * &q_int).complete() - &q_int) * Integer::two_pow(TAU + 2 * KAPPA);
         if self.z1.cmp0().is_lt() {
             return false;
         }
@@ -331,7 +328,7 @@ mod tests {
         let q_int = curve_order::<Secp256k1>();
         let x1_bytes = x1.to_repr();
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
-        let noise_bound = Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
+        let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
         let t = noise_bound.sample_below_ref(&mut rng);
         let x_hat_1 = &x1_int + (t * q_int);
 

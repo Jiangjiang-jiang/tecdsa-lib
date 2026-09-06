@@ -190,7 +190,7 @@ where
     let q_int = curve_order::<C>();
 
     // Sample noise t from [0, 2^{tau + 2*kappa})
-    let noise_bound = Integer::from(Integer::u_pow_u(2, TAU + 2 * KAPPA));
+    let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
     let t = noise_bound.sample_below_ref(rng);
 
     // Compute x_hat_1 = x1 + t * q (the noised share)

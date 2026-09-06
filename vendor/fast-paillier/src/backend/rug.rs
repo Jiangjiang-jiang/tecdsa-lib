@@ -69,6 +69,17 @@ pub trait BigIntExt: Sized {
     fn zero() -> Self;
     fn is_one(&self) -> bool;
 
+    /// `2^exp`.
+    ///
+    /// These powers of two are everywhere in the range/slack bounds of the ZK
+    /// proofs, so they get a name rather than being spelled
+    /// `Integer::u_pow_u(2, exp).complete()` at every use.
+    ///
+    /// Implemented with `u_pow_u` rather than `Integer::from(1) << exp`: the
+    /// two are equal, but GMP special-cases base 2 in `mpz_ui_pow_ui` and
+    /// benchmarks slightly faster than the shift.
+    fn two_pow(exp: u32) -> Self;
+
     fn sign(&self) -> super::Sign;
 
     fn significant_dwords(&self) -> usize;
@@ -177,6 +188,10 @@ impl BigIntExt for rug::Integer {
 
     fn is_one(&self) -> bool {
         self == rug::Integer::ONE
+    }
+
+    fn two_pow(exp: u32) -> Self {
+        rug::Integer::u_pow_u(2, exp).complete()
     }
 
     fn sign(&self) -> super::Sign {

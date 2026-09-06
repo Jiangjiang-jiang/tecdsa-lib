@@ -72,7 +72,7 @@ impl PiBProof {
         let n = ek.n();
 
         // Sampling range: q * 2^{tau + kappa}
-        let sample_bound = q * Integer::u_pow_u(2, TAU + KAPPA).complete();
+        let sample_bound = q * Integer::two_pow(TAU + KAPPA);
 
         // alpha <- Z_{q * 2^{tau+kappa}}
         let alpha = sample_bound.sample_below_ref(rng);
@@ -120,8 +120,7 @@ impl PiBProof {
         let e = compute_challenge_pib(n, q, c_B, &self.A);
 
         // Range check: z1 in [0, q * 2^{tau+kappa} + q * 2^kappa]
-        let upper_bound = q * Integer::u_pow_u(2, TAU + KAPPA).complete()
-            + q * Integer::u_pow_u(2, KAPPA).complete();
+        let upper_bound = q * Integer::two_pow(TAU + KAPPA) + q * Integer::two_pow(KAPPA);
         let z1_in_range = self.z1.cmp0().is_ge() && self.z1 <= upper_bound;
 
         // z2 must be in Z*_N (positive, coprime to N)
@@ -197,11 +196,11 @@ impl PiAProof {
         let nn = ek.nn();
 
         // K = q^2 * 2^{tau + 2*kappa}
-        let K = (q * q).complete() * Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
+        let K = (q * q).complete() * Integer::two_pow(TAU + 2 * KAPPA);
 
         // Sampling ranges
-        let gamma_bound = q * Integer::u_pow_u(2, TAU + KAPPA).complete();
-        let delta_bound = &K * Integer::u_pow_u(2, TAU + KAPPA).complete();
+        let gamma_bound = q * Integer::two_pow(TAU + KAPPA);
+        let delta_bound = &K * Integer::two_pow(TAU + KAPPA);
 
         // gamma <- Z_{q * 2^{tau+kappa}}
         let gamma = gamma_bound.sample_below_ref(rng);
@@ -257,19 +256,17 @@ impl PiAProof {
         let nn = ek.nn();
 
         // K = q^2 * 2^{tau + 2*kappa}
-        let K = (q * q).complete() * Integer::u_pow_u(2, TAU + 2 * KAPPA).complete();
+        let K = (q * q).complete() * Integer::two_pow(TAU + 2 * KAPPA);
 
         // Recompute challenge
         let e = compute_challenge_pia(n, q, c_A, c_B, &self.A);
 
         // Range check on z1: z1 in [0, q * 2^{tau+kappa} + q * 2^kappa]
-        let z1_upper = q * Integer::u_pow_u(2, TAU + KAPPA).complete()
-            + q * Integer::u_pow_u(2, KAPPA).complete();
+        let z1_upper = q * Integer::two_pow(TAU + KAPPA) + q * Integer::two_pow(KAPPA);
         let z1_in_range = self.z1.cmp0().is_ge() && self.z1 <= z1_upper;
 
         // Range check on z2: z2 in [0, K * 2^{tau+kappa} + K * 2^kappa]
-        let z2_upper = &K * Integer::u_pow_u(2, TAU + KAPPA).complete()
-            + &K * Integer::u_pow_u(2, KAPPA).complete();
+        let z2_upper = &K * Integer::two_pow(TAU + KAPPA) + &K * Integer::two_pow(KAPPA);
         let z2_in_range = self.z2.cmp0().is_ge() && self.z2 <= z2_upper;
 
         // z3 must be in Z*_N
@@ -327,7 +324,7 @@ fn compute_challenge_pib(n: &Integer, q: &Integer, c_B: &Integer, A: &Integer) -
 
     // Interpret hash as integer and reduce mod 2^kappa
     let hash_int = Integer::from_bytes_msf(&hash);
-    let modulus = Integer::u_pow_u(2, KAPPA).complete();
+    let modulus = Integer::two_pow(KAPPA);
     hash_int.modulo(&modulus)
 }
 
@@ -351,6 +348,6 @@ fn compute_challenge_pia(
     let hash = hasher.finalize();
 
     let hash_int = Integer::from_bytes_msf(&hash);
-    let modulus = Integer::u_pow_u(2, KAPPA).complete();
+    let modulus = Integer::two_pow(KAPPA);
     hash_int.modulo(&modulus)
 }
