@@ -870,7 +870,7 @@ mod tests {
         let (ek, _dk) = gen_paillier_keys(&mut rng);
         let q = curve_order_int();
         // K = q^2 * 2^{tau + 2*kappa} = q^2 * 2^{256 + 2*80} = q^2 * 2^{416}
-        let K = (&q * &q).complete() * Integer::two_pow(416);
+        let K = Integer::two_pow(416) * &q * &q;
 
         let k2 = q.sample_below_ref(&mut rng);
         let (c_B, _) = ek

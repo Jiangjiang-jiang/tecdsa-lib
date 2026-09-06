@@ -110,7 +110,7 @@ where
         let q_int = tecdsa_curve::conv::curve_order::<C>();
 
         // Step 1: Sample b from [0, q^2 * 2^{2(tau+kappa)})
-        let b_bound = (&q_int * &q_int).complete() * Integer::two_pow(2 * (TAU + KAPPA));
+        let b_bound = Integer::two_pow(2 * (TAU + KAPPA)) * &q_int * &q_int;
         let b = b_bound.sample_below_ref(rng);
 
         // Sample delta from Z*_N (nonzero, coprime to N)
@@ -178,7 +178,7 @@ where
         // z1 must be in [0, q^2 * 2^{2(tau+kappa)} + (q^2 - q) * 2^{tau+2kappa}]
         // This is the maximum value z1 can take: x_hat_1 * sigma + b
         // where x_hat_1 <= q * 2^{tau+2kappa} (approximately) and sigma < q, b < q^2 * 2^{2(tau+kappa)}
-        let z1_upper = (&q_int * &q_int).complete() * Integer::two_pow(2 * (TAU + KAPPA))
+        let z1_upper = Integer::two_pow(2 * (TAU + KAPPA)) * &q_int * &q_int
             + ((&q_int * &q_int).complete() - &q_int) * Integer::two_pow(TAU + 2 * KAPPA);
         if self.z1.cmp0().is_lt() {
             return false;
@@ -199,7 +199,7 @@ where
             .pow_mod_ref(&sigma_int, nn)
             .expect("pow_mod for C^sigma must succeed")
             .complete();
-        let lhs = (&self.gamma_1 * &c_to_sigma).complete().modulo(nn);
+        let lhs = (&self.gamma_1 * c_to_sigma).modulo(nn);
         let rhs = raw_encrypt(n, &self.z1, &self.z2);
         if lhs != rhs {
             return false;

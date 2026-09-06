@@ -27,7 +27,6 @@ use fast_paillier::{
     DecryptionKey, EncryptionKey,
 };
 use rand_core::CryptoRngCore;
-use rug::Complete;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{
     conv::{integer_to_scalar, scalar_to_bytes},
@@ -166,12 +165,11 @@ where
 {
     // Compute q (group order)
     let q_int = tecdsa_curve::conv::curve_order::<C>();
-    let q_squared = (&q_int * &q_int).complete();
 
     // Sample a from Z_q
     let a = q_int.sample_below_ref(rng);
     // Sample b from Z_{q^2}
-    let b = q_squared.sample_below_ref(rng);
+    let b = q_int.square().sample_below_ref(rng);
 
     // Compute c_tag = (a (*) c_key) (+) Enc(b)
     let c_a = ek
