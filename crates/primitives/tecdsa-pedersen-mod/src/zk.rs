@@ -205,7 +205,7 @@ impl PiMod {
             return None;
         }
 
-        if !tecdsa_bigint::is_safe_prime(p) || !tecdsa_bigint::is_safe_prime(q) {
+        if !p.is_safe_prime() || !q.is_safe_prime() {
             return None;
         }
         if p.mod_u(4) != 3 || q.mod_u(4) != 3 {

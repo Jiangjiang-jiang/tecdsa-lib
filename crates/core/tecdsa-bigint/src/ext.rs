@@ -202,6 +202,16 @@ pub trait BigIntExt: Sized {
     /// The sieve limit grows with `bits`: a larger limit removes more composite
     /// candidates up front at the cost of a bigger sieve.
     fn generate_safe_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self;
+
+    /// Generates a random Blum prime, i.e. a safe prime `p = 3 (mod 4)`.
+    ///
+    /// For a safe prime `p = 2p' + 1` with `p' > 2`, `p = 3 (mod 4)` holds
+    /// automatically; this asserts it rather than leaving it implicit.
+    fn generate_blum_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self;
+
+    /// Returns `true` if `self` is a safe prime, i.e. both `self` and
+    /// `(self - 1) / 2` are (probably) prime.
+    fn is_safe_prime(&self) -> bool;
 }
 
 impl BigIntExt for rug::Integer {
@@ -268,13 +278,13 @@ impl BigIntExt for rug::Integer {
     }
 
     fn sample_below(self, rng: &mut impl rand_core::RngCore) -> Self {
-        let mut adapter = RngAdapter(rng);
+        let mut adapter = crate::prime::SyncRng(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         self.random_below(&mut rng)
     }
 
     fn sample_below_ref(&self, rng: &mut impl rand_core::RngCore) -> Self {
-        let mut adapter = RngAdapter(rng);
+        let mut adapter = crate::prime::SyncRng(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         self.random_below_ref(&mut rng).complete()
     }
@@ -285,13 +295,13 @@ impl BigIntExt for rug::Integer {
     }
 
     fn sample_bits(bits: u32, rng: &mut impl rand_core::RngCore) -> Self {
-        let mut adapter = RngAdapter(rng);
+        let mut adapter = crate::prime::SyncRng(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         rug::Integer::random_bits(bits, &mut rng).complete()
     }
 
     fn random_bits_signed(bits: u32, rng: &mut impl rand_core::RngCore) -> Self {
-        let mut adapter = RngAdapter(rng);
+        let mut adapter = crate::prime::SyncRng(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         let r = rug::Integer::random_bits(bits, &mut rng).complete();
         let negative = rng.bits(1);
@@ -307,7 +317,7 @@ impl BigIntExt for rug::Integer {
         modulo: &Self,
         rng: &mut impl rand_core::RngCore,
     ) -> &mut Self {
-        let mut adapter = RngAdapter(rng);
+        let mut adapter = crate::prime::SyncRng(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         let r = modulo.random_below_ref(&mut rng);
         rug::Assign::assign(self, r);
@@ -315,7 +325,7 @@ impl BigIntExt for rug::Integer {
     }
 
     fn assign_random_bits(&mut self, bits: u32, rng: &mut impl rand_core::RngCore) -> &mut Self {
-        let mut adapter = RngAdapter(rng);
+        let mut adapter = crate::prime::SyncRng(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         let r = rug::Integer::random_bits(bits, &mut rng);
         rug::Assign::assign(self, r);
@@ -533,138 +543,33 @@ impl BigIntExt for rug::Integer {
     }
 
     fn generate_safe_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self {
-        // Sieve bound grows with size: small primes barely need sieving, while large ones
-        // benefit from removing far more composite candidates up front (tuned by benchmark).
-        let sieve_limit = if bits <= 512 {
-            50_000
-        } else if bits <= 1024 {
-            200_000
-        } else {
-            500_000
-        };
-        /// Width (in bits) of the candidate window scanned per random base.
-        const WINDOW_BITS: u32 = 15;
-        /// Cheap pre-filter: one Miller-Rabin round rejects almost all composites.
-        const FILTER_ROUNDS: u32 = 1;
-        /// Final confidence for the accepted Sophie Germain prime `q` (25 as in `mpz_nextprime`).
-        const CONFIRM_ROUNDS: u32 = 25;
+        let mut sync = crate::prime::SyncRng(rng);
+        let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync);
+        let sieve_limit = crate::prime::default_sieve_limit(u64::from(bits));
+        let primes = crate::prime::small_odd_primes(sieve_limit);
+        // a = 2 makes the chain prime `2q + 1`, i.e. the safe prime.
+        let (_, p) = crate::prime::gen_pair(
+            bits - 1,
+            &rug::Integer::from(2),
+            crate::prime::MR_ROUNDS,
+            crate::prime::WINDOW_BITS,
+            &primes,
+            rug_rng,
+        );
+        p
+    }
 
-        let window: usize = 1 << WINDOW_BITS;
-        let seed_bits = bits - 1;
-        let small_primes = small_odd_primes(sieve_limit);
+    fn generate_blum_prime(rng: &mut impl rand_core::RngCore, bits: u32) -> Self {
+        let p = Self::generate_safe_prime(rng, bits);
+        assert_eq!(p.mod_u(4), 3, "safe prime must be = 3 mod 4 for bits >= 3");
+        p
+    }
 
-        loop {
-            // Random odd base; the window holds candidates q = base + 2*j, j in [0, window).
-            let mut base = rug::Integer::zero();
-            base.assign_random_bits(seed_bits, rng);
-            base.set_bit(seed_bits - 1, true);
-            base |= 1u32;
-
-            // `true` marks a candidate position ruled out by the small-prime sieve.
-            let mut ruled_out = vec![false; window];
-
-            for &l in &small_primes {
-                let base_l = u64::from(base.mod_u(l as u32));
-                let inv2 = l.div_ceil(2); // 2^-1 mod l, for odd l
-
-                // Kill positions where q = base + 2j == 0 (mod l).
-                let j0 = ((l - base_l) % l * inv2 % l) as usize;
-                let mut idx = j0;
-                while idx < window {
-                    ruled_out[idx] = true;
-                    idx += l as usize;
-                }
-
-                // Kill positions where 2q + 1 == 0 (mod l): 4j == -(2*base + 1) (mod l).
-                let c = (2 * base_l + 1) % l;
-                let jf = ((l - c) % l * inv_mod(4 % l, l) % l) as usize;
-                let mut idx = jf;
-                while idx < window {
-                    ruled_out[idx] = true;
-                    idx += l as usize;
-                }
-            }
-
-            for j in 0..window {
-                if ruled_out[j] {
-                    continue;
-                }
-                let q = (&base + 2 * (j as u64)).complete();
-                // Cheap filter: one Miller-Rabin round rejects almost all composite `q`
-                // before we pay for the full confirmation or touch `p`.
-                if q.is_probably_prime(FILTER_ROUNDS) == rug::integer::IsPrime::No {
-                    continue;
-                }
-                let mut p = q.clone();
-                p <<= 1;
-                p += 1; // p = 2q + 1
-                        // Pocklington: `q = (p-1)/2` is a (probable) prime with `q > sqrt(p)`, and
-                        // `gcd(2^2 - 1, p) = gcd(3, p) = 1` (3 is in the sieve), so a single base-2
-                        // Fermat test is a primality *proof* for `p` given `q` is prime.
-                if p.mod_u(3) == 0 {
-                    continue; // 3 | p => p composite (defensive; the sieve already drops these)
-                }
-                let p_minus_1 = (&p - 1i32).complete();
-                if !rug::Integer::from(2u32)
-                    .pow_mod(&p_minus_1, &p)
-                    .unwrap()
-                    .is_one()
-                {
-                    continue;
-                }
-                // `p` is prime provided `q` is; spend the confidence rounds on `q` only.
-                if q.is_probably_prime(CONFIRM_ROUNDS) == rug::integer::IsPrime::No {
-                    continue;
-                }
-                return p;
-            }
-            // Window exhausted without success: draw a fresh random base.
+    fn is_safe_prime(&self) -> bool {
+        if self.is_probably_prime(crate::prime::MR_ROUNDS) == rug::integer::IsPrime::No {
+            return false;
         }
+        let sophie = (self - 1u32).complete() >> 1u32;
+        sophie.is_probably_prime(crate::prime::MR_ROUNDS) != rug::integer::IsPrime::No
     }
-}
-
-/// Adapts a [`rand_core::RngCore`] to rug's [`rug::rand::ThreadRandGen`].
-///
-/// Held as a local by each sampling method below; rug's `ThreadRandState`
-/// borrows it, so it cannot be returned from a helper without a transparent
-/// transmute (the upstream crate used `bytemuck` for that). Keeping it local
-/// avoids the dependency and the `unsafe` the workspace forbids.
-struct RngAdapter<'a, R: rand_core::RngCore + ?Sized>(&'a mut R);
-
-impl<R: rand_core::RngCore + ?Sized> rug::rand::ThreadRandGen for RngAdapter<'_, R> {
-    fn gen(&mut self) -> u32 {
-        self.0.next_u32()
-    }
-}
-
-/// Odd primes below `limit` (sieve of Eratosthenes), used for the double sieve.
-fn small_odd_primes(limit: usize) -> Vec<u64> {
-    let mut composite = vec![false; limit];
-    let mut out = Vec::new();
-    for i in 2..limit {
-        if !composite[i] {
-            if i > 2 {
-                out.push(i as u64);
-            }
-            let mut m = i * i;
-            while m < limit {
-                composite[m] = true;
-                m += i;
-            }
-        }
-    }
-    out
-}
-
-/// `x^(l-2) mod l == x^-1 mod l` (Fermat; `l` an odd prime, `0 < x < l`).
-fn inv_mod(x: u64, l: u64) -> u64 {
-    let (mut result, mut base, mut e) = (1u64, x % l, l - 2);
-    while e > 0 {
-        if e & 1 == 1 {
-            result = result * base % l;
-        }
-        base = base * base % l;
-        e >>= 1;
-    }
-    result
 }

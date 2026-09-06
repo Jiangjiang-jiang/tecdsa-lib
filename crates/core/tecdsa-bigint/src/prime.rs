@@ -1,24 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use rand_core::CryptoRngCore;
+use rand_core::RngCore;
 use rug::{
     integer::IsPrime,
     rand::{MutRandState, ThreadRandGen},
     Integer,
 };
 
-/// Returns `true` if `p` is a safe prime, i.e. both `p` and `(p-1)/2` are
-/// (probably) prime.
-#[must_use]
-#[allow(clippy::module_name_repetitions)]
-pub fn is_safe_prime(p: &Integer) -> bool {
-    if p.is_probably_prime(25) == IsPrime::No {
-        return false;
-    }
-    let sophie = Integer::from(p - 1) >> 1u32;
-    sophie.is_probably_prime(25) != IsPrime::No
-}
+/// Miller-Rabin confidence rounds for an accepted prime (25, as `mpz_nextprime` uses).
+pub(crate) const MR_ROUNDS: u32 = 25;
 
-/// Small-prime sieve bound used by [`generate_safe_prime`], chosen by prime size.
+/// Width (in bits) of the candidate window scanned per random base.
+pub(crate) const WINDOW_BITS: u32 = 15;
+
+/// Small-prime sieve bound used by safe-prime generation, chosen by prime size.
 ///
 /// Larger candidates benefit from removing many more composites up front, while
 /// small ones would only pay the extra sieve cost. Tiers were picked by benchmark.
@@ -31,34 +25,6 @@ pub fn default_sieve_limit(bits: u64) -> usize {
     } else {
         500_000
     }
-}
-
-/// Generates a random safe prime of approximately `bits` bits using `rng`.
-///
-/// Generates a Sophie Germain prime `q` of `bits - 1` bits, then returns
-/// `p = 2q + 1`.
-#[allow(clippy::module_name_repetitions)]
-pub fn generate_safe_prime(bits: u64, rng: &mut impl CryptoRngCore) -> Integer {
-    let mut sync_rng = SyncRng(&mut *rng);
-    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
-    let primes = small_odd_primes(default_sieve_limit(bits));
-    let (_, p) = gen_pair(bits as u32 - 1, &Integer::from(2), 25, 15, &primes, rug_rng);
-    p
-}
-
-/// Generate a random Blum prime: a safe prime p with p = 3 mod 4.
-///
-/// For safe primes p = 2p'+1 where p' > 2, p = 3 mod 4 always holds.
-/// This function makes that guarantee explicit.
-///
-/// # Panics
-///
-/// Panics if the generated safe prime is not = 3 mod 4 (invariant violation).
-#[allow(clippy::module_name_repetitions)]
-pub fn generate_blum_prime(bits: u64, rng: &mut impl CryptoRngCore) -> Integer {
-    let p = generate_safe_prime(bits, rng);
-    assert_eq!(p.mod_u(4), 3, "safe prime must be = 3 mod 4 for bits >= 3");
-    p
 }
 
 /// Odd primes below `limit` (sieve of Eratosthenes), used for the double sieve.
@@ -181,8 +147,15 @@ pub fn gen_pair(
     }
 }
 
-pub struct SyncRng<R: CryptoRngCore>(pub R);
-impl<R: CryptoRngCore> ThreadRandGen for SyncRng<R> {
+/// Adapts a [`rand_core::RngCore`] to rug's [`ThreadRandGen`].
+///
+/// Wraps `R` by value, but `&mut R` is itself `RngCore`, so `SyncRng(rng)` works
+/// for a borrowed RNG too. rug's `ThreadRandState` borrows the adapter, so it
+/// cannot be returned from a helper without a transparent transmute (upstream
+/// used `bytemuck`); callers hold it as a local instead, which avoids both the
+/// dependency and the `unsafe` this workspace forbids.
+pub struct SyncRng<R: RngCore>(pub R);
+impl<R: RngCore> ThreadRandGen for SyncRng<R> {
     fn r#gen(&mut self) -> u32 {
         self.0.next_u32()
     }
