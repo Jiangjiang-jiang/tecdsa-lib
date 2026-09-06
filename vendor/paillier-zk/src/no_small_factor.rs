@@ -38,8 +38,10 @@
 //! // 1. Prover prepares the data to obtain proof about
 //!
 //! let [p, q, ..] = pregenerated::primes_1536bits();
-//! let n = &p * &q;
-//! let n_root = n.sqrt_ref().unwrap();
+//! let n = Integer::from(&p * &q);
+//! // `n` is a product of two positive primes, so it is always non-negative
+//! // and `sqrt_ref` (which panics on negative input) cannot panic here.
+//! let n_root = Integer::from(n.sqrt_ref());
 //! let data = p::Data {
 //!     n: &n,
 //!     n_root: &n_root,
@@ -65,7 +67,8 @@
 //!
 //! # let recv = || (data.n, proof);
 //! let (n, proof) = recv();
-//! let n_root = n.sqrt_ref().unwrap();
+//! // Same `n` as computed by the prover above, so still non-negative.
+//! let n_root = Integer::from(n.sqrt_ref());
 //! let data = p::Data {
 //!     n: &n,
 //!     n_root: &n_root,
@@ -76,10 +79,9 @@
 //!
 //! If the verification succeeded, verifier can continue communication with prover
 
+use fast_paillier::backend::Integer;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-use fast_paillier::backend::Integer;
 
 pub use crate::common::{Aux, InvalidProof};
 
@@ -169,17 +171,16 @@ pub struct NiProof {
 
 /// Interactive version of the proof
 pub mod interactive {
-    use fast_paillier::backend::Integer;
+    use fast_paillier::backend::{BigIntExt, Integer};
     use rand_core::RngCore;
-
-    use crate::{
-        common::{fail_if, fail_if_ne, IntegerExt, InvalidProofReason},
-        Error,
-    };
 
     use super::{
         Aux, Challenge, Commitment, Data, InvalidProof, PrivateCommitment, PrivateData, Proof,
         SecurityParams,
+    };
+    use crate::{
+        common::{fail_if, fail_if_ne, IntegerExt, InvalidProofReason},
+        Error,
     };
 
     /// Create random commitment
@@ -192,16 +193,16 @@ pub mod interactive {
     ) -> Result<(Commitment, PrivateCommitment), Error> {
         let two_to_l = Integer::one() << security.l;
         let two_to_l_plus_e = Integer::one() << (security.l + security.epsilon);
-        let n_root_at_two_to_l_plus_e = &two_to_l_plus_e * data.n_root;
-        let aux_n_at_two_to_l = &two_to_l * &aux.rsa_modulo;
-        let aux_n_at_two_to_l_plus_e = &two_to_l_plus_e * &aux.rsa_modulo;
-        let n_at_aux_n = &aux.rsa_modulo * data.n;
+        let n_root_at_two_to_l_plus_e = Integer::from(&two_to_l_plus_e * data.n_root);
+        let aux_n_at_two_to_l = Integer::from(&two_to_l * &aux.rsa_modulo);
+        let aux_n_at_two_to_l_plus_e = Integer::from(&two_to_l_plus_e * &aux.rsa_modulo);
+        let n_at_aux_n = Integer::from(&aux.rsa_modulo * data.n);
 
         let alpha = Integer::from_rng_half_pm(&mut rng, &n_root_at_two_to_l_plus_e);
         let beta = Integer::from_rng_half_pm(&mut rng, &n_root_at_two_to_l_plus_e);
         let mu = Integer::from_rng_half_pm(&mut rng, &aux_n_at_two_to_l);
         let nu = Integer::from_rng_half_pm(&mut rng, &aux_n_at_two_to_l);
-        let r = Integer::from_rng_half_pm(&mut rng, &(&two_to_l_plus_e * &n_at_aux_n));
+        let r = Integer::from_rng_half_pm(&mut rng, &Integer::from(&two_to_l_plus_e * &n_at_aux_n));
         let x = Integer::from_rng_half_pm(&mut rng, &aux_n_at_two_to_l_plus_e);
         let y = Integer::from_rng_half_pm(&mut rng, &aux_n_at_two_to_l_plus_e);
 
@@ -241,11 +242,11 @@ pub mod interactive {
         challenge: &Challenge,
     ) -> Result<Proof, Error> {
         Ok(Proof {
-            z1: &pcomm.alpha + challenge * pdata.p,
-            z2: &pcomm.beta + challenge * pdata.q,
-            w1: &pcomm.x + challenge * &pcomm.mu,
-            w2: &pcomm.y + challenge * &pcomm.nu,
-            v: &pcomm.r - challenge * (&pcomm.nu * pdata.p),
+            z1: Integer::from(&pcomm.alpha + challenge * pdata.p),
+            z2: Integer::from(&pcomm.beta + challenge * pdata.q),
+            w1: Integer::from(&pcomm.x + challenge * &pcomm.mu),
+            w2: Integer::from(&pcomm.y + challenge * &pcomm.nu),
+            v: &pcomm.r - challenge * Integer::from(&pcomm.nu * pdata.p),
         })
     }
 
@@ -341,9 +342,8 @@ pub mod interactive {
 pub mod non_interactive {
     use digest::Digest;
 
-    pub use crate::{Error, InvalidProof};
-
     pub use super::{Aux, Challenge, Data, NiProof, PrivateData, SecurityParams};
+    pub use crate::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.
@@ -405,8 +405,9 @@ pub mod non_interactive {
 
 #[cfg(test)]
 mod test {
-    use crate::common::test::generate_blum_prime;
-    use crate::common::InvalidProofReason;
+    use fast_paillier::backend::Integer;
+
+    use crate::common::{test::generate_blum_prime, InvalidProofReason};
 
     #[test]
     fn passing() {
@@ -421,8 +422,10 @@ mod test {
         let mut rng = rand_dev::DevRng::new();
         let p = generate_blum_prime(&mut rng, n_bitlen / 2);
         let q = generate_blum_prime(&mut rng, n_bitlen / 2);
-        let n = &p * &q;
-        let n_root = n.sqrt_ref().unwrap();
+        let n = Integer::from(&p * &q);
+        // n = p * q with p, q positive primes, so it's always non-negative;
+        // sqrt_ref (which panics on negative input) cannot panic here.
+        let n_root = Integer::from(n.sqrt_ref());
         let data = super::Data {
             n: &n,
             n_root: &n_root,
@@ -461,8 +464,10 @@ mod test {
         let mut rng = rand_dev::DevRng::new();
         let p = generate_blum_prime(&mut rng, n_bitlen - (security.l as u32) / 2);
         let q = generate_blum_prime(&mut rng, security.l as u32 / 2);
-        let n = &p * &q;
-        let n_root = n.sqrt_ref().unwrap();
+        let n = Integer::from(&p * &q);
+        // n = p * q with p, q positive primes, so it's always non-negative;
+        // sqrt_ref (which panics on negative input) cannot panic here.
+        let n_root = Integer::from(n.sqrt_ref());
         let data = super::Data {
             n: &n,
             n_root: &n_root,

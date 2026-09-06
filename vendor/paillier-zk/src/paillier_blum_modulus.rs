@@ -28,13 +28,12 @@
 //! let data = p::Data { n: &n };
 //! let pdata = p::PrivateData { p: &p, q: &q };
 //!
-//! let proof =
-//!     p::non_interactive::prove::<{SECURITY}, sha2::Sha256>(
-//!         &shared_state,
-//!         data,
-//!         pdata,
-//!         &mut rng,
-//!     )?;
+//! let proof = p::non_interactive::prove::<{ SECURITY }, sha2::Sha256>(
+//!     &shared_state,
+//!     data,
+//!     pdata,
+//!     &mut rng,
+//! )?;
 //!
 //! // 2. P sends `data, commitment, proof` to the verifier V
 //!
@@ -46,7 +45,7 @@
 //! # let recv = || (data, proof);
 //! let (data, proof) = recv();
 //!
-//! p::non_interactive::verify::<{SECURITY}, sha2::Sha256>(
+//! p::non_interactive::verify::<{ SECURITY }, sha2::Sha256>(
 //!     &shared_state,
 //!     data,
 //!     &proof,
@@ -57,7 +56,6 @@
 //! If the verification succeeded, V can continue communication with P
 
 use fast_paillier::backend::Integer;
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -128,16 +126,17 @@ pub struct NiProof<const M: usize> {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use fast_paillier::backend::Integer;
+    use fast_paillier::backend::{BigIntExt, Integer};
     use rand_core::RngCore;
 
-    use crate::common::{
-        fail_if,
-        sqrt::{blum_sqrt, find_residue, sample_invertible_with_neg_jacobi},
-    };
-    use crate::{BadExponent, Error, ErrorReason, InvalidProof, InvalidProofReason};
-
     use super::{Challenge, Commitment, Data, PrivateData, Proof, ProofPoint};
+    use crate::{
+        common::{
+            fail_if,
+            sqrt::{blum_sqrt, find_residue, sample_invertible_with_neg_jacobi},
+        },
+        BadExponent, Error, ErrorReason, InvalidProof, InvalidProofReason,
+    };
 
     /// Create random commitment
     pub fn commit<R: RngCore>(Data { n }: Data, rng: &mut R) -> Commitment {
@@ -154,17 +153,18 @@ pub mod interactive {
         challenge: &Challenge<M>,
     ) -> Result<Proof<M>, Error> {
         let blum_sqrt = |x| blum_sqrt(&x, p, q, n);
-        let phi = (p - 1) * (q - 1);
-        let n_inverse = n.invert_ref(&phi).ok_or(ErrorReason::Invert)?;
+        let phi = Integer::from(p - 1) * Integer::from(q - 1);
+        let n_inverse = Integer::from(n.invert_ref(&phi).ok_or(ErrorReason::Invert)?);
 
         // We do an extra allocation as workaround while `array::try_map` is not stable
         let points = challenge
             .ys
             .iter()
             .map(|y| {
-                let z = y
-                    .pow_mod_ref(&n_inverse, n)
-                    .ok_or(BadExponent::undefined())?;
+                let z = Integer::from(
+                    y.pow_mod_ref(&n_inverse, n)
+                        .ok_or(BadExponent::undefined())?,
+                );
                 let (a, b, y_) = find_residue(y, w, p, q, n).ok_or(ErrorReason::FindResidue)?;
                 let x = blum_sqrt(blum_sqrt(y_));
                 Ok(ProofPoint { x, a, b, z })
@@ -184,9 +184,11 @@ pub mod interactive {
         commitment: &Commitment,
         challenge: &Challenge<M>,
         proof: &Proof<M>,
-        rng: &mut R,
+        _rng: &mut R,
     ) -> Result<(), InvalidProof> {
-        if data.n.is_probably_prime(25, rng) != fast_paillier::backend::IsPrime::No {
+        // rug's `is_probably_prime` (unlike the old fast-paillier trait method it
+        // replaces) doesn't take an rng; `_rng` is kept for API compatibility.
+        if data.n.is_probably_prime(25) != fast_paillier::backend::IsPrime::No {
             return Err(InvalidProofReason::ModulusIsPrime.into());
         }
         if data.n.is_even() {
@@ -206,25 +208,31 @@ pub mod interactive {
                 InvalidProofReason::RangeCheck(3),
                 point.z.in_mult_group_of(data.n),
             )?;
-            if point
-                .z
-                .pow_mod_ref(data.n, data.n)
-                .ok_or(InvalidProofReason::ModPow)?
-                != *y
+            if Integer::from(
+                point
+                    .z
+                    .pow_mod_ref(data.n, data.n)
+                    .ok_or(InvalidProofReason::ModPow)?,
+            ) != *y
             {
                 return Err(InvalidProofReason::IncorrectNthRoot.into());
             }
-            let y = if point.a { data.n - y } else { y.clone() };
+            let y = if point.a {
+                Integer::from(data.n - y)
+            } else {
+                y.clone()
+            };
             let y = if point.b {
                 (y * &commitment.w).modulo(data.n)
             } else {
                 y
             };
-            if point
-                .x
-                .pow_mod_ref(&4.into(), data.n)
-                .ok_or(InvalidProofReason::ModPow)?
-                != y
+            if Integer::from(
+                point
+                    .x
+                    .pow_mod_ref(&4.into(), data.n)
+                    .ok_or(InvalidProofReason::ModPow)?,
+            ) != y
             {
                 return Err(InvalidProofReason::IncorrectFourthRoot.into());
             }
@@ -246,9 +254,8 @@ pub mod interactive {
 pub mod non_interactive {
     use digest::Digest;
 
-    use crate::{Error, InvalidProof};
-
     use super::{Challenge, Commitment, Data, NiProof, PrivateData};
+    use crate::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.

@@ -5,7 +5,7 @@
 
 #![allow(non_snake_case)]
 
-use fast_paillier::backend::Integer;
+use fast_paillier::backend::{BigIntExt, Integer};
 
 /// Precomputed table for performing faster multiexponentiation
 #[derive(Debug, Clone)]
@@ -30,8 +30,8 @@ impl MultiexpTable {
         if s.cmp0().is_le()
             || t.cmp0().is_le()
             || N <= Integer::one()
-            || !s.gcd_ref(&N).is_one()
-            || !t.gcd_ref(&N).is_one()
+            || !Integer::from(s.gcd_ref(&N)).is_one()
+            || !Integer::from(t.gcd_ref(&N)).is_one()
         {
             return None;
         }
@@ -42,20 +42,20 @@ impl MultiexpTable {
 
         let B: u32 = 256;
         for i in 0..k_x {
-            let B_to_i = Integer::u_pow_u(B, i);
-            s_table.push(s.pow_mod_ref(&B_to_i, &N)?);
+            let B_to_i = Integer::from(Integer::u_pow_u(B, i));
+            s_table.push(Integer::from(s.pow_mod_ref(&B_to_i, &N)?));
         }
         for i in 0..k_y {
-            let B_to_i = Integer::u_pow_u(B, i);
-            t_table.push(t.pow_mod_ref(&B_to_i, &N)?);
+            let B_to_i = Integer::from(Integer::u_pow_u(B, i));
+            t_table.push(Integer::from(t.pow_mod_ref(&B_to_i, &N)?));
         }
 
         // smallest negative value possible for `x`
         let ell_x = -(Integer::one() << (k_x * 8)) + 1;
-        let s_to_ell_x = s.pow_mod_ref(&ell_x, &N)?;
+        let s_to_ell_x = Integer::from(s.pow_mod_ref(&ell_x, &N)?);
         // smallest negative value possible for `y`
         let ell_y = -(Integer::one() << (k_y * 8)) + 1;
-        let t_to_ell_y = t.pow_mod_ref(&ell_y, &N)?;
+        let t_to_ell_y = Integer::from(t.pow_mod_ref(&ell_y, &N)?);
 
         Some(Self {
             s: s_table,
@@ -77,7 +77,7 @@ impl MultiexpTable {
         let x_digits = if !x_is_neg {
             x.to_bytes_lsf()
         } else {
-            let x = x - &self.ell_x;
+            let x = Integer::from(x - &self.ell_x);
             if x.cmp0().is_lt() {
                 // `x` is less than lower bound
                 return None;
@@ -90,7 +90,7 @@ impl MultiexpTable {
         let y_digits = if !y_is_neg {
             y.to_bytes_lsf()
         } else {
-            let y = y - &self.ell_y;
+            let y = Integer::from(y - &self.ell_y);
             if y.cmp0().is_lt() {
                 // `y` is less than lower bound
                 return None;
@@ -187,7 +187,7 @@ fn build_digits_table(
 
 #[cfg(test)]
 mod test {
-    use fast_paillier::backend::Integer;
+    use fast_paillier::backend::{BigIntExt, Integer};
 
     use super::MultiexpTable;
 
@@ -205,19 +205,21 @@ mod test {
         let mut rng = rand_dev::DevRng::new();
 
         for _ in 0..100 {
-            let mut x = Integer::random_bits(x_bits, &mut rng);
+            let mut x = Integer::sample_bits(x_bits, &mut rng);
             if rand::Rng::gen(&mut rng) {
                 x = -x
             }
 
-            let mut y = Integer::random_bits(y_bits, &mut rng);
+            let mut y = Integer::sample_bits(y_bits, &mut rng);
             if rand::Rng::gen(&mut rng) {
                 y = -y
             }
             println!("x={x} y={y}");
 
             let actual = table.prod_exp(&x, &y).unwrap();
-            let expected = (s.pow_mod_ref(&x, &N).unwrap() * t.pow_mod_ref(&y, &N).unwrap()) % &N;
+            let expected = (Integer::from(s.pow_mod_ref(&x, &N).unwrap())
+                * Integer::from(t.pow_mod_ref(&y, &N).unwrap()))
+                % &N;
             assert_eq!(actual, expected);
         }
     }

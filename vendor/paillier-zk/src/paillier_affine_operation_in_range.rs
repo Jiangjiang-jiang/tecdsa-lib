@@ -29,9 +29,9 @@
 //! ## Example
 //!
 //! ```rust
-//! use paillier_zk::{paillier_affine_operation_in_range as p, IntegerExt};
 //! use fast_paillier::backend::Integer;
-//! use generic_ec::{Point, curves::Secp256k1 as E};
+//! use generic_ec::{curves::Secp256k1 as E, Point};
+//! use paillier_zk::{paillier_affine_operation_in_range as p, IntegerExt};
 //! # mod pregenerated {
 //! #     use super::*;
 //! #     paillier_zk::load_pregenerated_data!(
@@ -71,36 +71,23 @@
 //! // 2. Setup: prover prepares all plaintexts
 //!
 //! // x in paper
-//! let plaintext_x = Integer::from_rng_half_pm(
-//!     &mut rng,
-//!     &(Integer::one() << security.l_x),
-//! );
+//! let plaintext_x = Integer::from_rng_half_pm(&mut rng, &(Integer::one() << security.l_x));
 //! // y in paper
-//! let plaintext_y = Integer::from_rng_half_pm(
-//!     &mut rng,
-//!     &(Integer::one() << security.l_y),
-//! );
+//! let plaintext_y = Integer::from_rng_half_pm(&mut rng, &(Integer::one() << security.l_y));
 //!
 //! // 3. Setup: prover encrypts everything on correct keys and remembers some nonces
 //!
 //! // X in paper
 //! let ciphertext_x = Point::<E>::generator() * plaintext_x.to_scalar();
 //! // Y and ρ_y in paper
-//! let (ciphertext_y, nonce_y) = key_i.encrypt_with_random(
-//!     &mut rng,
-//!     &(plaintext_y),
-//! )?;
+//! let (ciphertext_y, nonce_y) = key_i.encrypt_with_random(&mut rng, &(plaintext_y))?;
 //! // nonce is ρ in paper
-//! let (ciphertext_y_by_key_j, nonce) = key_j.encrypt_with_random(
-//!     &mut rng,
-//!     &(plaintext_y)
-//! )?;
+//! let (ciphertext_y_by_key_j, nonce) = key_j.encrypt_with_random(&mut rng, &(plaintext_y))?;
 //! // D in paper
-//! let ciphertext_d = key_j
-//!     .oadd(
-//!         &key_j.omul(&plaintext_x, &ciphertext_c)?,
-//!         &ciphertext_y_by_key_j,
-//!     )?;
+//! let ciphertext_d = key_j.oadd(
+//!     &key_j.omul(&plaintext_x, &ciphertext_c)?,
+//!     &ciphertext_y_by_key_j,
+//! )?;
 //!
 //! // 4. Prover computes a non-interactive proof that plaintext_x and
 //! //    plaintext_y are at most `l_x` and `l_y` bits
@@ -119,15 +106,14 @@
 //!     nonce: &nonce,
 //!     nonce_y: &nonce_y,
 //! };
-//! let proof =
-//!     p::non_interactive::prove::<E, sha2::Sha256>(
-//!         &shared_state,
-//!         &aux,
-//!         data,
-//!         pdata,
-//!         &security,
-//!         &mut rng,
-//!     )?;
+//! let proof = p::non_interactive::prove::<E, sha2::Sha256>(
+//!     &shared_state,
+//!     &aux,
+//!     data,
+//!     pdata,
+//!     &security,
+//!     &mut rng,
+//! )?;
 //!
 //! // 5. Prover sends this data to verifier
 //!
@@ -152,10 +138,8 @@
 //!
 //! If the verification succeeded, verifier can continue communication with prover
 
-use fast_paillier::backend::Integer;
-use fast_paillier::{AnyEncryptionKey, Ciphertext, Nonce};
+use fast_paillier::{backend::Integer, AnyEncryptionKey, Ciphertext, Nonce};
 use generic_ec::{Curve, Point};
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -274,14 +258,15 @@ pub struct NiProof<C: Curve> {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use fast_paillier::backend::Integer;
+    use fast_paillier::backend::{BigIntExt, Integer};
     use generic_ec::{Curve, Point};
     use rand_core::RngCore;
 
-    use crate::common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason};
-    use crate::Error;
-
     use super::*;
+    use crate::{
+        common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason},
+        Error,
+    };
 
     /// Create random commitment
     pub fn commit<C: Curve, R: RngCore>(
@@ -294,8 +279,8 @@ pub mod interactive {
         let two_to_l = Integer::one() << security.l_x;
         let two_to_l_e = Integer::one() << (security.l_x + security.epsilon);
         let two_to_l_prime_e = Integer::one() << (security.l_y + security.epsilon);
-        let hat_n_at_two_to_l_e = &aux.rsa_modulo * &two_to_l_e;
-        let hat_n_at_two_to_l = &aux.rsa_modulo * &two_to_l;
+        let hat_n_at_two_to_l_e = Integer::from(&aux.rsa_modulo * &two_to_l_e);
+        let hat_n_at_two_to_l = Integer::from(&aux.rsa_modulo * &two_to_l);
 
         let alpha = Integer::from_rng_half_pm(&mut rng, &two_to_l_e);
         let beta = Integer::from_rng_half_pm(&mut rng, &two_to_l_prime_e);
@@ -340,10 +325,10 @@ pub mod interactive {
         challenge: &Challenge,
     ) -> Result<Proof, Error> {
         Ok(Proof {
-            z1: &pcomm.alpha + challenge * pdata.x,
-            z2: &pcomm.beta + challenge * pdata.y,
-            z3: &pcomm.gamma + challenge * &pcomm.m,
-            z4: &pcomm.delta + challenge * &pcomm.mu,
+            z1: Integer::from(&pcomm.alpha + challenge * pdata.x),
+            z2: Integer::from(&pcomm.beta + challenge * pdata.y),
+            z3: Integer::from(&pcomm.gamma + challenge * &pcomm.m),
+            z4: Integer::from(&pcomm.delta + challenge * &pcomm.mu),
             w: data
                 .key_j
                 .n()
@@ -493,9 +478,8 @@ pub mod non_interactive {
     use digest::Digest;
     use generic_ec::Curve;
 
-    use crate::{Error, InvalidProof};
-
     use super::{Aux, Challenge, Commitment, Data, NiProof, PrivateData, SecurityParams};
+    use crate::{Error, InvalidProof};
 
     /// Compute proof for the given data, producing random commitment and
     /// deriving determenistic challenge.
@@ -562,8 +546,7 @@ mod test {
     use generic_ec::{Curve, Point};
     use sha2::Digest;
 
-    use crate::common::test::random_key;
-    use crate::common::{IntegerExt, InvalidProofReason};
+    use crate::common::{test::random_key, IntegerExt, InvalidProofReason};
 
     fn run<R: rand_core::RngCore + rand_core::CryptoRng, C: Curve, D: Digest>(
         rng: &mut R,
