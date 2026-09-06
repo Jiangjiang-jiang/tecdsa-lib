@@ -5,6 +5,7 @@
 //! tests are marked `#[ignore]` due to their runtime.
 
 use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_joye_libert::{
     enc_dec::{decrypt, encrypt},
     hom::{hadd, hscmul},
@@ -56,7 +57,7 @@ fn jl_enc_dec_roundtrip() {
 fn jl_hadd_correctness() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
 
     let a = Integer::from(123u32);
     let b = Integer::from(456u32);
@@ -78,7 +79,7 @@ fn jl_hadd_correctness() {
 fn jl_hadd_wraps_mod_2k() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
 
     // Choose values that will overflow 2^k when added
     let a = Integer::from(&two_pow_k - 10);
@@ -97,7 +98,7 @@ fn jl_hadd_wraps_mod_2k() {
 fn jl_hscmul_correctness() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
 
     let a = Integer::from(7u32);
     let s = Integer::from(6u32);
@@ -115,7 +116,7 @@ fn jl_hscmul_correctness() {
 fn jl_hscmul_wraps_mod_2k() {
     let (pk, sk) = small_keypair();
     let mut rng = rand::thread_rng();
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
 
     let a = Integer::from(1_000_000u32);
     let s = Integer::from(5_000u32);

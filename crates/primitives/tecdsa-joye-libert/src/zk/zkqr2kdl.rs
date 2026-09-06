@@ -17,7 +17,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -107,7 +107,7 @@ impl ZkQr2kDlProof {
     /// Checks: for each i, h^{z_i} == a_i * y^{2^k * e_i} mod N.
     #[must_use]
     pub fn verify(&self) -> bool {
-        let two_pow_k = Integer::from(1) << self.k;
+        let two_pow_k = Integer::two_pow(self.k);
 
         // Recompute challenge
         let e = compute_challenge(&self.a_vec);

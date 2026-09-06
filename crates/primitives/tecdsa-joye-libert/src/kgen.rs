@@ -14,7 +14,7 @@ use rug::{
     Complete, Integer,
 };
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{gen_pair, pow_mod, small_odd_primes, SyncRng};
+use tecdsa_bigint::{gen_pair, pow_mod, small_odd_primes, BigIntExt, SyncRng};
 use zeroize::Zeroize;
 
 /// Public key for the Joye-Libert encryption scheme.
@@ -140,7 +140,7 @@ pub fn generate_keypair_with_qnr(
     let b = p_bits as u32;
     let k = msg_space_bits;
     // Step 1: p = 2^k*p'+1
-    let (pp, p) = gen_pair(b - k, &(Integer::ONE << k).into(), 25, 15, &primes, rng);
+    let (pp, p) = gen_pair(b - k, &Integer::two_pow(k), 25, 15, &primes, rng);
     // Step 2: q = 2*q'+1
     let (_, q) = gen_pair(b - 1, &Integer::from(2), 25, 15, &primes, rng);
 
@@ -157,7 +157,7 @@ pub fn generate_keypair_with_qnr(
     let gen_y = pow_mod(&qnr, &alpha, &n);
 
     // Step 6: Compute h = x^{2^k} mod N
-    let two_pow_k = Integer::from(1) << msg_space_bits;
+    let two_pow_k = Integer::two_pow(msg_space_bits);
     let elem_h = pow_mod(&qnr, &two_pow_k, &n);
 
     let y_to_neg_pp = gen_y

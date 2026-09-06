@@ -540,6 +540,8 @@ impl MtA for JlMtA {
 
 #[cfg(test)]
 mod tests {
+    use tecdsa_bigint::BigIntExt;
+
     use super::*;
     use crate::kgen::generate_keypair_with_params;
 
@@ -553,7 +555,7 @@ mod tests {
         let k = 128u32; // Must be >= min_k_for_mta(q_bits) = 98
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
 
         // Small shares
         let a = Integer::from(10u32);
@@ -585,7 +587,7 @@ mod tests {
         let k = 160u32;
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
 
         let a = random_below(&q, &mut rng);
         let b = random_below(&q, &mut rng);
@@ -617,7 +619,7 @@ mod tests {
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
         let (pk0, _sk0) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let setup = JlMtaSetup {
@@ -669,7 +671,7 @@ mod tests {
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
         let (pk0, _sk0) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let setup = JlMtaSetup {

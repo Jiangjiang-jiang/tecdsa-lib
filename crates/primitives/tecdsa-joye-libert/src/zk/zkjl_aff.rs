@@ -13,7 +13,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -69,8 +69,8 @@ impl ZkJlAffProof {
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         // Upper bounds for the blinding values
-        let v1_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b1_bits);
-        let v2_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b2_bits);
+        let v1_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b1_bits);
+        let v2_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b2_bits);
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
 
         let v1 = random_below(&v1_bound, rng);

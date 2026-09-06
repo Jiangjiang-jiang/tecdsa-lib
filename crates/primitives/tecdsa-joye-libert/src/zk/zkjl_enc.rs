@@ -8,7 +8,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -54,7 +54,7 @@ impl ZkJlEncProof {
         let stat_sec = 80u32;
 
         // Upper bounds for the blinding values
-        let v_bound = Integer::from(1) << (msg_bits + stat_sec);
+        let v_bound = Integer::two_pow(msg_bits + stat_sec);
         let w_bound = Integer::from(&pk.n << stat_sec);
 
         // Sample blinding values
@@ -152,7 +152,7 @@ impl ZkJlEncProof {
     ) -> Self {
         let stat_sec = 80u32;
 
-        let v_bound = Integer::from(1) << (msg_bits + stat_sec);
+        let v_bound = Integer::two_pow(msg_bits + stat_sec);
         let w_bound = Integer::from(&pk.n << stat_sec);
 
         let blind_v = random_below(&v_bound, rng);

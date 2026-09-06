@@ -18,7 +18,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -58,7 +58,7 @@ impl ZkQr2kProof {
         h: &Integer,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let two_pow_k = Integer::from(1) << k;
+        let two_pow_k = Integer::two_pow(k);
 
         // Step 1: Generate commitments
         let mut a_vec = Vec::with_capacity(REPEAT);
@@ -100,7 +100,7 @@ impl ZkQr2kProof {
     /// Checks: for each i, z_i^{2^k} == a_i * h^{e_i} mod N.
     #[must_use]
     pub fn verify(&self) -> bool {
-        let two_pow_k = Integer::from(1) << self.k;
+        let two_pow_k = Integer::two_pow(self.k);
 
         // Recompute challenge
         let e = compute_challenge(&self.a_vec);
@@ -157,7 +157,7 @@ mod tests {
         // Since generate_keypair_with_params does not expose x, we construct
         // our own test case.
         let x = random_below(&pk.n, &mut rng);
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
         let h = pow_mod(&x, &two_pow_k, &pk.n);
 
         let proof = ZkQr2kProof::prove(&pk.n, pk.k, &x, &h, &mut rng);
@@ -173,12 +173,12 @@ mod tests {
         let n_bits: u64 = 256;
         let k: u32 = 32;
 
-        let x = random_below(&(Integer::from(1) << n_bits as u32), &mut rng);
-        let mut n = random_below(&(Integer::from(1) << (n_bits as u32 * 2)), &mut rng);
+        let x = random_below(&Integer::two_pow(n_bits as u32), &mut rng);
+        let mut n = random_below(&Integer::two_pow(n_bits as u32 * 2), &mut rng);
         // Ensure n is odd (approximate modulus)
         n.set_bit(0, true);
 
-        let two_pow_k = Integer::from(1) << k;
+        let two_pow_k = Integer::two_pow(k);
         let h = pow_mod(&x, &two_pow_k, &n);
 
         let proof = ZkQr2kProof::prove(&n, k, &x, &h, &mut rng);

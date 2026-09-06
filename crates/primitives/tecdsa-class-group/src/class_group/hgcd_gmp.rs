@@ -445,6 +445,7 @@ pub(crate) fn partial_reduce_mpn(
 #[cfg(test)]
 mod tests {
     use rug::rand::RandState;
+    use tecdsa_bigint::BigIntExt;
 
     use super::*;
 
@@ -489,7 +490,7 @@ mod tests {
         let mut rng = RandState::new();
         rng.seed(&Integer::from(13));
         for &bits in &[300u32, 896, 1796, 4096] {
-            let l = Integer::from(1) << (bits / 2);
+            let l = Integer::two_pow(bits / 2);
             for _ in 0..40 {
                 let (by0, bx0) = balanced_pair(&mut rng, bits); // by0 > bx0
                 let (mut bx, mut by) = (bx0.clone(), by0.clone());
@@ -518,7 +519,7 @@ mod tests {
         let mut rng = RandState::new();
         rng.seed(&Integer::from(13));
         for &bits in &[300u32, 896, 1796, 4096] {
-            let l = Integer::from(1) << (bits / 2);
+            let l = Integer::two_pow(bits / 2);
             for _ in 0..40 {
                 let (by0, bx0) = balanced_pair(&mut rng, bits);
                 let (mut bx, mut by) = (bx0.clone(), by0.clone());
@@ -552,7 +553,7 @@ mod tests {
         use std::time::Instant;
         let mut rng = RandState::new();
         rng.seed(&Integer::from(99));
-        let l = Integer::from(1) << 448u32;
+        let l = Integer::two_pow(448);
         let pairs: Vec<(Integer, Integer)> = (0..200)
             .map(|_| {
                 let mut by = Integer::from(Integer::random_bits(895, &mut rng));

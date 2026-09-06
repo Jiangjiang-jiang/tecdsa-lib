@@ -9,7 +9,7 @@
 use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::{mul_mod, pow_mod, random_below, BigIntExt};
 
 use crate::kgen::JlPublicKey;
 
@@ -54,11 +54,11 @@ impl ZkJlComProof {
         msg_bits: u32,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
 
         // Upper bounds for the blinding values
         // v <- [0, 2^{s+t} * B) where B = 2^msg_bits
-        let v_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + msg_bits);
+        let v_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + msg_bits);
         // w <- [0, 2^{s+t} * N)
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
 
@@ -85,7 +85,7 @@ impl ZkJlComProof {
     /// Verifies the proof against public key `pk` and commitment `c`.
     #[must_use]
     pub fn verify(&self, pk: &JlPublicKey, c: &Integer) -> bool {
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
 
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, c, &self.d);
@@ -122,7 +122,7 @@ fn fiat_shamir_challenge(pk: &JlPublicKey, c: &Integer, d: &Integer) -> Integer 
 /// Computes a JL commitment: c = y^{2^k * m} * h^{2^k * r} mod N.
 #[must_use]
 pub fn jl_commit(pk: &JlPublicKey, m: &Integer, r: &Integer) -> Integer {
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
     let exp_y = Integer::from(&two_pow_k * m);
     let exp_h = two_pow_k * r;
     let y_m = pow_mod(&pk.y, &exp_y, &pk.n);
