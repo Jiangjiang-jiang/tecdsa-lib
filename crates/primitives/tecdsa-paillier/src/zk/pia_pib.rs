@@ -138,7 +138,7 @@ impl PiBProof {
             .pow_mod_ref(&e, n2)
             .expect("modular exponentiation should succeed")
             .complete();
-        let rhs = (&self.A * &c_B_to_e).complete().modulo(n2);
+        let rhs = (&self.A * c_B_to_e).modulo(n2);
 
         z1_in_range && z2_valid && lhs == rhs
     }
@@ -196,7 +196,7 @@ impl PiAProof {
         let nn = ek.nn();
 
         // K = q^2 * 2^{tau + 2*kappa}
-        let K = (q * q).complete() * Integer::two_pow(TAU + 2 * KAPPA);
+        let K = Integer::two_pow(TAU + 2 * KAPPA) * q * q;
 
         // Sampling ranges
         let gamma_bound = q * Integer::two_pow(TAU + KAPPA);
@@ -256,7 +256,7 @@ impl PiAProof {
         let nn = ek.nn();
 
         // K = q^2 * 2^{tau + 2*kappa}
-        let K = (q * q).complete() * Integer::two_pow(TAU + 2 * KAPPA);
+        let K = Integer::two_pow(TAU + 2 * KAPPA) * q * q;
 
         // Recompute challenge
         let e = compute_challenge_pia(n, q, c_A, c_B, &self.A);
@@ -284,7 +284,7 @@ impl PiAProof {
             .pow_mod_ref(&e, nn)
             .expect("modular exponentiation should succeed")
             .complete();
-        let rhs = (&self.A * &c_A_e).complete().modulo(nn);
+        let rhs = (&self.A * c_A_e).modulo(nn);
 
         z1_in_range && z2_in_range && z3_valid && lhs == rhs
     }
