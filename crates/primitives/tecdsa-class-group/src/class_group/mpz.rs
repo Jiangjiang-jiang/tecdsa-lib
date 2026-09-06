@@ -129,7 +129,7 @@ impl Mpz {
     }
     /// `floor(self / 2^n)`.
     pub fn fdiv_2exp(&self, n: u32) -> Mpz {
-        Mpz(self.0.clone().div_rem_floor(Integer::from(1) << n).0)
+        Mpz(Integer::from(&self.0 >> n))
     }
     pub fn add_ui(&self, n: u64) -> Mpz {
         Mpz(Integer::from(&self.0 + n))
