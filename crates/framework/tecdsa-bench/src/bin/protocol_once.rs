@@ -267,10 +267,7 @@ fn mta_once() {
     let b = Secp256k1::random_scalar(&mut OsRng);
     let a_bytes = a.to_repr();
     let b_bytes = b.to_repr();
-    let neg_one = -k256::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref()) + 1u8;
-    let q_bytes = q_int.to_bytes_msf();
+    let q_bytes = tecdsa_curve::conv::curve_order::<Secp256k1>().to_bytes_msf();
 
     // ── Setup (timed separately) ──
     let paillier_dk = time_once("mta/setup/paillier_keygen", || {
@@ -979,8 +976,8 @@ fn ggn16_dealer_setup(
         tecdsa_paillier::DecryptionKey::from_primes(p.clone(), q.clone()).expect("valid primes");
     let ek = dk.encryption_key().clone();
     let n_int = ek.n().clone();
-    let p_minus_1 = &p - Integer::one();
-    let q_minus_1 = &q - Integer::one();
+    let p_minus_1 = p - Integer::one();
+    let q_minus_1 = q - Integer::one();
     let lambda = p_minus_1.lcm(&q_minus_1);
     let beta = loop {
         let candidate = n_int.sample_below_ref(&mut rng);
@@ -1023,7 +1020,7 @@ fn ggn16_dealer_setup(
     let rq = Integer::generate_safe_prime(&mut rng, 1536);
     let n_tilde = (&rp * &rq).complete();
     let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-    let rlambda = (&rp - Integer::one()) * (&rq - Integer::one());
+    let rlambda = (rp - Integer::one()) * (rq - Integer::one());
     let h2 = h1
         .pow_mod_ref(&rlambda, &n_tilde)
         .expect("pow_mod")

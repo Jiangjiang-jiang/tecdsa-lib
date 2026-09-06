@@ -1452,7 +1452,7 @@ fn paillier_zk_facade(c: &mut Criterion) {
             l: 256,
             epsilon: 512,
         };
-        let plaintext = Integer::from_rng_half_pm(rng, &(Integer::one() << security.l));
+        let plaintext = Integer::from_rng_half_pm(rng, &Integer::two_pow(security.l as u32));
         let nonce = Integer::sample_in_mult_group_of(rng, ek.n());
         let ct = ek.encrypt_with(&plaintext, &nonce).expect("enc");
         let a_scalar = generic_ec::Scalar::<GE>::random(rng);

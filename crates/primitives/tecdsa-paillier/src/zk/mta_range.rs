@@ -149,7 +149,7 @@ impl AliceProof {
         let g_paillier = ek_n + Integer::one();
         let u = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
-            let g_alpha = (Integer::one() + (&alpha * ek_n).complete()).modulo(ek_nn);
+            let g_alpha = (Integer::one() + (&alpha * ek_n)).modulo(ek_nn);
             let beta_n = pow_mod_signed(&beta, ek_n, ek_nn);
             (g_alpha * beta_n).modulo(ek_nn)
         };
@@ -167,9 +167,9 @@ impl AliceProof {
             (r_e * &beta).modulo(ek_n)
         };
         // s1 = e*a + alpha
-        let s1 = (&e * a).complete() + &alpha;
+        let s1 = &e * a + alpha;
         // s2 = e*rho + gamma
-        let s2 = (&e * &rho).complete() + &gamma;
+        let s2 = &e * rho + gamma;
 
         AliceProof { z, e, s, s1, s2 }
     }
@@ -208,7 +208,7 @@ impl AliceProof {
         let g_paillier = ek_n + Integer::one();
         let u = {
             // (1 + N)^s1 = (1 + s1*N) mod N^2 (binomial) — one mul, no modexp.
-            let gs1 = (Integer::one() + (&self.s1 * ek_n).complete()).modulo(ek_nn);
+            let gs1 = (Integer::one() + &self.s1 * ek_n).modulo(ek_nn);
             let s_n = pow_mod_signed(&self.s, ek_n, ek_nn);
             let neg_e = -self.e.clone();
             let c_neg_e = pow_mod_signed(cipher, &neg_e, ek_nn);
@@ -346,7 +346,7 @@ impl BobProof {
         // v = C_a^alpha * (1 + gamma*N) * beta^N mod N^2
         let v = {
             let ca_alpha = pow_mod_signed(a_encrypted, &alpha, ek_nn);
-            let g_gamma = ((&gamma * ek_n).complete() + Integer::one()).modulo(ek_nn);
+            let g_gamma = (&gamma * ek_n + Integer::one()).modulo(ek_nn);
             let beta_n = pow_mod_signed(&beta, ek_n, ek_nn);
             (ca_alpha * g_gamma % ek_nn * beta_n).modulo(ek_nn)
         };
@@ -394,10 +394,10 @@ impl BobProof {
             let r_e = pow_mod_signed(r, &e, ek_n);
             (r_e * &beta).modulo(ek_n)
         };
-        let s1 = (&e * b).complete() + &alpha;
-        let s2 = (&e * &rho).complete() + &rho_prim;
-        let t1 = (&e * beta_prim).complete() + &gamma;
-        let t2 = (&e * &sigma).complete() + &tau;
+        let s1 = alpha + &e * b;
+        let s2 = rho_prim + &e * &rho;
+        let t1 = gamma + &e * beta_prim;
+        let t2 = tau + &e * &sigma;
 
         (
             BobProof {
@@ -479,7 +479,7 @@ impl BobProof {
         let v = {
             let ca_s1 = pow_mod_signed(a_enc, &self.s1, ek_nn);
             let s_n = pow_mod_signed(&self.s, ek_n, ek_nn);
-            let g_t1 = ((&self.t1 * ek_n).complete() + Integer::one()).modulo(ek_nn);
+            let g_t1 = (&self.t1 * ek_n + Integer::one()).modulo(ek_nn);
             let mta_neg_e = pow_mod_signed(mta_out, &neg_e, ek_nn);
             (ca_s1 * s_n % ek_nn * g_t1 % ek_nn * mta_neg_e).modulo(ek_nn)
         };
@@ -741,10 +741,10 @@ mod tests {
     fn paillier_g_pow_linear_vs_modexp() {
         use std::time::Instant;
         // ~3072-bit odd modulus N (primality irrelevant to timing); N^2 ~6144-bit.
-        let n: Integer = (Integer::one() << 3072) - Integer::one(); // ~3072-bit odd
+        let n: Integer = Integer::two_pow(3072) - Integer::one(); // ~3072-bit odd
         let nn: Integer = (&n * &n).complete();
         let g = &n + Integer::one(); // 1 + N
-        let alpha = (Integer::one() << 768) - Integer::one(); // ~768-bit exponent
+        let alpha = Integer::two_pow(768) - Integer::one(); // ~768-bit exponent
         const ITERS: u32 = 200;
 
         let t0 = Instant::now();
@@ -755,7 +755,7 @@ mod tests {
 
         let t1 = Instant::now();
         for _ in 0..ITERS {
-            let _ = (Integer::one() + (&alpha * &n).complete()).modulo(&nn);
+            let _ = (Integer::one() + &alpha * &n).modulo(&nn);
         }
         let t_linear = t1.elapsed() / ITERS;
 
@@ -786,7 +786,7 @@ mod tests {
         let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
 
         // h2 = h1^lambda mod N' for random lambda coprime to phi(N')
-        let phi_n = (&p - Integer::one()) * (&q - Integer::one());
+        let phi_n = (p - Integer::one()) * (q - Integer::one());
         let lambda = sample_below(&phi_n, rng);
         let h2 = h1
             .pow_mod_ref(&lambda, &n_tilde)

@@ -89,7 +89,7 @@ impl PiBProof {
         let e = compute_challenge_pib(n, q, c_B, &A);
 
         // z1 = alpha + e * b (integer arithmetic)
-        let z1 = &alpha + (&e * b).complete();
+        let z1 = alpha + &e * b;
 
         // z2 = beta * r^e mod N
         let r_to_e = r
@@ -223,10 +223,10 @@ impl PiAProof {
         let e = compute_challenge_pia(n, q, c_A, c_B, &A);
 
         // z1 = gamma + e * a (integer)
-        let z1 = &gamma + (&e * a).complete();
+        let z1 = gamma + &e * a;
 
         // z2 = delta + e * alpha' (integer)
-        let z2 = &delta + (&e * alpha_prime).complete();
+        let z2 = delta + &e * alpha_prime;
 
         // z3 = mu * r'^e mod N
         let r_prime_to_e = r_prime
@@ -301,7 +301,7 @@ impl PiAProof {
 /// for ZK responses that can exceed the normal encryption range.
 pub(crate) fn paillier_encrypt_raw(n: &Integer, nn: &Integer, x: &Integer, r: &Integer) -> Integer {
     // (1 + N)^x mod N^2 = (1 + x*N) mod N^2  (by binomial theorem)
-    let one_plus_xN = (Integer::one() + (x * n).complete()).modulo(nn);
+    let one_plus_xN = (Integer::one() + x * n).modulo(nn);
     // r^N mod N^2
     let r_to_N = r
         .pow_mod_ref(n, nn)
