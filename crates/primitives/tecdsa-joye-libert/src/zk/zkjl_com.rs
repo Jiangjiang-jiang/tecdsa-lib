@@ -9,7 +9,7 @@
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -62,8 +62,8 @@ impl ZkJlComProof {
         // w <- [0, 2^{s+t} * N)
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
 
-        let v = random_below(&v_bound, rng);
-        let w = random_below(&w_bound, rng);
+        let v = v_bound.sample_below_ref(rng);
+        let w = w_bound.sample_below_ref(rng);
 
         // Commitment: d = y^{2^k * v} * h^{2^k * w} mod N
         let exp_y = Integer::from(&two_pow_k * &v);
@@ -162,7 +162,7 @@ mod tests {
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
         let m = Integer::from(42u32);
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         let c = jl_commit(&pk, &m, &r);
         let proof = ZkJlComProof::prove(&pk, &c, &m, &r, 32, &mut rng);
@@ -176,12 +176,12 @@ mod tests {
         let (pk, _sk) = generate_keypair_with_params(256, 32, &mut rng);
 
         let m = Integer::from(42u32);
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
         let c = jl_commit(&pk, &m, &r);
 
         // Prove with wrong message
         let wrong_m = Integer::from(99u32);
-        let wrong_r = random_below(&pk.n, &mut rng);
+        let wrong_r = pk.n.sample_below_ref(&mut rng);
         let proof = ZkJlComProof::prove(&pk, &c, &wrong_m, &wrong_r, 32, &mut rng);
         assert!(!proof.verify(&pk, &c));
     }

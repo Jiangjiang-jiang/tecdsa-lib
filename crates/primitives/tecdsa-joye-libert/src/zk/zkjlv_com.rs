@@ -12,7 +12,7 @@
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -68,14 +68,14 @@ impl ZkJlvComProof {
 
         // Sample blinding values
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
-        let w = random_below(&w_bound, rng);
+        let w = w_bound.sample_below_ref(rng);
 
         let mut v_vec = Vec::with_capacity(ell);
         let mut y_items = Vec::with_capacity(ell);
 
         for i in 0..ell {
             let v_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
-            let v = random_below(&v_bound, rng);
+            let v = v_bound.sample_below_ref(rng);
 
             let exp_y = Integer::from(&two_pow_k * &v);
             let y_item = y_vec[i]
@@ -209,7 +209,7 @@ mod tests {
         let ell = 3;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&pk.n, &mut rng);
+            let alpha_i = pk.n.sample_below_ref(&mut rng);
             let y_i = x
                 .pow_mod_ref(&alpha_i, &pk.n)
                 .expect("exponent is non-negative")
@@ -223,7 +223,7 @@ mod tests {
             Integer::from(99u32),
         ];
         let b_bits_vec: Vec<u32> = vec![32, 32, 32];
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         let c = jl_vec_commit(&pk, &y_vec, &m_vec, &r);
         let proof = ZkJlvComProof::prove(&pk, &y_vec, &c, &m_vec, &r, &b_bits_vec, &mut rng);
@@ -239,7 +239,7 @@ mod tests {
         let ell = 2;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&pk.n, &mut rng);
+            let alpha_i = pk.n.sample_below_ref(&mut rng);
             let y_i = x
                 .pow_mod_ref(&alpha_i, &pk.n)
                 .expect("exponent is non-negative")
@@ -249,13 +249,13 @@ mod tests {
 
         let m_vec = vec![Integer::from(42u32), Integer::from(17u32)];
         let b_bits_vec = vec![32, 32];
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         let c = jl_vec_commit(&pk, &y_vec, &m_vec, &r);
 
         // Wrong witness
         let wrong_m = vec![Integer::from(99u32), Integer::from(17u32)];
-        let wrong_r = random_below(&pk.n, &mut rng);
+        let wrong_r = pk.n.sample_below_ref(&mut rng);
         let proof =
             ZkJlvComProof::prove(&pk, &y_vec, &c, &wrong_m, &wrong_r, &b_bits_vec, &mut rng);
         assert!(!proof.verify(&pk, &y_vec, &c));

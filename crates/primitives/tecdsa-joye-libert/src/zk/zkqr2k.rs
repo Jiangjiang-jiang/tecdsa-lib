@@ -18,7 +18,7 @@
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -65,7 +65,7 @@ impl ZkQr2kProof {
         let mut r_vec = Vec::with_capacity(REPEAT);
 
         for _ in 0..REPEAT {
-            let r = random_below(n, rng);
+            let r = n.sample_below_ref(rng);
             let a = r
                 .pow_mod_ref(&two_pow_k, n)
                 .expect("exponent is non-negative")
@@ -162,7 +162,7 @@ mod tests {
         // We need the original x to prove h = x^{2^k} mod N.
         // Since generate_keypair_with_params does not expose x, we construct
         // our own test case.
-        let x = random_below(&pk.n, &mut rng);
+        let x = pk.n.sample_below_ref(&mut rng);
         let two_pow_k = Integer::two_pow(pk.k);
         let h = x
             .pow_mod_ref(&two_pow_k, &pk.n)
@@ -182,8 +182,8 @@ mod tests {
         let n_bits: u64 = 256;
         let k: u32 = 32;
 
-        let x = random_below(&Integer::two_pow(n_bits as u32), &mut rng);
-        let mut n = random_below(&Integer::two_pow(n_bits as u32 * 2), &mut rng);
+        let x = Integer::two_pow(n_bits as u32).sample_below_ref(&mut rng);
+        let mut n = Integer::two_pow(n_bits as u32 * 2).sample_below_ref(&mut rng);
         // Ensure n is odd (approximate modulus)
         n.set_bit(0, true);
 

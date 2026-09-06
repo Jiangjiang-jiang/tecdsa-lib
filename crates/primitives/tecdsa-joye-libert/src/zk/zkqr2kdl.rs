@@ -17,7 +17,7 @@
 use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{random_below, BigIntExt};
+use tecdsa_bigint::BigIntExt;
 
 /// Number of repetitions for soundness.
 const REPEAT: usize = 80;
@@ -72,7 +72,7 @@ impl ZkQr2kDlProof {
         let mut beta_vec = Vec::with_capacity(REPEAT);
 
         for _ in 0..REPEAT {
-            let beta = random_below(&beta_bound, rng);
+            let beta = beta_bound.sample_below_ref(rng);
             let a = h
                 .pow_mod_ref(&beta, n)
                 .expect("exponent is non-negative")
