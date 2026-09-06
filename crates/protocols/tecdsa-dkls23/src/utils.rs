@@ -9,9 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
-};
+use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::PartyId;
@@ -47,29 +45,14 @@ pub fn validate_sender_no_dup<V>(
     Ok(())
 }
 
-/// Deserialize a projective point from its compressed SEC1 byte encoding.
-// Internal byte-decoding helper; the error carries no information beyond
-// "malformed input", so a unit error is intentional here.
-#[allow(clippy::result_unit_err)]
-pub fn deserialize_point<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::ProjectivePoint, ()>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    let repr = <C::ProjectivePoint as GroupEncoding>::Repr::default();
-    let buf_len = repr.as_ref().len();
-    if bytes.len() != buf_len {
-        return Err(());
-    }
-    let mut repr = repr;
-    repr.as_mut().copy_from_slice(bytes);
-    let opt = C::ProjectivePoint::from_bytes(&repr);
-    Option::from(opt).ok_or(())
-}
-
-/// Deserialize a scalar from its canonical big-endian byte representation.
+/// Parse a scalar from exact-width, canonical big-endian bytes.
+///
+/// Strict on purpose: unlike `TecdsaCurve::scalar_from_bytes`, this rejects
+/// wrong-length or out-of-range input instead of reducing it, since these
+/// bytes are Shamir shares / nonces that must round-trip exactly.
 // Internal byte-decoding helper; the unit error ("malformed input") is intentional.
 #[allow(clippy::result_unit_err)]
-pub fn deserialize_scalar<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::Scalar, ()>
+pub fn scalar_from_canonical_bytes<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::Scalar, ()>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,

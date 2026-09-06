@@ -25,6 +25,7 @@ use tecdsa_class_group::{
     drg::{drg_comb, drg_gen, drg_gen_verify, DrgGenOutput, PedersenVssShare},
     zk::{r_enc_pc::REncPcProof, r_key::RKeyProof},
 };
+use tecdsa_curve::PointExt; // to_bytes_vec / from_bytes_slice on EC points
 
 use crate::key_share::Wmy23KeyShare;
 
@@ -60,14 +61,8 @@ fn read_qfi(data: &[u8], pos: &mut usize) -> Result<Qfi, String> {
     Ok(Qfi::from_bytes(bytes))
 }
 
-fn point_to_bytes(p: &k256::ProjectivePoint) -> Vec<u8> {
-    p.to_bytes().to_vec()
-}
-
 fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String> {
-    let repr = k256::CompressedPoint::try_from(bytes)
-        .map_err(|e| format!("invalid point bytes ({label}): {e}"))?;
-    Option::from(k256::ProjectivePoint::from_bytes(&repr))
+    k256::ProjectivePoint::from_bytes_slice(bytes)
         .ok_or_else(|| format!("invalid EC point: {label}"))
 }
 
@@ -448,7 +443,11 @@ pub fn keygen_round1(
     let drg_gen = drg_gen(setup, &cl_pk, threshold, n, rng)?;
 
     // Serialize components for commitment
-    let pc_com_bytes: Vec<Vec<u8>> = drg_gen.commitments.iter().map(point_to_bytes).collect();
+    let pc_com_bytes: Vec<Vec<u8>> = drg_gen
+        .commitments
+        .iter()
+        .map(PointExt::to_bytes_vec)
+        .collect();
     let r_key_data = serialize_r_key_proof(&r_key_proof);
     let ct_data = serialize_ciphertext(setup, &drg_gen.ciphertext)?;
     let enc_pc_data = serialize_r_enc_pc_proof(&drg_gen.proof);
@@ -512,7 +511,7 @@ pub fn keygen_round2_bcast(state: &KeygenR1State, setup: &ClSetup) -> KeygenR2Bc
         .drg_gen
         .commitments
         .iter()
-        .map(point_to_bytes)
+        .map(PointExt::to_bytes_vec)
         .collect();
     let r_key_data = serialize_r_key_proof(&state.r_key_proof);
     let ct_data = serialize_ciphertext(setup, &state.drg_gen.ciphertext).expect("ct serialization");
@@ -735,7 +734,7 @@ pub fn keygen_round3_with_shares(
         combined_pc_bytes: comb.pc_bytes.clone(),
         combined_ct_data,
         combined_enc_pc_data,
-        x_point_bytes: point_to_bytes(&x_point),
+        x_point_bytes: x_point.to_bytes_vec(),
         r_dl_pc_data: serialize_r_dl_pc_proof(&r_dl_pc),
     };
 

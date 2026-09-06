@@ -43,6 +43,7 @@ use tecdsa_class_group::{
     zk::r_enc_pc::REncPcProof,
 };
 use tecdsa_core::TecdsaError;
+use tecdsa_curve::PointExt;
 use tecdsa_protocol::{
     state_machine::Outgoing, AbortReason, IaReport, PartyId, Recipient, StateMachine,
 };
@@ -176,9 +177,7 @@ fn scalar_from_bytes(bytes: &[u8], label: &str) -> Result<k256::Scalar, String> 
 
 /// Deserialize a compressed EC point from bytes.
 fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String> {
-    let repr = k256::CompressedPoint::try_from(bytes)
-        .map_err(|e| format!("invalid point bytes ({label}): {e}"))?;
-    Option::from(k256::ProjectivePoint::from_bytes(&repr))
+    k256::ProjectivePoint::from_bytes_slice(bytes)
         .ok_or_else(|| format!("invalid EC point: {label}"))
 }
 

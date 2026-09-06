@@ -22,14 +22,14 @@ use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 use zeroize::Zeroize;
 
 use super::msg::{Dkls23KeygenMsg, KeygenR1Broadcast, KeygenR2Broadcast, KeygenR2P2p};
 use crate::{
     key_share::Dkls23KeyShare,
-    utils::{deserialize_point, deserialize_scalar, validate_sender},
+    utils::{scalar_from_canonical_bytes, validate_sender},
 };
 
 // ---------------------------------------------------------------------------
@@ -390,7 +390,7 @@ where
             let mut x_ij_from_sender: Vec<C::ProjectivePoint> =
                 Vec::with_capacity(self.total as usize);
             for (k, bytes) in r2_bc.point_commitments.iter().enumerate() {
-                let pt = deserialize_point::<C>(bytes).map_err(|_| {
+                let pt = C::ProjectivePoint::from_bytes_slice(bytes).ok_or_else(|| {
                     TecdsaError::Other(format!(
                         "party {pid} sent invalid X_{{i,{}}} point encoding",
                         k + 1
@@ -399,9 +399,10 @@ where
                 x_ij_from_sender.push(pt);
             }
 
-            let p_i_star_remote = deserialize_point::<C>(&r2_bc.p_i_star).map_err(|_| {
-                TecdsaError::Other(format!("party {pid} sent invalid P_i^* point encoding"))
-            })?;
+            let p_i_star_remote = C::ProjectivePoint::from_bytes_slice(&r2_bc.p_i_star)
+                .ok_or_else(|| {
+                    TecdsaError::Other(format!("party {pid} sent invalid P_i^* point encoding"))
+                })?;
 
             // 2. Verify decommitment: recompute H(salt || X_{i,1} || ... || X_{i,n} || P_i^*)
             //    and compare against the round 1 commitment hash.
@@ -419,7 +420,7 @@ where
                 TecdsaError::Other(format!("missing round 2 P2P share from party {pid}"))
             })?;
 
-            let s_ij = deserialize_scalar::<C>(&r2_p2p.share).map_err(|_| {
+            let s_ij = scalar_from_canonical_bytes::<C>(&r2_p2p.share).map_err(|_| {
                 TecdsaError::Other(format!(
                     "party {pid} sent invalid scalar encoding for share"
                 ))
@@ -521,4 +522,5 @@ where
     hasher.finalize().into()
 }
 
-// deserialize_point and deserialize_scalar are imported from crate::utils
+// Point decoding uses `PointExt::from_bytes_slice`; `scalar_from_canonical_bytes`
+// is imported from crate::utils.

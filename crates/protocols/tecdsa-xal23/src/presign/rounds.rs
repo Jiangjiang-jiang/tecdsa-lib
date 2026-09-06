@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::{
-    group::{Curve as CurveGroup, Group, GroupEncoding},
+    group::{Curve as CurveGroup, Group},
     sec1::ModulusSize,
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -21,7 +21,7 @@ use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSenderState, JlMtaSetup};
 use tecdsa_protocol::{state_machine::Outgoing, MtA, PartyId, Recipient};
 
@@ -57,7 +57,7 @@ where
         .ok_or_else(|| TecdsaError::Other("invalid scalar encoding".into()))
 }
 
-/// Decode a compressed/uncompressed SEC1-encoded EC point from bytes.
+/// Decode a compressed, length-checked, canonical SEC1 EC point from bytes.
 fn point_from_bytes<C: TecdsaCurve>(
     bytes: &[u8],
     label: &str,
@@ -66,9 +66,8 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let affine = C::point_from_bytes(bytes)
-        .map_err(|_| TecdsaError::Other(format!("invalid EC point ({label})")))?;
-    Ok(C::ProjectivePoint::from(affine))
+    C::ProjectivePoint::from_bytes_slice(bytes)
+        .ok_or_else(|| TecdsaError::Other(format!("invalid EC point ({label})")))
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +211,7 @@ where
     let w_i = key_share.secret_share;
 
     // Commitment = SHA-256(compressed Gamma_i bytes)
-    let gamma_point_bytes = gamma_point_i.to_bytes();
+    let gamma_point_bytes = gamma_point_i.to_bytes_vec();
     let commitment: [u8; 32] = Sha256::new()
         .chain_update(gamma_point_bytes)
         .finalize()
@@ -315,7 +314,7 @@ where
     let mut outgoing = Vec::new();
 
     // Broadcast decommitment: Gamma_i point bytes
-    let gamma_point_bytes = state.gamma_point_i.to_bytes().as_ref().to_vec();
+    let gamma_point_bytes = state.gamma_point_i.to_bytes_vec();
     for &peer in &state.all_parties {
         if peer == state.my_id {
             continue;

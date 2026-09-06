@@ -456,10 +456,9 @@ impl Llz25PresignMachine {
 
 /// Deserialize compressed EC point bytes to `k256::ProjectivePoint`.
 fn point_from_bytes(bytes: &[u8]) -> Result<k256::ProjectivePoint, TecdsaError> {
-    use tecdsa_curve::TecdsaCurve;
-    let affine = <k256::Secp256k1 as TecdsaCurve>::point_from_bytes(bytes)
-        .map_err(|_| TecdsaError::Other("invalid EC point".into()))?;
-    Ok(affine.into())
+    use tecdsa_curve::PointExt;
+    k256::ProjectivePoint::from_bytes_slice(bytes)
+        .ok_or_else(|| TecdsaError::Other("invalid EC point".into()))
 }
 
 impl StateMachine for Llz25PresignMachine {

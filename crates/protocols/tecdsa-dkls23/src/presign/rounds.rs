@@ -33,7 +33,7 @@ use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 use tecdsa_ot::{
     rvole::{MulDataToKeep, MulReceiver, MulSender},
     seed_state::OtSeedState,
@@ -46,7 +46,7 @@ use super::types::{Dkls23Presignature, PartyRvoleData};
 use crate::{
     key_share::Dkls23KeyShare,
     sign::msg::{Dkls23SignMsg, SignR1Broadcast, SignR1P2p, SignR2Broadcast, SignR2P2p, SignR3P2p},
-    utils::{deserialize_point, deserialize_scalar, validate_sender},
+    utils::{scalar_from_canonical_bytes, validate_sender},
 };
 
 // ---------------------------------------------------------------------------
@@ -295,7 +295,7 @@ where
             let session_id = rvole_session_id(pid.0, self.my_id.0);
 
             // Deserialize the nonce scalar
-            let nonce = deserialize_scalar::<C>(&r1_p2p.nonce)
+            let nonce = scalar_from_canonical_bytes::<C>(&r1_p2p.nonce)
                 .map_err(|_| TecdsaError::Other(format!("party {pid} sent invalid RVOLE nonce")))?;
 
             // Init MulReceiver using counterparty's OteInitSenderMsg
@@ -595,7 +595,7 @@ where
             })?;
 
             // Deserialize R_j
-            let R_j = deserialize_point::<C>(&r2_bc.R_i).map_err(|_| {
+            let R_j = C::ProjectivePoint::from_bytes_slice(&r2_bc.R_i).ok_or_else(|| {
                 TecdsaError::Other(format!("party {pid} sent invalid R_i point encoding"))
             })?;
 
@@ -679,8 +679,8 @@ where
                 .round2_broadcasts
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing R2 broadcast from {pid}")))?;
-            let R_j = deserialize_point::<C>(&r2_bc.R_i)
-                .map_err(|_| TecdsaError::Other(format!("invalid R_j from {pid}")))?;
+            let R_j = C::ProjectivePoint::from_bytes_slice(&r2_bc.R_i)
+                .ok_or_else(|| TecdsaError::Other(format!("invalid R_j from {pid}")))?;
 
             // Gamma^u and Gamma^v from counterparty's R3 P2P message
             let gamma_u = r3_p2p.Gamma_u;
