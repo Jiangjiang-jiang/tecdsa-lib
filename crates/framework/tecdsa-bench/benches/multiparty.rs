@@ -300,8 +300,8 @@ mod ggn16_helpers {
             .expect("valid primes");
         let ek = dk.encryption_key().clone();
         let n_int = ek.n().clone();
-        let p_minus_1 = &p - Integer::one();
-        let q_minus_1 = &q - Integer::one();
+        let p_minus_1 = p - Integer::one();
+        let q_minus_1 = q - Integer::one();
         let lambda = p_minus_1.lcm(&q_minus_1);
         let beta = loop {
             let candidate = n_int.sample_below_ref(&mut rng);
@@ -344,7 +344,7 @@ mod ggn16_helpers {
         let rq = Integer::generate_safe_prime(&mut rng, 1536);
         let n_tilde = (&rp * &rq).complete();
         let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-        let rlambda = (&rp - Integer::one()) * (&rq - Integer::one());
+        let rlambda = (rp - Integer::one()) * (rq - Integer::one());
         let h2 = h1
             .pow_mod_ref(&rlambda, &n_tilde)
             .expect("pow_mod")

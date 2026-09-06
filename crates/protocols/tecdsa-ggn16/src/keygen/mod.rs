@@ -229,8 +229,8 @@ mod tests {
         let ek = dk.encryption_key().clone();
         let n = ek.n().clone();
 
-        let p_minus_1 = &p - Integer::one();
-        let q_minus_1 = &q - Integer::one();
+        let p_minus_1 = p - Integer::one();
+        let q_minus_1 = q - Integer::one();
         let lambda = p_minus_1.lcm(&q_minus_1);
 
         let beta = loop {
@@ -251,7 +251,7 @@ mod tests {
 
         // Shamir share d over Z with coefficient modulus M = N * delta
         let m = n * &delta;
-        let mut coeffs = vec![d.clone()];
+        let mut coeffs = vec![d];
         for _ in 0..corruption_threshold {
             coeffs.push(m.sample_below_ref(rng));
         }
@@ -261,7 +261,7 @@ mod tests {
             let mut val = Integer::zero();
             let mut x_pow = Integer::one();
             for coeff in &coeffs {
-                val += Integer::from(coeff * &x_pow);
+                val += coeff * &x_pow;
                 x_pow *= &x;
             }
             shares.push(DecryptionShare { index: i, d_i: val });
@@ -285,7 +285,7 @@ mod tests {
         let n_tilde = p * q;
 
         let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let xhi_bound = Integer::one() << 256u32;
+        let xhi_bound = Integer::two_pow(256);
         let xhi = xhi_bound.sample_below_ref(rng);
         let h1_xhi = Integer::from(
             h1.pow_mod_ref(&xhi, &n_tilde)

@@ -68,7 +68,7 @@ pub fn ntilde_params() -> (Integer, Integer, Integer) {
     let q = Integer::generate_safe_prime(&mut OsRng, 1536);
     let n_tilde = (&p * &q).complete();
     let h1 = Integer::sample_in_mult_group_of(&mut OsRng, &n_tilde);
-    let lambda = (&p - Integer::one()) * (&q - Integer::one());
+    let lambda = (p - Integer::one()) * (q - Integer::one());
     let h2 = h1
         .pow_mod_ref(&lambda, &n_tilde)
         .expect("pow_mod for h2")
@@ -77,16 +77,7 @@ pub fn ntilde_params() -> (Integer, Integer, Integer) {
 }
 
 pub fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
-    if exp.cmp0().is_lt() {
-        let base_inv = base
-            .invert_ref(modulus)
-            .expect("base must be invertible")
-            .complete();
-        let pos_exp = -exp.clone();
-        base_inv.pow_mod(&pos_exp, modulus).expect("pow_mod")
-    } else {
-        base.pow_mod_ref(exp, modulus).expect("pow_mod").complete()
-    }
+    base.pow_mod_ref(exp, modulus).expect("pow_mod").complete()
 }
 
 /// JL keys: Profile B = N=3360 bit (p_bits=1680), k=712.

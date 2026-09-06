@@ -36,7 +36,7 @@ struct IntWire {
 #[test]
 fn paillier_ciphertext_is_compact() {
     // A Paillier ciphertext for a 3072-bit modulus lives in Z_{N^2}: 6144 bits.
-    let ct: fast_paillier::Ciphertext = (Integer::one() << 6144_u32) - Integer::one();
+    let ct: fast_paillier::Ciphertext = Integer::two_pow(6144) - Integer::one();
     let size = wire_size(&IntWire { n: ct });
     assert!(size >= 768, "6144-bit ciphertext cannot fit in {size} B");
     assert!(
@@ -47,7 +47,7 @@ fn paillier_ciphertext_is_compact() {
 
 #[test]
 fn paillier_encryption_key_is_compact() {
-    let n: Integer = (Integer::one() << 3072_u32) - Integer::one();
+    let n: Integer = Integer::two_pow(3072) - Integer::one();
     let ek = fast_paillier::EncryptionKey::from_n(n);
     let size = wire_size(&ek);
     assert!(
@@ -58,7 +58,7 @@ fn paillier_encryption_key_is_compact() {
 
 #[test]
 fn negative_integer_roundtrips() {
-    let x = -((Integer::one() << 2047_u32) + Integer::one());
+    let x = -(Integer::two_pow(2047) + Integer::one());
     let bytes =
         bincode::serde::encode_to_vec(&IntWire { n: x.clone() }, bincode::config::standard())
             .unwrap();
@@ -75,7 +75,7 @@ fn rug_int_wire_is_compact() {
         n: rug::Integer,
     }
     let w = Wire {
-        n: (rug::Integer::from(1) << 3072_u32) - 1u8,
+        n: Integer::two_pow(3072) - 1u8,
     };
     let size = wire_size(&w);
     assert!(

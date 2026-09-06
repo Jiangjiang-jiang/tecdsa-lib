@@ -129,7 +129,7 @@ pub fn trusted_dealer_setup(
     let q = dk.q();
     let p_minus_1 = p - Integer::one();
     let q_minus_1 = q - Integer::one();
-    let lambda = lcm(&p_minus_1, &q_minus_1);
+    let lambda = p_minus_1.lcm(&q_minus_1);
 
     let beta = loop {
         let candidate = sample_below(&n, rng);
@@ -144,7 +144,7 @@ pub fn trusted_dealer_setup(
 
     // Shamir share d over Z with coefficient modulus M = N * delta.
     let m = n * &delta;
-    let shares = shamir_split_integer(&d, corruption_threshold, total, &m, rng);
+    let shares = shamir_split_integer(d, corruption_threshold, total, &m, rng);
 
     let setup = ThresholdSetup {
         ek,
@@ -251,13 +251,13 @@ pub fn combine_partials(
 // ---- Integer Shamir secret sharing ----
 
 fn shamir_split_integer(
-    secret: &Integer,
+    secret: Integer,
     corruption_threshold: u16,
     total: u16,
     modulus: &Integer,
     rng: &mut impl CryptoRngCore,
 ) -> Vec<DecryptionShare> {
-    let mut coeffs = vec![secret.clone()];
+    let mut coeffs = vec![secret];
     for _ in 0..corruption_threshold {
         coeffs.push(sample_below(modulus, rng));
     }
@@ -275,10 +275,6 @@ fn shamir_split_integer(
     }
 
     shares
-}
-
-fn lcm(a: &Integer, b: &Integer) -> Integer {
-    a.lcm_ref(b).complete()
 }
 
 #[cfg(test)]

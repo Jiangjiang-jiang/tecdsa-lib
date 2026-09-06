@@ -321,8 +321,7 @@ where
         let _gamma_paillier = &statement.ek_n + Integer::one();
         let u2 = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
-            let g_alpha =
-                (Integer::one() + (&alpha * &statement.ek_n).complete()).modulo(&statement.ek_nn);
+            let g_alpha = (Integer::one() + &alpha * &statement.ek_n).modulo(&statement.ek_nn);
             let beta_n = pow_mod_signed(&beta, &statement.ek_n, &statement.ek_nn);
             (g_alpha * beta_n).modulo(&statement.ek_nn)
         };
@@ -368,10 +367,10 @@ where
 
         // 4. Compute responses
         // s1 = e * eta1 + alpha
-        let s1 = (&e * &witness.eta1).complete() + &alpha;
+        let s1 = alpha + &e * &witness.eta1;
 
         // s2 = e * rho1 + gamma
-        let s2 = (&e * &rho1).complete() + &gamma;
+        let s2 = gamma + &e * &rho1;
 
         // t1 = r_c^e * mu mod N
         let t1 = {
@@ -380,7 +379,7 @@ where
         };
 
         // t2 = e * eta2 + theta
-        let t2 = (&e * &witness.eta2).complete() + &theta;
+        let t2 = theta + &e * &witness.eta2;
 
         // t3 = e * rho2 + tau
         let t3 = e * &rho2 + &tau;
@@ -493,9 +492,9 @@ mod tests {
         let n_tilde = (&p * &q).complete();
 
         let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = (&r * &r).complete().modulo(&n_tilde);
+        let h2 = r.square().modulo(&n_tilde);
 
-        let phi_n = (&p - Integer::one()) * (&q - Integer::one());
+        let phi_n = (p - Integer::one()) * (q - Integer::one());
         let lambda = sample_below(&phi_n, rng);
         let h1 = h2
             .pow_mod_ref(&lambda, &n_tilde)

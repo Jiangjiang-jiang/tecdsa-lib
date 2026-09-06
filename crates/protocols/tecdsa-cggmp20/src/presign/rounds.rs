@@ -8,7 +8,6 @@ use elliptic_curve::{
 };
 use generic_ec::curves::Secp256k1 as GE;
 use rand_core::CryptoRngCore;
-use rug::Complete;
 use sha2::Sha256;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{
@@ -362,7 +361,7 @@ where
             // --- MtA for gamma_i * k_j ---
             let beta_ij = C::random_scalar(&mut rng);
             let beta_ij_int = scalar_to_integer::<C>(&beta_ij);
-            let neg_beta_ij_int = (-&beta_ij_int).complete();
+            let neg_beta_ij_int = -beta_ij_int;
 
             let d_step1 = peer_ek
                 .omul(&gamma_i_int, &peer_round1.big_k)
@@ -383,7 +382,7 @@ where
             // --- MtA for x_i * k_j ---
             let hat_beta_ij = C::random_scalar(&mut rng);
             let hat_beta_ij_int = scalar_to_integer::<C>(&hat_beta_ij);
-            let neg_hat_beta_ij_int = (-&hat_beta_ij_int).complete();
+            let neg_hat_beta_ij_int = -hat_beta_ij_int;
 
             let hat_d_step1 = peer_ek
                 .omul(&x_i_int, &peer_round1.big_k)

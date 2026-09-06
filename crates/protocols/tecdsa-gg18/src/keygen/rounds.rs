@@ -114,7 +114,7 @@ pub fn generate_n_tilde(
     let n_tilde = dk_tilde.n().clone();
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
     // xhi is a random value in [0, 2^256)
-    let xhi_bound = Integer::one() << 256u32;
+    let xhi_bound = Integer::two_pow(256);
     let xhi = xhi_bound.sample_below_ref(rng);
     // h2 = h1^(-xhi) mod N'
     let h1_xhi = Integer::from(
