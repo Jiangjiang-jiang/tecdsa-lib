@@ -8,10 +8,9 @@ use rug::{integer::Order, Integer};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_paillier::{
-    zk::paillier_zk::{no_small_factor as pi_fac, paillier_blum_modulus as pi_mod},
-    DecryptionKey, EncryptionKey,
+    zk::paillier_zk::no_small_factor as pi_fac, BigIntExt, DecryptionKey, EncryptionKey,
 };
-use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
+use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 
 use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3, PI_MOD_REPS};
@@ -325,9 +324,17 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
 
         // 5. Generate per-peer π_fac proofs and queue P2P MsgRound3 messages.
         let own_n = self.dk.n().clone();
-        let n_root = own_n
-            .sqrt_ref()
-            .expect("sqrt of Paillier modulus must succeed");
+        // `sqrt_ref` panics on a negative operand (unlike the old newtype's
+        // `Option`-returning version); `own_n` is this party's own freshly
+        // generated Paillier modulus (always positive), but we still guard
+        // explicitly so the predicate matches the pre-refactor behaviour
+        // exactly rather than relying on that invariant.
+        let n_root = if own_n.cmp0() == std::cmp::Ordering::Less {
+            None
+        } else {
+            Some(Integer::from(own_n.sqrt_ref()))
+        }
+        .expect("sqrt of Paillier modulus must succeed");
 
         let pi_fac_tag = AuxInfoProofTag {
             context: "pi_fac",
@@ -488,9 +495,21 @@ impl Round3State {
                 prover: pid.0,
             };
             let peer_n = round2.paillier_ek.n();
-            let peer_n_root = peer_n
-                .sqrt_ref()
-                .expect("sqrt of peer Paillier modulus must succeed");
+            // `peer_n` comes from a wire message sent by another (possibly
+            // malicious) party, so unlike the `own_n` case above this really
+            // is attacker-controlled. Old behaviour: the newtype's
+            // `sqrt_ref` returned `None` for negative input, which the
+            // `.expect(...)` below then turned into a panic — i.e. a
+            // negative peer modulus was already fatal, just via `Option`
+            // rather than a native rug panic. We reproduce that `None` path
+            // explicitly so the externally observable behaviour (panic with
+            // this message on a negative `peer_n`) is unchanged.
+            let peer_n_root = if peer_n.cmp0() == std::cmp::Ordering::Less {
+                None
+            } else {
+                Some(Integer::from(peer_n.sqrt_ref()))
+            }
+            .expect("sqrt of peer Paillier modulus must succeed");
 
             pi_fac::non_interactive::verify::<sha2::Sha256>(
                 &pi_fac_tag,

@@ -19,6 +19,7 @@ use tecdsa::bigint::random_below;
 use tecdsa_bench::zk_fixtures::*;
 use tecdsa_class_group::cl::{Cleartext, Mpz, SECP256K1_ORDER};
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::BigIntExt;
 use tecdsa_testkit::wire_size;
 
 fn time_once<T>(name: &str, f: impl FnOnce() -> T) -> T {
@@ -773,7 +774,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let x1_bytes = scalar_to_bytes(&x1);
         let x1_point = C::generator() * x1;
         let q = group_order();
-        let t = q.random_below_ref(rng);
+        let t = q.sample_below_ref(rng);
         let x_hat_1 = Integer::from_bytes_msf(&x1_bytes) + &t * &q;
         let (ct, nonce) = paillier_encrypt(ek, &x_hat_1);
         let proof = time_once("zk/paillier/pi_eq/prove", || {
@@ -936,7 +937,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
         let gamma_paillier = ek.n() + Integer::one();
         let w_i = {
             let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
-            let q_eta2 = &q * &eta2;
+            let q_eta2 = (&q * &eta2).complete();
             let g_q_eta2 = pow_mod_signed(&gamma_paillier, &q_eta2, ek.nn());
             let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
@@ -1076,7 +1077,9 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
         let n = dk.n().clone();
         let p = dk.p().clone();
         let q = dk.q().clone();
-        let n_root = n.sqrt_ref().expect("sqrt");
+        // `n` is this benchmark's own Paillier modulus (p*q > 0), so `sqrt_ref`
+        // (which panics on negative input) cannot panic here.
+        let n_root = n.sqrt_ref().complete();
         let data = pi_fac::Data {
             n: &n,
             n_root: &n_root,

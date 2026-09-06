@@ -14,7 +14,7 @@ use tecdsa_gg18::{
     presign::{Gg18PresignMachine, Gg18Presignature, PresignConfig},
     sign::{Gg18OnlineSignMachine, OnlineSignConfig},
 };
-use tecdsa_paillier::{backend::Integer, DecryptionKey};
+use tecdsa_paillier::{backend::Integer, BigIntExt, DecryptionKey};
 use tecdsa_protocol::{
     verify_ecdsa, DataToSign, PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine,
 };

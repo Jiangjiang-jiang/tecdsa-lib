@@ -41,6 +41,7 @@ use tecdsa_paillier::{
     conv::{integer_to_scalar, scalar_to_integer},
     mta::{Gg18ProofSetup, Gg18Proofs, PaillierMtaProofs},
     zk::mta_range::BobProofExt,
+    BigIntExt,
 };
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 use tecdsa_vss::lagrange;
@@ -264,7 +265,7 @@ where
 
         // MtA for (k_j, gamma_i):
         let gamma_i_int = scalar_to_integer::<C>(&self.shared.sign_keys.gamma_i);
-        let beta_prim = sender_ek.half_n().random_below_ref(rng);
+        let beta_prim = sender_ek.half_n().sample_below_ref(rng);
         let r_bob_gamma = Integer::sample_in_mult_group_of(rng, sender_ek.n());
 
         let b_times_ca = sender_ek.omul(&gamma_i_int, c_a_j).expect("omul");
@@ -275,7 +276,7 @@ where
 
         // MtA for (k_j, w_i):
         let w_i_int = scalar_to_integer::<C>(&self.shared.sign_keys.w_i);
-        let nu_prim = sender_ek.half_n().random_below_ref(rng);
+        let nu_prim = sender_ek.half_n().sample_below_ref(rng);
         let r_bob_w = Integer::sample_in_mult_group_of(rng, sender_ek.n());
 
         let w_times_ca = sender_ek.omul(&w_i_int, c_a_j).expect("omul");

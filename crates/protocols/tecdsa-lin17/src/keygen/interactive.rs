@@ -34,6 +34,7 @@ use tecdsa_curve::{conv::scalar_to_bytes, zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
     backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pdl, range_ni::RangeProofNi},
+    BigIntExt,
 };
 
 use crate::{

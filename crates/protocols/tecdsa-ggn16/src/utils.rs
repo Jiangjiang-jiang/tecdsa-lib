@@ -8,7 +8,7 @@
 
 use elliptic_curve::{group::GroupEncoding, sec1::ModulusSize, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
+use tecdsa_paillier::{backend::Integer, BigIntExt};
 
 /// Serialize data for commitment: concatenate u_i and v_i byte representations.
 pub fn serialize_for_commit_r1(u_i: &Integer, v_i: &Integer) -> Vec<u8> {

@@ -14,7 +14,7 @@ use k256::Secp256k1;
 use rand_core::OsRng;
 use tecdsa_bench::zk_fixtures::{NTildeFixture, PaillierFixture, PedersenFixture};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
+use tecdsa_paillier::{backend::Integer, BigIntExt};
 use tecdsa_protocol::MtA;
 
 static PAILLIER: LazyLock<PaillierFixture> = LazyLock::new(PaillierFixture::generate);

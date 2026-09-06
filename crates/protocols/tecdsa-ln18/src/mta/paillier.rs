@@ -40,7 +40,7 @@ use tecdsa_paillier::{
     backend::Integer,
     conv::{integer_to_scalar, scalar_to_integer},
     zk::mta_range::{AliceProof, BobProofExt, NTildeParams},
-    DecryptionKey, EncryptionKey,
+    BigIntExt, DecryptionKey, EncryptionKey,
 };
 use tecdsa_protocol::PartyId;
 
@@ -266,7 +266,7 @@ where
             let b_i_int = scalar_to_integer::<C>(&self.b_i);
 
             // Sample beta_prime uniformly from [0, N/2)
-            let beta_prime = alice_ek.half_n().random_below_ref(rng);
+            let beta_prime = alice_ek.half_n().sample_below_ref(rng);
 
             // Compute c_b = b_i * c_a_j + Enc(beta_prime)
             // This encrypts (a_j * b_i + beta_prime) under Alice's key.
@@ -464,12 +464,12 @@ mod tests {
     fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
+        let n_tilde = Integer::from(&p * &q);
 
         let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
         let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-        let lambda = phi_n.random_below_ref(rng);
-        let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let lambda = phi_n.sample_below_ref(rng);
+        let h2 = Integer::from(h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined"));
 
         NTildeParams {
             N_tilde: n_tilde,

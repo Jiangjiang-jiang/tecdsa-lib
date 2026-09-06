@@ -12,6 +12,7 @@ use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::BigIntExt;
 
 /// Number of repetitions in the Paillier-Blum modulus proof (Pi_mod).
 ///

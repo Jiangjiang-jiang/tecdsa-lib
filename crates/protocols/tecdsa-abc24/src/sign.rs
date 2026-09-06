@@ -24,6 +24,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::{backend::Integer, BigIntExt};
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -274,7 +275,7 @@ where
 
     // Get curve order q
     let q_bytes = scalar_to_bytes(&(-C::Scalar::ONE));
-    let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
 
     // Compute u = [k_1^{-1} * (m + r * x_1)]_q + mu_mask * q
     let k1_inv_m_rx1 = k1_inv * (m + r * key_share.secret_share);
@@ -282,16 +283,16 @@ where
     let u_base = tecdsa_paillier::backend::Integer::from_bytes_msf(&u_base_bytes);
 
     // mu_mask: statistical masking to hide u mod q
-    let mu_mask = q_int.random_below_ref(rng);
-    let u = &u_base + &mu_mask * &q_int;
+    let mu_mask = q_int.sample_below_ref(rng);
+    let u = &u_base + Integer::from(&mu_mask * &q_int);
 
     // Compute v = [k_1^{-1} * r]_q + mu'_mask * q
     let k1_inv_r = k1_inv * r;
     let v_base_bytes = scalar_to_bytes(&k1_inv_r);
     let v_base = tecdsa_paillier::backend::Integer::from_bytes_msf(&v_base_bytes);
 
-    let mu_prime_mask = q_int.random_below_ref(rng);
-    let v = &v_base + &mu_prime_mask * &q_int;
+    let mu_prime_mask = q_int.sample_below_ref(rng);
+    let v = &v_base + Integer::from(&mu_prime_mask * &q_int);
 
     // Step 5: Compute S = enc_N(u) * E^v mod N^2
     // enc_N(u) with fresh randomness

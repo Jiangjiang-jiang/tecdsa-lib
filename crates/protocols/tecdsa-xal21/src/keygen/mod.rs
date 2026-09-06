@@ -25,18 +25,17 @@ pub use interactive::{
 pub use machine::{TwoPartyRole, Xal21KeyShare, Xal21KeygenMachine, Xal21KeygenMsg};
 use rand_core::CryptoRngCore;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{backend::Integer, zk::mta_range::NTildeParams};
+use tecdsa_paillier::{backend::Integer, zk::mta_range::NTildeParams, BigIntExt};
 
 use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
 
 fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
     let p = Integer::generate_safe_prime(rng, 1536);
     let q = Integer::generate_safe_prime(rng, 1536);
-    let n_tilde = &p * &q;
+    let n_tilde = Integer::from(&p * &q);
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-    let lambda = phi_n.random_below_ref(rng);
-    let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2");
+    let lambda = (&p - Integer::one()) * (&q - Integer::one());
+    let h2 = Integer::from(h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2"));
     NTildeParams {
         N_tilde: n_tilde,
         h1,
@@ -129,7 +128,7 @@ where
     let neg_one = -C::Scalar::ONE;
     let neg_one_bytes = neg_one.to_repr();
     let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    &q_minus_1 + 1u8
+    Integer::from(&q_minus_1 + 1u8)
 }
 
 pub(crate) use tecdsa_curve::conv::scalar_to_bytes;

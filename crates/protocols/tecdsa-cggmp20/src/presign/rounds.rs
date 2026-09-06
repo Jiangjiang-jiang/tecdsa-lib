@@ -8,6 +8,7 @@ use elliptic_curve::{
 };
 use generic_ec::curves::Secp256k1 as GE;
 use rand_core::CryptoRngCore;
+use rug::Complete;
 use sha2::Sha256;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::TecdsaCurve;
@@ -18,7 +19,7 @@ use tecdsa_paillier::{
         dlog_with_el_gamal_commitment as pi_elog, paillier_affine_operation_in_range as pi_aff,
         paillier_encryption_in_range_with_el_gamal as pi_enc_elg,
     },
-    Ciphertext, DecryptionKey, EncryptionKey,
+    BigIntExt, Ciphertext, DecryptionKey, EncryptionKey,
 };
 use tecdsa_pedersen_mod::PedersenModParams;
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
@@ -96,7 +97,7 @@ where
 {
     let neg_one = -C::Scalar::ONE;
     let q = scalar_to_integer::<C>(&neg_one) + Integer::one();
-    let reduced = i.modulo_ref(&q);
+    let reduced = i.modulo_ref(&q).complete();
     let red_bytes = reduced.to_bytes_msf();
     let fb = bytes_to_field_bytes::<C>(&red_bytes);
     <C::Scalar as PrimeField>::from_repr(fb)
@@ -396,7 +397,7 @@ where
             // --- MtA for gamma_i * k_j ---
             let beta_ij = C::random_scalar(&mut rng);
             let beta_ij_int = scalar_to_integer::<C>(&beta_ij);
-            let neg_beta_ij_int = -&beta_ij_int;
+            let neg_beta_ij_int = (-&beta_ij_int).complete();
 
             let d_step1 = peer_ek
                 .omul(&gamma_i_int, &peer_round1.big_k)
@@ -417,7 +418,7 @@ where
             // --- MtA for x_i * k_j ---
             let hat_beta_ij = C::random_scalar(&mut rng);
             let hat_beta_ij_int = scalar_to_integer::<C>(&hat_beta_ij);
-            let neg_hat_beta_ij_int = -&hat_beta_ij_int;
+            let neg_hat_beta_ij_int = (-&hat_beta_ij_int).complete();
 
             let hat_d_step1 = peer_ek
                 .omul(&x_i_int, &peer_round1.big_k)
