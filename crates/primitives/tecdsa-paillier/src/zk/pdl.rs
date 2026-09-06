@@ -64,6 +64,7 @@ pub enum PdlError {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct PdlVerifierMsg1 {
     /// `c' = (a (*) c_key) (+) Enc(b)` -- Paillier ciphertext encoding `a*x_1 + b`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub c_tag: fast_paillier::Ciphertext,
     /// Commitment to `(a, b)`.
     pub c_tag_tag: HashCommitment,
@@ -83,8 +84,10 @@ pub struct PdlProverMsg1 {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct PdlVerifierMsg2 {
     /// The scalar `a` sampled by the verifier.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub a: Integer,
     /// The scalar `b` sampled by the verifier.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub b: Integer,
     /// Opening nonce for `c_tag_tag`.
     pub nonce: [u8; 32],

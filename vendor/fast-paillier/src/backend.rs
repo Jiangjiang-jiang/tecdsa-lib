@@ -22,10 +22,21 @@
 //! `is_probably_prime`, `from_str_radix`, and the `random_*` family (the
 //! [`rand_core`]-adapting variants are named `sample_*` here to avoid the clash).
 //!
-//! Note that the serde representation of [`Integer`] is now rug's own
-//! (a `{radix, value}` radix-string struct), *not* the compact byte encoding
-//! this crate used to define. Wire structs that care should use an explicit
-//! `#[serde(with = ...)]` adapter.
+//! [`Integer`] can no longer implement `serde::Serialize`/`Deserialize`
+//! directly (doing so would violate the orphan rule now that it is a plain
+//! re-export rather than a newtype), so it no longer picks up any serde impl
+//! by default. Wire structs with an `Integer` field must opt into the
+//! [`int_wire`] adapter explicitly, which reproduces this crate's original
+//! compact `(magnitude_msf, is_negative)` encoding:
+//!
+//! ```rust
+//! # use fast_paillier::backend::Integer;
+//! #[derive(serde::Serialize, serde::Deserialize)]
+//! struct Wire {
+//!     #[serde(with = "fast_paillier::backend::int_wire")]
+//!     n: Integer,
+//! }
+//! ```
 
 pub mod rug;
 
@@ -45,6 +56,121 @@ pub enum Sign {
     /// Positive or zero
     NonNegative,
     Negative,
+}
+
+/// `#[serde(with = "fast_paillier::backend::int_wire")]`-compatible compact
+/// wire encoding for [`Integer`].
+///
+/// [`Integer`] is a plain re-export of `rug::Integer`: both it and
+/// `serde::Serialize`/`Deserialize` are foreign to this crate, so the orphan
+/// rule forbids implementing them directly (this is exactly why the old
+/// newtype's `make_serde!` impl was removed). Fields must therefore opt in
+/// via this module instead of deriving. It reproduces `make_serde!`'s
+/// original wire format byte-for-byte: the tuple
+/// `(magnitude_msf: Vec<u8>, is_negative: bool)`, i.e. big-endian
+/// (most-significant-first) base-256 magnitude plus a sign flag.
+#[cfg(feature = "serde")]
+pub mod int_wire {
+    use alloc::vec::Vec;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{BigIntExt, Integer, Sign};
+
+    /// Serializes as `(magnitude_msf, is_negative)`.
+    pub fn serialize<S: Serializer>(val: &Integer, serializer: S) -> Result<S::Ok, S::Error> {
+        let (bytes, sign) = val.to_bytes_msf_signed();
+        (bytes, sign == Sign::Negative).serialize(serializer)
+    }
+
+    /// Deserializes from `(magnitude_msf, is_negative)`.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Integer, D::Error> {
+        let (bytes, negative) = <(Vec<u8>, bool)>::deserialize(deserializer)?;
+        Ok(Integer::from_bytes_msf_signed(
+            &bytes,
+            if negative {
+                Sign::Negative
+            } else {
+                Sign::NonNegative
+            },
+        ))
+    }
+
+    /// Adapter for `Vec<Integer>` fields:
+    /// `#[serde(with = "fast_paillier::backend::int_wire::vec")]`.
+    pub mod vec {
+        use alloc::vec::Vec;
+
+        use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+        use super::{BigIntExt, Integer, Sign};
+
+        /// Serializes each element as `(magnitude_msf, is_negative)`.
+        pub fn serialize<S: Serializer>(
+            vals: &[Integer],
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            let wire: Vec<(Vec<u8>, bool)> = vals
+                .iter()
+                .map(|val| {
+                    let (bytes, sign) = val.to_bytes_msf_signed();
+                    (bytes, sign == Sign::Negative)
+                })
+                .collect();
+            wire.serialize(serializer)
+        }
+
+        /// Deserializes each element from `(magnitude_msf, is_negative)`.
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Vec<Integer>, D::Error> {
+            let wire = <Vec<(Vec<u8>, bool)>>::deserialize(deserializer)?;
+            Ok(wire
+                .into_iter()
+                .map(|(bytes, negative)| {
+                    Integer::from_bytes_msf_signed(
+                        &bytes,
+                        if negative {
+                            Sign::Negative
+                        } else {
+                            Sign::NonNegative
+                        },
+                    )
+                })
+                .collect())
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use serde::{Deserialize, Serialize};
+
+        use super::Integer;
+
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct Wire {
+            #[serde(with = "super")]
+            x: Integer,
+            #[serde(with = "super::vec")]
+            v: alloc::vec::Vec<Integer>,
+        }
+
+        #[test]
+        fn roundtrip() {
+            let w = Wire {
+                x: -Integer::from(0x1122_3344_5566u64),
+                v: alloc::vec![
+                    Integer::from(0),
+                    Integer::from(1),
+                    Integer::from(-1),
+                    Integer::from(u128::MAX) * Integer::from(u128::MAX),
+                ],
+            };
+            let bytes = serde_json::to_vec(&w).unwrap();
+            let w2: Wire = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(w, w2);
+        }
+    }
 }
 
 /// Odd primes below `limit` (sieve of Eratosthenes), used for the double sieve.

@@ -375,6 +375,7 @@ pub struct Cggmp20ReceiverProof {
     /// EC commitment `X = a * G` (public input to `pi_aff-g`).
     pub x: generic_ec::Point<GE>,
     /// Ciphertext `Y = Enc(key_i, alpha')` under the prover's own key.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub y: fast_paillier::Ciphertext,
 }
 
@@ -595,6 +596,7 @@ pub struct PaillierSenderState<P: PaillierMtaProofs = SimpleProofs> {
 ))]
 pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_B = Enc(pk, b; r)`: Paillier ciphertext of the sender's input.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub ciphertext: fast_paillier::Ciphertext,
     /// Proof accompanying the sender's ciphertext.
     pub proof: P::SenderProof,
@@ -608,6 +610,7 @@ pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
 ))]
 pub struct PaillierReceiverMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_A = c_B^a * Enc(pk, alpha'; r')`: the affine ciphertext.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub ciphertext: fast_paillier::Ciphertext,
     /// Proof accompanying the receiver's affine computation.
     pub proof: P::ReceiverProof,

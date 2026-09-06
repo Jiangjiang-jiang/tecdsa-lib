@@ -29,8 +29,10 @@ where
     FieldBytesSize<C>: ModulusSize,
 {
     /// Enc(pk_i, k_i)
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub big_k: Ciphertext,
     /// Enc(pk_i, gamma_i)
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub big_g: Ciphertext,
     /// y_i * G
     #[serde(with = "tecdsa_curve::serde_projective")]
@@ -60,12 +62,16 @@ where
     #[serde(with = "tecdsa_curve::serde_projective")]
     pub big_gamma: C::ProjectivePoint,
     /// MtA result: gamma_i (*) K_j (+) Enc(-beta)
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub big_d: Ciphertext,
     /// Enc(pk_i, -beta)
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub big_f: Ciphertext,
     /// MtA result: x_i (*) K_j (+) Enc(-hat_beta)
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub hat_big_d: Ciphertext,
     /// Enc(pk_i, -hat_beta)
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub hat_big_f: Ciphertext,
     /// π_enc_elg proof that K_i encrypts k_i in range
     pub psi0: pi_enc_elg::NiProof<GE>,

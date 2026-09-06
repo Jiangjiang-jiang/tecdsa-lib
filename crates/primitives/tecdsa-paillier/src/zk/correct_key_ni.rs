@@ -35,6 +35,7 @@ const SECURITY_PARAM: usize = 80;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NICorrectKeyProof {
     /// N-th root responses: `x_i` such that `x_i^N = y_i mod N`.
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     pub responses: Vec<Integer>,
 }
 

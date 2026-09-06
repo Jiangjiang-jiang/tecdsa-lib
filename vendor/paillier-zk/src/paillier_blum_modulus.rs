@@ -78,6 +78,7 @@ pub struct PrivateData<'a> {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Commitment {
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub w: Integer,
 }
 
@@ -94,9 +95,11 @@ pub struct Challenge<const M: usize> {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProofPoint {
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub x: Integer,
     pub a: bool,
     pub b: bool,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z: Integer,
 }
 

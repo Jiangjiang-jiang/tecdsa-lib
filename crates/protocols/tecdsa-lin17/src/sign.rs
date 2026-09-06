@@ -77,6 +77,7 @@ where
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Party2Round4Msg {
     /// `c_3 = Enc(rho*q + k_2^{-1}*m') (+) (c_key ^ (k_2^{-1} * r * x_2))`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c3: tecdsa_paillier::Ciphertext,
 }
 

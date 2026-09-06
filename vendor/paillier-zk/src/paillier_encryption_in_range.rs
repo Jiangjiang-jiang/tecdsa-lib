@@ -130,10 +130,13 @@ pub struct PrivateData<'a> {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Commitment {
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub s: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub a: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub c: Integer,
 }
 
@@ -156,8 +159,11 @@ pub type Challenge = Integer;
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Proof {
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z1: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z2: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z3: Integer,
 }
 

@@ -140,10 +140,13 @@ pub struct PrivateData<'a, E: Curve> {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
 pub struct Commitment<E: Curve> {
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub s: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub t: Integer,
     #[udigest(as = crate::common::encoding::Integer)]
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub d: Integer,
     pub y: Point<E>,
     pub z: Point<E>,
@@ -167,8 +170,11 @@ pub type Challenge = Integer;
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
 pub struct Proof<E: Curve> {
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z1: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z2: Integer,
+    #[cfg_attr(feature = "serde", serde(with = "fast_paillier::backend::int_wire"))]
     pub z3: Integer,
     pub w: Scalar<E>,
 }

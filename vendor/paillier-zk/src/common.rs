@@ -13,10 +13,22 @@ use generic_ec::Scalar;
 #[derive(Clone, Debug)]
 pub struct Aux {
     /// ring-pedersen parameter
+    #[cfg_attr(
+        feature = "__internal_doctest",
+        serde(with = "fast_paillier::backend::int_wire")
+    )]
     pub s: Integer,
     /// ring-pedersen parameter
+    #[cfg_attr(
+        feature = "__internal_doctest",
+        serde(with = "fast_paillier::backend::int_wire")
+    )]
     pub t: Integer,
     /// N^ in paper
+    #[cfg_attr(
+        feature = "__internal_doctest",
+        serde(with = "fast_paillier::backend::int_wire")
+    )]
     pub rsa_modulo: Integer,
     /// Precomuted table for computing `s^x t^y mod rsa_modulo` faster
     ///

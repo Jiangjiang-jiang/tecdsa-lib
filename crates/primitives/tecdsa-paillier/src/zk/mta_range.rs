@@ -75,10 +75,13 @@ pub enum MtaRangeError {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NTildeParams {
     /// RSA modulus $N' = p' q'$.
+    #[serde(with = "ser_integer")]
     pub N_tilde: Integer,
     /// First base $h_1$.
+    #[serde(with = "ser_integer")]
     pub h1: Integer,
     /// Second base $h_2 = h_1^\lambda \bmod N'$.
+    #[serde(with = "ser_integer")]
     pub h2: Integer,
 }
 

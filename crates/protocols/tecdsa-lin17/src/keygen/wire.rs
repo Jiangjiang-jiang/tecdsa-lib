@@ -48,6 +48,7 @@ pub(crate) struct WireR3Msg {
     pub(crate) dlog_proof_json: Vec<u8>,
     pub(crate) nonce: [u8; 32],
     pub(crate) ek: tecdsa_paillier::EncryptionKey,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub(crate) c_key: tecdsa_paillier::Ciphertext,
     pub(crate) c_key_nonce_bytes: Vec<u8>,
     pub(crate) correct_key_proof: NICorrectKeyProof,
@@ -57,6 +58,7 @@ pub(crate) struct WireR3Msg {
 /// Wire-safe Round 4 message (P2 -> P1): PDL verifier msg1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR4Msg {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub(crate) c_tag: tecdsa_paillier::Ciphertext,
     pub(crate) c_tag_tag: HashCommitment,
 }

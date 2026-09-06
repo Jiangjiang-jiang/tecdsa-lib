@@ -68,6 +68,7 @@ pub struct DecryptionShare {
     /// This party's index (1-based, matching Shamir evaluation points).
     pub index: u16,
     /// The secret share d_i of d = lambda(N) * beta.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d_i: Integer,
 }
 
@@ -89,6 +90,7 @@ pub struct PartialDecryption {
     /// The party's index (1-based).
     pub index: u16,
     /// c_i = c^{2 * delta * d_i} mod N^2
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub value: Integer,
 }
 
