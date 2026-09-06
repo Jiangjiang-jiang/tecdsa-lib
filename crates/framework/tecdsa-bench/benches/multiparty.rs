@@ -303,12 +303,7 @@ mod ggn16_helpers {
         let p_minus_1 = p - Integer::one();
         let q_minus_1 = q - Integer::one();
         let lambda = p_minus_1.lcm(&q_minus_1);
-        let beta = loop {
-            let candidate = n_int.sample_below_ref(&mut rng);
-            if candidate.cmp0().is_gt() && candidate.gcd_ref(&n_int).complete().is_one() {
-                break candidate;
-            }
-        };
+        let beta = Integer::sample_in_mult_group_of(&mut rng, &n_int);
         let d = lambda * beta;
         let theta = d.modulo_ref(&n_int).complete();
         let mut delta = Integer::one();

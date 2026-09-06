@@ -32,8 +32,6 @@ use rug::Complete;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-use crate::zk::pdl_slack::sample_below;
-
 #[derive(Debug, thiserror::Error)]
 pub enum ThresholdError {
     #[error("not enough partial decryptions: need {needed}, got {got}")]
@@ -131,12 +129,7 @@ pub fn trusted_dealer_setup(
     let q_minus_1 = q - Integer::one();
     let lambda = p_minus_1.lcm(&q_minus_1);
 
-    let beta = loop {
-        let candidate = sample_below(&n, rng);
-        if candidate.cmp0().is_gt() && candidate.gcd_ref(&n).complete().is_one() {
-            break candidate;
-        }
-    };
+    let beta = Integer::sample_in_mult_group_of(rng, &n);
 
     let d = lambda * beta;
     let theta = d.modulo_ref(&n).complete();
@@ -259,7 +252,7 @@ fn shamir_split_integer(
 ) -> Vec<DecryptionShare> {
     let mut coeffs = vec![secret];
     for _ in 0..corruption_threshold {
-        coeffs.push(sample_below(modulus, rng));
+        coeffs.push(modulus.sample_below_ref(rng));
     }
 
     let mut shares = Vec::with_capacity(total as usize);

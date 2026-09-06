@@ -128,7 +128,7 @@ fn derive_challenge(n: &Integer, domain: &[u8], index: usize) -> Integer {
         let reduced = candidate.modulo(n);
 
         // Ensure we get a value in Z*_N (nonzero and coprime to N)
-        if reduced.cmp0().is_gt() && reduced.gcd_ref(n).complete().is_one() {
+        if reduced.in_mult_group_of(n) {
             return reduced;
         }
         attempt += 1;

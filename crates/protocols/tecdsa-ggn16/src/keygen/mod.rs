@@ -233,12 +233,7 @@ mod tests {
         let q_minus_1 = q - Integer::one();
         let lambda = p_minus_1.lcm(&q_minus_1);
 
-        let beta = loop {
-            let candidate = n.sample_below_ref(rng);
-            if candidate.cmp0().is_gt() && Integer::from(candidate.gcd_ref(&n)).is_one() {
-                break candidate;
-            }
-        };
+        let beta = Integer::sample_in_mult_group_of(rng, &n);
 
         let d = lambda * beta;
         let theta = Integer::from(d.modulo_ref(&n));
