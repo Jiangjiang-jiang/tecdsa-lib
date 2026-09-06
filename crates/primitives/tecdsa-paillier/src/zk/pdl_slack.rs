@@ -184,28 +184,6 @@ where
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Compute `h1^x * h2^r mod N'`.
-///
-/// Handles negative exponents by inverting the base first.
-pub(crate) fn commitment_unknown_order(
-    h1: &Integer,
-    h2: &Integer,
-    modulus: &Integer,
-    x: &Integer,
-    r: &Integer,
-) -> Integer {
-    let h1_x = pow_mod_signed(h1, x, modulus);
-    let h2_r = pow_mod_signed(h2, r, modulus);
-    (h1_x * h2_r).modulo(modulus)
-}
-
-/// Modular exponentiation that handles negative exponents.
-pub(crate) fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
-    base.pow_mod_ref(exp, modulus)
-        .expect("pow_mod defined")
-        .complete()
-}
-
 /// Sample a random integer in `[1, bound)`.
 fn sample_range_one_to(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
     let bound_minus_one = bound - Integer::one();
@@ -283,13 +261,10 @@ where
         let gamma = (q3 * &statement.N_tilde).sample_below_ref(rng);
 
         // 2. z = h1^x * h2^rho mod N_tilde
-        let z = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &witness.x,
-            &rho,
-        );
+        let z = statement
+            .N_tilde
+            .combine(&statement.h1, &witness.x, &statement.h2, &rho)
+            .expect("bases are invertible modulo n");
 
         // 3. u1 = alpha * G
         let alpha_scalar = integer_to_scalar::<C>(&alpha);
@@ -298,23 +273,17 @@ where
         // 4. u2 = (1 + N)^alpha * beta^N mod N^2  (= Enc(N, alpha; beta))
         let u2 = {
             let g_paillier = &statement.ek_n + Integer::one(); // (1 + N)
-            commitment_unknown_order(
-                &g_paillier,
-                &beta,
-                &statement.ek_nn,
-                &alpha,
-                &statement.ek_n,
-            )
+            statement
+                .ek_nn
+                .combine(&g_paillier, &alpha, &beta, &statement.ek_n)
+                .expect("bases are invertible modulo n")
         };
 
         // 5. u3 = h1^alpha * h2^gamma mod N_tilde
-        let u3 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &alpha,
-            &gamma,
-        );
+        let u3 = statement
+            .N_tilde
+            .combine(&statement.h1, &alpha, &statement.h2, &gamma)
+            .expect("bases are invertible modulo n");
 
         // 6. e = H(N, C, Q, z, u1, u2, u3)
         let e = compute_challenge(statement, &z, &u1, &u2, &u3);
@@ -322,8 +291,11 @@ where
         // 7. s1 = alpha + e*x
         let s1 = alpha + &e * &witness.x;
 
-        // 8. s2 = beta * r^e mod N  (i.e., commitment_unknown_order(r, beta, N, e, 1))
-        let s2 = commitment_unknown_order(&witness.r, &beta, &statement.ek_n, &e, &Integer::one());
+        // 8. s2 = beta * r^e mod N  (i.e., N.combine(r, e, beta, 1))
+        let s2 = statement
+            .ek_n
+            .combine(&witness.r, &e, &beta, &Integer::one())
+            .expect("bases are invertible modulo n");
 
         // 9. s3 = gamma + e*rho
         let s3 = &gamma + e * &rho;
@@ -361,37 +333,25 @@ where
 
         // --- Paillier check: Enc(N, s1; s2) == u2 * C^e mod N^2 ---
         let g_paillier = &statement.ek_n + Integer::one();
-        let u2_test_tmp = commitment_unknown_order(
-            &g_paillier,
-            &self.s2,
-            &statement.ek_nn,
-            &self.s1,
-            &statement.ek_n,
-        );
+        let u2_test_tmp = statement
+            .ek_nn
+            .combine(&g_paillier, &self.s1, &self.s2, &statement.ek_n)
+            .expect("bases are invertible modulo n");
         let neg_e = -e.clone();
-        let u2_test = commitment_unknown_order(
-            &u2_test_tmp,
-            &statement.ciphertext,
-            &statement.ek_nn,
-            &Integer::one(),
-            &neg_e,
-        );
+        let u2_test = statement
+            .ek_nn
+            .combine(&u2_test_tmp, &Integer::one(), &statement.ciphertext, &neg_e)
+            .expect("bases are invertible modulo n");
 
         // --- Ring-Pedersen check: h1^s1 * h2^s3 == u3 * z^e mod N' ---
-        let u3_test_tmp = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &self.s1,
-            &self.s3,
-        );
-        let u3_test = commitment_unknown_order(
-            &u3_test_tmp,
-            &self.z,
-            &statement.N_tilde,
-            &Integer::one(),
-            &neg_e,
-        );
+        let u3_test_tmp = statement
+            .N_tilde
+            .combine(&statement.h1, &self.s1, &statement.h2, &self.s3)
+            .expect("bases are invertible modulo n");
+        let u3_test = statement
+            .N_tilde
+            .combine(&u3_test_tmp, &Integer::one(), &self.z, &neg_e)
+            .expect("bases are invertible modulo n");
 
         // --- Range check: |s1| < q^3 ---
         // s1 should be positive (alpha >= 0, e >= 0, x >= 0 in typical usage)

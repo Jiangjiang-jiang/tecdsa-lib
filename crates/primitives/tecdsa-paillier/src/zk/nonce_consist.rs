@@ -27,8 +27,6 @@ use tecdsa_curve::{
     TecdsaCurve,
 };
 
-use super::pdl_slack::{commitment_unknown_order, pow_mod_signed};
-
 /// Verification error for the nonce consistency proof.
 #[derive(Debug, thiserror::Error)]
 pub enum NonceConsistError {
@@ -294,22 +292,16 @@ where
 
         // 2. Compute commitments
         // z1 = h1^{eta1} * h2^{rho1} mod N_tilde
-        let z1 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &witness.eta1,
-            &rho1,
-        );
+        let z1 = statement
+            .N_tilde
+            .combine(&statement.h1, &witness.eta1, &statement.h2, &rho1)
+            .expect("bases are invertible modulo n");
 
         // z2 = h1^{eta2} * h2^{rho2} mod N_tilde
-        let z2 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &witness.eta2,
-            &rho2,
-        );
+        let z2 = statement
+            .N_tilde
+            .combine(&statement.h1, &witness.eta2, &statement.h2, &rho2)
+            .expect("bases are invertible modulo n");
 
         // u1 = G^alpha (EC point)
         let alpha_scalar = integer_to_scalar::<C>(&alpha);
@@ -320,45 +312,46 @@ where
         let u2 = {
             // (1 + N)^alpha = (1 + alpha*N) mod N^2 (binomial) — one mul, no modexp.
             let g_alpha = (Integer::one() + &alpha * &statement.ek_n).modulo(&statement.ek_nn);
-            let beta_n = pow_mod_signed(&beta, &statement.ek_n, &statement.ek_nn);
+            let beta_n = beta
+                .pow_mod_ref(&statement.ek_n, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (g_alpha * beta_n).modulo(&statement.ek_nn)
         };
 
         // u3 = h1^alpha * h2^gamma mod N_tilde
-        let u3 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &alpha,
-            &gamma,
-        );
+        let u3 = statement
+            .N_tilde
+            .combine(&statement.h1, &alpha, &statement.h2, &gamma)
+            .expect("bases are invertible modulo n");
 
         // v1 = u^alpha * Gamma^{q*theta} * mu^N mod N^2
         let v1 = {
-            let u_alpha = pow_mod_signed(&statement.u, &alpha, &statement.ek_nn);
+            let u_alpha = statement
+                .u
+                .pow_mod_ref(&alpha, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             let q_theta = q * &theta;
             let g_q_theta = (Integer::one() + q_theta * &statement.ek_n).modulo(&statement.ek_nn);
-            let mu_n = pow_mod_signed(&mu, &statement.ek_n, &statement.ek_nn);
+            let mu_n = mu
+                .pow_mod_ref(&statement.ek_n, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (u_alpha * g_q_theta % &statement.ek_nn * mu_n).modulo(&statement.ek_nn)
         };
 
         // v2 = h1^delta * h2^nu mod N_tilde
-        let v2 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &delta,
-            &nu,
-        );
+        let v2 = statement
+            .N_tilde
+            .combine(&statement.h1, &delta, &statement.h2, &nu)
+            .expect("bases are invertible modulo n");
 
         // v3 = h1^theta * h2^tau mod N_tilde
-        let v3 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &theta,
-            &tau,
-        );
+        let v3 = statement
+            .N_tilde
+            .combine(&statement.h1, &theta, &statement.h2, &tau)
+            .expect("bases are invertible modulo n");
 
         // 3. Fiat-Shamir challenge
         let e = compute_challenge(statement, &z1, &z2, &u1, &u2, &u3, &v1, &v2, &v3);
@@ -372,7 +365,11 @@ where
 
         // t1 = r_c^e * mu mod N
         let t1 = {
-            let r_e = pow_mod_signed(&witness.r_c, &e, &statement.ek_n);
+            let r_e = witness
+                .r_c
+                .pow_mod_ref(&e, &statement.ek_n)
+                .expect("base is invertible modulo n")
+                .complete();
             (r_e * &mu).modulo(&statement.ek_n)
         };
 
@@ -426,28 +423,64 @@ where
         // --- Paillier check: u^{s1} * Gamma^{q*t2} * t1^N * w_i^{-e} == v1 mod N^2 ---
         let _gamma_paillier = &statement.ek_n + Integer::one();
         let v1_check = {
-            let u_s1 = pow_mod_signed(&statement.u, &self.s1, &statement.ek_nn);
+            let u_s1 = statement
+                .u
+                .pow_mod_ref(&self.s1, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             let q_t2 = q * &self.t2;
             let g_q_t2 = (Integer::one() + q_t2 * &statement.ek_n).modulo(&statement.ek_nn);
-            let t1_n = pow_mod_signed(&self.t1, &statement.ek_n, &statement.ek_nn);
-            let w_neg_e = pow_mod_signed(&statement.w_i, &neg_e, &statement.ek_nn);
+            let t1_n = self
+                .t1
+                .pow_mod_ref(&statement.ek_n, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
+            let w_neg_e = statement
+                .w_i
+                .pow_mod_ref(&neg_e, &statement.ek_nn)
+                .expect("base is invertible modulo n")
+                .complete();
             (u_s1 * g_q_t2 % &statement.ek_nn * t1_n % &statement.ek_nn * w_neg_e)
                 .modulo(&statement.ek_nn)
         };
 
         // --- Range commitment check 1: h1^{s1} * h2^{s2} * z1^{-e} == u3 mod N_tilde ---
         let u3_check = {
-            let h1_s1 = pow_mod_signed(&statement.h1, &self.s1, &statement.N_tilde);
-            let h2_s2 = pow_mod_signed(&statement.h2, &self.s2, &statement.N_tilde);
-            let z1_neg_e = pow_mod_signed(&self.z1, &neg_e, &statement.N_tilde);
+            let h1_s1 = statement
+                .h1
+                .pow_mod_ref(&self.s1, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let h2_s2 = statement
+                .h2
+                .pow_mod_ref(&self.s2, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let z1_neg_e = self
+                .z1
+                .pow_mod_ref(&neg_e, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
             (h1_s1 * h2_s2 % &statement.N_tilde * z1_neg_e).modulo(&statement.N_tilde)
         };
 
         // --- Range commitment check 2: h1^{t2} * h2^{t3} * z2^{-e} == v3 mod N_tilde ---
         let v3_check = {
-            let h1_t2 = pow_mod_signed(&statement.h1, &self.t2, &statement.N_tilde);
-            let h2_t3 = pow_mod_signed(&statement.h2, &self.t3, &statement.N_tilde);
-            let z2_neg_e = pow_mod_signed(&self.z2, &neg_e, &statement.N_tilde);
+            let h1_t2 = statement
+                .h1
+                .pow_mod_ref(&self.t2, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let h2_t3 = statement
+                .h2
+                .pow_mod_ref(&self.t3, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
+            let z2_neg_e = self
+                .z2
+                .pow_mod_ref(&neg_e, &statement.N_tilde)
+                .expect("base is invertible modulo n")
+                .complete();
             (h1_t2 * h2_t3 % &statement.N_tilde * z2_neg_e).modulo(&statement.N_tilde)
         };
 
@@ -516,10 +549,16 @@ mod tests {
         let r_c = Integer::sample_in_mult_group_of(&mut rng, ek.n());
         let _gamma_paillier = ek.n() + Integer::one();
         let w_i = {
-            let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
+            let u_eta1 = u_ct
+                .pow_mod_ref(&eta1, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             let q_eta2 = q * &eta2;
             let g_q_eta2 = (Integer::one() + q_eta2 * ek.n()).modulo(ek.nn());
-            let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
+            let r_c_n = r_c
+                .pow_mod_ref(ek.n(), ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
         };
 
@@ -565,10 +604,16 @@ mod tests {
         let r_c = Integer::sample_in_mult_group_of(&mut rng, ek.n());
         let _gamma_paillier = ek.n() + Integer::one();
         let w_i = {
-            let u_eta1 = pow_mod_signed(&u_ct, &eta1, ek.nn());
+            let u_eta1 = u_ct
+                .pow_mod_ref(&eta1, ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             let q_eta2 = (&q * &eta2).complete();
             let g_q_eta2 = (Integer::one() + q_eta2 * ek.n()).modulo(ek.nn());
-            let r_c_n = pow_mod_signed(&r_c, ek.n(), ek.nn());
+            let r_c_n = r_c
+                .pow_mod_ref(ek.n(), ek.nn())
+                .expect("base is invertible modulo n")
+                .complete();
             (u_eta1 * g_q_eta2 % ek.nn() * r_c_n).modulo(ek.nn())
         };
 
