@@ -37,9 +37,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::{
     base_ot::OtError,
     soft_spoken::{
-        random_scalar, tagged_hash, tagged_hash_as_scalar, HashOutput,
-        OtExtensionReceiver, OtExtensionSender, OteDataToSender, OteInitSenderMsg, PrgOutput,
-        BATCH_SIZE,
+        random_scalar, tagged_hash, tagged_hash_as_scalar, HashOutput, OtExtensionReceiver,
+        OtExtensionSender, OteDataToSender, OteInitSenderMsg, PrgOutput, BATCH_SIZE,
     },
 };
 
@@ -297,8 +296,7 @@ impl MulSender {
             .iter()
             .map(|tau| tau.iter().map(scalar_to_bytes).collect())
             .collect();
-        let verify_u_bytes: Vec<Vec<u8>> =
-            verify_u.iter().map(scalar_to_bytes).collect();
+        let verify_u_bytes: Vec<Vec<u8>> = verify_u.iter().map(scalar_to_bytes).collect();
         let gamma_bytes: Vec<Vec<u8>> = gamma.iter().map(scalar_to_bytes).collect();
 
         let data_to_receiver = MulDataToReceiver {
@@ -417,8 +415,7 @@ impl MulReceiver {
         }
 
         let b_bytes = scalar_to_bytes(&b);
-        let chi_tilde_bytes: Vec<Vec<u8>> =
-            chi_tilde.iter().map(scalar_to_bytes).collect();
+        let chi_tilde_bytes: Vec<Vec<u8>> = chi_tilde.iter().map(scalar_to_bytes).collect();
         let chi_hat_bytes: Vec<Vec<u8>> = chi_hat.iter().map(scalar_to_bytes).collect();
 
         let data_to_keep = MulDataToKeep {

@@ -21,15 +21,15 @@ use std::collections::BTreeMap;
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand::RngCore;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes};
+use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
 use tecdsa_joye_libert::{kgen::JlPublicKey, zk::zkjlmod::ZkJlModProof};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{
     msg::Xal23KeygenMsg,
     rounds::{
-        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_from_bytes,
-        R1LocalState, R2BcastPayload, R2ReceivedBcast, SerDlogProof,
+        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_from_bytes, R1LocalState,
+        R2BcastPayload, R2ReceivedBcast, SerDlogProof,
     },
 };
 use crate::key_share::Xal23KeyShare;

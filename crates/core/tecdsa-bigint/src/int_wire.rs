@@ -46,8 +46,9 @@ pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Integer
 
 /// Adapter for `Vec<Integer>` fields: each element is `(sign, magnitude)`.
 pub mod vec {
-    use super::{Deserialize, Deserializer, Integer, Order, Serialize, Serializer};
     use serde::de::Error as _;
+
+    use super::{Deserialize, Deserializer, Integer, Order, Serialize, Serializer};
 
     /// Serialize a `Vec<Integer>` element-wise in the compact wire format.
     pub fn serialize<S: Serializer>(vals: &[Integer], serializer: S) -> Result<S::Ok, S::Error> {
@@ -88,8 +89,9 @@ pub mod vec {
 
 #[cfg(test)]
 mod tests {
-    use super::Integer;
     use serde::{Deserialize, Serialize};
+
+    use super::Integer;
 
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
     struct Wire {

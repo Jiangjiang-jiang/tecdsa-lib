@@ -26,7 +26,7 @@ use elliptic_curve::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{TecdsaCurve, conv::scalar_to_bytes, zk::dlog::DlogProof};
+use tecdsa_curve::{conv::scalar_to_bytes, zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_joye_libert::{
     kgen::{JlPublicKey, JlSecretKey},
     zk::zkjlmod::ZkJlModProof,

@@ -32,6 +32,10 @@ pub mod types;
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, PrimeField};
+use rounds::{
+    DrgPresignR1Bcast, DrgPresignR1P2P, DrgPresignR1State, DrgPresignR2Bcast, DrgPresignR2State,
+    DrgPresignR3Data, DrgPresignR4State,
+};
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClSetup, Qfi},
@@ -45,10 +49,6 @@ use tecdsa_protocol::{
 pub use types::Wmy23Presignature;
 
 use crate::key_share::Wmy23KeyShare;
-use rounds::{
-    DrgPresignR1Bcast, DrgPresignR1P2P, DrgPresignR1State, DrgPresignR2Bcast, DrgPresignR2State,
-    DrgPresignR3Data, DrgPresignR4State,
-};
 
 // ---------------------------------------------------------------------------
 // Message types
