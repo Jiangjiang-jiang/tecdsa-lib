@@ -13,9 +13,10 @@ use core::{cell::RefCell, cmp::Ordering, fmt};
 use std::borrow::Borrow;
 
 use gmp_mpfr_sys::gmp;
-use rug::Integer;
+use rug::{ops::NegAssign, Complete, Integer};
+use tecdsa_bigint::BigIntExt;
 
-use super::{mpz::Mpz, nt::sqrt_mod_prime};
+use super::nt::{div_exact_checked, gcdext, sqrt_mod_prime};
 
 thread_local! {
     /// Reused scratch for the in-place `mpz_*` reduction (one per thread).
@@ -46,44 +47,44 @@ struct ReduceScratch {
 /// Solve `a·x ≡ b (mod m)` for `m > 0`. Returns `(x0, m')` such that the
 /// solution set is `x ≡ x0 (mod m')` with `x0 ∈ [0, m')`, or `None` if there
 /// is no solution.
-fn solve_lc(a: &Mpz, b: &Mpz, m: &Mpz) -> Option<(Mpz, Mpz)> {
+fn solve_lc(a: &Integer, b: &Integer, m: &Integer) -> Option<(Integer, Integer)> {
     // g = u·a + v·m  ⇒  u·a ≡ g (mod m)
-    let (g, u, _v) = a.gcdext(m);
-    let (q, r) = b.fdiv_qr(&g);
+    let (g, u, _v) = gcdext(a, m);
+    let (q, r) = b.clone().div_rem_floor(g.clone());
     if !r.is_zero() {
         return None; // g ∤ b
     }
-    let modulus = m.divexact(&g);
-    let x0 = (&q * &u).modulo(&modulus);
+    let modulus = m.clone().div_exact(&g);
+    let x0 = (&q * &u).complete().modulo(&modulus);
     Some((x0, modulus))
 }
 
 /// A reduced (unless stated otherwise) binary quadratic form `(a, b, c)`.
 #[derive(Clone, Debug)]
 pub struct QFI {
-    pub(crate) a: Mpz,
-    pub(crate) b: Mpz,
-    pub(crate) c: Mpz,
+    pub(crate) a: Integer,
+    pub(crate) b: Integer,
+    pub(crate) c: Integer,
 }
 
 impl QFI {
-    pub fn from_abc(a: Mpz, b: Mpz, c: Mpz) -> QFI {
+    pub fn from_abc(a: Integer, b: Integer, c: Integer) -> QFI {
         QFI { a, b, c }
     }
 
-    pub fn a(&self) -> &Mpz {
+    pub fn a(&self) -> &Integer {
         &self.a
     }
-    pub fn b(&self) -> &Mpz {
+    pub fn b(&self) -> &Integer {
         &self.b
     }
-    pub fn c(&self) -> &Mpz {
+    pub fn c(&self) -> &Integer {
         &self.c
     }
 
     /// The discriminant `b² − 4ac`.
-    pub fn discriminant(&self) -> Mpz {
-        &(&self.b * &self.b) - &(&self.a * &self.c).mul_2exp(2)
+    pub fn discriminant(&self) -> Integer {
+        (&self.b * &self.b).complete() - ((&self.a * &self.c).complete() << 2u32)
     }
 
     /// Whether this is the principal form (the class-group identity).
@@ -100,9 +101,8 @@ impl QFI {
     /// [`ClassGroup::inverse`] for reduced inputs, but mutates in place with no
     /// allocation or reduction.)
     pub fn neg(&mut self) {
-        use rug::ops::NegAssign;
         if self.a != self.b && self.a != self.c {
-            self.b.0.neg_assign();
+            self.b.neg_assign();
         }
     }
 
@@ -111,15 +111,15 @@ impl QFI {
     /// primitive (`gcd(a, b, c) = 1`), one of `a`, `c`, `a + b + c` is always
     /// coprime to `l`; the corresponding `SL₂(ℤ)`-equivalent `(a′, b′, c′)` is
     /// returned.
-    fn primitive_coprime_to(&self, l: &Mpz) -> (Mpz, Mpz, Mpz) {
-        let one = Mpz::from(1u64);
-        if self.a.gcd(l) == one {
+    fn primitive_coprime_to(&self, l: &Integer) -> (Integer, Integer, Integer) {
+        let one = Integer::from(1u64);
+        if self.a.clone().gcd(l) == one {
             (self.a.clone(), self.b.clone(), self.c.clone())
-        } else if self.c.gcd(l) == one {
-            (self.c.clone(), self.b.neg(), self.a.clone()) // (c, -b, a)
+        } else if self.c.clone().gcd(l) == one {
+            (self.c.clone(), Integer::from(-&self.b), self.a.clone()) // (c, -b, a)
         } else {
-            let abc = &(&self.a + &self.b) + &self.c;
-            let nb = &self.b.neg() - &self.a.mul_2exp(1); // -b - 2a
+            let abc = (&self.a + &self.b).complete() + &self.c;
+            let nb = Integer::from(-&self.b) - (&self.a << 1u32).complete(); // -b - 2a
             (abc, nb, self.a.clone())
         }
     }
@@ -129,10 +129,10 @@ impl QFI {
     /// `(a, l·b, l²·c)`, of discriminant `l²·Δ` (the ideal "go-down" map of
     /// HJPT98/CL09). The result is **not** reduced — reduce it in the target
     /// [`ClassGroup`].
-    pub(crate) fn lift(&self, l: &Mpz) -> QFI {
+    pub(crate) fn lift(&self, l: &Integer) -> QFI {
         let (a, b, c) = self.primitive_coprime_to(l);
-        let l2 = l * l;
-        QFI::from_abc(a, &b * l, &c * &l2)
+        let l2 = (l * l).complete();
+        QFI::from_abc(a, (&b * l).complete(), (&c * &l2).complete())
     }
 
     /// Map this form (of discriminant `l²·Δ_K`, in the order of conductor `l`)
@@ -140,24 +140,24 @@ impl QFI {
     /// (HJPT98 Alg. 3 / CL09 Alg. 2). Takes an `a` coprime to `l`, sets
     /// `b′ ≡ b·l⁻¹ (mod 2a)` centered into `(−a, a]`, and
     /// `c′ = (b′² − Δ_K)/(4a)`. The result is **not** reduced.
-    pub(crate) fn to_maximal_order(&self, l: &Mpz, delta_k: &Mpz) -> QFI {
+    pub(crate) fn to_maximal_order(&self, l: &Integer, delta_k: &Integer) -> QFI {
         let (a, b, _c) = self.primitive_coprime_to(l); // gcd(a, l) = 1
                                                        // 1 = u·l + v·a  ⇒  b′ = b·l⁻¹ ≡ b·u + a·v (mod 2a).
-        let (_g, u, v) = l.gcdext(&a);
-        let two_a = a.mul_2exp(1);
-        let mut bn = (&(&b * &u) + &(&a * &v)).modulo(&two_a);
+        let (_g, u, v) = gcdext(l, &a);
+        let two_a = (&a << 1u32).complete();
+        let mut bn = ((&b * &u).complete() + (&a * &v).complete()).modulo(&two_a);
         if bn > a {
-            bn = &bn - &two_a;
+            bn -= &two_a;
         }
-        let cc = (&(&bn * &bn) - delta_k).divexact(&a.mul_2exp(2));
+        let cc = ((&bn * &bn).complete() - delta_k).div_exact(&(&a << 2u32).complete());
         QFI::from_abc(a, bn, cc)
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         for x in [&self.a(), &self.b(), &self.c()] {
-            let mag = x.to_bytes_be(); // |x|, big-endian
-            buf.push((x.sgn() < 0) as u8); // sign byte
+            let mag = x.to_bytes_msf(); // |x|, big-endian
+            buf.push(x.cmp0().is_lt() as u8); // sign byte
             buf.extend_from_slice(&(mag.len() as u32).to_be_bytes());
             buf.extend_from_slice(&mag);
         }
@@ -165,16 +165,15 @@ impl QFI {
     }
 
     pub fn from_bytes(buf: &[u8]) -> Self {
-        fn get_mpz(buf: &[u8], pos: &mut usize) -> Mpz {
+        fn get_mpz(buf: &[u8], pos: &mut usize) -> Integer {
             let neg = buf[*pos] == 1;
             *pos += 1;
             let len = u32::from_be_bytes(buf[*pos..*pos + 4].try_into().unwrap()) as usize;
             *pos += 4;
-            let mut v = Mpz::from_bytes_be(&buf[*pos..*pos + len]);
+            let mut v = Integer::from_bytes_msf(&buf[*pos..*pos + len]);
             *pos += len;
             if neg {
-                use rug::ops::NegAssign;
-                v.0.neg_assign();
+                v.neg_assign();
             }
             v
         }
@@ -214,9 +213,9 @@ impl FixedBaseComb {
 /// The ideal class group of a negative discriminant `Δ ≡ 0 or 1 (mod 4)`.
 #[derive(Clone, Debug)]
 pub struct ClassGroup {
-    disc: Mpz,
+    disc: Integer,
     /// `⌊(|Δ|/4)^(1/4)⌋`, the partial-reduction threshold used by NUCOMP.
-    l_thresh: Mpz,
+    l_thresh: Integer,
 }
 
 /// A fixed-base comb precomputation table for fast exponentiation of one base.
@@ -230,29 +229,31 @@ pub struct FixedBaseComb {
 impl ClassGroup {
     /// Create the class group of discriminant `disc` (must be `< 0` and
     /// `≡ 0 or 1 (mod 4)`).
-    pub fn new(disc: Mpz) -> ClassGroup {
-        debug_assert!(disc.sgn() < 0, "discriminant must be negative");
-        let abs = disc.abs();
+    pub fn new(disc: Integer) -> ClassGroup {
+        debug_assert!(disc.cmp0().is_lt(), "discriminant must be negative");
+        let abs = disc.clone().abs();
         // L = floor((|Δ|/4)^(1/4)) = floor(|Δ|^(1/4) / sqrt(2))
-        let l_thresh = abs.fdiv_2exp(2).root(4);
+        let l_thresh = (abs >> 2u32).root(4);
         ClassGroup { disc, l_thresh }
     }
 
-    pub fn discriminant(&self) -> &Mpz {
+    pub fn discriminant(&self) -> &Integer {
         &self.disc
     }
 
     /// The principal form (identity element).
     pub fn identity(&self) -> QFI {
-        let one = Mpz::from(1u64);
-        if self.disc.modulo(&Mpz::from(4u64)) == 1u64 {
+        let one = Integer::from(1u64);
+        if self.disc.modulo_ref(&Integer::from(4u64)).complete() == 1u64 {
             // (1, 1, (1-Δ)/4)
-            let c = (&one - &self.disc).divexact(&Mpz::from(4u64));
+            let c = (&one - &self.disc)
+                .complete()
+                .div_exact(&Integer::from(4u64));
             QFI::from_abc(one.clone(), one, c)
         } else {
             // Δ ≡ 0 (mod 4): (1, 0, -Δ/4)
-            let c = self.disc.neg().divexact(&Mpz::from(4u64));
-            QFI::from_abc(one, Mpz::new(), c)
+            let c = Integer::from(-&self.disc).div_exact(&Integer::from(4u64));
+            QFI::from_abc(one, Integer::new(), c)
         }
     }
 
@@ -268,9 +269,9 @@ impl ClassGroup {
         REDUCE_SCRATCH.with(|scr| {
             let mut scr = scr.borrow_mut();
             unsafe {
-                let a = f.a.0.as_raw_mut();
-                let b = f.b.0.as_raw_mut();
-                let c = f.c.0.as_raw_mut();
+                let a = f.a.as_raw_mut();
+                let b = f.b.as_raw_mut();
+                let c = f.c.as_raw_mut();
                 let q = scr.q.as_raw_mut();
                 let t = scr.t.as_raw_mut();
                 let two = scr.two.as_raw_mut();
@@ -329,15 +330,15 @@ impl ClassGroup {
 
     /// Inverse of a class: `(a, b, c) ↦ (a, -b, c)` (then reduced).
     pub fn inverse(&self, f: &QFI) -> QFI {
-        let mut g = QFI::from_abc(f.a.clone(), f.b.neg(), f.c.clone());
+        let mut g = QFI::from_abc(f.a.clone(), Integer::from(-&f.b), f.c.clone());
         self.reduce(&mut g);
         g
     }
 
     /// The smallest prime `l` that splits (Kronecker `(Δ|l) = 1`), so that a
     /// non-trivial prime form of norm `l` exists.
-    pub fn smallest_split_prime(&self) -> Mpz {
-        let mut l = Mpz::from(2u64);
+    pub fn smallest_split_prime(&self) -> Integer {
+        let mut l = Integer::from(2u64);
         loop {
             if self.disc.kronecker(&l) == 1 {
                 return l;
@@ -348,19 +349,21 @@ impl ClassGroup {
 
     /// The reduced form of the prime ideal above the prime `l`
     /// (requires `(Δ | l) ≠ -1`, i.e. `l` splits or ramifies).
-    pub fn prime_form(&self, l: &Mpz) -> QFI {
+    pub fn prime_form(&self, l: &Integer) -> QFI {
         let (b, c);
         if *l == 2u64 {
             // requires Δ ≡ 1 (mod 8)
-            b = Mpz::from(1u64);
-            c = (&Mpz::from(1u64) - &self.disc).divexact(&Mpz::from(8u64));
+            b = Integer::from(1u64);
+            c = (&Integer::from(1u64) - &self.disc)
+                .complete()
+                .div_exact(&Integer::from(8u64));
         } else {
-            let dl = self.disc.modulo(l);
+            let dl = self.disc.modulo_ref(l).complete();
             let r = sqrt_mod_prime(&dl, l).expect("prime_form: l does not split the discriminant");
             // Δ is odd ⇒ b must be odd; r²≡Δ (mod l), pick odd representative.
-            let bb = if r.is_odd() { r } else { &r + l };
-            let four_l = l.mul_2exp(2);
-            c = (&(&bb * &bb) - &self.disc).divexact(&four_l);
+            let bb = if r.is_odd() { r } else { (&r + l).complete() };
+            let four_l = (l << 2u32).complete();
+            c = ((&bb * &bb).complete() - &self.disc).div_exact(&four_l);
             b = bb;
         }
         let mut f = QFI::from_abc(l.clone(), b, c);
@@ -380,36 +383,36 @@ impl ClassGroup {
         let _ = ga; // c2 is not needed by this formulation
 
         // 1. g = (b+β)/2, h = (β−b)/2, w = gcd(a, α, g)
-        let g = (b + be).fdiv_2exp(1);
-        let h = (be - b).fdiv_2exp(1);
-        let w = a.gcd(al).gcd(&g);
+        let g = (b + be).complete() >> 1u32;
+        let h = (be - b).complete() >> 1u32;
+        let w = a.gcd_ref(al).complete().gcd(&g);
 
         // 2. j = w, s = a/w, t = α/w, u = g/w
         let j = w.clone();
-        let s = a.divexact(&w);
-        let t = al.divexact(&w);
-        let u = g.divexact(&w);
+        let s = a.clone().div_exact(&w);
+        let t = al.clone().div_exact(&w);
+        let u = g.clone().div_exact(&w);
 
         // 3. solve (t·u)·k ≡ h·u + s·c  (mod s·t)
-        let st = &s * &t;
-        let tu = &t * &u;
-        let rhs3 = &(&h * &u) + &(&s * c);
+        let st = (&s * &t).complete();
+        let tu = (&t * &u).complete();
+        let rhs3 = (&h * &u).complete() + (&s * c).complete();
         let (mu, nu) = solve_lc(&tu, &rhs3, &st).expect("compose: congruence (3) unsolvable");
 
         // 4. solve (t·ν)·n ≡ h − t·μ  (mod s)
-        let rhs4 = &h - &(&t * &mu);
-        let coef4 = &t * &nu;
+        let rhs4 = &h - (&t * &mu).complete();
+        let coef4 = (&t * &nu).complete();
         let (lambda, _) = solve_lc(&coef4, &rhs4, &s).expect("compose: congruence (4) unsolvable");
 
         // 5. k, l, m
-        let k = &mu + &(&nu * &lambda);
-        let l = (&(&k * &t) - &h).divexact(&s);
-        let m = (&(&(&tu * &k) - &(&h * &u)) - &(c * &s)).divexact(&st);
+        let k = &mu + (&nu * &lambda).complete();
+        let l = ((&k * &t).complete() - &h).div_exact(&s);
+        let m = ((&tu * &k).complete() - (&h * &u).complete() - (c * &s).complete()).div_exact(&st);
 
         // 6. A = s·t, B = j·u − (k·t + l·s), C = k·l − j·m
         let aa = st;
-        let bb = &(&j * &u) - &(&(&k * &t) + &(&l * &s));
-        let cc = &(&k * &l) - &(&j * &m);
+        let bb = (&j * &u).complete() - ((&k * &t).complete() + (&l * &s).complete());
+        let cc = (&k * &l).complete() - (&j * &m).complete();
 
         let mut f3 = QFI::from_abc(aa, bb, cc);
         self.reduce(&mut f3);
@@ -429,30 +432,36 @@ impl ClassGroup {
         let (a1, b1, c1) = (&f1.a, &f1.b, &f1.c);
         let (a2, b2, c2) = (&f2.a, &f2.b, &f2.c);
 
-        let ss = (b1 + b2).fdiv_2exp(1); // (b1+b2)/2
-        let m = (b2 - b1).fdiv_2exp(1); // (b2-b1)/2
+        let ss = (b1 + b2).complete() >> 1u32; // (b1+b2)/2
+        let m = (b2 - b1).complete() >> 1u32; // (b2-b1)/2
 
         // F = gcd(a2, a1) = u·a2 + v·a1
-        let (ff, u, v) = a2.gcdext(a1);
+        let (ff, u, v) = gcdext(a2, a1);
 
         let (g, by, cy, dy, bx0);
-        if ss.modulo(&ff).is_zero() {
+        if ss.modulo_ref(&ff).complete().is_zero() {
             g = ff.clone();
-            by = a1.divexact(&g);
-            cy = a2.divexact(&g);
-            dy = ss.divexact(&g);
-            bx0 = (&m * &u).modulo(&by);
+            by = a1.clone().div_exact(&g);
+            cy = a2.clone().div_exact(&g);
+            dy = ss.clone().div_exact(&g);
+            bx0 = (&m * &u).complete().modulo(&by);
         } else {
-            let (gg, _x, _y) = ff.gcdext(&ss);
-            let hh = ff.divexact(&gg);
-            by = a1.divexact(&gg);
-            cy = a2.divexact(&gg);
-            dy = ss.divexact(&gg);
-            let l = (&_y * &(&(&u * &c1.modulo(&hh)) + &(&v * &c2.modulo(&hh)))).modulo(&hh);
-            bx0 = (&(&u * &m.divexact(&hh)) + &(&l * &a1.divexact(&hh))).modulo(&by);
+            let (gg, _x, _y) = gcdext(&ff, &ss);
+            let hh = ff.clone().div_exact(&gg);
+            by = a1.clone().div_exact(&gg);
+            cy = a2.clone().div_exact(&gg);
+            dy = ss.clone().div_exact(&gg);
+            let c1_h = c1.modulo_ref(&hh).complete();
+            let c2_h = c2.modulo_ref(&hh).complete();
+            let sum_uv = (&u * c1_h) + (&v * c2_h);
+            let l = (&_y * sum_uv).modulo(&hh);
+            let m_h = m.clone().div_exact(&hh);
+            let a1_h = a1.clone().div_exact(&hh);
+            let sum_bx = (&u * m_h) + (&l * a1_h);
+            bx0 = sum_bx.modulo(&by);
             g = gg;
         }
-        if by.is_one() {
+        if by == 1 {
             // Degenerate partial reduction; plain composition is correct.
             return self.compose_dirichlet(f1, f2);
         }
@@ -477,14 +486,14 @@ impl ClassGroup {
         // Fallback (degenerate states only): §3a square + full reduction, or
         // general composition if b is not invertible mod a.
         let (a, b, c) = (&f.a, &f.b, &f.c);
-        let binv = match b.invert(a) {
+        let binv = match b.invert_ref(a).map(Integer::from) {
             Some(x) => x,
             None => return self.compose_dirichlet(f, f),
         };
-        let mu = (c * &binv).modulo(a);
-        let aa = a * a; // A = a²
-        let bb = b - &(&mu * a).mul_2exp(1); // B = b - 2aμ
-        let cc = &(&mu * &mu) - &(&(b * &mu) - c).divexact(a); // C = μ² - (bμ-c)/a
+        let mu = (c * &binv).complete().modulo(a);
+        let aa = (a * a).complete(); // A = a²
+        let bb = b - ((&mu * a).complete() << 1u32); // B = b - 2aμ
+        let cc = (&mu * &mu).complete() - ((b * &mu).complete() - c).div_exact(a); // C = μ² - (bμ-c)/a
         let mut sq = QFI::from_abc(aa, bb, cc);
         self.reduce(&mut sq);
         sq
@@ -514,37 +523,37 @@ impl ClassGroup {
         let (a, b, c) = (&f.a, &f.b, &f.c);
         // G = u·b + _·a = gcd(b, a).  By₀ = a/G, Dy = b/G.  (Always extended-gcd:
         // a modular inverse would be wasted work on the G>1 forms.)
-        let (gg, u, _v) = b.gcdext(a);
-        let by0 = a.divexact(&gg);
-        if by0.is_one() {
+        let (gg, u, _v) = gcdext(b, a);
+        let by0 = a.clone().div_exact(&gg);
+        if by0 == 1 {
             return None; // a = G ⇒ b = 0 or |b| = a; degenerate, fall back
         }
-        let dy = b.divexact(&gg);
-        let bx0 = (&u * c).modulo(&by0); // = c·b⁻¹ mod a when G = 1 (the §3a μ)
+        let dy = b.clone().div_exact(&gg);
+        let bx0 = (&u * c).complete().modulo(&by0); // = c·b⁻¹ mod a when G = 1 (the §3a μ)
 
         // Partial extended-Euclidean reduction of (bx0, By₀) until bx ≈ L.
-        let mut bxi = bx0.0;
-        let mut byi = by0.0.clone();
+        let mut bxi = bx0;
+        let mut byi = by0.clone();
         let (yi, xi, z_odd) = self.partial_reduce(&mut bxi, &mut byi);
         if bxi.cmp0() == Ordering::Equal {
             return None;
         }
-        let bx = Mpz(bxi);
-        let mut byr = Mpz(byi);
-        let x = Mpz(xi);
-        let mut y = Mpz(yi);
+        let bx = bxi;
+        let mut byr = byi;
+        let x = xi;
+        let mut y = yi;
         if z_odd {
-            byr = byr.neg();
-            y = y.neg();
+            byr = -byr;
+            y = -y;
         }
         if x.is_zero() {
             return None;
         }
         // ax = G·x, ay = G·y (when G = 1 these are just x, y — avoid the mul).
-        let (ax, ay) = if gg.is_one() {
+        let (ax, ay) = if gg == 1 {
             (x.clone(), y.clone())
         } else {
-            (&gg * &x, &gg * &y)
+            ((&gg * &x).complete(), (&gg * &y).complete())
         };
 
         // Assembly (m = 0). cx = bx, cy2 = byr are exact by construction (no
@@ -552,13 +561,13 @@ impl ClassGroup {
         // a non-exact one ⇒ bail to the caller's §3a fallback. (Measured: a
         // raw-mpz reused-scratch rewrite of this assembly gives no speedup — only
         // ~10 ops, so allocation is negligible next to the multiplications.)
-        let dx = (&(&bx * &dy) - &(c * &x)).divexact_checked(&by0)?;
-        let dxa = &dx * &ay;
-        let dy2 = (&dxa + b).divexact_checked(&ax)?;
-        let a3 = &(&byr * &byr) - &(&ay * &dy2);
-        let c3 = &(&bx * &bx) - &(&ax * &dx);
+        let dx = div_exact_checked(&((&bx * &dy).complete() - (c * &x).complete()), &by0)?;
+        let dxa = (&dx * &ay).complete();
+        let dy2 = div_exact_checked(&((&dxa + b).complete()), &ax)?;
+        let a3 = (&byr * &byr).complete() - (&ay * &dy2).complete();
+        let c3 = (&bx * &bx).complete() - (&ax * &dx).complete();
         // b₃ = ax·dy2 + ay·dx − (bx·cy2 + byr·cx) = 2·(dx·ay) + b − 2·bx·byr.
-        let b3 = &(&(&dxa + &dxa) + b) - &(&bx * &byr).mul_2exp(1);
+        let b3 = ((&dxa + &dxa).complete() + b) - ((&bx * &byr).complete() << 1u32);
         if a3.is_zero() {
             return None;
         }
@@ -579,14 +588,14 @@ impl ClassGroup {
     fn partial_reduce(&self, bx: &mut Integer, by: &mut Integer) -> (Integer, Integer, bool) {
         #[cfg(feature = "gmp-hgcd")]
         {
-            super::hgcd_gmp::partial_reduce_hgcd2(bx, by, &self.l_thresh.0)
+            super::hgcd_gmp::partial_reduce_hgcd2(bx, by, &self.l_thresh)
         }
         #[cfg(not(feature = "gmp-hgcd"))]
         {
             if by.significant_bits() >= super::hgcd::NUCOMP_HGCD_DISPATCH_BITS {
-                super::hgcd::partial_reduce_hgcd(bx, by, &self.l_thresh.0)
+                super::hgcd::partial_reduce_hgcd(bx, by, &self.l_thresh)
             } else {
-                super::hgcd::partial_reduce_lehmer(bx, by, &self.l_thresh.0)
+                super::hgcd::partial_reduce_lehmer(bx, by, &self.l_thresh)
             }
         }
     }
@@ -596,14 +605,14 @@ impl ClassGroup {
     #[allow(clippy::too_many_arguments)]
     fn nucomp_finish(
         &self,
-        g: &Mpz,
-        bx0: Mpz,
-        by0: Mpz,
-        cy: Mpz,
-        dy: Mpz,
-        m: &Mpz,
-        w2: &Mpz,
-        ss: &Mpz,
+        g: &Integer,
+        bx0: Integer,
+        by0: Integer,
+        cy: Integer,
+        dy: Integer,
+        m: &Integer,
+        w2: &Integer,
+        ss: &Integer,
     ) -> Option<QFI> {
         // Partial extended Euclidean on (bx, by) until bx <= L. Word-batched
         // schoolbook Lehmer is fastest in every practical range; recursive HGCD
@@ -611,39 +620,40 @@ impl ClassGroup {
         // `by0` (the *original*, pre-reduction By) is needed below as the modulus
         // for the cofactor relations; the partial reduction overwrites `byi`.
         let by_orig = by0.clone();
-        let mut bxi = bx0.0;
-        let mut byi = by0.0;
+        let mut bxi = bx0;
+        let mut byi = by0;
         let (yi, xi, z_odd) = self.partial_reduce(&mut bxi, &mut byi);
         // Degenerate (the pair shared a common factor); caller falls back.
         if bxi.cmp0() == Ordering::Equal {
             return None;
         }
-        let bx = Mpz(bxi);
-        let mut byr = Mpz(byi); // *reduced* By (R_{i-1}); used in the final assembly
-        let x = Mpz(xi);
-        let mut y = Mpz(yi);
+        let bx = bxi;
+        let mut byr = byi; // *reduced* By (R_{i-1}); used in the final assembly
+        let x = xi;
+        let mut y = yi;
         if z_odd {
-            byr = byr.neg();
-            y = y.neg();
+            byr = -byr;
+            y = -y;
         }
         if x.is_zero() {
             return None; // ax = g·x would be 0
         }
-        let ax = g * &x;
-        let ay = g * &y;
+        let ax = (g * &x).complete();
+        let ay = (g * &y).complete();
         // Recover the remaining coefficients. The cofactor identity guarantees
         // `bx ≡ x·bx0 (mod by0)`, so `cx`, `dx` divide *exactly* by the **original**
         // `by0` (not the reduced `byr`); `cy2` then divides by the reduced `bx`.
         // Checked divisions: on the rare degenerate state a relation is non-exact
         // ⇒ bail and let the caller fall back to plain composition.
-        let cx = (&(&bx * &cy) - &(m * &x)).divexact_checked(&by_orig)?;
-        let dx = (&(&bx * &dy) - &(w2 * &x)).divexact_checked(&by_orig)?;
-        let cy2 = (&(&byr * &cx) + m).divexact_checked(&bx)?;
-        let dy2 = (&(&dx * &ay) + ss).divexact_checked(&ax)?; // d_y·a_x = d_x·a_y + ss
-                                                              // Compound (vdP): the near-reduced product form (a₃, b₃, c₃).
-        let u3 = &(&byr * &cy2) - &(&ay * &dy2);
-        let w3 = &(&bx * &cx) - &(&ax * &dx);
-        let v3 = &(&(&ax * &dy2) + &(&ay * &dx)) - &(&(&bx * &cy2) + &(&byr * &cx));
+        let cx = div_exact_checked(&((&bx * &cy).complete() - (m * &x).complete()), &by_orig)?;
+        let dx = div_exact_checked(&((&bx * &dy).complete() - (w2 * &x).complete()), &by_orig)?;
+        let cy2 = div_exact_checked(&((&byr * &cx).complete() + m), &bx)?;
+        let dy2 = div_exact_checked(&((&dx * &ay).complete() + ss), &ax)?; // d_y·a_x = d_x·a_y + ss
+                                                                           // Compound (vdP): the near-reduced product form (a₃, b₃, c₃).
+        let u3 = (&byr * &cy2).complete() - (&ay * &dy2).complete();
+        let w3 = (&bx * &cx).complete() - (&ax * &dx).complete();
+        let v3 = ((&ax * &dy2).complete() + (&ay * &dx).complete())
+            - ((&bx * &cy2).complete() + (&byr * &cx).complete());
         if u3.is_zero() {
             return None;
         }
@@ -658,17 +668,17 @@ impl ClassGroup {
     /// squarings are NUDUPL ([`square`](Self::square)) and whose multiplications
     /// are NUCOMP ([`compose`](Self::compose)). Handles `n = 0` and `n < 0`.
     /// [`exp`](Self::exp) is the same routine.
-    pub fn nupow(&self, f: &QFI, n: &Mpz) -> QFI {
+    pub fn nupow(&self, f: &QFI, n: &Integer) -> QFI {
         self.exp(f, n)
     }
 
     /// `f^n` via width-5 sliding-window exponentiation (handles `n = 0`, `n < 0`).
-    pub fn exp(&self, f: &QFI, n: &Mpz) -> QFI {
+    pub fn exp(&self, f: &QFI, n: &Integer) -> QFI {
         if n.is_zero() {
             return self.identity();
         }
-        let (base, e) = if n.sgn() < 0 {
-            (self.inverse(f), n.neg())
+        let (base, e) = if n.cmp0().is_lt() {
+            (self.inverse(f), Integer::from(-n))
         } else {
             (f.clone(), n.clone())
         };
@@ -682,8 +692,8 @@ impl ClassGroup {
     /// density versus an unsigned sliding window (BICYCL, eprint 2022/1466 §5.2,
     /// the Decrypt `c1^{sk}` case). The window width adapts to `e`'s size so
     /// short exponents don't pay for a large odd-power table.
-    fn exp_window(&self, base: &QFI, e: &Mpz) -> QFI {
-        let w = naf_width(e.nbits());
+    fn exp_window(&self, base: &QFI, e: &Integer) -> QFI {
+        let w = naf_width(e.significant_bits());
         // Positive odd-power table: odds[i] = base^(2i+1), i = 0 .. 2^(w-2)-1.
         let table_len = 1usize << (w - 2);
         let base_sq = self.square(base);
@@ -743,14 +753,14 @@ impl ClassGroup {
     /// `e` must fit in [`FixedBaseComb::max_bits`]; higher bits are ignored (the                                                       
     /// comb is sized for the bounded secret-key / randomness exponents). For a
     /// possibly-larger exponent use [`exp`](Self::exp).
-    pub fn exp_comb(&self, comb: &FixedBaseComb, e: &Mpz) -> QFI {
+    pub fn exp_comb(&self, comb: &FixedBaseComb, e: &Integer) -> QFI {
         debug_assert!(
-            e.nbits() <= comb.max_bits(),
+            e.significant_bits() as usize <= comb.max_bits(),
             "exp_comb: exponent has {} bits but the comb covers only {}; use exp() for unbounded exponents", 
-            e.nbits(),
+            e.significant_bits(),
             comb.max_bits()
         );
-        if e.sgn() <= 0 {
+        if e.cmp0().is_le() {
             return self.identity();
         }
         let mut result = self.identity();
@@ -779,16 +789,16 @@ impl ClassGroup {
     /// Handles negative exponents (by inverting the base) and skips zero ones.
     /// For a single term prefer [`exp`](Self::exp); this shines for the
     /// `∏ gᵢ^{xᵢ}` products in VSS / threshold-decryption aggregation.
-    pub fn multiexp(&self, bases: &[impl Borrow<QFI>], exps: &[Mpz]) -> QFI {
+    pub fn multiexp(&self, bases: &[impl Borrow<QFI>], exps: &[Integer]) -> QFI {
         assert_eq!(
             bases.len(),
             exps.len(),
             "multiexp: bases and exps must have equal length"
         );
-        let mut maxbits = 0usize;
+        let mut maxbits = 0u32;
         for e in exps.iter() {
             if !e.is_zero() {
-                maxbits = maxbits.max(e.nbits());
+                maxbits = maxbits.max(e.significant_bits());
             }
         }
         if maxbits == 0 {
@@ -807,8 +817,8 @@ impl ClassGroup {
             if e.is_zero() {
                 continue;
             }
-            let (base, exp) = if e.sgn() < 0 {
-                (self.inverse(b), e.neg())
+            let (base, exp) = if e.cmp0().is_lt() {
+                (self.inverse(b), Integer::from(-e))
             } else {
                 ((*b).clone(), e.clone())
             };
@@ -846,13 +856,13 @@ impl ClassGroup {
 /// Width-`w` non-adjacent form (NAF) of a non-negative `e`, returned LSB-first.
 /// Each digit is `0` or odd in `(-2^{w-1}, 2^{w-1})`, with at most one nonzero
 /// in any `w` consecutive positions (nonzero density `~1/(w+1)`).
-fn wnaf(e: &Mpz, w: u32) -> Vec<i32> {
-    debug_assert!(w >= 2 && e.sgn() >= 0);
+fn wnaf(e: &Integer, w: u32) -> Vec<i32> {
+    debug_assert!(w >= 2 && e.cmp0().is_ge());
     let two_w = 1i64 << w;
     let half = 1i64 << (w - 1);
-    let mut digits = Vec::with_capacity(e.nbits() + 1);
+    let mut digits = Vec::with_capacity(e.significant_bits() as usize + 1);
     let mut k = e.clone();
-    while k.sgn() > 0 {
+    while k.cmp0().is_gt() {
         if k.is_odd() {
             // Low `w` bits of k, mapped to a signed odd digit in (-2^{w-1}, 2^{w-1}).
             let mut r = 0i64;
@@ -863,15 +873,15 @@ fn wnaf(e: &Mpz, w: u32) -> Vec<i32> {
             }
             let d = if r >= half { r - two_w } else { r };
             k = if d >= 0 {
-                &k - &Mpz::from(d as u64)
+                k - Integer::from(d as u64)
             } else {
-                &k + &Mpz::from((-d) as u64)
+                k + Integer::from((-d) as u64)
             };
             digits.push(d as i32);
         } else {
             digits.push(0);
         }
-        k = k.fdiv_2exp(1);
+        k >>= 1u32;
     }
     digits
 }
@@ -879,7 +889,7 @@ fn wnaf(e: &Mpz, w: u32) -> Vec<i32> {
 /// Adaptive NAF window width: short exponents must not pay for a large
 /// odd-power table, while large ones (secret keys, ZK responses) benefit from a
 /// wider window. Chosen to roughly minimise `2^{w-2} + nbits/(w+1)`.
-fn naf_width(nbits: usize) -> u32 {
+fn naf_width(nbits: u32) -> u32 {
     match nbits {
         0..=160 => 4,
         161..=448 => 5,
@@ -891,18 +901,19 @@ fn naf_width(nbits: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::class_group::error::parse_int_auto;
 
     // A small fundamental-ish discriminant for structural tests of reduction
     // (Δ = -163, class number 1).
     fn cg_163() -> ClassGroup {
-        ClassGroup::new(Mpz::from(-163i64))
+        ClassGroup::new(Integer::from(-163i64))
     }
 
     #[test]
     fn identity_is_reduced_principal() {
         let cg = cg_163();
         let id = cg.identity();
-        assert_eq!(id.discriminant(), Mpz::from(-163i64));
+        assert_eq!(id.discriminant(), Integer::from(-163i64));
         assert!(id.is_principal());
         // reducing the identity is a no-op
         assert_eq!(cg.reduced(&id), id);
@@ -910,27 +921,27 @@ mod tests {
 
     #[test]
     fn reduce_makes_valid_reduced_form() {
-        let cg = ClassGroup::new(Mpz::from(-2003i64)); // -2003 ≡ 1 mod 4
-                                                       // An unreduced form of the same discriminant.
-        let mut f = QFI::from_abc(Mpz::from(9u64), Mpz::from(7u64), Mpz::new());
+        let cg = ClassGroup::new(Integer::from(-2003i64)); // -2003 ≡ 1 mod 4
+                                                           // An unreduced form of the same discriminant.
+        let mut f = QFI::from_abc(Integer::from(9u64), Integer::from(7u64), Integer::new());
         // fix c so discriminant matches: c = (b²-Δ)/(4a)
-        f.c = (&(&f.b * &f.b) - cg.discriminant()).divexact(&f.a.mul_2exp(2));
+        f.c = ((&f.b * &f.b).complete() - cg.discriminant()).div_exact(&(&f.a << 2u32).complete());
         let d_before = f.discriminant();
         cg.reduce(&mut f);
         // discriminant preserved
         assert_eq!(f.discriminant(), d_before);
         // reduced predicate: |b| <= a <= c
-        assert!(f.b.abs() <= f.a);
+        assert!(f.b.abs_ref().complete() <= f.a);
         assert!(f.a <= f.c);
     }
 
     #[test]
     fn prime_form_has_right_discriminant() {
-        let cg = ClassGroup::new(Mpz::from(-23i64)); // class number 3
-                                                     // 2 splits in Q(sqrt(-23)) since -23 ≡ 1 mod 8
-        let f2 = cg.prime_form(&Mpz::from(2u64));
-        assert_eq!(f2.discriminant(), Mpz::from(-23i64));
-        assert_eq!(*f2.a(), Mpz::from(2u64));
+        let cg = ClassGroup::new(Integer::from(-23i64)); // class number 3
+                                                         // 2 splits in Q(sqrt(-23)) since -23 ≡ 1 mod 8
+        let f2 = cg.prime_form(&Integer::from(2u64));
+        assert_eq!(f2.discriminant(), Integer::from(-23i64));
+        assert_eq!(*f2.a(), Integer::from(2u64));
     }
 
     // --- group-law tests --------------------------------------------------
@@ -938,10 +949,10 @@ mod tests {
     fn cg_large() -> ClassGroup {
         // A 200-ish-bit negative discriminant ≡ 1 mod 4 (not necessarily
         // fundamental — group laws hold regardless).
-        let d = Mpz::from_str_auto("-0xb503b3a4f1e2d6c8a7f9e1d3c5b7a90123456789abcdef13").unwrap();
+        let d = parse_int_auto("-0xb503b3a4f1e2d6c8a7f9e1d3c5b7a90123456789abcdef13").unwrap();
         // make it ≡ 1 mod 4
-        let r = d.modulo(&Mpz::from(4u64));
-        let d = &d - &r + &Mpz::from(1u64); // now ≡ 1 mod 4 (still negative)
+        let r = d.modulo_ref(&Integer::from(4u64)).complete();
+        let d = (&d - &r).complete() + Integer::from(1u64); // now ≡ 1 mod 4 (still negative)
         ClassGroup::new(d)
     }
 
@@ -984,10 +995,10 @@ mod tests {
         let bases: Vec<&QFI> = owned.iter().collect();
         // Mix positive, zero, multi-word, and negative exponents.
         let exps = [
-            Mpz::from(12345u64),
-            Mpz::from(0u64),
-            Mpz::from_str_auto("0x9abcdef0123456789abcdef0").unwrap(),
-            Mpz::from(7u64).neg(),
+            Integer::from(12345u64),
+            Integer::from(0u64),
+            parse_int_auto("0x9abcdef0123456789abcdef0").unwrap(),
+            -Integer::from(7u64),
         ];
         let got = cg.multiexp(&bases, &exps);
         let mut naive = cg.identity();
@@ -1013,9 +1024,9 @@ mod tests {
                 owned.push(cur.clone());
             }
             let bases: Vec<&QFI> = owned.iter().collect();
-            let exps: Vec<Mpz> = (0..n)
+            let exps: Vec<Integer> = (0..n)
                 .map(|i| {
-                    Mpz::from((i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)).mul_2exp(192)
+                    Integer::from((i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) << 192u32
                 })
                 .collect();
 
@@ -1045,14 +1056,14 @@ mod tests {
     fn law_of_exponents() {
         let cg = cg_large();
         let f = cg.prime_form(&cg.smallest_split_prime());
-        let a = Mpz::from(37u64);
-        let b = Mpz::from(91u64);
+        let a = Integer::from(37u64);
+        let b = Integer::from(91u64);
         let lhs = cg.compose(&cg.exp(&f, &a), &cg.exp(&f, &b));
-        let rhs = cg.exp(&f, &(&a + &b));
+        let rhs = cg.exp(&f, &(&a + &b).complete());
         assert_eq!(lhs, rhs);
         // negative exponents
-        assert_eq!(cg.exp(&f, &Mpz::from(-1i64)), cg.inverse(&f));
-        assert_eq!(cg.exp(&f, &Mpz::new()), cg.identity());
+        assert_eq!(cg.exp(&f, &Integer::from(-1i64)), cg.inverse(&f));
+        assert_eq!(cg.exp(&f, &Integer::new()), cg.identity());
     }
 
     #[test]
@@ -1061,15 +1072,15 @@ mod tests {
         let f = cg.prime_form(&cg.smallest_split_prime());
         for n in [-37i64, -7, -1, 0, 1, 5, 64, 1000] {
             assert_eq!(
-                cg.nupow(&f, &Mpz::from(n)),
-                cg.exp(&f, &Mpz::from(n)),
+                cg.nupow(&f, &Integer::from(n)),
+                cg.exp(&f, &Integer::from(n)),
                 "nupow≠exp at {n}"
             );
         }
         // matches repeated composition
         let mut acc = cg.identity();
         for k in 0..12u64 {
-            assert_eq!(cg.nupow(&f, &Mpz::from(k)), acc, "nupow(f,{k}) wrong");
+            assert_eq!(cg.nupow(&f, &Integer::from(k)), acc, "nupow(f,{k}) wrong");
             acc = cg.compose(&acc, &f);
         }
     }
@@ -1100,9 +1111,9 @@ mod tests {
     #[test]
     fn lift_and_to_maximal_order_roundtrip() {
         // Δ_K = -23 (fundamental, ≡1 mod 4), conductor M = 5, Δ = 25·Δ_K = -575.
-        let delta_k = Mpz::from(-23i64);
-        let m = Mpz::from(5u64);
-        let delta = &(&m * &m) * &delta_k;
+        let delta_k = Integer::from(-23i64);
+        let m = Integer::from(5u64);
+        let delta = (&m * &m).complete() * &delta_k;
         let clk = ClassGroup::new(delta_k.clone());
         let cl = ClassGroup::new(delta.clone());
         let base = clk.prime_form(&clk.smallest_split_prime());
@@ -1160,25 +1171,25 @@ mod tests {
     fn profile_square() {
         use std::time::Instant;
         // CL-sized: |Δ| ≈ 1796 bits, ≡ 1 (mod 4).
-        let d = Mpz::from(1u64).mul_2exp(1796).add_ui(3).neg();
+        let d = -((Integer::from(1u64) << 1796u32) + 3u32);
         let cg = ClassGroup::new(d);
         let base = cg.prime_form(&cg.smallest_split_prime());
-        let f = cg.exp(&base, &Mpz::from(0x9e3779b97f4a7c15u64)); // generic reduced form
+        let f = cg.exp(&base, &Integer::from(0x9e3779b97f4a7c15u64)); // generic reduced form
         let n = 4000;
 
         // unreduced §3a square for isolating reduce()
         let (a, b, c) = (&f.a, &f.b, &f.c);
-        let binv = b.invert(a).unwrap();
-        let mu = (c * &binv).modulo(a);
+        let binv = b.invert_ref(a).map(Integer::from).unwrap();
+        let mu = (c * &binv).complete().modulo(a);
         let unred = QFI::from_abc(
-            a * a,
-            b - &(&mu * a).mul_2exp(1),
-            &(&mu * &mu) - &(&(b * &mu) - c).divexact(a),
+            (a * a).complete(),
+            b - ((&mu * a).complete() << 1u32),
+            (&mu * &mu).complete() - ((b * &mu).complete() - c).div_exact(a),
         );
 
         let t = Instant::now();
         for _ in 0..n {
-            let _ = f.b.invert(&f.a).unwrap();
+            let _ = f.b.invert_ref(&f.a).map(Integer::from).unwrap();
         }
         let inv = t.elapsed().as_secs_f64() * 1e6 / n as f64;
 
@@ -1197,8 +1208,8 @@ mod tests {
 
         println!(
             "\n  |Δ|={} |a|={} bits | invert {inv:.2}µs | reduce {red:.2}µs | square {sq:.2}µs",
-            cg.discriminant().abs().nbits(),
-            f.a().nbits()
+            cg.discriminant().clone().abs().significant_bits(),
+            f.a().significant_bits()
         );
     }
 
@@ -1209,11 +1220,11 @@ mod tests {
     #[ignore]
     fn profile_ops() {
         use std::time::Instant;
-        let d = Mpz::from(1u64).mul_2exp(1796).add_ui(3).neg();
+        let d = -((Integer::from(1u64) << 1796u32) + 3u32);
         let cg = ClassGroup::new(d);
         let base = cg.prime_form(&cg.smallest_split_prime());
-        let f = cg.exp(&base, &Mpz::from(0x9e3779b97f4a7c15u64));
-        let g = cg.exp(&base, &Mpz::from(0xbf58476d1ce4e5b9u64));
+        let f = cg.exp(&base, &Integer::from(0x9e3779b97f4a7c15u64));
+        let g = cg.exp(&base, &Integer::from(0xbf58476d1ce4e5b9u64));
         let n = 4000;
 
         let time = |op: &dyn Fn()| {
@@ -1249,8 +1260,8 @@ mod tests {
         });
         println!(
             "\n  |Δ|={}b |a|={}b\n  dirichlet {dir:.2}µs ({dir_rho}ρ) | compose(NUCOMP) {comp:.2}µs ({comp_rho}ρ) | square(NUDUPL) {sq:.2}µs ({sq_rho}ρ)",
-            cg.discriminant().abs().nbits(),
-            f.a().nbits()
+            cg.discriminant().clone().abs().significant_bits(),
+            f.a().significant_bits()
         );
     }
 
@@ -1262,10 +1273,10 @@ mod tests {
     #[ignore]
     fn profile_square_breakdown() {
         use std::time::Instant;
-        let d = Mpz::from(1u64).mul_2exp(1796).add_ui(3).neg();
+        let d = -((Integer::from(1u64) << 1796u32) + 3u32);
         let cg = ClassGroup::new(d);
         let base = cg.prime_form(&cg.smallest_split_prime());
-        let f = cg.exp(&base, &Mpz::from(0x9e3779b97f4a7c15u64));
+        let f = cg.exp(&base, &Integer::from(0x9e3779b97f4a7c15u64));
         let (a, b, c) = (&f.a, &f.b, &f.c);
         let n = 4000;
         // Min over K sub-runs: scheduling/thermal noise only adds time, so the
@@ -1290,33 +1301,33 @@ mod tests {
             cg.square(&f);
         });
         bench("  gcdext(b,a)", &|| {
-            let _ = b.gcdext(a);
+            let _ = gcdext(b, a);
         });
         bench("  invert(b mod a)", &|| {
-            let _ = b.invert(a);
+            let _ = b.invert_ref(a).map(Integer::from);
         });
         bench("  a*a (full §3a A)", &|| {
-            let _ = a * a;
+            let _ = (a * a).complete();
         });
         // setup: gcdext + by/dy + bx0
         let setup = bench("  setup (gcdext+divs+bx0)", &|| {
-            let (gg, u, _v) = b.gcdext(a);
-            let by = a.divexact(&gg);
-            let _dy = b.divexact(&gg);
-            let _bx0 = (&u * c).modulo(&by);
+            let (gg, u, _v) = gcdext(b, a);
+            let by = a.clone().div_exact(&gg);
+            let _dy = b.clone().div_exact(&gg);
+            let _bx0 = (&u * c).complete().modulo(&by);
         });
         // partial reduce
-        let (gg, u, _v) = b.gcdext(a);
-        let by0 = a.divexact(&gg);
-        let bx0 = (&u * c).modulo(&by0);
+        let (gg, u, _v) = gcdext(b, a);
+        let by0 = a.clone().div_exact(&gg);
+        let bx0 = (&u * c).complete().modulo(&by0);
         use std::sync::atomic::Ordering as AO;
         super::super::hgcd::PR_CALLS.store(0, AO::Relaxed);
         super::super::hgcd::PR_BATCHES.store(0, AO::Relaxed);
         super::super::hgcd::PR_STEPS0.store(0, AO::Relaxed);
         let partial = bench("  partial_reduce_lehmer", &|| {
-            let mut bxi = bx0.0.clone();
-            let mut byi = by0.0.clone();
-            let _ = super::super::hgcd::partial_reduce_lehmer(&mut bxi, &mut byi, &cg.l_thresh.0);
+            let mut bxi = bx0.clone();
+            let mut byi = by0.clone();
+            let _ = super::super::hgcd::partial_reduce_lehmer(&mut bxi, &mut byi, &cg.l_thresh);
         });
         let calls = super::super::hgcd::PR_CALLS.load(AO::Relaxed);
         println!(
@@ -1340,10 +1351,10 @@ mod tests {
     #[ignore]
     fn profile_square_chain() {
         use std::time::Instant;
-        let d = Mpz::from(1u64).mul_2exp(1796).add_ui(3).neg();
+        let d = -((Integer::from(1u64) << 1796u32) + 3u32);
         let cg = ClassGroup::new(d);
         let base = cg.prime_form(&cg.smallest_split_prime());
-        let mut g = cg.exp(&base, &Mpz::from(0x9e3779b97f4a7c15u64));
+        let mut g = cg.exp(&base, &Integer::from(0x9e3779b97f4a7c15u64));
         // warm + advance
         for _ in 0..500 {
             g = cg.square(&g);
@@ -1383,10 +1394,10 @@ mod tests {
     /// Lehmer inner loop. Any divergence from `compose_dirichlet` fails here.
     #[test]
     fn square_matches_dirichlet_over_chain() {
-        let d = Mpz::from(1u64).mul_2exp(1796).add_ui(3).neg();
+        let d = -((Integer::from(1u64) << 1796u32) + 3u32);
         let cg = ClassGroup::new(d);
         let base = cg.prime_form(&cg.smallest_split_prime());
-        let mut g = cg.exp(&base, &Mpz::from(0x9e3779b97f4a7c15u64));
+        let mut g = cg.exp(&base, &Integer::from(0x9e3779b97f4a7c15u64));
         let mut gcd_gt1 = 0;
         for i in 0..400 {
             assert_eq!(
@@ -1394,7 +1405,7 @@ mod tests {
                 cg.compose_dirichlet(&g, &g),
                 "square≠dirichlet at step {i}"
             );
-            if !g.a().gcd(g.b()).is_one() {
+            if g.a().gcd_ref(g.b()).complete() != 1 {
                 gcd_gt1 += 1;
             }
             g = cg.square(&g);
@@ -1409,11 +1420,11 @@ mod tests {
 
     #[test]
     fn nucomp_fast_path_fires_and_is_near_reduced() {
-        let d = Mpz::from(1u64).mul_2exp(1796).add_ui(3).neg();
+        let d = -((Integer::from(1u64) << 1796u32) + 3u32);
         let cg = ClassGroup::new(d);
         let base = cg.prime_form(&cg.smallest_split_prime());
-        let f = cg.exp(&base, &Mpz::from(0x9e3779b97f4a7c15u64));
-        let g = cg.exp(&base, &Mpz::from(0xbf58476d1ce4e5b9u64));
+        let f = cg.exp(&base, &Integer::from(0x9e3779b97f4a7c15u64));
+        let g = cg.exp(&base, &Integer::from(0xbf58476d1ce4e5b9u64));
 
         // compose fires the fast path and equals the Dirichlet reference.
         assert_eq!(cg.compose(&f, &g), cg.compose_dirichlet(&f, &g));
@@ -1452,7 +1463,7 @@ mod tests {
     fn nucomp_matches_plain_large() {
         // NUCOMP agrees with plain composition at a large (~6000-bit) discriminant.
         // (HGCD itself is exercised directly in the `hgcd` module's tests.)
-        let d = Mpz::from(1u64).mul_2exp(6000).add_ui(3).neg(); // ≡ 1 (mod 4), < 0
+        let d = -((Integer::from(1u64) << 6000u32) + 3u32); // ≡ 1 (mod 4), < 0
         let cg = ClassGroup::new(d);
         let f = cg.prime_form(&cg.smallest_split_prime());
         let mut powers = vec![f.clone()];
@@ -1472,14 +1483,14 @@ mod tests {
 
     #[test]
     fn small_group_z3_disc_minus_23() {
-        let cg = ClassGroup::new(Mpz::from(-23i64)); // Cl(-23) ≅ Z/3
+        let cg = ClassGroup::new(Integer::from(-23i64)); // Cl(-23) ≅ Z/3
         let id = cg.identity();
-        let f2 = cg.prime_form(&Mpz::from(2u64));
+        let f2 = cg.prime_form(&Integer::from(2u64));
         assert_ne!(f2, id);
         let f2sq = cg.square(&f2);
         assert_ne!(f2sq, id);
         // order 3: f2^2 == f2^{-1}, f2^3 == id
         assert_eq!(f2sq, cg.inverse(&f2));
-        assert_eq!(cg.exp(&f2, &Mpz::from(3u64)), id);
+        assert_eq!(cg.exp(&f2, &Integer::from(3u64)), id);
     }
 }

@@ -143,3 +143,24 @@ fn integer_from_to_bytes_roundtrip() {
     let recovered = Integer::from_digits(&bytes, Order::Msf);
     assert_eq!(val, recovered);
 }
+
+/// Semantics of `rug` that the class group and the Paillier proofs rely on.
+///
+/// These pin behaviour we depend on but do not own. `modulo` must be Euclidean
+/// (never negative) -- class-group reduction and every `mod q` in the ZK proofs
+/// assume it. A `rug` upgrade that made it truncating would otherwise corrupt
+/// results silently. `div_rem_floor` must round toward negative infinity, which
+/// is what the class-group form reduction needs.
+#[test]
+fn depended_on_rug_semantics() {
+    assert_eq!(Integer::from(-3).modulo(&Integer::from(5)), 2);
+    assert_eq!(Integer::from(3).modulo(&Integer::from(5)), 3);
+    assert_eq!(Integer::from(-5).modulo(&Integer::from(5)), 0);
+
+    let (q, r) = Integer::from(-7).div_rem_floor(Integer::from(3));
+    assert_eq!((q, r), (Integer::from(-3), Integer::from(2)));
+
+    // `is_divisible` is the direction the old `Mpz::divides` wrapped.
+    assert!(Integer::from(12).is_divisible(&Integer::from(4)));
+    assert!(!Integer::from(12).is_divisible(&Integer::from(5)));
+}
