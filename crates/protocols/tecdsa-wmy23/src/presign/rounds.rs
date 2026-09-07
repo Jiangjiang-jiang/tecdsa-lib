@@ -39,7 +39,7 @@ use tecdsa_class_group::{
     drg::{drg_comb, drg_gen, drg_gen_verify, DrgCombOutput, DrgGenOutput, PedersenVssShare},
     zk::r_enc_pc::REncPcProof,
 };
-use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 
 use crate::{
     key_share::Wmy23KeyShare,
@@ -352,40 +352,36 @@ pub fn drg_presign_round2(
         let bcast_i = &r1_bcasts[i];
 
         // The R_Enc-PC statement commits to PC = commitments[0]; recompute
-        // its bytes from the broadcast commitments instead of trusting a
+        // it from the broadcast commitments instead of trusting a
         // separately transmitted copy.
-        let k_pc_bytes = bcast_i
+        let k_pc = bcast_i
             .k_commitments
             .first()
-            .ok_or_else(|| format!("party {i}: empty k commitments"))?
-            .to_bytes()
-            .to_vec();
+            .ok_or_else(|| format!("party {i}: empty k commitments"))?;
         let k_ok = drg_gen_verify(
             setup,
             pk_i,
             &bcast_i.k_commitments,
             &bcast_i.k_ciphertext,
             &bcast_i.k_proof,
-            &k_pc_bytes,
+            k_pc,
             &p2p.k_share,
         )?;
         if !k_ok {
             return Err(format!("DRG.GenVf: k share from party {i} failed").into());
         }
 
-        let gamma_pc_bytes = bcast_i
+        let gamma_pc = bcast_i
             .gamma_commitments
             .first()
-            .ok_or_else(|| format!("party {i}: empty gamma commitments"))?
-            .to_bytes()
-            .to_vec();
+            .ok_or_else(|| format!("party {i}: empty gamma commitments"))?;
         let gamma_ok = drg_gen_verify(
             setup,
             pk_i,
             &bcast_i.gamma_commitments,
             &bcast_i.gamma_ciphertext,
             &bcast_i.gamma_proof,
-            &gamma_pc_bytes,
+            gamma_pc,
             &p2p.gamma_share,
         )?;
         if !gamma_ok {
@@ -471,10 +467,10 @@ pub fn drg_presign_round2(
     let r2_bcast = DrgPresignR2Bcast {
         k_comb_ct: k_comb.ciphertext.clone(),
         k_comb_proof: k_comb.proof.clone(),
-        k_comb_pc_bytes: k_comb.pc_bytes.clone(),
+        k_comb_pc_bytes: k_comb.pc.to_bytes_vec(),
         gamma_comb_ct: gamma_comb.ciphertext.clone(),
         gamma_comb_proof: gamma_comb.proof.clone(),
-        gamma_comb_pc_bytes: gamma_comb.pc_bytes.clone(),
+        gamma_comb_pc_bytes: gamma_comb.pc.to_bytes_vec(),
         g_gamma_point,
         gamma_reveal_proof,
     };
@@ -552,9 +548,8 @@ pub fn drg_presign_round3_bob(
 
         // Scale Alice j's bound DRG.Comb ciphertext c_{k_j} by Alice's public
         // Lagrange coefficient: c_{hat_k_j} = lambda_j (x) c_{k_j}.
-        let lambda_j_bytes = local_lambdas[j].to_bytes_vec();
-        let c_hat_k_j =
-            setup.scal_ciphertext_bytes(pk_j, &r2_bcasts[j].k_comb_ct, &lambda_j_bytes)?;
+        let lambda_j_int = local_lambdas[j].to_integer();
+        let c_hat_k_j = setup.scal_ciphertext(pk_j, &r2_bcasts[j].k_comb_ct, &lambda_j_int)?;
 
         // Gamma MtA: hat_k_j * hat_gamma_i  (Alice j holds k, Bob i holds gamma)
         let gamma_bob = mtawc::mtawc_bob(setup, pk_j, &c_hat_k_j, hat_gamma_i, rng)?;
@@ -694,10 +689,7 @@ pub fn drg_presign_round4_compute(
         if pc_kj.to_bytes().as_slice() != b.k_comb_pc_bytes.as_slice() {
             return Err(format!("CombVf: PC_k mismatch for party {j}").into());
         }
-        if !b
-            .k_comb_proof
-            .verify(setup, pk_j, &b.k_comb_ct, &b.k_comb_pc_bytes)?
-        {
+        if !b.k_comb_proof.verify(setup, pk_j, &b.k_comb_ct, &pc_kj)? {
             return Err(format!("CombVf: R_Enc-PC (k) failed for party {j}").into());
         }
         k_comb_pcs.push(pc_kj);
@@ -709,7 +701,7 @@ pub fn drg_presign_round4_compute(
         }
         if !b
             .gamma_comb_proof
-            .verify(setup, pk_j, &b.gamma_comb_ct, &b.gamma_comb_pc_bytes)?
+            .verify(setup, pk_j, &b.gamma_comb_ct, &pc_gj)?
         {
             return Err(format!("CombVf: R_Enc-PC (gamma) failed for party {j}").into());
         }

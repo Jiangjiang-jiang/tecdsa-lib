@@ -30,6 +30,8 @@
 //!
 //! Finally, `dlog_F(alpha) + dlog_F(beta) = x * y mod q`.
 
+use rug::Integer;
+
 use crate::cl::{
     Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi,
 };
@@ -37,17 +39,17 @@ use crate::cl::{
 /// State retained by Party A after encoding.
 #[derive(Debug)]
 pub struct NimStateA {
-    /// The encryption randomness `r` (big-endian bytes).
-    pub r_bytes: Vec<u8>,
-    /// Party A's private input `x` (big-endian bytes).
-    pub x_bytes: Vec<u8>,
+    /// The encryption randomness `r`.
+    pub r: Integer,
+    /// Party A's private input `x`.
+    pub x: Integer,
 }
 
 /// State retained by Party B after encoding.
 #[derive(Debug)]
 pub struct NimStateB {
-    /// The encryption randomness `s` (big-endian bytes).
-    pub s_bytes: Vec<u8>,
+    /// The encryption randomness `s`.
+    pub s: Integer,
 }
 
 /// Result of Party A's encode step.
@@ -95,31 +97,24 @@ impl<'a> Nim<'a> {
     ///
     /// # Arguments
     ///
-    /// - `x_bytes`: Party A's private input as big-endian bytes.
+    /// - `x`: Party A's private input.
     /// - `pk`: The CRS public key.
     ///
     /// # Errors
     ///
     /// Returns an error if BICYCL operations fail.
-    pub fn encode_a(
-        &mut self,
-        x_bytes: &[u8],
-        pk: &ClHsmqkPublicKey,
-    ) -> ClResult<NimEncodeAOutput> {
+    pub fn encode_a(&mut self, x: &Integer, pk: &ClHsmqkPublicKey) -> ClResult<NimEncodeAOutput> {
         // Sample randomness r.
-        let r_bytes = sample_randomness(self.setup)?;
+        let r = sample_randomness(self.setup)?;
 
         // Compute pe_A = h^r * pk^x
-        let h_r = self.setup.power_of_h_bytes(&r_bytes)?;
-        let pk_x = self.setup.pk_pow_bytes(pk, x_bytes)?;
+        let h_r = self.setup.power_of_h(&r)?;
+        let pk_x = self.setup.pk_pow(pk, x)?;
         let pe_a = self.setup.compose(&h_r, &pk_x)?;
 
         Ok(NimEncodeAOutput {
             pe_a,
-            state: NimStateA {
-                r_bytes,
-                x_bytes: x_bytes.to_vec(),
-            },
+            state: NimStateA { r, x: x.clone() },
         })
     }
 
@@ -130,26 +125,22 @@ impl<'a> Nim<'a> {
     ///
     /// # Arguments
     ///
-    /// - `y_bytes`: Party B's private input as big-endian bytes.
+    /// - `y`: Party B's private input.
     /// - `pk`: The CRS public key.
     ///
     /// # Errors
     ///
     /// Returns an error if BICYCL operations fail.
-    pub fn encode_b(
-        &mut self,
-        y_bytes: &[u8],
-        pk: &ClHsmqkPublicKey,
-    ) -> ClResult<NimEncodeBOutput> {
+    pub fn encode_b(&mut self, y: &Integer, pk: &ClHsmqkPublicKey) -> ClResult<NimEncodeBOutput> {
         // Sample randomness s.
-        let s_bytes = sample_randomness(self.setup)?;
+        let s = sample_randomness(self.setup)?;
 
         // Compute pe_B = CL.Enc(pk, y; s)
-        let pe_b = self.setup.encrypt_with_r_bytes(pk, y_bytes, &s_bytes)?;
+        let pe_b = self.setup.encrypt_with_r(pk, y, &s)?;
 
         Ok(NimEncodeBOutput {
             pe_b,
-            state: NimStateB { s_bytes },
+            state: NimStateB { s },
         })
     }
 
@@ -158,18 +149,18 @@ impl<'a> Nim<'a> {
     /// Computes `z_A_raw = c1^r * c2^x` from `pe_B`, then extracts
     /// the F-component: `alpha = z_A_raw * H(z_A_raw)^{-1}`.
     ///
-    /// Returns `dlog_in_F(alpha)` as big-endian bytes.
+    /// Returns `dlog_in_F(alpha)`.
     ///
     /// # Errors
     ///
     /// Returns an error if BICYCL operations fail.
-    pub fn decode_a(&self, pe_b: &ClHsmqkCiphertext, state: &NimStateA) -> ClResult<Vec<u8>> {
+    pub fn decode_a(&self, pe_b: &ClHsmqkCiphertext, state: &NimStateA) -> ClResult<Integer> {
         let (c1, c2) = self.setup.ct_components(pe_b)?;
 
         // z_A_raw = c1^r · c2^x, via one shared-squaring multi-exponentiation.
         let z_a_raw = self
             .setup
-            .multiexp_bytes(&[&c1, &c2], &[state.r_bytes.clone(), state.x_bytes.clone()])?;
+            .multiexp(&[&c1, &c2], &[state.r.clone(), state.x.clone()])?;
 
         extract_f_component(self.setup, &z_a_raw, false)
     }
@@ -179,13 +170,13 @@ impl<'a> Nim<'a> {
     /// Computes `z_B_raw = pe_A^s`, then extracts the F-component:
     /// `beta = H(z_B_raw) * z_B_raw^{-1}`.
     ///
-    /// Returns `dlog_in_F(beta)` as big-endian bytes.
+    /// Returns `dlog_in_F(beta)`.
     ///
     /// # Errors
     ///
     /// Returns an error if BICYCL operations fail.
-    pub fn decode_b(&self, pe_a: &Qfi, state: &NimStateB) -> ClResult<Vec<u8>> {
-        let z_b_raw = self.setup.exp_bytes(pe_a, &state.s_bytes)?;
+    pub fn decode_b(&self, pe_a: &Qfi, state: &NimStateB) -> ClResult<Integer> {
+        let z_b_raw = self.setup.exp(pe_a, &state.s)?;
 
         extract_f_component(self.setup, &z_b_raw, true)
     }
@@ -199,7 +190,7 @@ impl<'a> Nim<'a> {
 ///
 /// Uses `Qfi::dup` to produce an independent copy.
 #[allow(non_snake_case)]
-fn extract_f_component(setup: &ClSetup, z: &Qfi, negate: bool) -> ClResult<Vec<u8>> {
+fn extract_f_component(setup: &ClSetup, z: &Qfi, negate: bool) -> ClResult<Integer> {
     let mut h_label = setup.cl().to_cl_delta_k(z); // reduced π(z)
     setup.cl().from_cl_delta_k_to_cl_delta(&mut h_label); // reduced lift back
 
@@ -212,61 +203,54 @@ fn extract_f_component(setup: &ClSetup, z: &Qfi, negate: bool) -> ClResult<Vec<u
         setup.compose(z, &h_label)?
     };
 
-    #[allow(non_snake_case)]
-    setup.dlog_in_F_bytes(&f_component)
+    setup.dlog_in_F(&f_component)
 }
 
 /// Samples a random value suitable for encryption randomness.
-///
-/// Returns the randomness as big-endian bytes.
-fn sample_randomness(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
+fn sample_randomness(setup: &mut ClSetup) -> ClResult<Integer> {
     // Generate a key pair and extract the secret key value as our
     // randomness. The BICYCL keygen samples `sk` uniformly from
     // `[0, secret_key_bound)`.
     let (sk, _pk) = setup.keygen()?;
-    setup.sk_to_bytes(&sk)
+    Ok(setup.sk_to_integer(&sk))
 }
 
 #[cfg(test)]
 mod tests {
-    use rug::{integer::Order, Integer};
+    use rug::Integer;
 
     use super::*;
 
     #[test]
     #[allow(clippy::similar_names)]
     fn nim_smoke() {
-        let mut setup = ClSetup::new_secp256k1("42").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(42u64).expect("setup");
         // Generate a single CRS key pair.
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x = &7u32.to_be_bytes();
-        let y = &11u32.to_be_bytes();
+        let x = Integer::from(7u32);
+        let y = Integer::from(11u32);
 
         let mut nim = Nim::new(&mut setup);
 
         // Party A encodes
-        let encode_a = nim.encode_a(x, &pk).expect("encode_a");
+        let encode_a = nim.encode_a(&x, &pk).expect("encode_a");
 
         // Party B encodes
-        let encode_b = nim.encode_b(y, &pk).expect("encode_b");
+        let encode_b = nim.encode_b(&y, &pk).expect("encode_b");
 
         // Party A decodes using pe_B
-        let share_a_bytes = nim
+        let z_a = nim
             .decode_a(&encode_b.pe_b, &encode_a.state)
             .expect("decode_a");
 
         // Party B decodes using pe_A
-        let share_b_bytes = nim
+        let z_b = nim
             .decode_b(&encode_a.pe_a, &encode_b.state)
             .expect("decode_b");
 
-        let q = Integer::from_digits(&setup.q_bytes().unwrap(), Order::Msf);
-        let z_a = Integer::from_digits(&share_a_bytes, Order::Msf);
-        let z_b = Integer::from_digits(&share_b_bytes, Order::Msf);
-        let x_val = Integer::from(7u32);
-        let y_val = Integer::from(11u32);
-        let xy = Integer::from(&x_val * &y_val).modulo(&q);
+        let q = setup.cl().q();
+        let xy = Integer::from(&x * &y).modulo(q);
         let sum = (z_a + z_b) % q;
 
         assert_eq!(sum, xy, "NIM correctness: z_A + z_B != x*y mod q");

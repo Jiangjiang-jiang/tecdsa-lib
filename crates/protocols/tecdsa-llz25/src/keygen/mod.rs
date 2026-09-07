@@ -23,9 +23,10 @@ pub mod machine;
 pub mod msg;
 pub mod rounds;
 
-use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use elliptic_curve::CurveArithmetic;
 pub use machine::Llz25KeygenMachine;
 pub use msg::Llz25KeygenMsg;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
     cl::{ClCiphertext as ClHsmqkCiphertext, ClPublicKey as ClHsmqkPublicKey, ClSetup},
     nim::{Nim, NimEncodeBOutput},
@@ -89,12 +90,12 @@ pub fn keygen_with_dealer(
     let mut all_pe_x_components: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(n as usize);
 
     for (i, share) in shares.iter().enumerate() {
-        let x_i_bytes = share.value.to_bytes_vec();
+        let x_i_int = share.value.to_integer();
 
         // NIM.Encode_B(crs, x_i) -- CL encryption of x_i.
         let mut nim = Nim::new(setup);
         let NimEncodeBOutput { pe_b, state: st_b } = nim
-            .encode_b(&x_i_bytes, pk_crs)
+            .encode_b(&x_i_int, pk_crs)
             .map_err(|e| Llz25Error::ClassGroup(format!("NIM.Encode_B failed: {e}")))?;
 
         // Serialize pe_x ciphertext components
@@ -103,26 +104,19 @@ pub fn keygen_with_dealer(
             .map_err(|e| Llz25Error::ClassGroup(format!("ct_components: {e}")))?;
         all_pe_x_components.push((c1.to_bytes(), c2.to_bytes()));
 
-        // Compute X_i = x_i * G (compressed point for ZK proof).
-        let big_x_i_bytes = public_shares[i].to_bytes().to_vec();
+        // Compute X_i = x_i * G (point for ZK proof).
+        let big_x_i_point = public_shares[i];
 
         // ZK proof: NIZKAoK_{CL-DL} that pe_b encrypts dlog of X_i.
-        let proof = RClDlEcProof::prove(
-            setup,
-            pk_crs,
-            &pe_b,
-            &big_x_i_bytes,
-            &x_i_bytes,
-            &st_b.s_bytes,
-        )
-        .map_err(|e| Llz25Error::ClassGroup(format!("R_CL_DL_EC prove failed: {e}")))?;
+        let proof = RClDlEcProof::prove(setup, pk_crs, &pe_b, &big_x_i_point, &x_i_int, &st_b.s)
+            .map_err(|e| Llz25Error::ClassGroup(format!("R_CL_DL_EC prove failed: {e}")))?;
 
         key_shares.push(Llz25KeyShare {
             party_index: share.index,
             secret_share: share.value,
             public_key,
             public_shares: public_shares.clone(),
-            st_x_bytes: st_b.s_bytes,
+            st_x_bytes: st_b.s.to_bytes_msf(),
             pe_x_components: (Vec::new(), Vec::new()),
             all_pe_x_components: Vec::new(),
             cl_setup_seed: cl_setup_seed.to_string(),
@@ -146,10 +140,10 @@ pub fn keygen_with_dealer(
 
     // 5. Verify all proofs (simulate broadcast + verification).
     for (i, aux) in aux_infos.iter().enumerate() {
-        let big_x_i_bytes = public_shares[i].to_bytes().to_vec();
+        let big_x_i_point = public_shares[i];
         let valid = aux
             .proof
-            .verify(setup, pk_crs, &aux.pe_x, &big_x_i_bytes)
+            .verify(setup, pk_crs, &aux.pe_x, &big_x_i_point)
             .map_err(|e| Llz25Error::ClassGroup(format!("R_CL_DL_EC verify failed: {e}")))?;
         if !valid {
             return Err(Llz25Error::InvalidProof(format!(

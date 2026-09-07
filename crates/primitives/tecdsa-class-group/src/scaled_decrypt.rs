@@ -11,6 +11,8 @@
 //!
 //! The combined `F = sum F_i = f^{a*b}` and `c = DLog_F(F)` gives `a*b mod q`.
 
+use rug::Integer;
+
 use crate::{
     cl::{ClCiphertext, ClPublicKey, ClResult, ClSetup, Qfi},
     zk::r_aff_com::RAffComProof,
@@ -18,12 +20,12 @@ use crate::{
 
 /// Per-party secret inputs for scaled decryption.
 pub struct ScaledDecryptPartyInput {
-    /// CL encryption randomness alpha_i (big-endian bytes).
-    pub alpha_i: Vec<u8>,
-    /// CL commitment randomness beta_i (big-endian bytes).
-    pub beta_i: Vec<u8>,
-    /// Commitment value b_i (big-endian bytes, mod q).
-    pub b_i: Vec<u8>,
+    /// CL encryption randomness alpha_i.
+    pub alpha_i: Integer,
+    /// CL commitment randomness beta_i.
+    pub beta_i: Integer,
+    /// Commitment value b_i (mod q).
+    pub b_i: Integer,
 }
 
 /// Aggregated public ciphertext and commitment.
@@ -54,12 +56,12 @@ pub fn compute_f_share(
 ) -> ClResult<Qfi> {
     // F_i = a2^{b_i} · a1^{beta_i} · b_agg^{-alpha_i}, via one shared-squaring
     // multi-exponentiation instead of three exps + two composes.
-    let f_i = setup.multiexp_signed_bytes(
+    let f_i = setup.multiexp(
         &[&public.a2, &public.a1, &public.b_agg],
         &[
-            (false, input.b_i.clone()),
-            (false, input.beta_i.clone()),
-            (true, input.alpha_i.clone()),
+            input.b_i.clone(),
+            input.beta_i.clone(),
+            -input.alpha_i.clone(),
         ],
     )?;
     Ok(f_i)
@@ -86,7 +88,7 @@ pub fn compute_f_share_with_proof(
         &ct_out,
         u_com_i,
         &input.b_i,
-        &[0u8],
+        &Integer::new(),
         &input.alpha_i,
         &input.beta_i,
     )?;
@@ -98,13 +100,13 @@ pub fn compute_f_share_with_proof(
 }
 
 /// Aggregate F_i shares and extract the product `a*b mod q`.
-pub fn aggregate_and_solve(setup: &ClSetup, f_shares: &[Qfi]) -> ClResult<Vec<u8>> {
+pub fn aggregate_and_solve(setup: &ClSetup, f_shares: &[Qfi]) -> ClResult<Integer> {
     let id = setup.identity()?;
     let mut f_agg = id;
     for fi in f_shares {
         f_agg = setup.compose(&f_agg, fi)?;
     }
-    setup.dlog_in_F_bytes(&f_agg)
+    setup.dlog_in_F(&f_agg)
 }
 
 /// Aggregate ciphertext components from all parties.
@@ -136,7 +138,7 @@ pub fn scaled_decrypt_local(
     setup: &ClSetup,
     inputs: &[ScaledDecryptPartyInput],
     public: &ScaledDecryptPublic,
-) -> ClResult<Vec<u8>> {
+) -> ClResult<Integer> {
     let f_shares: Vec<Qfi> = inputs
         .iter()
         .map(|input| compute_f_share(setup, input, public))

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Types for the Trout presigning protocol.
 
+use rug::Integer;
 use tecdsa_class_group::zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof};
 use tecdsa_evrf::{EvrfOutput, EvrfProof};
 use zeroize::Zeroize;
@@ -13,24 +14,25 @@ pub struct TroutRound1State {
     pub k_i: k256::Scalar,
     /// Random blinding factor u_i.
     pub u_i: k256::Scalar,
-    /// CL encryption randomness for K_tilde_i (decimal).
-    pub alpha_i: Vec<u8>,
-    /// CL commitment randomness for U_i (decimal).
-    pub beta_i: Vec<u8>,
+    /// CL encryption randomness for K_tilde_i.
+    pub alpha_i: Integer,
+    /// CL commitment randomness for U_i.
+    pub beta_i: Integer,
     /// Lagrange coefficient l_i for this party.
     pub l_i: k256::Scalar,
-    /// l_i * delta_i (scaled encryption randomness, decimal).
-    pub l_i_delta_i: Vec<u8>,
+    /// l_i * delta_i (scaled encryption randomness).
+    pub l_i_delta_i: Integer,
 }
 
 impl Zeroize for TroutRound1State {
     fn zeroize(&mut self) {
         self.k_i.zeroize();
         self.u_i.zeroize();
-        self.alpha_i.zeroize();
-        self.beta_i.zeroize();
+        // `rug::Integer` doesn't implement `Zeroize`; best-effort clear.
+        self.alpha_i = Integer::new();
+        self.beta_i = Integer::new();
         self.l_i.zeroize();
-        self.l_i_delta_i.zeroize();
+        self.l_i_delta_i = Integer::new();
     }
 }
 
@@ -78,14 +80,14 @@ pub struct TroutPresignOutput {
     pub k_i: k256::Scalar,
     /// This party's blinding factor u_i.
     pub u_i: k256::Scalar,
-    /// This party's CL encryption randomness alpha_i (decimal).
-    pub alpha_i: Vec<u8>,
-    /// This party's CL commitment randomness beta_i (decimal).
-    pub beta_i: Vec<u8>,
+    /// This party's CL encryption randomness alpha_i.
+    pub alpha_i: Integer,
+    /// This party's CL commitment randomness beta_i.
+    pub beta_i: Integer,
     /// Lagrange coefficient l_i.
     pub l_i: k256::Scalar,
-    /// l_i * delta_i (scaled encryption randomness, decimal).
-    pub l_i_delta_i: Vec<u8>,
+    /// l_i * delta_i (scaled encryption randomness).
+    pub l_i_delta_i: Integer,
     /// All parties' Round 1 broadcasts (needed for scaled decryption).
     pub all_broadcasts: Vec<TroutRound1Broadcast>,
 }
@@ -94,10 +96,11 @@ impl Zeroize for TroutPresignOutput {
     fn zeroize(&mut self) {
         self.k_i.zeroize();
         self.u_i.zeroize();
-        self.alpha_i.zeroize();
-        self.beta_i.zeroize();
+        // `rug::Integer` doesn't implement `Zeroize`; best-effort clear.
+        self.alpha_i = Integer::new();
+        self.beta_i = Integer::new();
         self.l_i.zeroize();
-        self.l_i_delta_i.zeroize();
+        self.l_i_delta_i = Integer::new();
     }
 }
 

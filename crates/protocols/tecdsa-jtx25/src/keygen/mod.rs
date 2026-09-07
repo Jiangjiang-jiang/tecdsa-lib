@@ -44,9 +44,10 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
-use rug::{integer::Order, Integer};
+use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
-    cl::{ClPublicKey, ClSecretKey, ClSetup, Qfi},
+    cl::{parse_int_auto, ClPublicKey, ClSecretKey, ClSetup, Qfi},
     dkg_cl::{self, DkgClGenOutput, DkgClGenPerRecipient, DkgClRevealOutput},
     zk::{r_dec_dl::RDecDlProof, r_key::RKeyProof, r_sh::RShProof},
 };
@@ -79,7 +80,7 @@ struct Round1State {
     threshold: u16,
     cl_sk_raw: ClSecretKey,
     cl_pk_raw: ClPublicKey,
-    cl_sk_bytes: Vec<u8>,
+    cl_sk_int: Integer,
     cl_pk_qfi: Qfi,
     received: BTreeMap<PartyId, Round1Msg>,
     outgoing: Vec<Outgoing<Jtx25KeygenMsg>>,
@@ -97,7 +98,7 @@ struct Round2State {
     threshold: u16,
     _cl_sk_raw: ClSecretKey,
     cl_pk_raw: ClPublicKey,
-    cl_sk_bytes: Vec<u8>,
+    cl_sk_int: Integer,
     cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     my_pvss: tecdsa_class_group::pvss_share::PvssShareOutput,
     received: BTreeMap<PartyId, Round2Msg>,
@@ -245,14 +246,12 @@ impl Jtx25KeygenMachine {
         }
 
         // Per-party CL keypair is provided by the caller.
-        let cl_sk_bytes = setup
-            .sk_to_bytes(&cl_sk_raw)
-            .map_err(|e| TecdsaError::Other(format!("sk_to_bytes: {e}")))?;
+        let cl_sk_int = setup.sk_to_integer(&cl_sk_raw);
 
         let cl_pk_qfi = cl_pk_raw.elt().clone();
 
         // Generate R_key proof.
-        let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_bytes)
+        let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_int)
             .map_err(|e| TecdsaError::Other(format!("R_key prove: {e}")))?;
 
         // Serialize and queue Round 1 broadcast.
@@ -270,7 +269,7 @@ impl Jtx25KeygenMachine {
             threshold,
             cl_sk_raw,
             cl_pk_raw,
-            cl_sk_bytes,
+            cl_sk_int,
             cl_pk_qfi,
             received: BTreeMap::new(),
             outgoing,
@@ -296,10 +295,12 @@ impl Jtx25KeygenMachine {
         cl_setup_seed: &str,
         use_128bit_security: bool,
     ) -> tecdsa_core::Result<Self> {
+        let seed = parse_int_auto(cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if use_128bit_security {
-            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+            ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            ClSetup::new_secp256k1(cl_setup_seed)
+            ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 
@@ -568,7 +569,7 @@ impl StateMachine for Jtx25KeygenMachine {
                     })?;
 
                 let from_reveal_output = DkgClRevealOutput {
-                    combined_share: dkg_cl_reveal_wire.combined_share.clone(),
+                    combined_share: Integer::from_bytes_msf(&dkg_cl_reveal_wire.combined_share),
                     pk_share: dkg_cl_reveal_wire.lifted_share.clone(),
                     proof: tecdsa_class_group::zk::r_gdec_cl::RGdecClProof::from_parts(
                         dkg_cl_reveal_wire.proof_t1.clone(),
@@ -717,7 +718,7 @@ impl Jtx25KeygenMachine {
             n,
             state.threshold as usize,
             my_idx,
-            &state.cl_sk_bytes,
+            &state.cl_sk_int,
         )
         .map_err(|e| TecdsaError::Other(format!("DKG-CL Gen failed: {e}")))?;
 
@@ -780,7 +781,7 @@ impl Jtx25KeygenMachine {
             threshold: state.threshold,
             _cl_sk_raw: state.cl_sk_raw,
             cl_pk_raw: my_pk_clone,
-            cl_sk_bytes: state.cl_sk_bytes,
+            cl_sk_int: state.cl_sk_int,
             cl_pk_qfis,
             my_pvss: pvss_output,
             received: BTreeMap::new(),
@@ -805,7 +806,7 @@ impl Jtx25KeygenMachine {
         // ---- DKG-Sig: PVSS decrypt and combine ----
 
         // Start with own PVSS share.
-        let mut x_i = k256::Secp256k1::scalar_from_bytes(&state.my_pvss.secret_share_bytes);
+        let mut x_i = k256::Secp256k1::scalar_from_integer(&state.my_pvss.secret_share);
 
         // Decrypt shares from other parties.
         for pid in &state.all_parties {
@@ -817,14 +818,14 @@ impl Jtx25KeygenMachine {
                 .get(pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing R2 from {pid}")))?;
 
-            let share_bytes = pvss_share_decrypt(
+            let share_int = pvss_share_decrypt(
                 &self.setup,
-                &state.cl_sk_bytes,
+                &state.cl_sk_int,
                 &r2_msg.c1,
                 &r2_msg.c2s[my_idx],
             )
             .map_err(|e| TecdsaError::Other(format!("pvss_decrypt from {pid}: {e}")))?;
-            let share_j = k256::Secp256k1::scalar_from_bytes(&share_bytes);
+            let share_j = k256::Secp256k1::scalar_from_integer(&share_int);
 
             x_i += share_j;
         }
@@ -861,7 +862,7 @@ impl Jtx25KeygenMachine {
 
         let dkg_cl_reveal = dkg_cl::dkg_cl_reveal(
             &mut self.setup,
-            &state.cl_sk_bytes,
+            &state.cl_sk_int,
             &my_pk_for_reveal,
             &received_chunks,
             n,
@@ -878,7 +879,7 @@ impl Jtx25KeygenMachine {
 
         let pd = self
             .setup
-            .exp_bytes(c1_ref, &state.cl_sk_bytes)
+            .exp(c1_ref, &state.cl_sk_int)
             .map_err(|e| TecdsaError::Other(format!("exp for pd: {e}")))?;
 
         let r_dec_dl_proof = RDecDlProof::prove(
@@ -886,7 +887,7 @@ impl Jtx25KeygenMachine {
             &state.cl_pk_raw,
             &ct_ref,
             &pd,
-            &state.cl_sk_bytes,
+            &state.cl_sk_int,
         )
         .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove: {e}")))?;
 
@@ -934,7 +935,7 @@ impl Jtx25KeygenMachine {
             outgoing,
             cl_setup_seed: state.cl_setup_seed,
             use_128bit_security: state.use_128bit_security,
-            dkg_cl_combined_share: dkg_cl_reveal.combined_share,
+            dkg_cl_combined_share: dkg_cl_reveal.combined_share.to_bytes_msf(),
             my_dkg_cl_lifted_share: dkg_cl_reveal.pk_share,
             _my_dkg_cl_combined_ct: dkg_cl_reveal.combined_ct,
             _all_dkg_cl_chunk_cts: all_dkg_cl_chunk_cts,
@@ -1037,12 +1038,10 @@ fn finalize_keygen(state: Round3State, setup: &ClSetup) -> tecdsa_core::Result<J
 /// compliant DKG-CL protocol flow which uses `dkg_cl` module instead).
 pub fn shamir_share_delta(
     setup: &mut ClSetup,
-    sk_bytes: &[u8],
+    sk: &Integer,
     n: usize,
     t: usize,
-) -> Result<Vec<Vec<u8>>, Jtx25Error> {
-    let sk = Integer::from_digits(sk_bytes, Order::Msf);
-
+) -> Result<Vec<Integer>, Jtx25Error> {
     // delta = n!
     let mut delta = Integer::from(1);
     for i in 2..=n {
@@ -1054,9 +1053,7 @@ pub fn shamir_share_delta(
     let mut coeffs: Vec<Integer> = vec![delta_sk];
     for _ in 1..t {
         let (rsk, _) = setup.keygen()?;
-        let r = setup.sk_to_bytes(&rsk)?;
-        let r_val = Integer::from_digits(&r, Order::Msf);
-        coeffs.push(r_val);
+        coeffs.push(setup.sk_to_integer(&rsk));
     }
 
     // Evaluate polynomial at i = 1, 2, ..., n.
@@ -1069,8 +1066,7 @@ pub fn shamir_share_delta(
             val += Integer::from(coeff * &x_pow);
             x_pow *= &x;
         }
-        let val_bytes = val.to_digits::<u8>(Order::Msf);
-        shares.push(val_bytes);
+        shares.push(val);
     }
 
     Ok(shares)
@@ -1425,7 +1421,7 @@ fn serialize_round3(
     dkg_cl_proof_t2: &Qfi,
     dkg_cl_proof_z: &[u8],
     dkg_cl_proof_e: &[u8],
-    dkg_cl_combined_share: &[u8],
+    dkg_cl_combined_share: &Integer,
     dkg_cl_combined_ct_c1: &Qfi,
     dkg_cl_combined_ct_c2: &Qfi,
 ) -> Result<Vec<u8>, Jtx25Error> {
@@ -1443,7 +1439,7 @@ fn serialize_round3(
     write_qfi_bin(&mut buf, dkg_cl_proof_t2);
     write_field(&mut buf, dkg_cl_proof_z);
     write_field(&mut buf, dkg_cl_proof_e);
-    write_field(&mut buf, dkg_cl_combined_share);
+    write_field(&mut buf, &dkg_cl_combined_share.to_bytes_msf());
     write_qfi_bin(&mut buf, dkg_cl_combined_ct_c1);
     write_qfi_bin(&mut buf, dkg_cl_combined_ct_c2);
 

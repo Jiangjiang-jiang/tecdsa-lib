@@ -51,15 +51,13 @@ fn decode_point(bytes: &[u8]) -> ClResult<ProjectivePoint> {
         .ok_or_else(|| crate::cl::ClError::InvalidParam("invalid EC point encoding".into()))
 }
 
-/// Negates a byte value modulo `q`, returning `(q - val) mod q` as big-endian bytes.
-fn negate_mod_q_bytes(val: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
-    let val_big = Integer::from_digits(val, Order::Msf);
-    let q_big = Integer::from_digits(q, Order::Msf);
-    let val_mod = val_big % &q_big;
-    if val_mod == 0 {
-        Ok(vec![0])
+/// Negates an integer modulo `q`, returning `(q - val) mod q`.
+fn negate_mod_q(val: &Integer, q: &Integer) -> Integer {
+    let val_mod = Integer::from(val % q);
+    if val_mod.is_zero() {
+        val_mod
     } else {
-        Ok((q_big - val_mod).to_digits::<u8>(Order::Msf))
+        q - val_mod
     }
 }
 
@@ -74,29 +72,29 @@ impl RMAffDlEcProof {
         d2: &Qfi,
         r_point: &ProjectivePoint,
         b_point: &ProjectivePoint,
-        k_star_bytes: &[u8],
-        beta_bytes: &[u8],
+        k_star: &Integer,
+        beta: &Integer,
     ) -> ClResult<Self> {
-        let q_bytes = setup.q_bytes()?;
+        let q = setup.cl().q().clone();
 
         // 1. Sample random commitment values.
         let beta0 = sample_random_mod_q(setup)?;
         let k0_star = sample_random(setup)?;
 
         // 2. Compute CL commitments.
-        let d_prime_1 = setup.exp_bytes(c1, &k0_star)?;
+        let d_prime_1 = setup.exp(c1, &k0_star)?;
 
-        let c2_k0 = setup.exp_bytes(c2, &k0_star)?;
-        let neg_beta0 = negate_mod_q_bytes(&beta0, &q_bytes)?;
-        let f_neg_beta0 = setup.power_of_f_bytes(&neg_beta0)?;
+        let c2_k0 = setup.exp(c2, &k0_star)?;
+        let neg_beta0 = negate_mod_q(&beta0, &q);
+        let f_neg_beta0 = setup.power_of_f(&neg_beta0)?;
         let d_prime_2 = setup.compose(&c2_k0, &f_neg_beta0)?;
 
         // 3. Compute EC commitments.
-        let beta0_scalar = Secp256k1::scalar_from_bytes(&beta0);
+        let beta0_scalar = Secp256k1::scalar_from_integer(&beta0);
         let b0 = ProjectivePoint::GENERATOR * beta0_scalar;
         let b0_bytes = b0.to_bytes_vec();
 
-        let k0_scalar = Secp256k1::scalar_from_bytes(&k0_star);
+        let k0_scalar = Secp256k1::scalar_from_integer(&k0_star);
         let r0 = ProjectivePoint::GENERATOR * k0_scalar;
         let r0_bytes = r0.to_bytes_vec();
 
@@ -112,8 +110,8 @@ impl RMAffDlEcProof {
         )?;
 
         // 5. Compute responses.
-        let k_hat = response_unbounded(&k0_star, &e, k_star_bytes)?;
-        let beta_hat = response_mod_q(&beta0, &e, beta_bytes, &q_bytes)?;
+        let k_hat = response_unbounded(&k0_star, &e, k_star);
+        let beta_hat = response_mod_q(&beta0, &e, beta, &q);
 
         Ok(Self {
             d_prime_1,
@@ -156,22 +154,20 @@ impl RMAffDlEcProof {
             return Ok(false);
         }
 
+        let k_hat = Integer::from_digits(&self.k_hat, Order::Msf);
+        let beta_hat = Integer::from_digits(&self.beta_hat, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
         // Check 1: c1^{k_hat} == d'1 * d1^{ch} ⟺ c1^{k_hat} * d1^{-ch} == d'1.
-        let lhs1 = setup.multiexp_signed_bytes(
-            &[c1, d1],
-            &[(false, self.k_hat.clone()), (true, self.e.clone())],
-        )?;
+        let lhs1 = setup.multiexp(&[c1, d1], &[k_hat.clone(), -e.clone()])?;
         if lhs1 != self.d_prime_1 {
             return Ok(false);
         }
 
         // Check 2: c2^{k_hat} * f^{-beta_hat} == d'2 * d2^{ch}
         //        ⟺ c2^{k_hat} * d2^{-ch} == d'2 * f^{beta_hat}  (f^{} is free).
-        let lhs2 = setup.multiexp_signed_bytes(
-            &[c2, d2],
-            &[(false, self.k_hat.clone()), (true, self.e.clone())],
-        )?;
-        let f_beta_hat = setup.power_of_f_bytes(&self.beta_hat)?;
+        let lhs2 = setup.multiexp(&[c2, d2], &[k_hat, -e])?;
+        let f_beta_hat = setup.power_of_f(&beta_hat)?;
         let rhs2 = setup.compose(&self.d_prime_2, &f_beta_hat)?;
         if lhs2 != rhs2 {
             return Ok(false);
@@ -205,51 +201,41 @@ mod tests {
 
     #[test]
     fn r_m_aff_dl_ec_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("9001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(9001u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         // Encrypt a random value gamma.
-        let gamma_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let gamma = Integer::from(42u32);
         let r_gamma = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct_gamma = setup
-            .encrypt_with_r_bytes(&pk, &gamma_bytes, &r_gamma)
-            .expect("enc");
+        let ct_gamma = setup.encrypt_with_r(&pk, &gamma, &r_gamma).expect("enc");
         let (c1, c2) = setup.ct_components(&ct_gamma).expect("ct");
 
         // Witness values.
         let k_star = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let beta_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
-        let q_bytes = setup.q_bytes().expect("q");
+        let beta = Integer::from(17u32);
+        let q = setup.cl().q().clone();
 
         // Compute the affine output.
-        let d1 = setup.exp_bytes(&c1, &k_star).expect("exp c1");
-        let c2_k = setup.exp_bytes(&c2, &k_star).expect("exp c2");
-        let neg_beta = negate_mod_q_bytes(&beta_bytes, &q_bytes).expect("neg");
-        let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
+        let d1 = setup.exp(&c1, &k_star).expect("exp c1");
+        let c2_k = setup.exp(&c2, &k_star).expect("exp c2");
+        let neg_beta = negate_mod_q(&beta, &q);
+        let f_neg_beta = setup.power_of_f(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("compose");
 
         // EC points: R = k_star * G, B = beta * G.
-        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
+        let k_scalar = Secp256k1::scalar_from_integer(&k_star);
         let r_point = ProjectivePoint::GENERATOR * k_scalar;
         let beta_scalar = k256::Scalar::from(17u64);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
         let proof = RMAffDlEcProof::prove(
-            &mut setup,
-            &c1,
-            &c2,
-            &d1,
-            &d2,
-            &r_point,
-            &b_point,
-            &k_star,
-            &beta_bytes,
+            &mut setup, &c1, &c2, &d1, &d2, &r_point, &b_point, &k_star, &beta,
         )
         .expect("prove");
 
@@ -261,33 +247,31 @@ mod tests {
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_m_aff_dl_ec_rejects_wrong_k_star() {
-        let mut setup = ClSetup::new_secp256k1("9002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(9002u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let gamma_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let gamma = Integer::from(42u32);
         let r_gamma = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct_gamma = setup
-            .encrypt_with_r_bytes(&pk, &gamma_bytes, &r_gamma)
-            .expect("enc");
+        let ct_gamma = setup.encrypt_with_r(&pk, &gamma, &r_gamma).expect("enc");
         let (c1, c2) = setup.ct_components(&ct_gamma).expect("ct");
 
         let k_star = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let beta_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
-        let q_bytes = setup.q_bytes().expect("q");
+        let beta = Integer::from(17u32);
+        let q = setup.cl().q().clone();
 
-        let d1 = setup.exp_bytes(&c1, &k_star).expect("exp c1");
-        let c2_k = setup.exp_bytes(&c2, &k_star).expect("exp c2");
-        let neg_beta = negate_mod_q_bytes(&beta_bytes, &q_bytes).expect("neg");
-        let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
+        let d1 = setup.exp(&c1, &k_star).expect("exp c1");
+        let c2_k = setup.exp(&c2, &k_star).expect("exp c2");
+        let neg_beta = negate_mod_q(&beta, &q);
+        let f_neg_beta = setup.power_of_f(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("compose");
 
-        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
+        let k_scalar = Secp256k1::scalar_from_integer(&k_star);
         let r_point = ProjectivePoint::GENERATOR * k_scalar;
         let beta_scalar = k256::Scalar::from(17u64);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
@@ -295,7 +279,7 @@ mod tests {
         // Prove with WRONG k_star.
         let wrong_k_star = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
 
         let proof = RMAffDlEcProof::prove(
@@ -307,7 +291,7 @@ mod tests {
             &r_point,
             &b_point,
             &wrong_k_star,
-            &beta_bytes,
+            &beta,
         )
         .expect("prove");
 
@@ -319,39 +303,37 @@ mod tests {
     #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_m_aff_dl_ec_rejects_wrong_beta() {
-        let mut setup = ClSetup::new_secp256k1("9003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(9003u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let gamma_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let gamma = Integer::from(42u32);
         let r_gamma = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct_gamma = setup
-            .encrypt_with_r_bytes(&pk, &gamma_bytes, &r_gamma)
-            .expect("enc");
+        let ct_gamma = setup.encrypt_with_r(&pk, &gamma, &r_gamma).expect("enc");
         let (c1, c2) = setup.ct_components(&ct_gamma).expect("ct");
 
         let k_star = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let beta_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
-        let q_bytes = setup.q_bytes().expect("q");
+        let beta = Integer::from(17u32);
+        let q = setup.cl().q().clone();
 
-        let d1 = setup.exp_bytes(&c1, &k_star).expect("exp c1");
-        let c2_k = setup.exp_bytes(&c2, &k_star).expect("exp c2");
-        let neg_beta = negate_mod_q_bytes(&beta_bytes, &q_bytes).expect("neg");
-        let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
+        let d1 = setup.exp(&c1, &k_star).expect("exp c1");
+        let c2_k = setup.exp(&c2, &k_star).expect("exp c2");
+        let neg_beta = negate_mod_q(&beta, &q);
+        let f_neg_beta = setup.power_of_f(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("compose");
 
-        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
+        let k_scalar = Secp256k1::scalar_from_integer(&k_star);
         let r_point = ProjectivePoint::GENERATOR * k_scalar;
         let beta_scalar = k256::Scalar::from(17u64);
         let b_point = ProjectivePoint::GENERATOR * beta_scalar;
 
         // Prove with WRONG beta.
-        let wrong_beta_bytes = Integer::from(999u32).to_digits::<u8>(Order::Msf);
+        let wrong_beta = Integer::from(999u32);
         let proof = RMAffDlEcProof::prove(
             &mut setup,
             &c1,
@@ -361,7 +343,7 @@ mod tests {
             &r_point,
             &b_point,
             &k_star,
-            &wrong_beta_bytes,
+            &wrong_beta,
         )
         .expect("prove");
 

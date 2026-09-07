@@ -394,9 +394,9 @@ impl Llz25PresignMachine {
             PresignState {
                 k_i: k256::Scalar::ZERO,
                 gamma_i: k256::Scalar::ZERO,
-                st_k_bytes: Vec::new(),
-                st_gamma_r_bytes: Vec::new(),
-                st_gamma_x_bytes: Vec::new(),
+                st_k: rug::Integer::new(),
+                st_gamma_r: rug::Integer::new(),
+                st_gamma_x: rug::Integer::new(),
             },
         );
 

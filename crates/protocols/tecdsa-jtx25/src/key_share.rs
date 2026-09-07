@@ -36,10 +36,11 @@ impl Jtx25KeyShare {
     pub fn create_cl_setup(
         &self,
     ) -> Result<tecdsa_class_group::cl::ClSetup, tecdsa_class_group::cl::ClError> {
+        let seed = tecdsa_class_group::cl::parse_int_auto(&self.cl_setup_seed)?;
         if self.use_128bit_security {
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            tecdsa_class_group::cl::ClSetup::new_secp256k1(&self.cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1(&seed)
         }
     }
 }

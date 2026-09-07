@@ -19,11 +19,10 @@
 //! the CL-HSMqk notation) is the order-`q` generator, and `Delta = n!`.
 //!
 //! In our CL-HSMqk implementation:
-//! - `h` is the hidden-order generator accessed via `ClSetup::power_of_h_bytes`
-//! - `g_q` = `f` is the order-`q` generator accessed via `ClSetup::power_of_f_bytes`
+//! - `h` is the hidden-order generator accessed via `ClSetup::power_of_h`
+//! - `g_q` = `f` is the order-`q` generator accessed via `ClSetup::power_of_f`
 
-use rug::{Complete, Integer};
-use tecdsa_bigint::BigIntExt;
+use rug::Integer;
 
 use crate::cl::{ClResult, ClSetup, Qfi};
 
@@ -32,8 +31,8 @@ use crate::cl::{ClResult, ClSetup, Qfi};
 /// # Arguments
 ///
 /// - `setup`: the CL-HSMqk setup (provides `h`, `f = g_q`, and group operations).
-/// - `a_bytes`: the first exponent `a` as big-endian unsigned bytes.
-/// - `b_bytes`: the second exponent `b` as big-endian unsigned bytes.
+/// - `a`: the first exponent `a`.
+/// - `b`: the second exponent `b`.
 /// - `delta`: the parameter `Delta = n!`.
 ///
 /// # Returns
@@ -41,24 +40,18 @@ use crate::cl::{ClResult, ClSetup, Qfi};
 /// The QFI element `PC = h^a * f^{b * Delta}`.
 pub fn pedersen_commit_cl(
     setup: &ClSetup,
-    a_bytes: &[u8],
-    b_bytes: &[u8],
+    a: &Integer,
+    b: &Integer,
     delta: &Integer,
 ) -> ClResult<Qfi> {
     // Compute h^a
-    let h_a = setup.power_of_h_bytes(a_bytes)?;
+    let h_a = setup.power_of_h(a)?;
 
     // Compute b * Delta
-    let b = Integer::from_bytes_msf(b_bytes);
-    let b_delta = (&b * delta).complete();
+    let b_delta = Integer::from(b * delta);
 
     // Compute g_q^{b * Delta} = f^{b * Delta}
-    let b_delta_bytes = if b_delta.is_zero() {
-        vec![0u8]
-    } else {
-        b_delta.to_bytes_msf()
-    };
-    let gq_bd = setup.power_of_f_bytes(&b_delta_bytes)?;
+    let gq_bd = setup.power_of_f(&b_delta)?;
 
     // PC = h^a * g_q^{b * Delta}
     setup.compose(&h_a, &gq_bd)
@@ -73,8 +66,8 @@ pub fn pedersen_commit_cl(
 ///
 /// - `setup`: the CL-HSMqk setup.
 /// - `pc`: the commitment to verify.
-/// - `a_bytes`: the claimed first exponent `a` as big-endian unsigned bytes.
-/// - `b_bytes`: the claimed second exponent `b` as big-endian unsigned bytes.
+/// - `a`: the claimed first exponent `a`.
+/// - `b`: the claimed second exponent `b`.
 /// - `delta`: the parameter `Delta = n!`.
 ///
 /// # Returns
@@ -83,11 +76,11 @@ pub fn pedersen_commit_cl(
 pub fn pedersen_verify_cl(
     setup: &ClSetup,
     pc: &Qfi,
-    a_bytes: &[u8],
-    b_bytes: &[u8],
+    a: &Integer,
+    b: &Integer,
     delta: &Integer,
 ) -> ClResult<bool> {
-    let recomputed = pedersen_commit_cl(setup, a_bytes, b_bytes, delta)?;
+    let recomputed = pedersen_commit_cl(setup, a, b, delta)?;
     Ok(*pc == recomputed)
 }
 
@@ -96,20 +89,20 @@ mod tests {
     use super::*;
 
     fn test_setup() -> ClSetup {
-        ClSetup::new_secp256k1("42").unwrap()
+        ClSetup::new_secp256k1(42u64).unwrap()
     }
 
     #[test]
     fn commit_and_verify() {
         let setup = test_setup();
 
-        let a_bytes = 12345u64.to_be_bytes();
-        let b_bytes = 67890u64.to_be_bytes();
+        let a = Integer::from(12345u64);
+        let b = Integer::from(67890u64);
         // delta = 6! = 720
         let delta = Integer::from(720u64);
 
-        let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
-        let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &delta).unwrap();
+        let pc = pedersen_commit_cl(&setup, &a, &b, &delta).unwrap();
+        let valid = pedersen_verify_cl(&setup, &pc, &a, &b, &delta).unwrap();
         assert!(valid, "commitment should verify with correct opening");
     }
 
@@ -117,25 +110,25 @@ mod tests {
     fn verify_fails_with_wrong_opening() {
         let setup = test_setup();
 
-        let a_bytes = 12345u64.to_be_bytes();
-        let b_bytes = 67890u64.to_be_bytes();
+        let a = Integer::from(12345u64);
+        let b = Integer::from(67890u64);
         let delta = Integer::from(720u64);
 
-        let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
+        let pc = pedersen_commit_cl(&setup, &a, &b, &delta).unwrap();
 
         // Wrong a
-        let wrong_a = 99999u64.to_be_bytes();
-        let valid = pedersen_verify_cl(&setup, &pc, &wrong_a, &b_bytes, &delta).unwrap();
+        let wrong_a = Integer::from(99999u64);
+        let valid = pedersen_verify_cl(&setup, &pc, &wrong_a, &b, &delta).unwrap();
         assert!(!valid, "commitment should NOT verify with wrong a");
 
         // Wrong b
-        let wrong_b = 11111u64.to_be_bytes();
-        let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &wrong_b, &delta).unwrap();
+        let wrong_b = Integer::from(11111u64);
+        let valid = pedersen_verify_cl(&setup, &pc, &a, &wrong_b, &delta).unwrap();
         assert!(!valid, "commitment should NOT verify with wrong b");
 
         // Wrong delta
         let wrong_delta = Integer::from(100u64);
-        let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &wrong_delta).unwrap();
+        let valid = pedersen_verify_cl(&setup, &pc, &a, &b, &wrong_delta).unwrap();
         assert!(!valid, "commitment should NOT verify with wrong delta");
     }
 
@@ -143,12 +136,12 @@ mod tests {
     fn commit_with_zero_b() {
         let setup = test_setup();
 
-        let a_bytes = 42u64.to_be_bytes();
-        let b_bytes = 0u64.to_be_bytes();
+        let a = Integer::from(42u64);
+        let b = Integer::from(0u64);
         let delta = Integer::from(720u64);
 
-        let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
-        let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &delta).unwrap();
+        let pc = pedersen_commit_cl(&setup, &a, &b, &delta).unwrap();
+        let valid = pedersen_verify_cl(&setup, &pc, &a, &b, &delta).unwrap();
         assert!(valid, "commitment with zero b should verify");
     }
 
@@ -156,12 +149,12 @@ mod tests {
     fn commit_with_zero_delta() {
         let setup = test_setup();
 
-        let a_bytes = 42u64.to_be_bytes();
-        let b_bytes = 67890u64.to_be_bytes();
+        let a = Integer::from(42u64);
+        let b = Integer::from(67890u64);
         let delta = Integer::from(0);
 
-        let pc = pedersen_commit_cl(&setup, &a_bytes, &b_bytes, &delta).unwrap();
-        let valid = pedersen_verify_cl(&setup, &pc, &a_bytes, &b_bytes, &delta).unwrap();
+        let pc = pedersen_commit_cl(&setup, &a, &b, &delta).unwrap();
+        let valid = pedersen_verify_cl(&setup, &pc, &a, &b, &delta).unwrap();
         assert!(valid, "commitment with zero delta should verify");
     }
 }

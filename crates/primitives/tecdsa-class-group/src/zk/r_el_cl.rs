@@ -63,8 +63,8 @@ impl RElClProof {
         ck_1: &Qfi,
         cgk_0: &Qfi,
         cgk_1: &Qfi,
-        gamma_bytes: &[u8],
-        r_bytes: &[u8],
+        gamma: &Integer,
+        r: &Integer,
     ) -> ClResult<Self> {
         // 1. Sample random commitment values.
         let a1 = sample_random(setup)?;
@@ -72,19 +72,19 @@ impl RElClProof {
 
         // 2. Compute commitments.
         // EC: R_elg = a2 * G
-        let a2_scalar = Secp256k1::scalar_from_bytes(&a2);
+        let a2_scalar = Secp256k1::scalar_from_integer(&a2);
         let r_elg = ProjectivePoint::GENERATOR * a2_scalar;
         let r_elg_bytes = r_elg.to_bytes_vec();
 
         // EC: S_elg = a1 * D + a2 * elek
-        let a1_scalar = Secp256k1::scalar_from_bytes(&a1);
+        let a1_scalar = Secp256k1::scalar_from_integer(&a1);
         let s_elg = *d * a1_scalar + *elek * a2_scalar;
         let s_elg_bytes = s_elg.to_bytes_vec();
 
         // CL: R_ck = ck_0^{a1}
-        let r_ck = setup.exp_bytes(ck_0, &a1)?;
+        let r_ck = setup.exp(ck_0, &a1)?;
         // CL: S_ck = ck_1^{a1}
-        let s_ck = setup.exp_bytes(ck_1, &a1)?;
+        let s_ck = setup.exp(ck_1, &a1)?;
 
         // 3. Fiat-Shamir challenge.
         let d_bytes = d.to_bytes_vec();
@@ -108,15 +108,12 @@ impl RElClProof {
 
         // 4. Responses.
         // z1 = a1 + e * gamma (unbounded for CL checks).
-        let z1 = response_unbounded(&a1, &e, gamma_bytes)?;
+        let z1 = response_unbounded(&a1, &e, gamma);
 
         // z2 = a2 + e * r mod q (for EC checks).
-        let q_bytes = setup.q_bytes()?;
-        let q = Integer::from_digits(&q_bytes, Order::Msf);
-        let a2_big = Integer::from_digits(&a2, Order::Msf);
+        let q = setup.cl().q();
         let e_big = Integer::from_digits(&e, Order::Msf);
-        let r_big = Integer::from_digits(r_bytes, Order::Msf);
-        let z2_big = (a2_big + e_big * r_big) % q;
+        let z2_big = (a2 + e_big * r) % q;
         let z2 = z2_big.to_digits::<u8>(Order::Msf);
 
         Ok(Self {
@@ -189,20 +186,17 @@ impl RElClProof {
             return Ok(false);
         }
 
+        let z1 = Integer::from_digits(&self.z1, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
         // Check 3: ck_0^{z1} == R_ck * cgk_0^e ⟺ ck_0^{z1} * cgk_0^{-e} == R_ck.
-        let lhs3 = setup.multiexp_signed_bytes(
-            &[ck_0, cgk_0],
-            &[(false, self.z1.clone()), (true, self.e.clone())],
-        )?;
+        let lhs3 = setup.multiexp(&[ck_0, cgk_0], &[z1.clone(), -e.clone()])?;
         if lhs3 != self.r_ck {
             return Ok(false);
         }
 
         // Check 4: ck_1^{z1} == S_ck * cgk_1^e ⟺ ck_1^{z1} * cgk_1^{-e} == S_ck.
-        let lhs4 = setup.multiexp_signed_bytes(
-            &[ck_1, cgk_1],
-            &[(false, self.z1.clone()), (true, self.e.clone())],
-        )?;
+        let lhs4 = setup.multiexp(&[ck_1, cgk_1], &[z1, -e])?;
         if lhs4 != self.s_ck {
             return Ok(false);
         }
@@ -218,7 +212,7 @@ mod tests {
 
     #[test]
     fn r_el_cl_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("17001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(17001u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         let g = ProjectivePoint::GENERATOR;
@@ -228,8 +222,8 @@ mod tests {
         let elek = g * eldk;
 
         // Witness: gamma and r
-        let gamma_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
-        let r_bytes = Integer::from(23u32).to_digits::<u8>(Order::Msf);
+        let gamma = Integer::from(17u32);
+        let r = Integer::from(23u32);
         let gamma_scalar = k256::Scalar::from(17u64);
         let r_scalar = k256::Scalar::from(23u64);
 
@@ -238,31 +232,15 @@ mod tests {
         let elg_1 = g * gamma_scalar + elek * r_scalar;
 
         // CL ciphertext to scalar multiply
-        let ct = setup
-            .encrypt_bytes(&pk, &Integer::from(55u32).to_digits::<u8>(Order::Msf))
-            .expect("encrypt");
+        let ct = setup.encrypt(&pk, &Integer::from(55u32)).expect("encrypt");
         let (ck_0, ck_1) = setup.ct_components(&ct).expect("comp");
 
         // CL scalar multiply by gamma
-        let cgk_0 = setup
-            .exp_bytes(&ck_0, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
-            .expect("exp");
-        let cgk_1 = setup
-            .exp_bytes(&ck_1, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
-            .expect("exp");
+        let cgk_0 = setup.exp(&ck_0, &gamma).expect("exp");
+        let cgk_1 = setup.exp(&ck_1, &gamma).expect("exp");
 
         let proof = RElClProof::prove(
-            &mut setup,
-            &g,
-            &elek,
-            &elg_0,
-            &elg_1,
-            &ck_0,
-            &ck_1,
-            &cgk_0,
-            &cgk_1,
-            &gamma_bytes,
-            &r_bytes,
+            &mut setup, &g, &elek, &elg_0, &elg_1, &ck_0, &ck_1, &cgk_0, &cgk_1, &gamma, &r,
         )
         .expect("prove");
 
@@ -274,7 +252,7 @@ mod tests {
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_el_cl_rejects_wrong_gamma() {
-        let mut setup = ClSetup::new_secp256k1("17002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(17002u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         let g = ProjectivePoint::GENERATOR;
@@ -283,24 +261,18 @@ mod tests {
 
         let gamma_scalar = k256::Scalar::from(17u64);
         let r_scalar = k256::Scalar::from(23u64);
-        let r_bytes = Integer::from(23u32).to_digits::<u8>(Order::Msf);
+        let r = Integer::from(23u32);
 
         let elg_0 = g * r_scalar;
         let elg_1 = g * gamma_scalar + elek * r_scalar;
 
-        let ct = setup
-            .encrypt_bytes(&pk, &Integer::from(55u32).to_digits::<u8>(Order::Msf))
-            .expect("encrypt");
+        let ct = setup.encrypt(&pk, &Integer::from(55u32)).expect("encrypt");
         let (ck_0, ck_1) = setup.ct_components(&ct).expect("comp");
-        let cgk_0 = setup
-            .exp_bytes(&ck_0, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
-            .expect("exp");
-        let cgk_1 = setup
-            .exp_bytes(&ck_1, &Integer::from(17u32).to_digits::<u8>(Order::Msf))
-            .expect("exp");
+        let cgk_0 = setup.exp(&ck_0, &Integer::from(17u32)).expect("exp");
+        let cgk_1 = setup.exp(&ck_1, &Integer::from(17u32)).expect("exp");
 
         // Prove with WRONG gamma
-        let wrong_gamma_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
+        let wrong_gamma = Integer::from(99u32);
         let proof = RElClProof::prove(
             &mut setup,
             &g,
@@ -311,8 +283,8 @@ mod tests {
             &ck_1,
             &cgk_0,
             &cgk_1,
-            &wrong_gamma_bytes,
-            &r_bytes,
+            &wrong_gamma,
+            &r,
         )
         .expect("prove");
 

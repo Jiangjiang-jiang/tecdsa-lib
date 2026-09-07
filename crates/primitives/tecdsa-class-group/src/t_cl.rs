@@ -21,7 +21,7 @@
 //!   Lagrange in the exponent: `combined = product(pd_i^{lambda_i})`,
 //!   then extract plaintext from `c2 * combined^{-1}`.
 
-use rug::{integer::Order, Integer};
+use rug::Integer;
 
 use crate::cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, Qfi};
 
@@ -43,15 +43,15 @@ impl std::fmt::Debug for PartialDecryption {
 
 /// Computes a partial decryption for party `i`.
 ///
-/// `sk_i_bytes` is party `i`'s secret-key share as big-endian bytes.
+/// `sk_i` is party `i`'s secret-key share.
 pub fn partial_decrypt(
     setup: &ClSetup,
     ct: &ClHsmqkCiphertext,
     party_index: usize,
-    sk_i_bytes: &[u8],
+    sk_i: &Integer,
 ) -> ClResult<PartialDecryption> {
     let (c1, _c2) = setup.ct_components(ct)?;
-    let dec_share = setup.exp_bytes(&c1, sk_i_bytes)?;
+    let dec_share = setup.exp(&c1, sk_i)?;
     Ok(PartialDecryption {
         party_index,
         dec_share,
@@ -104,16 +104,15 @@ fn lagrange_coefficients_delta(indices: &[usize], delta: &Integer) -> Vec<(usize
 /// Each partial decryption share must have been computed from a key
 /// share where the Shamir polynomial has constant term `delta * sk`.
 ///
-/// Returns the plaintext as big-endian bytes.
+/// Returns the plaintext.
 #[allow(non_snake_case)]
 pub fn final_decrypt(
     setup: &ClSetup,
     ct: &ClHsmqkCiphertext,
     n_parties: usize,
     partial_decs: &[PartialDecryption],
-) -> ClResult<Vec<u8>> {
-    let q_bytes = setup.q_bytes()?;
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
+) -> ClResult<Integer> {
+    let q = setup.cl().q().clone();
 
     // delta = n_parties!
     let mut delta = Integer::from(1);
@@ -129,18 +128,16 @@ pub fn final_decrypt(
     // Since shares come from F(j) = delta*sk + r1*j + ..., and lambda_i includes
     // a delta factor, the combined exponent is sk * delta^2.
     let mut bases: Vec<&Qfi> = Vec::with_capacity(coeffs.len());
-    let mut exps: Vec<(bool, Vec<u8>)> = Vec::with_capacity(coeffs.len());
+    let mut exps: Vec<Integer> = Vec::with_capacity(coeffs.len());
     for (idx, lambda) in &coeffs {
         let pd = partial_decs
             .iter()
             .find(|p| p.party_index == *idx)
             .expect("party index mismatch");
         bases.push(&pd.dec_share);
-        // `to_digits` yields the magnitude (sign discarded); track sign separately.
-        let should_invert = lambda.cmp0() == core::cmp::Ordering::Less;
-        exps.push((should_invert, lambda.to_digits::<u8>(Order::Msf)));
+        exps.push(lambda.clone());
     }
-    let mut combined = setup.multiexp_signed_bytes(&bases, &exps)?;
+    let mut combined = setup.multiexp(&bases, &exps)?;
 
     // plaintext element = c2^{delta^2} * combined^{-1}
     //
@@ -148,15 +145,13 @@ pub fn final_decrypt(
     // c2^{delta^2} = (h^{sk*r} * f^m)^{delta^2} = h^{sk*r*delta^2} * f^{m*delta^2}
     // result = f^{m * delta^2}
     let delta2 = Integer::from(&delta * &delta);
-    let delta2_bytes = delta2.to_digits::<u8>(Order::Msf);
     let (_c1, c2) = setup.ct_components(ct)?;
-    let c2_delta2 = setup.exp_bytes(&c2, &delta2_bytes)?;
+    let c2_delta2 = setup.exp(&c2, &delta2)?;
     combined.neg();
     let plaintext_elt = setup.compose(&c2_delta2, &combined)?;
 
     // Extract m * delta^2 mod q, then divide by delta^2 mod q.
-    let m_scaled_bytes = setup.dlog_in_F_bytes(&plaintext_elt)?;
-    let m_scaled = Integer::from_digits(&m_scaled_bytes, Order::Msf);
+    let m_scaled = setup.dlog_in_F(&plaintext_elt)?;
 
     // delta2_inv = delta^{-2} mod q  (via Fermat's little theorem)
     let q_minus_2 = Integer::from(&q - 2);
@@ -165,7 +160,7 @@ pub fn final_decrypt(
         .expect("q - 2 is non-negative");
 
     let m = (m_scaled * delta2_inv).modulo(&q);
-    Ok(m.to_digits::<u8>(Order::Msf))
+    Ok(m)
 }
 
 #[cfg(test)]
@@ -183,16 +178,14 @@ mod tests {
     ///
     /// Shares are computed over the integers (unbounded), NOT mod q.
     ///
-    /// Returns shares as signed big-endian byte strings (for exp_bytes,
-    /// callers must handle sign separately).
+    /// Returns shares as signed integers (for `exp`, callers pass them
+    /// directly since `Integer` carries its own sign).
     fn shamir_share_delta(
         setup: &mut ClSetup,
-        sk_bytes: &[u8],
+        sk: &Integer,
         n: usize,
         t: usize,
-    ) -> ClResult<Vec<Vec<u8>>> {
-        let sk = Integer::from_digits(sk_bytes, Order::Msf);
-
+    ) -> ClResult<Vec<Integer>> {
         // delta = n!
         let mut delta = Integer::from(1);
         for i in 2..=n {
@@ -204,9 +197,7 @@ mod tests {
         // Use secretkey_bound as the range for random coefficients.
         let mut coeffs: Vec<Integer> = vec![delta_sk];
         for _ in 1..t {
-            let r = super::super::zk::sample_random(setup)?;
-            let r_val = Integer::from_digits(&r, Order::Msf);
-            coeffs.push(r_val);
+            coeffs.push(super::super::zk::sample_random(setup)?);
         }
 
         // Evaluate polynomial at i = 1, 2, ..., n (over the integers).
@@ -219,20 +210,14 @@ mod tests {
                 val += Integer::from(coeff * &x_pow);
                 x_pow *= &x;
             }
-            // Store share magnitude as big-endian bytes. exp_bytes
-            // requires unsigned input; for small (t,n) and large
-            // delta*sk, polynomial evaluations are always non-negative.
-            // We assert this below to catch any unexpected cases.
-            let abs_bytes = val.to_digits::<u8>(Order::Msf);
-            // For negative values, we'd need to negate after exponentiation.
-            // In practice, delta * sk is much larger than the random terms,
-            // so shares are always positive.
-            // To be safe, we'll assert non-negative in tests.
+            // Polynomial evaluations are always non-negative for small
+            // (t,n) and large delta*sk in these tests; assert to catch
+            // any unexpected cases.
             assert!(
                 val.cmp0() != core::cmp::Ordering::Less,
                 "test assumption: share should be non-negative for small t,n"
             );
-            shares.push(abs_bytes);
+            shares.push(val);
         }
 
         Ok(shares)
@@ -240,62 +225,59 @@ mod tests {
 
     #[test]
     fn t_cl_part_dec_correct() {
-        let mut setup = ClSetup::new_secp256k1("15001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(15001u64).expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-        let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
+        let sk = setup.sk_to_integer(&sk_raw);
 
-        let msg = b"\x2a"; // 42
-        let ct = setup.encrypt_bytes(&pk_raw, msg).expect("encrypt");
+        let msg = Integer::from(42u32);
+        let ct = setup.encrypt(&pk_raw, &msg).expect("encrypt");
 
         // Single party (1-of-1) partial decryption = full decryption.
-        let pd = partial_decrypt(&setup, &ct, 1, &sk_bytes).expect("pd");
+        let pd = partial_decrypt(&setup, &ct, 1, &sk).expect("pd");
 
         // Verify: pd = c1^sk, so c2 * pd^{-1} should give f^m.
         let (_c1, c2) = setup.ct_components(&ct).expect("comp");
         let mut pd_inv = pd.dec_share.clone();
         pd_inv.neg();
         let f_m = setup.compose(&c2, &pd_inv).expect("compose");
-        #[allow(non_snake_case)]
-        let m_bytes = setup.dlog_in_F_bytes(&f_m).expect("dlog");
-        let m_val = Integer::from_digits(&m_bytes, Order::Msf);
+        let m_val = setup.dlog_in_F(&f_m).expect("dlog");
         assert_eq!(m_val, Integer::from(42u32));
     }
 
     #[test]
     fn t_cl_fin_dec_2_of_3() {
-        let mut setup = ClSetup::new_secp256k1("15002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(15002u64).expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-        let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
+        let sk = setup.sk_to_integer(&sk_raw);
 
-        let msg = &123u32.to_be_bytes();
-        let ct = setup.encrypt_bytes(&pk_raw, msg).expect("encrypt");
+        let msg = Integer::from(123u32);
+        let ct = setup.encrypt(&pk_raw, &msg).expect("encrypt");
 
         let n = 3;
         let t = 2;
-        let shares = shamir_share_delta(&mut setup, &sk_bytes, n, t).expect("shares");
+        let shares = shamir_share_delta(&mut setup, &sk, n, t).expect("shares");
 
         // Partial decryptions from parties 1 and 2.
         let pd1 = partial_decrypt(&setup, &ct, 1, &shares[0]).expect("pd1");
         let pd2 = partial_decrypt(&setup, &ct, 2, &shares[1]).expect("pd2");
 
         let decrypted = final_decrypt(&setup, &ct, n, &[pd1, pd2]).expect("fin_dec");
-        let m_val = Integer::from_digits(&decrypted, Order::Msf);
-        assert_eq!(m_val, Integer::from(123u32));
+        assert_eq!(decrypted, Integer::from(123u32));
     }
 
     #[test]
     #[ignore = "slow: larger threshold variant"]
     fn t_cl_fin_dec_3_of_5() {
-        let mut setup = ClSetup::new_secp256k1("15003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(15003u64).expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-        let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
+        let sk = setup.sk_to_integer(&sk_raw);
 
-        let msg = &999u32.to_be_bytes();
-        let ct = setup.encrypt_bytes(&pk_raw, msg).expect("encrypt");
+        let msg = Integer::from(999u32);
+        let ct = setup.encrypt(&pk_raw, &msg).expect("encrypt");
 
         let n = 5;
         let t = 3;
-        let shares = shamir_share_delta(&mut setup, &sk_bytes, n, t).expect("shares");
+        let shares = shamir_share_delta(&mut setup, &sk, n, t).expect("shares");
 
         // Partial decryptions from parties 1, 3, 5.
         let pd1 = partial_decrypt(&setup, &ct, 1, &shares[0]).expect("pd1");
@@ -303,7 +285,6 @@ mod tests {
         let pd5 = partial_decrypt(&setup, &ct, 5, &shares[4]).expect("pd5");
 
         let decrypted = final_decrypt(&setup, &ct, n, &[pd1, pd3, pd5]).expect("fin_dec");
-        let m_val = Integer::from_digits(&decrypted, Order::Msf);
-        assert_eq!(m_val, Integer::from(999u32));
+        assert_eq!(decrypted, Integer::from(999u32));
     }
 }

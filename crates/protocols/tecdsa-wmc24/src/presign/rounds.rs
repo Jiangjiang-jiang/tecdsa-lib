@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
 use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
     t_cl::{self as threshold_cl, PartialDecryption as ClPartialDecryption},
@@ -124,11 +125,11 @@ impl Drop for KeyMaterial {
 pub(crate) fn scalar_mul_ct(
     setup: &ClSetup,
     ct: &ClCiphertext,
-    x_bytes: &[u8],
+    x: &Integer,
 ) -> Result<ClCiphertext, Wmc24Error> {
     let (c1, c2) = setup.ct_components(ct)?;
-    let c1_x = setup.exp_bytes(&c1, x_bytes)?;
-    let c2_x = setup.exp_bytes(&c2, x_bytes)?;
+    let c1_x = setup.exp(&c1, x)?;
+    let c2_x = setup.exp(&c2, x)?;
     let result = setup.ct_from_components(&c1_x, &c2_x)?;
     Ok(result)
 }
@@ -190,61 +191,43 @@ pub(crate) fn transition_r1_to_r2(
     let lagrange_coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
     let lambda_i = lagrange_coeffs[my_idx];
     let lambda_x_i = lambda_i * key_mat.x_i;
-    let lambda_x_i_bytes = lambda_x_i.to_bytes_vec();
+    let lambda_x_i_int = lambda_x_i.to_integer();
 
-    let xk_bar_i = scalar_mul_ct(setup, &k_bar, &lambda_x_i_bytes)
+    let xk_bar_i = scalar_mul_ct(setup, &k_bar, &lambda_x_i_int)
         .map_err(|e| TecdsaError::Other(format!("scalar_mul xk_bar_i: {e}")))?;
 
     let x_i_lambda_point =
         <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * lambda_x_i;
 
-    let pi_dl_cl_x = RDlClProof::prove(
-        setup,
-        &x_i_lambda_point,
-        &k_bar,
-        &xk_bar_i,
-        &lambda_x_i_bytes,
-    )
-    .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
+    let pi_dl_cl_x =
+        RDlClProof::prove(setup, &x_i_lambda_point, &k_bar, &xk_bar_i, &lambda_x_i_int)
+            .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
 
     // Sample gamma_i.
-    let gamma_i = {
+    let gamma_i_int = {
         let (sk, _) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("keygen: {e}")))?;
-        let sk_dec = sk.to_string();
-        let q_dec = setup.cl().q().to_string();
-        let q = Integer::from_str_radix(&q_dec, 10)
-            .map_err(|e| TecdsaError::Other(format!("parse q: {e}")))?;
-        let bu = Integer::from_str_radix(&sk_dec, 10)
-            .map_err(|e| TecdsaError::Other(format!("parse sk: {e}")))?;
-        let reduced = bu % &q;
-        k256::Secp256k1::scalar_from_integer(&reduced)
+        setup.sk_to_integer(&sk).modulo(setup.cl().q())
     };
-    let gamma_i_bytes = gamma_i.to_bytes_vec();
+    let gamma_i = k256::Secp256k1::scalar_from_integer(&gamma_i_int);
 
     // ElGamal encrypt g^{gamma_i}: D_gamma_i = t-ElG.Enc(elek, g^{gamma_i}; r_{gamma_i}).
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
     let g_gamma_i = g * gamma_i;
 
     // Sample ElGamal randomness.
-    let r_elg_i = {
+    let r_elg_i_int = {
         let (sk, _) = setup
             .keygen()
             .map_err(|e| TecdsaError::Other(format!("keygen: {e}")))?;
-        let sk_dec = sk.to_string();
-        let q_dec = setup.cl().q().to_string();
-        let q = Integer::from_str_radix(&q_dec, 10)
-            .map_err(|e| TecdsaError::Other(format!("parse q: {e}")))?;
-        let bu = Integer::from_str_radix(&sk_dec, 10)
-            .map_err(|e| TecdsaError::Other(format!("parse sk: {e}")))?;
-        let reduced = bu % &q;
-        k256::Secp256k1::scalar_from_integer(&reduced)
+        setup.sk_to_integer(&sk).modulo(setup.cl().q())
     };
+    let r_elg_i = k256::Secp256k1::scalar_from_integer(&r_elg_i_int);
     let d_gamma_i = tecdsa_elgamal::encrypt(&key_mat.elek, &g_gamma_i, &r_elg_i);
 
     // Compute gk_bar_i = gamma_i * k_bar.
-    let gk_bar_i = scalar_mul_ct(setup, &k_bar, &gamma_i_bytes)
+    let gk_bar_i = scalar_mul_ct(setup, &k_bar, &gamma_i_int)
         .map_err(|e| TecdsaError::Other(format!("scalar_mul gk_bar_i: {e}")))?;
 
     // R_El-CL proof.
@@ -265,8 +248,8 @@ pub(crate) fn transition_r1_to_r2(
         &ck_1,
         &cgk_0,
         &cgk_1,
-        &gamma_i.to_bytes_vec(),
-        &r_elg_i.to_bytes_vec(),
+        &gamma_i_int,
+        &r_elg_i_int,
     )
     .map_err(|e| TecdsaError::Other(format!("R_El-CL prove: {e}")))?;
 
@@ -399,8 +382,9 @@ pub(crate) fn transition_r2_to_r3(
     let (gk_c1, _) = setup
         .ct_components(&gk_bar)
         .map_err(|e| TecdsaError::Other(format!("gk_bar comp: {e}")))?;
+    let cl_sk_share_int = Integer::from_bytes_msf(&key_mat.cl_sk_share);
     let pd_cl_i = setup
-        .exp_bytes(&gk_c1, &key_mat.cl_sk_share)
+        .exp(&gk_c1, &cl_sk_share_int)
         .map_err(|e| TecdsaError::Other(format!("pd_cl: {e}")))?;
 
     // R_part_dec proof for CL.
@@ -414,7 +398,7 @@ pub(crate) fn transition_r2_to_r3(
         .map_err(|e| TecdsaError::Other(format!("pk_from_qfi: {e}")))?;
 
     let pi_part_dec_cl =
-        RPartDecProof::prove(setup, &my_pk_raw, &gk_bar, &pd_cl_i, &key_mat.cl_sk_share)
+        RPartDecProof::prove(setup, &my_pk_raw, &gk_bar, &pd_cl_i, &cl_sk_share_int)
             .map_err(|e| TecdsaError::Other(format!("R_part_dec_cl prove: {e}")))?;
 
     // Serialize and broadcast.
@@ -498,11 +482,11 @@ pub(crate) fn finalize(
         });
     }
 
-    let gamma_k_bytes =
+    let gamma_k_int =
         threshold_cl::final_decrypt(setup, &state.gk_bar, key_mat.n_parties_dkg, &pd_cls)
             .map_err(|e| TecdsaError::Other(format!("final_decrypt gk: {e}")))?;
 
-    let gamma_k = k256::Secp256k1::scalar_from_bytes(&gamma_k_bytes);
+    let gamma_k = k256::Secp256k1::scalar_from_integer(&gamma_k_int);
 
     // 3. R = (g^gamma)^{1/(gamma*k)} = g^{1/k}.
     let gamma_k_inv: k256::Scalar = {

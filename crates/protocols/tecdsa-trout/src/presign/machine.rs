@@ -27,7 +27,7 @@ use tecdsa_class_group::{
     zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof},
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{
@@ -338,9 +338,11 @@ impl TroutPresignMachine {
                 .setup
                 .ct_from_components(&c1, &c2)
                 .map_err(|e| TecdsaError::Other(format!("ct: {e}")))?;
+            let r_i_point = k256::ProjectivePoint::from_bytes_slice(&bcast.r_i_bytes)
+                .ok_or_else(|| TecdsaError::Other("invalid R_i point".into()))?;
             let ok = bcast
                 .pi_cl_ec
-                .verify(&self.setup, &self.cl_pk, &kt_ct, &bcast.r_i_bytes)
+                .verify(&self.setup, &self.cl_pk, &kt_ct, &r_i_point)
                 .map_err(|e| TecdsaError::Other(format!("R_CL-EC verify: {e}")))?;
             if !ok {
                 return Err(TecdsaError::Other(format!(

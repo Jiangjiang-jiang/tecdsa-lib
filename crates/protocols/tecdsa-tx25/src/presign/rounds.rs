@@ -197,8 +197,8 @@ pub(crate) fn transition_r1_to_r2(
     // k_i = sum_j share_{i,j} where share_{i,j} is party j's PVSS
     // share for party i.
     let sk_raw = setup
-        .sk_from_bytes(&key_mat.sk_decimal)
-        .map_err(|e| TecdsaError::Other(format!("sk_from_decimal: {e}")))?;
+        .sk_from_integer(&key_mat.sk_int)
+        .map_err(|e| TecdsaError::Other(format!("sk_from_integer: {e}")))?;
 
     let mut k_i = state.own_pvss_share; // Start with own PVSS share.
 
@@ -234,10 +234,10 @@ pub(crate) fn transition_r1_to_r2(
             .ct_from_components(&r1.pvss_c1, c2_my)
             .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
         let pd = setup
-            .exp_bytes(&r1.pvss_c1, &key_mat.sk_decimal)
+            .exp(&r1.pvss_c1, &key_mat.sk_int)
             .map_err(|e| TecdsaError::Other(format!("partial_dec: {e}")))?;
 
-        let proof = RDecDlProof::prove(setup, my_pk_raw, &ct_repr, &pd, &key_mat.sk_decimal)
+        let proof = RDecDlProof::prove(setup, my_pk_raw, &ct_repr, &pd, &key_mat.sk_int)
             .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove: {e}")))?;
 
         // Copy the c1 for inclusion in the message via binary round-trip.
@@ -257,7 +257,7 @@ pub(crate) fn transition_r1_to_r2(
             let id2 = setup.identity().map_err(map_cl)?;
             let id3 = setup.identity().map_err(map_cl)?;
             let dummy_ct = setup.ct_from_components(&id, &id2).map_err(map_cl)?;
-            let proof = RDecDlProof::prove(setup, my_pk_raw, &dummy_ct, &id3, &key_mat.sk_decimal)
+            let proof = RDecDlProof::prove(setup, my_pk_raw, &dummy_ct, &id3, &key_mat.sk_int)
                 .map_err(map_cl)?;
             let pd = setup.identity().map_err(map_cl)?;
             let c1 = setup.identity().map_err(map_cl)?;
@@ -287,27 +287,27 @@ pub(crate) fn transition_r1_to_r2(
     }
 
     // MPMtA Round 2 for k*gamma.
-    let k_bytes = k_i.to_bytes_vec();
+    let k_int = k_i.to_integer();
     let kg_mta = mpmta_round2(
         setup,
         &party_ids_u16,
         my_idx_val,
         &key_mat.raw_pks,
         &all_c_gammas,
-        &k_bytes,
+        &k_int,
         &mut rng,
     )
     .map_err(|e| TecdsaError::Other(format!("MPMtA2 k*gamma: {e}")))?;
 
     // MPMtA Round 2 for x*gamma.
-    let x_bytes = key_mat.x_i.to_bytes_vec();
+    let x_int = key_mat.x_i.to_integer();
     let xg_mta = mpmta_round2(
         setup,
         &party_ids_u16,
         my_idx_val,
         &key_mat.raw_pks,
         &all_c_gammas,
-        &x_bytes,
+        &x_int,
         &mut rng,
     )
     .map_err(|e| TecdsaError::Other(format!("MPMtA2 x*gamma: {e}")))?;
@@ -427,7 +427,7 @@ pub(crate) fn finalize(
             },
             betas: vec![k256::Scalar::ZERO; n], // Unknown to verifier.
             beta_points: r2.b_points.clone(),
-            k_star: Vec::new(), // Unknown to verifier (private).
+            k_star: rug::Integer::new(), // Unknown to verifier (private).
             proof: {
                 let (_d1, _) = setup
                     .ct_components(&r2.kg_c_alphas[0])
@@ -480,7 +480,7 @@ pub(crate) fn finalize(
             },
             betas: vec![k256::Scalar::ZERO; n],
             beta_points: r2.b_hat_points.clone(),
-            k_star: Vec::new(),
+            k_star: rug::Integer::new(),
             proof: {
                 RMAffDlEcProof {
                     d_prime_1: {
@@ -542,8 +542,8 @@ pub(crate) fn finalize(
 
     // --- Step 2: Decrypt alpha values and compute shares ---
     let sk_raw = setup
-        .sk_from_bytes(&key_mat.sk_decimal)
-        .map_err(|e| TecdsaError::Other(format!("sk_from_decimal: {e}")))?;
+        .sk_from_integer(&key_mat.sk_int)
+        .map_err(|e| TecdsaError::Other(format!("sk_from_integer: {e}")))?;
 
     let mut delta_shares: BTreeMap<u16, k256::Scalar> = BTreeMap::new();
     let mut zeta_shares: BTreeMap<u16, k256::Scalar> = BTreeMap::new();
@@ -578,10 +578,10 @@ pub(crate) fn finalize(
 
         // Decrypt alpha_{i,j} from party j's C_alpha (k*gamma MtA).
         let c_alpha_ij = &r2.kg_c_alphas[my_idx_val];
-        let alpha_kg_bytes = setup.decrypt_bytes(&sk_raw, c_alpha_ij).map_err(|e| {
+        let alpha_kg_int = setup.decrypt(&sk_raw, c_alpha_ij).map_err(|e| {
             TecdsaError::Other(format!("decrypt k*gamma alpha from party {party_j}: {e}"))
         })?;
-        let alpha_kg = k256::Secp256k1::scalar_from_bytes(&alpha_kg_bytes);
+        let alpha_kg = k256::Secp256k1::scalar_from_integer(&alpha_kg_int);
 
         // Our beta for party j (from our MPMtA2 output for k*gamma).
         let beta_kg_ij = state.kg_mta.betas[j_idx];
@@ -591,10 +591,10 @@ pub(crate) fn finalize(
 
         // Same for x*gamma MtA.
         let c_alpha_hat_ij = &r2.xg_c_alphas[my_idx_val];
-        let alpha_xg_bytes = setup.decrypt_bytes(&sk_raw, c_alpha_hat_ij).map_err(|e| {
+        let alpha_xg_int = setup.decrypt(&sk_raw, c_alpha_hat_ij).map_err(|e| {
             TecdsaError::Other(format!("decrypt x*gamma alpha from party {party_j}: {e}"))
         })?;
-        let alpha_xg = k256::Secp256k1::scalar_from_bytes(&alpha_xg_bytes);
+        let alpha_xg = k256::Secp256k1::scalar_from_integer(&alpha_xg_int);
 
         let beta_xg_ij = state.xg_mta.betas[j_idx];
         zeta_shares.insert(j_pid, alpha_xg + beta_xg_ij);

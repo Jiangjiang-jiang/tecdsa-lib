@@ -1290,7 +1290,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/tx25", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1302,8 +1302,10 @@ fn tx25_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -1454,7 +1456,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/jtx25", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1466,8 +1468,10 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -1627,7 +1631,7 @@ fn jtx25_robust_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/jtx25_robust", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1639,8 +1643,10 @@ fn jtx25_robust_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     // Keygen is shared between the normal and robust variants.
@@ -1802,7 +1808,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/wmy23", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1814,11 +1820,13 @@ fn wmy23_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     // WMY23's Feldman-VSS keygen takes the reconstruction threshold (t); the
     // presign machine Lagrange-weights each signer's Shamir share, so any t-of-n
     // subset (here parties 1..=t) reconstructs the key.
     let msg_data = make_data_to_sign(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -1984,7 +1992,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/wmc24", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1996,8 +2004,10 @@ fn wmc24_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -2158,7 +2168,7 @@ fn llz25_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/llz25", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -2170,8 +2180,10 @@ fn llz25_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // CRS key (shared out-of-band, independent of n/t).
     let pk_crs = {
@@ -2350,7 +2362,7 @@ fn trout_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/trout", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 let _evrf = tecdsa_evrf::EvrfSecretKey::<C>::generate(&mut rand_core::OsRng);
                 s.keygen().expect("cl keygen")
@@ -2363,8 +2375,10 @@ fn trout_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let message = make_data_to_sign(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {

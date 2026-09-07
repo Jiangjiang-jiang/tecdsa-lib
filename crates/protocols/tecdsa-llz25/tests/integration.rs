@@ -7,7 +7,7 @@
 
 #![allow(non_snake_case)]
 
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_llz25::{
     keygen::keygen_with_dealer,
     presign::{compute_presign_coefficients, presign_round1, verify_presign_message},
@@ -26,7 +26,8 @@ fn test_llz25_full_sign_5_of_3() {
     let t = 3u16; // reconstruction threshold: 3 parties needed to sign
 
     // -- Setup --
-    let mut setup = ClSetup::new_secp256k1(SEED).expect("CL setup");
+    let seed_int = parse_int_auto(SEED).expect("parse seed");
+    let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
 
     // -- KeyGen (trusted dealer) --
@@ -125,7 +126,8 @@ fn test_llz25_minimum_quorum() {
     let n = 5u16;
     let t = 3u16; // reconstruction threshold: 3 parties needed to sign
 
-    let mut setup = ClSetup::new_secp256k1("67890").expect("CL setup");
+    let seed_int = parse_int_auto("67890").expect("parse seed");
+    let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
 
     let (key_shares, aux_infos) =
@@ -191,7 +193,8 @@ fn test_llz25_all_parties_sign() {
     let n = 3u16;
     let t = 2u16; // reconstruction threshold: 2 parties needed to sign
 
-    let mut setup = ClSetup::new_secp256k1("11111").expect("CL setup");
+    let seed_int = parse_int_auto("11111").expect("parse seed");
+    let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
 
     let (key_shares, aux_infos) =
@@ -257,7 +260,8 @@ fn test_llz25_ecdsa_verify() {
     let n = 3u16;
     let t = 2u16; // reconstruction threshold: 2 parties needed to sign
 
-    let mut setup = ClSetup::new_secp256k1("22222").expect("CL setup");
+    let seed_int = parse_int_auto("22222").expect("parse seed");
+    let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
     let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
 
     let (key_shares, aux_infos) =

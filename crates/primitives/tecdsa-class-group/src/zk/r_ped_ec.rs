@@ -18,7 +18,8 @@
 //!
 //! Reference: LLZ25 (Lyu-Li-Zhou-Deng, CCS 2025), Section 4.3.
 
-use k256::Secp256k1;
+use elliptic_curve::group::GroupEncoding;
+use k256::{ProjectivePoint, Secp256k1};
 use rug::{integer::Order, Integer};
 use tecdsa_curve::{PointExt, TecdsaCurve};
 
@@ -45,33 +46,34 @@ impl RPedEcProof {
         setup: &mut ClSetup,
         pk: &ClHsmqkPublicKey,
         c: &Qfi,
-        big_v_bytes: &[u8],
-        v_bytes: &[u8],
-        r_bytes: &[u8],
+        big_v: &ProjectivePoint,
+        v: &Integer,
+        r: &Integer,
     ) -> ClResult<Self> {
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
         // CL Pedersen commitment: c_tilde = h^{a1} * pk^{a2}.
-        let h_a1 = setup.power_of_h_bytes(&a1)?;
+        let h_a1 = setup.power_of_h(&a1)?;
         let pk_elt = pk.elt();
-        let pk_a2 = setup.pk_pow_bytes(pk, &a2)?;
+        let pk_a2 = setup.pk_pow(pk, &a2)?;
         let c_tilde = setup.compose(&h_a1, &pk_a2)?;
 
         // EC commitment: V_tilde = a2 * G.
         let v_tilde_bytes = ec_scalar_base_mul_bytes(&a2);
 
         // Compute challenge.
+        let big_v_bytes = big_v.to_bytes_vec();
         let e = challenge_from_qfi(
             setup,
             b"R_ped_ec",
             &[pk_elt, c, &c_tilde],
-            &[big_v_bytes, &v_tilde_bytes],
+            &[&big_v_bytes, &v_tilde_bytes],
         )?;
 
         // Compute responses (over Z for CL soundness).
-        let s_r = response_unbounded(&a1, &e, r_bytes)?;
-        let s_v = response_unbounded(&a2, &e, v_bytes)?;
+        let s_r = response_unbounded(&a1, &e, r);
+        let s_v = response_unbounded(&a2, &e, v);
 
         Ok(Self {
             c_tilde,
@@ -88,35 +90,45 @@ impl RPedEcProof {
         setup: &ClSetup,
         pk: &ClHsmqkPublicKey,
         c: &Qfi,
-        big_v_bytes: &[u8],
+        big_v: &ProjectivePoint,
     ) -> ClResult<bool> {
         let pk_elt = pk.elt();
+        let big_v_bytes = big_v.to_bytes_vec();
 
         // Re-derive challenge.
         let e_check = challenge_from_qfi(
             setup,
             b"R_ped_ec",
             &[pk_elt, c, &self.c_tilde],
-            &[big_v_bytes, &self.v_tilde_bytes],
+            &[&big_v_bytes, &self.v_tilde_bytes],
         )?;
         if e_check != self.e {
             return Ok(false);
         }
 
+        let s_r = Integer::from_digits(&self.s_r, Order::Msf);
+        let s_v = Integer::from_digits(&self.s_v, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
         // Check 1: h^{s_r} * pk^{s_v} == c_tilde * c^e.
-        let h_sr = setup.power_of_h_bytes(&self.s_r)?;
-        let pk_sv = setup.pk_pow_bytes(pk, &self.s_v)?;
+        let h_sr = setup.power_of_h(&s_r)?;
+        let pk_sv = setup.pk_pow(pk, &s_v)?;
         let lhs = setup.compose(&h_sr, &pk_sv)?;
-        let c_e = setup.exp_bytes(c, &self.e)?;
+        let c_e = setup.exp(c, &e)?;
         let rhs = setup.compose(&self.c_tilde, &c_e)?;
         if lhs != rhs {
             return Ok(false);
         }
 
         // Check 2: (s_v mod q) * G == V_tilde + e * V.
-        let q_bytes = setup.q_bytes()?;
-        let s_v_mod_q = mod_reduce_bytes(&self.s_v, &q_bytes);
-        if !ec_schnorr_check_bytes(&s_v_mod_q, &self.v_tilde_bytes, &self.e, big_v_bytes) {
+        let q = setup.cl().q();
+        let s_v_mod_q = s_v % q;
+        if !ec_schnorr_check_bytes(
+            &s_v_mod_q.to_digits::<u8>(Order::Msf),
+            &self.v_tilde_bytes,
+            &self.e,
+            &big_v_bytes,
+        ) {
             return Ok(false);
         }
 
@@ -128,21 +140,9 @@ impl RPedEcProof {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn mod_reduce_bytes(a: &[u8], q: &[u8]) -> Vec<u8> {
-    let a_val = Integer::from_digits(a, Order::Msf);
-    let q_val = Integer::from_digits(q, Order::Msf);
-    if q_val.significant_bits() == 0 {
-        return a.to_vec();
-    }
-    (a_val % q_val).to_digits::<u8>(Order::Msf)
-}
-
-fn ec_scalar_base_mul_bytes(scalar_bytes: &[u8]) -> Vec<u8> {
-    use elliptic_curve::group::GroupEncoding;
-
-    let val = Integer::from_digits(scalar_bytes, Order::Msf);
+fn ec_scalar_base_mul_bytes(scalar: &Integer) -> Vec<u8> {
     let q = k256::Secp256k1::order();
-    let reduced = val % &q;
+    let reduced = Integer::from(scalar % &q);
     let scalar = Secp256k1::scalar_from_integer(&reduced);
     let point = k256::ProjectivePoint::GENERATOR * scalar;
     point.to_bytes().to_vec()
@@ -177,58 +177,48 @@ fn ec_schnorr_check_bytes(
 
 #[cfg(test)]
 mod tests {
-    use elliptic_curve::group::GroupEncoding;
-
     use super::*;
     use crate::{cl::ClSetup, nim::Nim};
 
     #[test]
     fn r_ped_ec_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("6001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(6001u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let x = Integer::from(42u32);
 
         // Compute pe_A = h^r * pk^x via NIM Encode_A.
         let mut nim = Nim::new(&mut setup);
-        let encode_out = nim.encode_a(&42u32.to_be_bytes(), &pk).expect("encode_a");
+        let encode_out = nim.encode_a(&x, &pk).expect("encode_a");
         let pe_a = encode_out.pe_a;
-        let r_bytes = encode_out.state.r_bytes.clone();
+        let r = encode_out.state.r.clone();
 
         // V = x * G
-        let x_scalar = Secp256k1::scalar_from_integer(&Integer::from(42u32));
+        let x_scalar = Secp256k1::scalar_from_integer(&x);
         let big_v = k256::ProjectivePoint::GENERATOR * x_scalar;
-        let big_v_bytes = big_v.to_bytes().to_vec();
 
-        let proof = RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v_bytes, &x_bytes, &r_bytes)
-            .expect("prove");
-        assert!(proof
-            .verify(&setup, &pk, &pe_a, &big_v_bytes)
-            .expect("verify"));
+        let proof = RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v, &x, &r).expect("prove");
+        assert!(proof.verify(&setup, &pk, &pe_a, &big_v).expect("verify"));
     }
 
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_ped_ec_rejects_wrong_value() {
-        let mut setup = ClSetup::new_secp256k1("6002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(6002u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let x = Integer::from(42u32);
 
         let mut nim = Nim::new(&mut setup);
-        let encode_out = nim.encode_a(&42u32.to_be_bytes(), &pk).expect("encode_a");
+        let encode_out = nim.encode_a(&x, &pk).expect("encode_a");
         let pe_a = encode_out.pe_a;
-        let r_bytes = encode_out.state.r_bytes.clone();
+        let r = encode_out.state.r.clone();
 
         // Use wrong V
         let wrong_scalar = Secp256k1::scalar_from_integer(&Integer::from(99u32));
         let wrong_v = k256::ProjectivePoint::GENERATOR * wrong_scalar;
-        let wrong_v_bytes = wrong_v.to_bytes().to_vec();
 
-        let proof = RPedEcProof::prove(&mut setup, &pk, &pe_a, &wrong_v_bytes, &x_bytes, &r_bytes)
-            .expect("prove");
-        assert!(!proof
-            .verify(&setup, &pk, &pe_a, &wrong_v_bytes)
-            .expect("verify"));
+        let proof = RPedEcProof::prove(&mut setup, &pk, &pe_a, &wrong_v, &x, &r).expect("prove");
+        assert!(!proof.verify(&setup, &pk, &pe_a, &wrong_v).expect("verify"));
     }
 }

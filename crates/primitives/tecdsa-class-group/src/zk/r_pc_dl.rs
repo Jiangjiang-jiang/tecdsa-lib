@@ -29,18 +29,15 @@ pub struct RPcDlProof {
 
 impl RPcDlProof {
     /// Proves knowledge of `x` such that `Y = f^x`.
-    pub fn prove(setup: &mut ClSetup, y: &Qfi, x_bytes: &[u8]) -> ClResult<Self> {
+    pub fn prove(setup: &mut ClSetup, y: &Qfi, x: &Integer) -> ClResult<Self> {
         let a = sample_random_mod_q(setup)?;
-        let t = setup.power_of_f_bytes(&a)?;
+        let t = setup.power_of_f(&a)?;
 
         let e = challenge_from_qfi(setup, b"R_pc_dl", &[y, &t], &[])?;
 
-        let q_bytes = setup.q_bytes()?;
-        let q = Integer::from_digits(&q_bytes, Order::Msf);
-        let a_val = Integer::from_digits(&a, Order::Msf);
+        let q = setup.cl().q();
         let e_val = Integer::from_digits(&e, Order::Msf);
-        let x_val = Integer::from_digits(x_bytes, Order::Msf);
-        let z_val = (a_val + e_val * x_val) % q;
+        let z_val = (a + e_val * x) % q;
 
         Ok(Self {
             t,
@@ -59,18 +56,15 @@ impl RPcDlProof {
 
         // Verify using scalar arithmetic over F-subgroup:
         // z == dlog(t) + e * dlog(Y) mod q
-        let dlog_t = setup.dlog_in_F_bytes(&self.t)?;
-        let dlog_y = setup.dlog_in_F_bytes(y)?;
+        let dt = setup.dlog_in_F(&self.t)?;
+        let dy = setup.dlog_in_F(y)?;
 
-        let q_bytes = setup.q_bytes()?;
-        let q = Integer::from_digits(&q_bytes, Order::Msf);
-        let dt = Integer::from_digits(&dlog_t, Order::Msf);
-        let dy = Integer::from_digits(&dlog_y, Order::Msf);
+        let q = setup.cl().q();
         let ev = Integer::from_digits(&self.e, Order::Msf);
         let zv = Integer::from_digits(&self.z, Order::Msf);
 
-        let expected = (dt + ev * dy) % &q;
-        let z_mod = zv % &q;
+        let expected = (dt + ev * dy) % q;
+        let z_mod = zv % q;
 
         Ok(expected == z_mod)
     }
@@ -83,20 +77,20 @@ mod tests {
 
     #[test]
     fn r_pc_dl_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("9001").expect("setup");
-        let x_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
-        let y = setup.power_of_f("42").expect("f^x");
-        let proof = RPcDlProof::prove(&mut setup, &y, &x_bytes).expect("prove");
+        let mut setup = ClSetup::new_secp256k1(9001u64).expect("setup");
+        let x = Integer::from(42u32);
+        let y = setup.power_of_f(&x).expect("f^x");
+        let proof = RPcDlProof::prove(&mut setup, &y, &x).expect("prove");
         assert!(proof.verify(&setup, &y).expect("verify"));
     }
 
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_pc_dl_rejects_wrong_x() {
-        let mut setup = ClSetup::new_secp256k1("9002").expect("setup");
-        let y = setup.power_of_f("42").expect("f^x");
-        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
-        let proof = RPcDlProof::prove(&mut setup, &y, &wrong_x_bytes).expect("prove");
+        let mut setup = ClSetup::new_secp256k1(9002u64).expect("setup");
+        let y = setup.power_of_f(&Integer::from(42u32)).expect("f^x");
+        let wrong_x = Integer::from(99u32);
+        let proof = RPcDlProof::prove(&mut setup, &y, &wrong_x).expect("prove");
         assert!(!proof.verify(&setup, &y).expect("verify"));
     }
 }

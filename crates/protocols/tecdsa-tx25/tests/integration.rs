@@ -10,7 +10,7 @@
 #![allow(non_snake_case)]
 
 use elliptic_curve::CurveArithmetic;
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_protocol::{
     ecdsa::{verify_ecdsa, DataToSign, Signature},
     Outgoing, PartyId, Recipient, StateMachine,
@@ -165,10 +165,11 @@ fn test_tx25_full_protocol_5_of_3() {
         .iter()
         .enumerate()
         .map(|(i, &pid)| {
+            let seed_int = parse_int_auto(seed).expect("parse seed");
             let setup = if use_128bit_security {
-                ClSetup::new_secp256k1_128bit(seed)
+                ClSetup::new_secp256k1_128bit(&seed_int)
             } else {
-                ClSetup::new_secp256k1(seed)
+                ClSetup::new_secp256k1(&seed_int)
             }
             .unwrap_or_else(|e| panic!("ClSetup creation failed for party {i}: {e}"));
 

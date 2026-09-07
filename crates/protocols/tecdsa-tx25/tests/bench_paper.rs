@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, StateMachine};
 use tecdsa_tx25::{
     keygen::Tx25KeygenMachine,
@@ -64,6 +64,7 @@ fn bench_tx25_n5_128bit() {
     let n = 5u16;
     let t = 2u16; // paper corruption threshold=1, repo reconstruction threshold=2
     let seed = "128001";
+    let seed_int = parse_int_auto(seed).expect("parse seed");
     let party_ids: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     println!("\n=== TX25 Benchmark (n={n}, t={t}, 128-bit CL security) ===");
@@ -93,7 +94,7 @@ fn bench_tx25_n5_128bit() {
         .iter()
         .enumerate()
         .map(|(i, &pid)| {
-            let setup = ClSetup::new_secp256k1_128bit(seed).expect("setup");
+            let setup = ClSetup::new_secp256k1_128bit(&seed_int).expect("setup");
             let m = Tx25PresignMachine::new(pid, party_ids.clone(), &key_shares[i], setup)
                 .expect("presign");
             (pid, m)

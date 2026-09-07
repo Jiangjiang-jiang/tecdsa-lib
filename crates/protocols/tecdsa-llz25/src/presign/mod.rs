@@ -46,7 +46,9 @@
 
 pub mod machine;
 
-use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use elliptic_curve::CurveArithmetic;
+use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
     cl::{ClCiphertext as ClHsmqkCiphertext, ClPublicKey as ClHsmqkPublicKey, ClSetup, Qfi},
     nim::{Nim, NimEncodeAOutput, NimEncodeBOutput, NimStateA, NimStateB},
@@ -80,20 +82,21 @@ pub struct PresignState {
     /// $\gamma_i$.
     pub gamma_i: k256::Scalar,
     /// NIM state for $pe_{k,i}$ (Encode_B randomness).
-    pub st_k_bytes: Vec<u8>,
+    pub st_k: Integer,
     /// NIM state for $pe_{\gamma,i}$ (Encode_A randomness).
-    pub st_gamma_r_bytes: Vec<u8>,
+    pub st_gamma_r: Integer,
     /// NIM state for $pe_{\gamma,i}$ (Encode_A input).
-    pub st_gamma_x_bytes: Vec<u8>,
+    pub st_gamma_x: Integer,
 }
 
 impl Zeroize for PresignState {
     fn zeroize(&mut self) {
         self.k_i.zeroize();
         self.gamma_i.zeroize();
-        self.st_k_bytes.zeroize();
-        self.st_gamma_r_bytes.zeroize();
-        self.st_gamma_x_bytes.zeroize();
+        // `rug::Integer` doesn't implement `Zeroize`; best-effort clear.
+        self.st_k = Integer::new();
+        self.st_gamma_r = Integer::new();
+        self.st_gamma_x = Integer::new();
     }
 }
 
@@ -120,8 +123,8 @@ pub fn presign_round1(
     let big_k = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_i;
     let big_gamma = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * gamma_i;
 
-    let k_bytes = k_i.to_bytes_vec();
-    let gamma_bytes = gamma_i.to_bytes_vec();
+    let k_int = k_i.to_integer();
+    let gamma_int = gamma_i.to_integer();
 
     // 3a. NIM.Encode_B(crs, k_i) -- CL encryption.
     let mut nim = Nim::new(setup);
@@ -129,7 +132,7 @@ pub fn presign_round1(
         pe_b: pe_k,
         state: st_k,
     } = nim
-        .encode_b(&k_bytes, pk_crs)
+        .encode_b(&k_int, pk_crs)
         .map_err(|e| Llz25Error::ClassGroup(format!("NIM.Encode_B(k_i) failed: {e}")))?;
 
     // 3b. NIM.Encode_A(crs, gamma_i) -- Pedersen CL commitment.
@@ -137,23 +140,21 @@ pub fn presign_round1(
         pe_a: pe_gamma,
         state: st_gamma,
     } = nim
-        .encode_a(&gamma_bytes, pk_crs)
+        .encode_a(&gamma_int, pk_crs)
         .map_err(|e| Llz25Error::ClassGroup(format!("NIM.Encode_A(gamma_i) failed: {e}")))?;
 
     // 4a. ZK proof: R_{CL-DL-EC} for (pe_k, K_i).
-    let big_k_bytes = big_k.to_bytes().to_vec();
-    let proof_cl = RClDlEcProof::prove(setup, pk_crs, &pe_k, &big_k_bytes, &k_bytes, &st_k.s_bytes)
+    let proof_cl = RClDlEcProof::prove(setup, pk_crs, &pe_k, &big_k, &k_int, &st_k.s)
         .map_err(|e| Llz25Error::ClassGroup(format!("R_CL_DL_EC prove failed: {e}")))?;
 
     // 4b. ZK proof: R_{Ped-EC} for (pe_gamma, Gamma_i).
-    let big_gamma_bytes = big_gamma.to_bytes().to_vec();
     let proof_ped = RPedEcProof::prove(
         setup,
         pk_crs,
         &pe_gamma,
-        &big_gamma_bytes,
-        &gamma_bytes,
-        &st_gamma.r_bytes,
+        &big_gamma,
+        &gamma_int,
+        &st_gamma.r,
     )
     .map_err(|e| Llz25Error::ClassGroup(format!("R_Ped_EC prove failed: {e}")))?;
 
@@ -169,9 +170,9 @@ pub fn presign_round1(
     let state = PresignState {
         k_i,
         gamma_i,
-        st_k_bytes: st_k.s_bytes,
-        st_gamma_r_bytes: st_gamma.r_bytes,
-        st_gamma_x_bytes: st_gamma.x_bytes,
+        st_k: st_k.s,
+        st_gamma_r: st_gamma.r,
+        st_gamma_x: st_gamma.x,
     };
 
     Ok((message, state))
@@ -185,19 +186,16 @@ pub fn verify_presign_message(
     pk_crs: &ClHsmqkPublicKey,
     msg: &PresignMessage,
 ) -> Result<bool, Llz25Error> {
-    let big_k_bytes = msg.big_k.to_bytes().to_vec();
-    let big_gamma_bytes = msg.big_gamma.to_bytes().to_vec();
-
     // Verify R_{CL-DL-EC} proof.
     let cl_ok = msg
         .proof_cl
-        .verify(setup, pk_crs, &msg.pe_k, &big_k_bytes)
+        .verify(setup, pk_crs, &msg.pe_k, &msg.big_k)
         .map_err(|e| Llz25Error::ClassGroup(format!("R_CL_DL_EC verify failed: {e}")))?;
 
     // Verify R_{Ped-EC} proof.
     let ped_ok = msg
         .proof_ped
-        .verify(setup, pk_crs, &msg.pe_gamma, &big_gamma_bytes)
+        .verify(setup, pk_crs, &msg.pe_gamma, &msg.big_gamma)
         .map_err(|e| Llz25Error::ClassGroup(format!("R_Ped_EC verify failed: {e}")))?;
 
     Ok(cl_ok && ped_ok)
@@ -306,14 +304,14 @@ pub fn compute_presign_coefficients(
 
     // Reconstruct NIM states.
     let st_k = NimStateB {
-        s_bytes: pst.st_k_bytes.clone(),
+        s: pst.st_k.clone(),
     };
     let st_gamma = NimStateA {
-        r_bytes: pst.st_gamma_r_bytes.clone(),
-        x_bytes: pst.st_gamma_x_bytes.clone(),
+        r: pst.st_gamma_r.clone(),
+        x: pst.st_gamma_x.clone(),
     };
     let st_x = NimStateB {
-        s_bytes: key_share.st_x_bytes.clone(),
+        s: Integer::from_bytes_msf(&key_share.st_x_bytes),
     };
 
     for j in 0..n_quorum {
@@ -324,31 +322,31 @@ pub fn compute_presign_coefficients(
         let pm_j = &presign_messages[j];
 
         // alpha_{i,j} = NIM.Decode_B(pe_{gamma,j}, st_{k,i})
-        let alpha_bytes = nim
+        let alpha_int = nim
             .decode_b(&pm_j.pe_gamma, &st_k)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_b alpha: {e}")))?;
-        let alpha_ij = k256::Secp256k1::scalar_from_bytes(&alpha_bytes);
+        let alpha_ij = k256::Secp256k1::scalar_from_integer(&alpha_int);
 
         // beta_{j,i} = NIM.Decode_A(pe_{k,j}, st_{gamma,i})
-        let beta_bytes = nim
+        let beta_int = nim
             .decode_a(&pm_j.pe_k, &st_gamma)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_a beta: {e}")))?;
-        let beta_ji = k256::Secp256k1::scalar_from_bytes(&beta_bytes);
+        let beta_ji = k256::Secp256k1::scalar_from_integer(&beta_int);
 
         alpha_beta_sum += alpha_ij + beta_ji;
 
         // mu_{i,j} = lambda_i * NIM.Decode_B(pe_{gamma,j}, st_{x,i})
-        let mu_bytes = nim
+        let mu_int = nim
             .decode_b(&pm_j.pe_gamma, &st_x)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_b mu: {e}")))?;
-        let mu_ij = my_lambda * k256::Secp256k1::scalar_from_bytes(&mu_bytes);
+        let mu_ij = my_lambda * k256::Secp256k1::scalar_from_integer(&mu_int);
 
         // nu_{j,i} = lambda_j * NIM.Decode_A(pe_{x,j}, st_{gamma,i})
         let lambda_j = lagrange_coefficient(quorum_indices, j);
-        let nu_bytes = nim
+        let nu_int = nim
             .decode_a(&pe_x_list[j], &st_gamma)
             .map_err(|e| Llz25Error::ClassGroup(format!("decode_a nu: {e}")))?;
-        let nu_ji = lambda_j * k256::Secp256k1::scalar_from_bytes(&nu_bytes);
+        let nu_ji = lambda_j * k256::Secp256k1::scalar_from_integer(&nu_int);
 
         mu_nu_sum += mu_ij + nu_ji;
     }

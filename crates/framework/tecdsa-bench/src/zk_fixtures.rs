@@ -39,7 +39,7 @@ pub fn paillier_encrypt(
 
 /// CL setup with 128-bit security (|DeltaK| ~ 1827 bit).
 pub fn cl_setup() -> tecdsa_class_group::cl::ClSetup {
-    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042").expect("cl setup")
+    tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64).expect("cl setup")
 }
 
 pub fn cl_setup_with_keys() -> (

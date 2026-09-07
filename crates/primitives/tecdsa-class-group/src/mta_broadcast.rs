@@ -161,14 +161,15 @@ impl tecdsa_protocol::MtABroadcast for NimMtA {
     ) -> Result<(Self::Encoding, Self::State), Self::Error> {
         let mut cl_setup = setup.setup.borrow_mut();
         let mut nim = Nim::new(&mut cl_setup);
+        let input = Integer::from_digits(input_bytes, Order::Msf);
 
         match setup.role {
             NimRole::A => {
-                let out = nim.encode_a(input_bytes, &setup.pk)?;
+                let out = nim.encode_a(&input, &setup.pk)?;
                 Ok((NimEncoding::RoleA(out.pe_a), NimState::RoleA(out.state)))
             }
             NimRole::B => {
-                let out = nim.encode_b(input_bytes, &setup.pk)?;
+                let out = nim.encode_b(&input, &setup.pk)?;
                 Ok((NimEncoding::RoleB(out.pe_b), NimState::RoleB(out.state)))
             }
         }
@@ -210,14 +211,12 @@ impl tecdsa_protocol::MtABroadcast for NimMtA {
 
         match (my_state, other_encoding) {
             (NimState::RoleA(state_a), NimEncoding::RoleB(pe_b)) => {
-                let share_bytes = nim.decode_a(pe_b, state_a)?;
-                let share = Integer::from_digits(&share_bytes, Order::Msf);
+                let share = nim.decode_a(pe_b, state_a)?;
                 let share_mod_q = share % &q;
                 Ok(share_mod_q.to_digits::<u8>(Order::Msf))
             }
             (NimState::RoleB(state_b), NimEncoding::RoleA(pe_a)) => {
-                let share_bytes = nim.decode_b(pe_a, state_b)?;
-                let share = Integer::from_digits(&share_bytes, Order::Msf);
+                let share = nim.decode_b(pe_a, state_b)?;
                 let share_mod_q = share % &q;
                 Ok(share_mod_q.to_digits::<u8>(Order::Msf))
             }
@@ -284,12 +283,12 @@ impl Clone for ScaledDecryptEncoding {
 /// Per-party secret state for scaled decryption, retained between
 /// encode and decode.
 pub struct ScaledDecryptState {
-    /// CL encryption randomness `alpha_i` (big-endian bytes).
-    pub alpha_i: Vec<u8>,
-    /// CL commitment randomness `beta_i` (big-endian bytes).
-    pub beta_i: Vec<u8>,
-    /// Party's share of the commitment value `b_i` (big-endian bytes, mod q).
-    pub b_i: Vec<u8>,
+    /// CL encryption randomness `alpha_i`.
+    pub alpha_i: Integer,
+    /// CL commitment randomness `beta_i`.
+    pub beta_i: Integer,
+    /// Party's share of the commitment value `b_i` (mod q).
+    pub b_i: Integer,
 }
 
 /// Error type for the scaled-decryption `MtA` backend.
@@ -368,16 +367,14 @@ impl ScaledDecryptMtA {
     pub fn aggregate_f_shares(
         setup: &ScaledDecryptSetup,
         f_shares: &[Qfi],
-    ) -> Result<Vec<u8>, ScaledDecryptError> {
+    ) -> Result<Integer, ScaledDecryptError> {
         let cl = setup.setup.borrow();
         let mut f_agg = cl.identity()?;
         for fi in f_shares {
             f_agg = cl.compose(&f_agg, fi)?;
         }
 
-        #[allow(non_snake_case)]
-        let result_bytes = cl.dlog_in_F_bytes(&f_agg)?;
-        Ok(result_bytes)
+        Ok(cl.dlog_in_F(&f_agg)?)
     }
 }
 
@@ -409,33 +406,33 @@ impl tecdsa_protocol::MtABroadcast for ScaledDecryptMtA {
             )));
         }
 
-        let a_i_bytes = &input_bytes[..32];
-        let b_i_bytes = &input_bytes[32..];
+        let a_i = Integer::from_digits(&input_bytes[..32], Order::Msf);
+        let b_i = Integer::from_digits(&input_bytes[32..], Order::Msf);
 
         let mut cl = setup.setup.borrow_mut();
 
         // Sample alpha_i (encryption randomness)
         let (sk_tmp, _) = cl.keygen()?;
-        let alpha_i = cl.sk_to_bytes(&sk_tmp)?;
+        let alpha_i = cl.sk_to_integer(&sk_tmp);
 
         // Encrypt a_i with explicit randomness alpha_i
-        let ct = cl.encrypt_with_r_bytes(&setup.pk, a_i_bytes, &alpha_i)?;
+        let ct = cl.encrypt_with_r(&setup.pk, &a_i, &alpha_i)?;
         let (c1, c2) = cl.ct_components(&ct)?;
 
         // Sample beta_i (commitment randomness)
         let (sk_tmp2, _) = cl.keygen()?;
-        let beta_i = cl.sk_to_bytes(&sk_tmp2)?;
+        let beta_i = cl.sk_to_integer(&sk_tmp2);
 
         // Compute commitment U_i = h^{beta_i} * pk_elt^{b_i}
-        let h_beta = cl.power_of_h_bytes(&beta_i)?;
-        let pk_b = cl.pk_pow_bytes(&setup.pk, b_i_bytes)?;
+        let h_beta = cl.power_of_h(&beta_i)?;
+        let pk_b = cl.pk_pow(&setup.pk, &b_i)?;
         let u_com = cl.compose(&h_beta, &pk_b)?;
 
         let encoding = ScaledDecryptEncoding { c1, c2, u_com };
         let state = ScaledDecryptState {
             alpha_i,
             beta_i,
-            b_i: b_i_bytes.to_vec(),
+            b_i,
         };
 
         Ok((encoding, state))
@@ -468,16 +465,16 @@ impl tecdsa_protocol::MtABroadcast for ScaledDecryptMtA {
 
         // F_i = A_2^{b_i} * A_1^{beta_i} * B^{-alpha_i}, via one shared-squaring
         // multi-exponentiation instead of three exps + two composes.
-        let f_i = cl.multiexp_signed_bytes(
+        let f_i = cl.multiexp(
             &[
                 &other_encoding.c2,
                 &other_encoding.c1,
                 &other_encoding.u_com,
             ],
             &[
-                (false, my_state.b_i.clone()),
-                (false, my_state.beta_i.clone()),
-                (true, my_state.alpha_i.clone()),
+                my_state.b_i.clone(),
+                my_state.beta_i.clone(),
+                -my_state.alpha_i.clone(),
             ],
         )?;
 
@@ -515,7 +512,7 @@ mod tests {
     // ---- NimMtA tests ----
 
     /// Helper: create a `NimMtaSetup` for the given role.
-    fn nim_setup(seed: &str, role: NimRole) -> NimMtaSetup {
+    fn nim_setup(seed: u64, role: NimRole) -> NimMtaSetup {
         let mut cl = ClSetup::new_secp256k1(seed).expect("CL setup");
         let (_sk, pk) = cl.keygen().expect("keygen");
         NimMtaSetup {
@@ -541,8 +538,8 @@ mod tests {
         // Both parties share the same CL setup (same seed = same CRS).
         // In a real protocol they would share the CRS parameters.
         // For testing, we create them with the same seed so the CRS matches.
-        let setup_a = nim_setup("42", NimRole::A);
-        let setup_b = nim_setup("42", NimRole::B);
+        let setup_a = nim_setup(42, NimRole::A);
+        let setup_b = nim_setup(42, NimRole::B);
 
         let mut rng = rand::thread_rng();
 
@@ -580,8 +577,8 @@ mod tests {
         let x = Integer::from(&q - 3);
         let y = Integer::from(1000u32);
 
-        let setup_a = nim_setup("100", NimRole::A);
-        let setup_b = nim_setup("100", NimRole::B);
+        let setup_a = nim_setup(100, NimRole::A);
+        let setup_b = nim_setup(100, NimRole::B);
         let mut rng = rand::thread_rng();
 
         let (enc_a, state_a) =
@@ -610,7 +607,7 @@ mod tests {
     fn nim_mta_role_mismatch_errors() {
         let q_bytes = secp256k1_order_bytes();
 
-        let setup_a = nim_setup("200", NimRole::A);
+        let setup_a = nim_setup(200, NimRole::A);
         let mut rng = rand::thread_rng();
 
         let (enc_a, state_a) =
@@ -638,7 +635,7 @@ mod tests {
 
         // 3 parties, each with shares a_i and b_i
         let n = 3usize;
-        let mut cl = ClSetup::new_secp256k1("9002").expect("CL setup");
+        let mut cl = ClSetup::new_secp256k1(9002u64).expect("CL setup");
         let (_sk, pk) = cl.keygen().expect("keygen");
 
         let setup = ScaledDecryptSetup {
@@ -706,9 +703,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Aggregate F-shares and extract the product
-        let result_bytes =
+        let result =
             ScaledDecryptMtA::aggregate_f_shares(&setup, &f_shares).expect("aggregate_f_shares");
-        let result = Integer::from_digits(&result_bytes, Order::Msf);
         let result_mod_q = result % q;
 
         assert_eq!(
@@ -722,7 +718,7 @@ mod tests {
     fn scaled_decrypt_bad_input_length() {
         let q_bytes = secp256k1_order_bytes();
 
-        let mut cl = ClSetup::new_secp256k1("9003").expect("CL setup");
+        let mut cl = ClSetup::new_secp256k1(9003u64).expect("CL setup");
         let (_sk, pk) = cl.keygen().expect("keygen");
         let setup = ScaledDecryptSetup {
             setup: RefCell::new(cl),

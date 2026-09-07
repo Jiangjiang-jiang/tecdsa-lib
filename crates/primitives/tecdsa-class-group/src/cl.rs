@@ -11,7 +11,6 @@
 use std::{borrow::Borrow, sync::Arc};
 
 use rug::{ops::Pow, Complete, Integer};
-use tecdsa_bigint::BigIntExt;
 
 pub use self::{Ciphertext as ClCiphertext, PublicKey as ClPublicKey, SecretKey as ClSecretKey};
 pub use crate::class_group::{
@@ -74,9 +73,15 @@ impl ClSetup {
     /// satisfying the required congruence and Kronecker-symbol
     /// constraints for a fundamental discriminant `Delta_K = -p*q`.
     ///
-    /// `seed_decimal` seeds the internal PRNG for deterministic testing.
+    /// `seed` seeds the internal PRNG for deterministic testing.
     /// In production, pass a cryptographically random seed.
-    pub fn new_secp256k1(seed_decimal: &str) -> ClResult<Self> {
+    ///
+    /// Takes anything convertible into an [`Integer`], so a literal seed needs
+    /// no wrapping: both `new_secp256k1(12345u64)` and
+    /// `new_secp256k1(&seed_integer)` work. Setup is a one-time cost dominated
+    /// by prime generation, so the clone `&Integer` incurs is irrelevant here;
+    /// the arithmetic methods below still take `&Integer` to avoid it.
+    pub fn new_secp256k1(seed: impl Into<Integer>) -> ClResult<Self> {
         // For secp256k1, q ≡ 1 (mod 4), so we need p ≡ 3 (mod 4) and p prime,
         // with Legendre(q, p) = -1, to make Delta_K = -p*q fundamental.
         //
@@ -85,7 +90,7 @@ impl ClSetup {
         //
         // NOTE: This gives a tiny discriminant (insecure!) suitable only for
         // fast testing. Use `new_secp256k1_128bit` for 128-bit security.
-        Self::new_custom(SECP256K1_ORDER, 1, "7", seed_decimal)
+        Self::new_custom(parse_int_auto(SECP256K1_ORDER)?, 1, 7u64, seed)
     }
 
     /// Creates a CL-HSMqk setup for secp256k1 with 128-bit security.
@@ -97,31 +102,31 @@ impl ClSetup {
     /// This matches the security parameters used by:
     /// - WMY23 (|Delta_q| = 1860)
     /// - Trout (SecurityLevel::OneHundredTwentyEightBit, lambda = 914)
-    pub fn new_secp256k1_128bit(seed_decimal: &str) -> ClResult<Self> {
-        Self::new_custom(SECP256K1_ORDER, 1, SECP256K1_CL_PRIME_128BIT, seed_decimal)
+    pub fn new_secp256k1_128bit(seed: impl Into<Integer>) -> ClResult<Self> {
+        Self::new_custom(
+            parse_int_auto(SECP256K1_ORDER)?,
+            1,
+            parse_int_auto(SECP256K1_CL_PRIME_128BIT)?,
+            seed,
+        )
     }
 
     /// Creates a CL-HSMqk setup with custom parameters.
     ///
-    /// - `q_decimal`: the prime order of the plaintext group.
+    /// - `q`: the prime order of the plaintext group.
     /// - `k`: the power parameter (plaintext space is `Z/q^k`).
-    /// - `p_decimal`: the class-group prime.
-    /// - `seed_decimal`: PRNG seed (decimal string).
+    /// - `p`: the class-group prime.
+    /// - `seed`: PRNG seed.
     pub fn new_custom(
-        q_decimal: &str,
+        q: impl Into<Integer>,
         k: u32,
-        p_decimal: &str,
-        seed_decimal: &str,
+        p: impl Into<Integer>,
+        seed: impl Into<Integer>,
     ) -> ClResult<Self> {
         let mut randgen = RandGen::new();
-        randgen.set_seed(&parse_int_auto(seed_decimal)?);
+        randgen.set_seed(&seed.into());
 
-        let cl = CL_HSMqk::new(
-            &parse_int_auto(q_decimal)?,
-            k as usize,
-            &parse_int_auto(p_decimal)?,
-            Params::default(),
-        )?;
+        let cl = CL_HSMqk::new(&q.into(), k as usize, &p.into(), Params::default())?;
 
         Ok(Self {
             rng: randgen,
@@ -153,32 +158,25 @@ impl ClSetup {
 
     // ── Encryption / Decryption ────────────────────────────────────────
 
-    /// Encrypts a plaintext given as a decimal string.
-    pub fn encrypt(&mut self, pk: &PublicKey, message_decimal: &str) -> ClResult<Ciphertext> {
+    /// Encrypts a plaintext.
+    pub fn encrypt(&mut self, pk: &PublicKey, m: &Integer) -> ClResult<Ciphertext> {
         Ok(self.cl.encrypt(
             pk,
-            &Cleartext::from_mpz(&self.cl, parse_int_auto(message_decimal)?)?,
+            &Cleartext::from_mpz(&self.cl, m.clone())?,
             &mut self.rng,
         ))
     }
 
     /// Encrypts with explicit randomness (deterministic encryption).
-    pub fn encrypt_with_r(
-        &self,
-        pk: &PublicKey,
-        message_decimal: &str,
-        r_decimal: &str,
-    ) -> ClResult<Ciphertext> {
-        Ok(self.cl.encrypt_with_randomness(
-            pk,
-            &Cleartext::from_mpz(&self.cl, parse_int_auto(message_decimal)?)?,
-            &parse_int_auto(r_decimal)?,
-        ))
+    pub fn encrypt_with_r(&self, pk: &PublicKey, m: &Integer, r: &Integer) -> ClResult<Ciphertext> {
+        Ok(self
+            .cl
+            .encrypt_with_randomness(pk, &Cleartext::from_mpz(&self.cl, m.clone())?, r))
     }
 
-    /// Decrypts a ciphertext, returning the plaintext as a decimal string.
-    pub fn decrypt(&self, sk: &SecretKey, ct: &Ciphertext) -> ClResult<String> {
-        Ok(self.cl.decrypt(sk, ct).to_string())
+    /// Decrypts a ciphertext, returning the plaintext.
+    pub fn decrypt(&self, sk: &SecretKey, ct: &Ciphertext) -> ClResult<Integer> {
+        Ok(self.cl.decrypt(sk, ct).as_mpz().clone())
     }
 
     // ── Homomorphic operations ─────────────────────────────────────────
@@ -198,121 +196,48 @@ impl ClSetup {
         &mut self,
         pk: &PublicKey,
         ct: &Ciphertext,
-        scalar_decimal: &str,
+        s: &Integer,
     ) -> ClResult<Ciphertext> {
-        Ok(self
-            .cl
-            .scal_ciphertexts(pk, ct, &parse_int_auto(scalar_decimal)?, &mut self.rng))
+        Ok(self.cl.scal_ciphertexts(pk, ct, s, &mut self.rng))
     }
 
     // ── Subgroup operations ────────────────────────────────────────────
 
     /// Computes `h^e` (power of the hidden-order generator).
-    pub fn power_of_h(&self, e_decimal: &str) -> ClResult<Qfi> {
-        Ok(self.cl.power_of_h(&parse_int_auto(e_decimal)?))
+    pub fn power_of_h(&self, e: &Integer) -> ClResult<Qfi> {
+        Ok(self.cl.power_of_h(e))
     }
 
     /// Computes `f^m` in the cyclic subgroup `F` (the message subgroup).
-    pub fn power_of_f(&self, m_decimal: &str) -> ClResult<Qfi> {
-        Ok(self.cl.power_of_f(&parse_int_auto(m_decimal)?))
+    pub fn power_of_f(&self, m: &Integer) -> ClResult<Qfi> {
+        Ok(self.cl.power_of_f(m))
     }
 
-    // ── Bytes-based API ───────────────────────────────────────────────
-
-    /// Encrypts a plaintext given as big-endian bytes.
-    ///
-    /// The bytes are interpreted as an unsigned big-endian integer.
-    pub fn encrypt_bytes(
-        &mut self,
-        pk: &PublicKey,
-        plaintext_bytes: &[u8],
-    ) -> ClResult<Ciphertext> {
-        Ok(self.cl.encrypt(
-            pk,
-            &Cleartext::from_mpz(&self.cl, Integer::from_bytes_msf(plaintext_bytes))?,
-            &mut self.rng,
-        ))
-    }
-
-    /// Decrypts a ciphertext, returning the plaintext as big-endian bytes.
-    pub fn decrypt_bytes(&self, sk: &SecretKey, ct: &Ciphertext) -> ClResult<Vec<u8>> {
-        Ok(self.cl.decrypt(sk, ct).to_bytes_msf())
-    }
-
-    /// Homomorphic scalar multiplication with a bytes scalar.
-    pub fn scal_ciphertext_bytes(
-        &mut self,
-        pk: &PublicKey,
-        ct: &Ciphertext,
-        scalar_bytes: &[u8],
-    ) -> ClResult<Ciphertext> {
-        Ok(self.cl.scal_ciphertexts(
-            pk,
-            ct,
-            &Integer::from_bytes_msf(scalar_bytes),
-            &mut self.rng,
-        ))
-    }
-
-    /// Computes `f^m` in the cyclic subgroup `F`, with `m` as big-endian bytes.
-    pub fn power_of_f_bytes(&self, m_bytes: &[u8]) -> ClResult<Qfi> {
-        Ok(self.cl.power_of_f(&Integer::from_bytes_msf(m_bytes)))
-    }
-
-    /// Computes `h^e` with `e` as big-endian bytes.
-    pub fn power_of_h_bytes(&self, e_bytes: &[u8]) -> ClResult<Qfi> {
-        Ok(self.cl.power_of_h(&Integer::from_bytes_msf(e_bytes)))
-    }
-
-    /// Discrete log in subgroup F, result as big-endian bytes.
+    /// Discrete log of `fm = f^m` in `F`, returning `m`.
     #[allow(non_snake_case)]
-    pub fn dlog_in_F_bytes(&self, fm: &Qfi) -> ClResult<Vec<u8>> {
-        Ok(self.cl.dlog_in_F(fm).to_bytes_msf())
+    pub fn dlog_in_F(&self, fm: &Qfi) -> ClResult<Integer> {
+        Ok(self.cl.dlog_in_F(fm))
     }
 
-    /// QFI exponentiation in `Cl(Delta)`: `f^n` with `n` as big-endian bytes.
-    pub fn exp_bytes(&self, f: &Qfi, n: &[u8]) -> ClResult<Qfi> {
+    /// QFI exponentiation in `Cl(Delta)`: `f^n`.
+    pub fn exp(&self, f: &Qfi, n: &Integer) -> ClResult<Qfi> {
         let cl_delta = self.cl.cl_delta();
-        Ok(cl_delta.exp(f, &Integer::from_bytes_msf(n)))
+        Ok(cl_delta.exp(f, n))
     }
 
-    /// Deterministic encryption with explicit randomness, bytes-based.
-    ///
-    /// Both `msg` and `r` are big-endian unsigned bytes.
-    pub fn encrypt_with_r_bytes(
-        &self,
-        pk: &PublicKey,
-        msg: &[u8],
-        r: &[u8],
-    ) -> ClResult<Ciphertext> {
-        Ok(self.cl.encrypt_with_randomness(
-            pk,
-            &Cleartext::from_mpz(&self.cl, Integer::from_bytes_msf(msg))?,
-            &Integer::from_bytes_msf(r),
-        ))
+    /// Export secret key as an `Integer`.
+    pub fn sk_to_integer(&self, sk: &SecretKey) -> Integer {
+        sk.as_mpz().clone()
     }
 
-    /// Export secret key as big-endian bytes.
-    pub fn sk_to_bytes(&self, sk: &SecretKey) -> ClResult<Vec<u8>> {
-        Ok(sk.to_bytes_msf())
+    /// Import secret key from an `Integer`.
+    pub fn sk_from_integer(&self, v: &Integer) -> ClResult<SecretKey> {
+        Ok(SecretKey::from_mpz(&self.cl, v.clone())?)
     }
 
-    /// Import secret key from big-endian bytes.
-    pub fn sk_from_bytes(&self, bytes: &[u8]) -> ClResult<SecretKey> {
-        Ok(SecretKey::from_mpz(
-            &self.cl,
-            Integer::from_bytes_msf(bytes),
-        )?)
-    }
-
-    /// Curve order `q` as big-endian bytes.
-    pub fn q_bytes(&self) -> ClResult<Vec<u8>> {
-        Ok(self.cl.q().to_bytes_msf())
-    }
-
-    /// Secret key bound as big-endian bytes.
-    pub fn secretkey_bound_bytes(&self) -> ClResult<Vec<u8>> {
-        Ok(self.cl.secretkey_bound().to_bytes_msf())
+    /// Secret key bound.
+    pub fn secretkey_bound(&self) -> &Integer {
+        self.cl.secretkey_bound()
     }
 
     // ── Class-group QFI utilities ──────────────────────────────────────
@@ -323,65 +248,29 @@ impl ClSetup {
         Ok(cl_delta.compose(f1, f2))
     }
 
-    /// Exponentiates a QFI element: `f^n`.
-    pub fn exp(&self, f: &Qfi, n_decimal: &str) -> ClResult<Qfi> {
-        let cl_delta = self.cl.cl_delta();
-        Ok(cl_delta.exp(f, &parse_int_auto(n_decimal)?))
+    /// Simultaneous multi-exponentiation `∏ bases[i]^exps[i]` in `Cl(Δ)`.
+    /// `exps` is signed (`Integer` carries a sign), so a negative exponent
+    /// naturally inverts its base. Shares one squaring chain across all bases
+    /// (see [`ClassGroup::multiexp`]); far cheaper than folding `n` independent
+    /// [`exp`](Self::exp) results with [`compose`](Self::compose).
+    pub fn multiexp(&self, bases: &[impl Borrow<Qfi>], exps: &[Integer]) -> ClResult<Qfi> {
+        Ok(self.cl.cl_delta().multiexp(bases, exps))
     }
 
-    /// Simultaneous multi-exponentiation `∏ bases[i]^exps[i]` in `Cl(Δ)`, with
-    /// each exponent given as big-endian bytes. Shares one squaring chain across
-    /// all bases (see [`ClassGroup::multiexp`]); far cheaper than folding `n`
-    /// independent [`exp_bytes`](Self::exp_bytes) results with [`compose`](Self::compose).
-    pub fn multiexp_bytes(
-        &self,
-        bases: &[impl Borrow<Qfi>],
-        exps: &[impl Borrow<[u8]>],
-    ) -> ClResult<Qfi> {
-        let exps_mpz: Vec<Integer> = exps
-            .iter()
-            .map(|e| Integer::from_bytes_msf(e.borrow()))
-            .collect();
-        Ok(self.cl.cl_delta().multiexp(bases, &exps_mpz))
-    }
-
-    /// `pk^e` (`e` big-endian bytes) using the public key's fixed-base comb when
-    /// possible. The comb is built lazily on `pk` and reused, so the O(n)
-    /// per-peer Schnorr verifies that raise the *same* `pk` to a response `z`
-    /// amortise one table build instead of doing `n` bare variable-base exps.
-    /// Falls back to a bare exp for the compact variant (where `pk ∈ Cl(Δ_K)`)
-    /// or for exponents beyond the comb's range.
-    pub fn pk_pow_bytes(&self, pk: &PublicKey, e: &[u8]) -> ClResult<Qfi> {
-        let n = Integer::from_bytes_msf(e);
+    /// `pk^e` using the public key's fixed-base comb when possible. The comb
+    /// is built lazily on `pk` and reused, so the O(n) per-peer Schnorr
+    /// verifies that raise the *same* `pk` to a response `z` amortise one
+    /// table build instead of doing `n` bare variable-base exps. Falls back
+    /// to a bare exp for the compact variant (where `pk ∈ Cl(Δ_K)`) or for
+    /// exponents beyond the comb's range.
+    pub fn pk_pow(&self, pk: &PublicKey, e: &Integer) -> ClResult<Qfi> {
         if !self.cl.compact_variant {
             let comb = pk.comb(&self.cl);
-            if n.significant_bits() as usize <= comb.max_bits() {
-                return Ok(self.cl.cl_delta.exp_comb(comb, &n));
+            if e.significant_bits() as usize <= comb.max_bits() {
+                return Ok(self.cl.cl_delta.exp_comb(comb, e));
             }
         }
-        Ok(self.cl.cl_delta.exp(pk.elt(), &n))
-    }
-
-    /// Like [`multiexp_bytes`](Self::multiexp_bytes) but each exponent carries an
-    /// explicit sign (`true` = negative); the magnitude is big-endian bytes.
-    /// Useful for Lagrange-weighted products `∏ gᵢ^{λᵢ}` where `λᵢ` may be negative.
-    pub fn multiexp_signed_bytes(
-        &self,
-        bases: &[impl Borrow<Qfi>],
-        exps: &[(bool, impl Borrow<[u8]>)],
-    ) -> ClResult<Qfi> {
-        let exps_mpz: Vec<Integer> = exps
-            .iter()
-            .map(|(neg, e)| {
-                let m = Integer::from_bytes_msf(e.borrow());
-                if *neg {
-                    -m
-                } else {
-                    m
-                }
-            })
-            .collect();
-        Ok(self.cl.cl_delta().multiexp(bases, &exps_mpz))
+        Ok(self.cl.cl_delta.exp(pk.elt(), e))
     }
 
     /// Returns the identity element of `Cl(Delta)`.
@@ -1511,32 +1400,31 @@ mod tests {
     #[ignore = "perf micro-benchmark: pk-comb routing; run with --ignored --nocapture"]
     fn pk_pow_comb_vs_bare_timing() {
         use std::time::Instant;
-        let mut setup = ClSetup::new_secp256k1_128bit("42").expect("setup");
+        let mut setup = ClSetup::new_secp256k1_128bit(42u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
         // Response-sized exponent z = a + e·sk: ~secretkey_bound + ~28 bytes of
         // challenge, staying within the (enlarged) comb range.
         let z = {
             let (s2, _) = setup.keygen().expect("k2");
-            let body = setup.sk_to_bytes(&s2).expect("bytes");
-            let mut ext = vec![0xABu8; 28];
-            ext.extend_from_slice(&body);
-            ext
+            let body = setup.sk_to_integer(&s2);
+            let ext = Integer::from(0xABu64) << (28 * 8 + body.significant_bits());
+            ext + body
         };
         let elt = pk.elt().clone();
         const N: u32 = 20; // simulate reuse across an n-peer verify loop
         let t0 = Instant::now();
         for _ in 0..N {
-            let _ = setup.pk_pow_bytes(&pk, &z).expect("comb");
+            let _ = setup.pk_pow(&pk, &z).expect("comb");
         }
         let t_comb = t0.elapsed() / N;
         let t1 = Instant::now();
         for _ in 0..N {
-            let _ = setup.exp_bytes(&elt, &z).expect("bare");
+            let _ = setup.exp(&elt, &z).expect("bare");
         }
         let t_bare = t1.elapsed() / N;
         println!(
             "pk^z ({}-bit) amortised over {N} reuses: comb={t_comb:?} bare={t_bare:?} speedup={:.2}x",
-            z.len() * 8,
+            z.significant_bits(),
             t_bare.as_secs_f64() / t_comb.as_secs_f64()
         );
     }

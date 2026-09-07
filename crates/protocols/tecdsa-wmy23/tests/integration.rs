@@ -7,7 +7,7 @@
 #![allow(non_snake_case)]
 
 use sha2::{Digest, Sha256};
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
 use tecdsa_wmy23::{
@@ -193,7 +193,7 @@ fn run_sign(
 #[test]
 fn test_wmy23_full_sign() {
     let shares = run_keygen(3, 3, false); // reconstruction threshold=3, need 3 to sign (3-of-3)
-    let mut setup = ClSetup::new_secp256k1("12345").unwrap();
+    let mut setup = ClSetup::new_secp256k1(12345u64).unwrap();
     let presigs = run_drg_presign(&shares, &mut setup);
     let msg = hash_message(b"WMY23 correctness test");
     let sig = run_sign(&presigs, msg, &shares[0].public_key);
@@ -232,10 +232,11 @@ fn test_wmy23_machine_3party_e2e() {
     }
 
     // --- Presign with all 3 parties via the DRG presign machine ---
+    let seed_int = parse_int_auto(seed).expect("parse seed");
     let presign_machines: Vec<(PartyId, Wmy23PresignMachine)> = all_parties
         .iter()
         .map(|&pid| {
-            let setup = ClSetup::new_secp256k1(seed).expect("cl setup");
+            let setup = ClSetup::new_secp256k1(&seed_int).expect("cl setup");
             let config = PresignConfig {
                 key_share: key_shares[(pid.0 - 1) as usize].clone(),
                 my_id: pid,
@@ -304,7 +305,7 @@ fn test_wmy23_machine_3party_e2e() {
 
 #[test]
 fn test_wmy23_threshold_subset_sign() {
-    use tecdsa_class_group::cl::ClSetup;
+    use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
     use tecdsa_protocol::PartyId;
     use tecdsa_testkit::Orchestrator;
     use tecdsa_wmy23::{
@@ -354,11 +355,12 @@ fn test_wmy23_threshold_subset_sign() {
     let signers = [1u16, 2];
     let signer_parties: Vec<PartyId> = signers.iter().map(|&s| PartyId(s)).collect();
 
+    let seed_int = parse_int_auto(seed).expect("parse seed");
     let presign_machines: Vec<(PartyId, Wmy23PresignMachine)> = signers
         .iter()
         .map(|&s| {
             let pid = PartyId(s);
-            let setup = ClSetup::new_secp256k1(seed).expect("cl setup");
+            let setup = ClSetup::new_secp256k1(&seed_int).expect("cl setup");
             let config = PresignConfig {
                 key_share: key_shares[(s - 1) as usize].clone(),
                 my_id: pid,
@@ -435,7 +437,7 @@ fn test_wmy23_threshold_subset_sign() {
 #[test]
 fn test_wmy23_online_identifies_bad_partial_signature() {
     let shares = run_keygen(3, 3, false);
-    let mut setup = ClSetup::new_secp256k1("12345").unwrap();
+    let mut setup = ClSetup::new_secp256k1(12345u64).unwrap();
     let presigs = run_drg_presign(&shares, &mut setup);
     let m = DataToSign::from_digest(hash_message(b"cheater: bad s_i"));
     let mut rng = rand::thread_rng();
@@ -472,7 +474,7 @@ fn test_wmy23_online_identifies_bad_partial_signature() {
 #[test]
 fn test_wmy23_online_identifies_bad_mta_share() {
     let shares = run_keygen(3, 3, false);
-    let mut setup = ClSetup::new_secp256k1("12345").unwrap();
+    let mut setup = ClSetup::new_secp256k1(12345u64).unwrap();
     let presigs = run_drg_presign(&shares, &mut setup);
     let m = DataToSign::from_digest(hash_message(b"cheater: bad M_ij"));
     let mut rng = rand::thread_rng();
@@ -520,7 +522,7 @@ fn test_wmy23_online_machine_reports_cheater() {
     use tecdsa_wmy23::sign::{msg::serialize_contribution, Wmy23OnlineSignMachine};
 
     let shares = run_keygen(3, 3, false);
-    let mut setup = ClSetup::new_secp256k1("12345").unwrap();
+    let mut setup = ClSetup::new_secp256k1(12345u64).unwrap();
     let presigs = run_drg_presign(&shares, &mut setup);
     let public_key = shares[0].public_key;
     let m = DataToSign::from_digest(hash_message(b"machine cheater test"));
@@ -595,7 +597,7 @@ fn rebuild_presig(
 #[test]
 fn test_wmy23_presign_phase3_crossverify_honest() {
     let shares = run_keygen(3, 3, false);
-    let mut setup = ClSetup::new_secp256k1("12345").unwrap();
+    let mut setup = ClSetup::new_secp256k1(12345u64).unwrap();
     let r4s = run_drg_presign_r4(&shares, &mut setup);
 
     // Every party (verifier v) accepts every party j's revealed share.
@@ -618,7 +620,7 @@ fn test_wmy23_presign_phase3_crossverify_honest() {
 #[test]
 fn test_wmy23_presign_identifies_bad_delta() {
     let shares = run_keygen(3, 3, false);
-    let mut setup = ClSetup::new_secp256k1("12345").unwrap();
+    let mut setup = ClSetup::new_secp256k1(12345u64).unwrap();
     let r4s = run_drg_presign_r4(&shares, &mut setup);
 
     // Party 1 tampers its revealed delta_1 (leaves D_1 / pi_{D_1} intact):
@@ -647,7 +649,7 @@ fn test_wmy23_presign_identifies_bad_delta() {
 fn test_wmy23_presign_identifies_bad_big_d() {
     use elliptic_curve::CurveArithmetic;
     let shares = run_keygen(3, 3, false);
-    let mut setup = ClSetup::new_secp256k1("12345").unwrap();
+    let mut setup = ClSetup::new_secp256k1(12345u64).unwrap();
     let r4s = run_drg_presign_r4(&shares, &mut setup);
 
     // Party 2 tampers D_2: pi_{D_2} (R_DL-PC, base Gamma) must reject it.
@@ -706,7 +708,7 @@ fn bench_wmy23_paper_params() {
     let mut times = Vec::new();
     let mut presigs = Vec::new();
     for _ in 0..iters {
-        let mut setup = ClSetup::new_secp256k1_128bit("12345").unwrap();
+        let mut setup = ClSetup::new_secp256k1_128bit(12345u64).unwrap();
         let start = Instant::now();
         presigs = run_drg_presign(&shares, &mut setup);
         times.push(start.elapsed());

@@ -57,9 +57,9 @@ pub mod robust;
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
-use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSetup},
     zk::{r_dl_cl::RDlClProof, r_enc::REncProof},
@@ -299,7 +299,6 @@ enum PresignRound {
 
 struct KeyMaterial {
     x_i: k256::Scalar,
-    x_i_bytes: Vec<u8>,
     _x_point: k256::ProjectivePoint,
     public_shares: Vec<k256::ProjectivePoint>,
     threshold: u16,
@@ -315,7 +314,6 @@ struct KeyMaterial {
 impl Zeroize for KeyMaterial {
     fn zeroize(&mut self) {
         self.x_i.zeroize();
-        self.x_i_bytes.zeroize();
         self.cl_sk_share.zeroize();
     }
 }
@@ -370,11 +368,8 @@ impl Jtx25PresignMachine {
             cl_pk_share_bytes.insert(pid, data);
         }
 
-        let x_i_bytes = key_share.secret_share.to_bytes_vec();
-
         let key_mat = KeyMaterial {
             x_i: key_share.secret_share,
-            x_i_bytes,
             _x_point: key_share.public_key,
             public_shares: key_share.public_shares.clone(),
             threshold,
@@ -388,39 +383,29 @@ impl Jtx25PresignMachine {
         };
 
         // --- Step 1: Sample phi_i ---
-        let phi_i = {
+        let phi_i_int = {
             let (sk, _) = setup.keygen()?;
-            let sk_bytes = setup.sk_to_bytes(&sk)?;
-            let q_bytes = setup.q_bytes()?;
-            let q = Integer::from_digits(&q_bytes, Order::Msf);
-            let bu = Integer::from_digits(&sk_bytes, Order::Msf);
-            let reduced = bu % &q;
-            k256::Secp256k1::scalar_from_integer(&reduced)
+            setup.sk_to_integer(&sk).modulo(setup.cl().q())
         };
-        let phi_i_bytes = phi_i.to_bytes_vec();
+        let phi_i = k256::Secp256k1::scalar_from_integer(&phi_i_int);
 
         // --- Step 2: Sample k_i ---
         let k_i = {
             let (sk, _) = setup.keygen()?;
-            let sk_bytes = setup.sk_to_bytes(&sk)?;
-            let q_bytes = setup.q_bytes()?;
-            let q = Integer::from_digits(&q_bytes, Order::Msf);
-            let bu = Integer::from_digits(&sk_bytes, Order::Msf);
-            let reduced = bu % &q;
+            let reduced = setup.sk_to_integer(&sk).modulo(setup.cl().q());
             k256::Secp256k1::scalar_from_integer(&reduced)
         };
 
         // --- Step 3: Encrypt phi_i under aggregate CL pk ---
         let (r_sk, _) = setup.keygen()?;
-        let enc_randomness = setup.sk_to_bytes(&r_sk)?;
-        let phi_bar_i =
-            setup.encrypt_with_r_bytes(&key_mat.cl_pk, &phi_i_bytes, &enc_randomness)?;
+        let enc_randomness = setup.sk_to_integer(&r_sk);
+        let phi_bar_i = setup.encrypt_with_r(&key_mat.cl_pk, &phi_i_int, &enc_randomness)?;
 
         let r_enc_proof = REncProof::prove(
             &mut setup,
             &key_mat.cl_pk,
             &phi_bar_i,
-            &phi_i_bytes,
+            &phi_i_int,
             &enc_randomness,
         )?;
 
@@ -431,7 +416,7 @@ impl Jtx25PresignMachine {
         let mut commit_nonce = [0u8; COMMIT_NONCE_LEN];
         {
             let (nonce_sk, _) = setup.keygen()?;
-            let nonce_bytes = setup.sk_to_bytes(&nonce_sk)?;
+            let nonce_bytes = setup.sk_to_integer(&nonce_sk).to_bytes_msf();
             let len = nonce_bytes.len().min(COMMIT_NONCE_LEN);
             commit_nonce[..len].copy_from_slice(&nonce_bytes[..len]);
         }
@@ -533,9 +518,9 @@ impl Jtx25PresignMachine {
             tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
         let lambda_i = lagrange_coeffs[my_idx];
         let lambda_x_i = lambda_i * key_mat.x_i;
-        let lambda_x_i_bytes = lambda_x_i.to_bytes_vec();
+        let lambda_x_i_int = lambda_x_i.to_integer();
 
-        let phi_bar_x_i = scalar_mul_ct(setup, &phi_bar, &lambda_x_i_bytes)
+        let phi_bar_x_i = scalar_mul_ct(setup, &phi_bar, &lambda_x_i_int)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_x_i: {e}")))?;
 
         let x_i_lambda_point =
@@ -546,17 +531,17 @@ impl Jtx25PresignMachine {
             &x_i_lambda_point,
             &phi_bar,
             &phi_bar_x_i,
-            &lambda_x_i_bytes,
+            &lambda_x_i_int,
         )
         .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
 
         // --- Step 3: Compute phi_bar_k_i = phi_bar * k_i ---
-        let k_i_bytes = state.k_i.to_bytes_vec();
-        let phi_bar_k_i = scalar_mul_ct(setup, &phi_bar, &k_i_bytes)
+        let k_i_int = state.k_i.to_integer();
+        let phi_bar_k_i = scalar_mul_ct(setup, &phi_bar, &k_i_int)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_k_i: {e}")))?;
 
         let pi_dl_cl_k =
-            RDlClProof::prove(setup, &state.r_point_i, &phi_bar, &phi_bar_k_i, &k_i_bytes)
+            RDlClProof::prove(setup, &state.r_point_i, &phi_bar, &phi_bar_k_i, &k_i_int)
                 .map_err(|e| TecdsaError::Other(format!("R_dl-cl k prove: {e}")))?;
 
         // --- Step 4: Build Round 2 payload (decommit + proofs) ---

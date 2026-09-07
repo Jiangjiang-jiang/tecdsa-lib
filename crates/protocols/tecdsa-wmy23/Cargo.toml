@@ -24,6 +24,7 @@ elliptic-curve.workspace = true
 sha2.workspace = true
 rand_core.workspace = true
 rand.workspace = true
+rug.workspace = true
 zeroize.workspace = true
 subtle.workspace = true
 serde = { workspace = true, optional = true }
@@ -32,7 +33,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tecdsa-testkit.workspace = true
-rug.workspace = true
 
 [lints]
 workspace = true
