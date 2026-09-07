@@ -3,7 +3,7 @@
 
 use std::str::FromStr;
 
-use tecdsa_class_group::cl::{Mpz, Qfi};
+use tecdsa_class_group::cl::Qfi;
 
 /// Errors that can occur during the Trout protocol execution.
 #[derive(Debug, thiserror::Error)]
@@ -47,9 +47,9 @@ pub fn qfi_to_abc(qfi: &tecdsa_class_group::cl::Qfi) -> TroutResult<(String, Str
 /// Helper to reconstruct a QFI from its (a, b, c) decimal representation.
 pub fn qfi_from_abc(a: &str, b: &str, c: &str) -> TroutResult<tecdsa_class_group::cl::Qfi> {
     Ok(Qfi::from_abc(
-        Mpz::from_str(a).map_err(|e| TroutError::Bicycl(format!("{e}")))?,
-        Mpz::from_str(b).map_err(|e| TroutError::Bicycl(format!("{e}")))?,
-        Mpz::from_str(c).map_err(|e| TroutError::Bicycl(format!("{e}")))?,
+        rug::Integer::from_str(a).map_err(|e| TroutError::Bicycl(format!("{e}")))?,
+        rug::Integer::from_str(b).map_err(|e| TroutError::Bicycl(format!("{e}")))?,
+        rug::Integer::from_str(c).map_err(|e| TroutError::Bicycl(format!("{e}")))?,
     ))
 }
 

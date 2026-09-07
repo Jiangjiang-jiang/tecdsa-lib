@@ -670,12 +670,17 @@ pub fn drg_full_run(
 
 #[cfg(test)]
 mod tests {
+    use rug::Integer;
+
     use super::*;
-    use crate::cl::{ClPublicKey, ClSetup, Mpz, Qfi};
+    use crate::cl::{ClPublicKey, ClSetup, Qfi};
 
     /// Helper: create CL public keys for all parties.
     #[allow(clippy::type_complexity)]
-    fn make_cl_keys(setup: &mut ClSetup, n: usize) -> Vec<(Vec<u8>, ClPublicKey, (Mpz, Mpz, Mpz))> {
+    fn make_cl_keys(
+        setup: &mut ClSetup,
+        n: usize,
+    ) -> Vec<(Vec<u8>, ClPublicKey, (Integer, Integer, Integer))> {
         (0..n)
             .map(|_| {
                 let (sk_raw, pk) = setup.keygen().expect("CL keygen");
@@ -688,7 +693,7 @@ mod tests {
     }
 
     /// Helper: reconstruct CL public key from ABC.
-    fn reconstruct_pk(setup: &ClSetup, abc: &(Mpz, Mpz, Mpz)) -> ClPublicKey {
+    fn reconstruct_pk(setup: &ClSetup, abc: &(Integer, Integer, Integer)) -> ClPublicKey {
         let qfi = Qfi::from_abc(abc.0.clone(), abc.1.clone(), abc.2.clone());
         let pk_raw = ClPublicKey::from_qfi(setup.cl(), qfi).expect("pk from qfi");
         pk_raw

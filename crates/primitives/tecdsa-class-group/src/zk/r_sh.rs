@@ -126,7 +126,7 @@ fn aggregate_products(
 ) -> ClResult<(Qfi, Qfi)> {
     let n = party_ids.len();
     let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
-    let M = Integer::from_digits(&setup.cl().m().to_bytes_be(), Order::Msf);
+    let M = Integer::from_digits(&setup.cl().m().to_bytes_msf(), Order::Msf);
 
     // degree = n - t - 2  (the dual code degree).
     // When n <= t + 1, degree < 0 and there is no dual code check.

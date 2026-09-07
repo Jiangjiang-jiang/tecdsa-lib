@@ -11,7 +11,7 @@ use k256::Secp256k1;
 use rand::thread_rng;
 use rug::{integer::Order, Complete, Integer};
 use tecdsa_bench::zk_fixtures::*;
-use tecdsa_class_group::cl::{Cleartext, Mpz, SECP256K1_ORDER};
+use tecdsa_class_group::cl::{Cleartext, SECP256K1_ORDER};
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::BigIntExt;
 
@@ -607,14 +607,15 @@ fn class_group_zk(c: &mut Criterion) {
         let (r_sk2, _) = setup.keygen().expect("kg");
         let ct_in = setup.cl().encrypt_with_randomness(
             &pk,
-            &Cleartext::from_mpz(setup.cl(), Mpz::from_str("100").expect("enc")).expect("enc"),
+            &Cleartext::from_mpz(setup.cl(), Integer::from_str("100").expect("enc")).expect("enc"),
             &r_sk2,
         );
         let (r_sk3, _) = setup.keygen().expect("kg");
         let r1 = setup.sk_to_bytes(&r_sk3).expect("bytes");
-        let q_bu = Mpz::from_str(SECP256K1_ORDER).unwrap();
-        let m_out = (Mpz::from(5u32) * Mpz::from(100u32) + Mpz::from(10u32)).modulo(&q_bu);
-        let r_out = Mpz::from(5u32) * r_sk2.as_mpz() + r_sk3.as_mpz();
+        let q_bu = Integer::from_str(SECP256K1_ORDER).unwrap();
+        let m_out =
+            (Integer::from(5u32) * Integer::from(100u32) + Integer::from(10u32)).modulo(&q_bu);
+        let r_out = Integer::from(5u32) * r_sk2.as_mpz() + r_sk3.as_mpz();
         let ct_out = setup.cl().encrypt_with_randomness(
             &pk,
             &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),
@@ -622,7 +623,7 @@ fn class_group_zk(c: &mut Criterion) {
         );
         let (r_sk4, _) = setup.keygen().expect("kg");
         let r2 = setup.sk_to_bytes(&r_sk4).expect("bytes");
-        let r2_dec = Mpz::from_bytes_be(&r2);
+        let r2_dec = Integer::from_bytes_msf(&r2);
         let h_r2 = setup.cl().power_of_h(&r2_dec);
         let f_x = setup.power_of_f("5").expect("f_x");
         let commitment = setup.compose(&h_r2, &f_x).expect("com");
@@ -673,15 +674,17 @@ fn class_group_zk(c: &mut Criterion) {
         let r_base = setup.sk_to_bytes(&r_sk2).expect("bytes");
         let (r_sk3, _) = setup.keygen().expect("kg");
         let r_enc = setup.sk_to_bytes(&r_sk3).expect("bytes");
-        let r_base_dec = Mpz::from_bytes_be(&r_base);
+        let r_base_dec = Integer::from_bytes_msf(&r_base);
         let ct_in = setup.cl().encrypt_with_randomness(
             &pk,
-            &Cleartext::from_mpz(setup.cl(), Mpz::from_str("100").unwrap()).unwrap(),
+            &Cleartext::from_mpz(setup.cl(), Integer::from_str("100").unwrap()).unwrap(),
             &r_base_dec,
         );
-        let q_bu = Mpz::from_str(tecdsa_class_group::cl::SECP256K1_ORDER).unwrap();
-        let m_out = (Mpz::from(3u32) * Mpz::from(100u32) + Mpz::from(7u32)).modulo(&q_bu);
-        let r_out = Mpz::from(3u32) * Mpz::from_bytes_be(&r_base) + Mpz::from_bytes_be(&r_enc);
+        let q_bu = Integer::from_str(tecdsa_class_group::cl::SECP256K1_ORDER).unwrap();
+        let m_out =
+            (Integer::from(3u32) * Integer::from(100u32) + Integer::from(7u32)).modulo(&q_bu);
+        let r_out = Integer::from(3u32) * Integer::from_bytes_msf(&r_base)
+            + Integer::from_bytes_msf(&r_enc);
         let ct_out = setup.cl().encrypt_with_randomness(
             &pk,
             &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),
@@ -727,10 +730,10 @@ fn class_group_zk(c: &mut Criterion) {
         let d1 = setup.exp_bytes(&c1, &k_star).expect("d1");
         let c2_k = setup.exp_bytes(&c2, &k_star).expect("c2k");
         // negate_mod_q inlined
-        let q_bu = Mpz::from_bytes_be(&q_bytes);
-        let beta_bu = Mpz::from_bytes_be(&beta_bytes);
-        let neg_beta_bu = (&q_bu - &beta_bu.modulo(&q_bu)).modulo(&q_bu);
-        let neg_beta = neg_beta_bu.to_bytes_be();
+        let q_bu = Integer::from_bytes_msf(&q_bytes);
+        let beta_bu = Integer::from_bytes_msf(&beta_bytes);
+        let neg_beta_bu = (&q_bu - &beta_bu.modulo(&q_bu)).complete().modulo(&q_bu);
+        let neg_beta = neg_beta_bu.to_bytes_msf();
         let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("d2");
         let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
@@ -790,7 +793,7 @@ fn class_group_zk(c: &mut Criterion) {
         let party_ids: Vec<u16> = (1..=n).collect();
         let pk_refs: Vec<&_> = pks.iter().collect();
         // Inline create_pvss_ciphertexts
-        let q_bu = setup.cl().q().clone().into_inner();
+        let q_bu = setup.cl().q().clone();
         let (rho_sk, _) = setup.keygen().expect("kg");
         let rho_bytes = setup.sk_to_bytes(&rho_sk).expect("rho");
         let c1_sh = setup.power_of_h_bytes(&rho_bytes).expect("h^rho");
