@@ -287,9 +287,9 @@ impl PaillierMtaProofs for Gg18Proofs {
 // Cggmp20Proofs: CGGMP20-specific proof system with pi_enc + pi_aff-g
 // ---------------------------------------------------------------------------
 
-use generic_ec::curves::Secp256k1 as GE;
+use tecdsa_curve::TecdsaCurve;
 
-use crate::zk::{pi_aff_g as pi_aff, pi_enc, IntegerExt};
+use crate::zk::{pi_aff_g as pi_aff, pi_enc};
 
 /// CGGMP20 proof setup: Ring-Pedersen auxiliary parameters, security
 /// parameters, and the prover's own Paillier key.
@@ -368,9 +368,10 @@ pub type Cggmp20SenderProof = pi_enc::NiProof;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Cggmp20ReceiverProof {
     /// The `pi_aff-g` non-interactive proof.
-    pub proof: pi_aff::NiProof<GE>,
+    pub proof: pi_aff::NiProof<k256::Secp256k1>,
     /// EC commitment `X = a * G` (public input to `pi_aff-g`).
-    pub x: generic_ec::Point<GE>,
+    #[serde(with = "tecdsa_curve::serde_projective")]
+    pub x: k256::ProjectivePoint,
     /// Ciphertext `Y = Enc(key_i, alpha')` under the prover's own key.
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub y: crate::scheme::Ciphertext,
@@ -471,7 +472,7 @@ impl PaillierMtaProofs for Cggmp20Proofs {
         rng: &mut impl CryptoRngCore,
     ) -> Self::ReceiverProof {
         // Compute EC commitment: X = a * G
-        let x_point = generic_ec::Point::<GE>::generator() * a.to_scalar::<GE>();
+        let x_point = k256::Secp256k1::generator() * k256::Secp256k1::scalar_from_integer(a);
 
         // Encrypt alpha_prime under the prover's own key to get Y
         let (y_ciphertext, nonce_y) = proof_setup
@@ -479,7 +480,7 @@ impl PaillierMtaProofs for Cggmp20Proofs {
             .encrypt_with_random(rng, alpha_prime)
             .expect("encryption of alpha_prime under prover key must succeed");
 
-        let proof = pi_aff::non_interactive::prove::<GE, Sha256>(
+        let proof = pi_aff::non_interactive::prove::<k256::Secp256k1, Sha256>(
             &Cggmp20MtaFsTag,
             &proof_setup.aux,
             pi_aff::Data {
@@ -521,7 +522,7 @@ impl PaillierMtaProofs for Cggmp20Proofs {
         // `Cggmp20ReceiverProof`, so the full pi_aff-g statement can be
         // reconstructed and verified here: `c_a = c_B` (the input), `c_b = c_A`
         // (the affine result), `Y = proof.y`, `X = proof.x`.
-        pi_aff::non_interactive::verify::<GE, Sha256>(
+        pi_aff::non_interactive::verify::<k256::Secp256k1, Sha256>(
             &Cggmp20MtaFsTag,
             &proof_setup.aux,
             pi_aff::Data {

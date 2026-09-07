@@ -1042,7 +1042,7 @@ fn paillier_zk_once(pf: &PaillierFixture, nt: &NTildeFixture) {
 
 fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
     use sha2::Sha256;
-    use tecdsa_paillier::zk::bridge::{pedersen_to_aux, point_to_ge, scalar_to_ge};
+    use tecdsa_paillier::zk::bridge::pedersen_to_aux;
 
     #[derive(udigest::Digestable)]
     struct BenchTag(&'static str);
@@ -1128,7 +1128,6 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
 
     {
         use tecdsa_paillier::zk::pi_aff_g as pi_aff;
-        type GE = generic_ec::curves::Secp256k1;
         let x_val = Integer::from(7);
         let y_val = Integer::from(13);
         let (ct_c, _) = paillier_encrypt(ek, &Integer::from(100));
@@ -1144,14 +1143,13 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
         };
         let x_scalar = C::scalar_from_integer(&x_val);
         let x_point = C::generator() * x_scalar;
-        let x_ge = point_to_ge(&x_point);
-        let data = pi_aff::Data::<GE> {
+        let data = pi_aff::Data::<C> {
             key_j: ek,
             key_i: ek,
             c: &ct_c,
             d: &d_val,
             y: &ct_y,
-            x: &x_ge,
+            x: &x_point,
         };
         let pdata = pi_aff::PrivateData {
             x: &x_val,
@@ -1165,52 +1163,50 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
             epsilon: 512,
         };
         let proof = time_once("zk/paillier_zk_facade/pi_aff_g/prove", || {
-            pi_aff::non_interactive::prove::<GE, Sha256>(&tag, &aux, data, pdata, &security, rng)
+            pi_aff::non_interactive::prove::<C, Sha256>(&tag, &aux, data, pdata, &security, rng)
                 .expect("pi_aff prove")
         });
         size_of("zk/paillier_zk_facade/pi_aff_g", &proof);
         time_once("zk/paillier_zk_facade/pi_aff_g/verify", || {
-            pi_aff::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &security, &proof)
+            pi_aff::non_interactive::verify::<C, Sha256>(&tag, &aux, data, &security, &proof)
                 .expect("pi_aff verify")
         });
     }
 
     {
         use tecdsa_paillier::zk::pi_elog;
-        type GE = generic_ec::curves::Secp256k1;
-        let y = scalar_to_ge(&C::random_scalar(rng));
-        let lambda = scalar_to_ge(&C::random_scalar(rng));
-        let g = generic_ec::Point::<GE>::generator();
-        let h = g * generic_ec::Scalar::<GE>::random(rng);
+        let y = C::random_scalar(rng);
+        let lambda = C::random_scalar(rng);
+        let g = C::generator();
+        let h = g * C::random_scalar(rng);
         let x = g * y;
         let l = g * lambda;
         let m = g * y + x * lambda;
         let y_pt = h * y;
-        let data = pi_elog::Data::<GE> {
+        let data = pi_elog::Data::<C> {
             l: &l,
             m: &m,
             x: &x,
             y: &y_pt,
             h: &h,
         };
-        let pdata = pi_elog::PrivateData::<GE> {
+        let pdata = pi_elog::PrivateData::<C> {
             y: &y,
             lambda: &lambda,
         };
         let proof = time_once("zk/paillier_zk_facade/pi_elog/prove", || {
-            pi_elog::non_interactive::prove::<GE, Sha256>(&tag, data, pdata, rng)
+            pi_elog::non_interactive::prove::<C, Sha256>(&tag, data, pdata, rng)
                 .expect("pi_elog prove")
         });
         time_once("zk/paillier_zk_facade/pi_elog/verify", || {
-            pi_elog::non_interactive::verify::<GE, Sha256>(&tag, data, &proof)
+            pi_elog::non_interactive::verify::<C, Sha256>(&tag, data, &proof)
                 .expect("pi_elog verify")
         });
     }
 
     {
-        use tecdsa_paillier::zk::{pi_enc_elg, IntegerExt as _};
+        use tecdsa_paillier::zk::pi_enc_elg;
 
-        type GE = generic_ec::curves::Secp256k1;
         let security = pi_enc_elg::SecurityParams {
             l: 256,
             epsilon: 512,
@@ -1218,32 +1214,30 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
         let plaintext = Integer::from_rng_half_pm(rng, &Integer::two_pow(security.l as u32));
         let nonce = Integer::sample_in_mult_group_of(rng, ek.n());
         let ct = ek.encrypt_with(&plaintext, &nonce).expect("enc");
-        let a = generic_ec::Scalar::<GE>::random(rng);
-        let b = generic_ec::Scalar::<GE>::random(rng);
-        let g = generic_ec::Point::<GE>::generator();
+        let a = C::random_scalar(rng);
+        let b = C::random_scalar(rng);
+        let g = C::generator();
         let a_pt = g * a;
         let b_pt = g * b;
-        let x_pt = g * (a * b + plaintext.to_scalar());
-        let data = pi_enc_elg::Data::<GE> {
+        let x_pt = g * (a * b + C::scalar_from_integer(&plaintext));
+        let data = pi_enc_elg::Data::<C> {
             key: ek,
             ciphertext: &ct,
             a: &a_pt,
             b: &b_pt,
             x: &x_pt,
         };
-        let pdata = pi_enc_elg::PrivateData::<GE> {
+        let pdata = pi_enc_elg::PrivateData::<C> {
             plaintext: &plaintext,
             nonce: &nonce,
             b: &b,
         };
         let proof = time_once("zk/paillier_zk_facade/pi_enc_elg/prove", || {
-            pi_enc_elg::non_interactive::prove::<GE, Sha256>(
-                &tag, &aux, data, pdata, &security, rng,
-            )
-            .expect("pi_enc_elg prove")
+            pi_enc_elg::non_interactive::prove::<C, Sha256>(&tag, &aux, data, pdata, &security, rng)
+                .expect("pi_enc_elg prove")
         });
         time_once("zk/paillier_zk_facade/pi_enc_elg/verify", || {
-            pi_enc_elg::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &proof, &security)
+            pi_enc_elg::non_interactive::verify::<C, Sha256>(&tag, &aux, data, &proof, &security)
                 .expect("pi_enc_elg verify")
         });
     }

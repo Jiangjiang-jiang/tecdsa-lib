@@ -36,7 +36,6 @@ impl<C: TecdsaCurve> Cggmp20PresignMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-    C: crate::bridge::BridgeCurve,
 {
     /// Create a new presign state machine with the default 128-bit security level.
     pub fn new(
@@ -78,7 +77,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar:
         PrimeField<Repr = FieldBytes<C>> + serde::Serialize + for<'de> serde::Deserialize<'de>,
-    C: crate::bridge::BridgeCurve,
 {
     type Output = (Presignature<C>, PresignaturePublicData<C>);
     type Inbound = PresignMsg<C>;

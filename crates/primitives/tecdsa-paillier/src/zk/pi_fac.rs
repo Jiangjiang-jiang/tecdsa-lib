@@ -113,7 +113,7 @@ pub mod interactive {
         SecurityParams,
     };
     use crate::zk::{
-        common::{fail_if, fail_if_ne, IntegerExt, InvalidProofReason},
+        common::{fail_if, fail_if_ne, InvalidProofReason},
         Error,
     };
 

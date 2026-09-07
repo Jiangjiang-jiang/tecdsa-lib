@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
-use generic_ec::Scalar;
 use rug::Integer;
 use tecdsa_bigint::BigIntExt;
 
@@ -123,63 +122,6 @@ impl From<PaillierError> for InvalidProof {
 #[error("paillier encryption failed")]
 pub struct PaillierError;
 
-pub trait IntegerExt: Sized {
-    /// Embed BigInt into chosen scalar type
-    fn to_scalar<C: generic_ec::Curve>(&self) -> Scalar<C>;
-
-    /// Returns prime order of curve C
-    fn curve_order<C: generic_ec::Curve>() -> Self;
-
-    /// Generates a random integer in interval
-    /// `[-range/2; range/2]` if range is even
-    /// `[-(range-1)/2; (range-1)/2]` if range is odd
-    fn from_rng_half_pm<R: rand_core::RngCore>(rng: &mut R, range: &Self) -> Self;
-
-    /// Checks whether `self` is in interval
-    /// `[-range/2; range/2]` when range is even
-    /// `[-(range-1)/2; (range-1)/2]` when range is odd
-    fn is_in_half_pm(&self, range: &Self) -> bool;
-}
-
-impl IntegerExt for Integer {
-    fn to_scalar<C: generic_ec::Curve>(&self) -> Scalar<C> {
-        let bytes_be = self.to_bytes_msf();
-        let s = Scalar::<C>::from_be_bytes_mod_order(bytes_be);
-        if self.cmp0().is_ge() {
-            s
-        } else {
-            -s
-        }
-    }
-
-    fn curve_order<C: generic_ec::Curve>() -> Self {
-        let order_minus_one = -Scalar::<C>::one();
-        let i = Integer::from_bytes_msf(&order_minus_one.to_be_bytes());
-        i + 1
-    }
-
-    fn from_rng_half_pm<R: rand_core::RngCore>(rng: &mut R, range: &Self) -> Self {
-        if range.is_even() {
-            let half_range = Integer::from(range >> 1);
-            let range_plus_one = Integer::from(range + 1u32);
-            range_plus_one.sample_below(rng) - half_range
-        } else {
-            // range is odd, so half of the range minus one (that is `(range -
-            // 1) / 2`) is range / 2
-            let half_range_minus_one = Integer::from(range >> 1);
-            range.sample_below_ref(rng) - half_range_minus_one
-        }
-    }
-
-    fn is_in_half_pm(&self, range: &Self) -> bool {
-        // If range is even, range >> 1 is exactly range / 2
-        // If range is odd, range >> 1 == (range - 1) >> 1 == (range - 1) / 2 as
-        // the lowest bit is discarded either way
-        let bound = Integer::from(range >> 1);
-        self.cmp_abs(&bound).is_le()
-    }
-}
-
 /// Error indicating that computation cannot be evaluated because of bad exponent
 ///
 /// Returned by [`Aux::pow_mod`] and other functions that do exponentiation internally
@@ -241,6 +183,17 @@ pub mod encoding {
             bytes.push(u8::from(sign == Sign::Negative));
             bytes.extend_from_slice(&magnitude);
             encoder.encode_leaf_value(bytes);
+        }
+    }
+
+    /// Digests a curve point by its canonical (compressed) encoding.
+    ///
+    /// Replaces `generic-ec`'s own `Digestable` impl. The encoding is fixed
+    /// width and canonical, so it is injective on the point set.
+    pub struct Point;
+    impl<G: elliptic_curve::group::GroupEncoding> udigest::DigestAs<G> for Point {
+        fn digest_as<B: udigest::Buffer>(value: &G, encoder: udigest::encoding::EncodeValue<B>) {
+            encoder.encode_leaf_value(value.to_bytes());
         }
     }
 
@@ -349,28 +302,6 @@ pub mod test {
 mod _test {
     use rug::Integer;
     use tecdsa_bigint::BigIntExt;
-
-    use super::IntegerExt;
-
-    #[test]
-    fn to_scalar_encoding() {
-        type E = generic_ec::curves::Secp256k1;
-
-        let bytes = [123u8, 231u8];
-        let int = u16::from_be_bytes(bytes);
-        let bn = Integer::from(int);
-        let scalar = bn.to_scalar();
-        assert_eq!(scalar, generic_ec::Scalar::<E>::from(int));
-
-        assert_eq!(bn.to_bytes_msf(), &bytes);
-
-        let curve_order = Integer::curve_order::<E>();
-        assert_eq!(curve_order.to_scalar(), generic_ec::Scalar::<E>::zero());
-        assert_eq!(
-            (curve_order - 1u8).to_scalar(),
-            -generic_ec::Scalar::<E>::one()
-        );
-    }
 
     #[test]
     fn test_from_rng_half_pm_bounds() {

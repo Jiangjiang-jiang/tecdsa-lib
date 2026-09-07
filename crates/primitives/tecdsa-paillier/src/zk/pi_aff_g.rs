@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2023 Dfns <https://github.com/LFDT-Lockness/cggmp21>
 
-use generic_ec::{Curve, Point};
+use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
 use rug::Integer;
 use serde::{Deserialize, Serialize};
+use tecdsa_curve::TecdsaCurve;
 
 use crate::scheme::{AnyEncryptionKey, Ciphertext, Nonce};
 pub use crate::zk::common::{Aux, InvalidProof};
@@ -23,7 +24,10 @@ pub struct SecurityParams {
 /// Public data that both parties know
 #[derive(Debug, Clone, Copy, udigest::Digestable)]
 #[udigest(bound = "")]
-pub struct Data<'a, C: Curve> {
+pub struct Data<'a, C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
     /// Nj in the spec, public key that C was encrypted on
     #[udigest(as = crate::zk::common::encoding::AnyEncryptionKey)]
     pub key_j: &'a dyn AnyEncryptionKey,
@@ -40,7 +44,8 @@ pub struct Data<'a, C: Curve> {
     #[udigest(as = &crate::zk::common::encoding::Integer)]
     pub y: &'a Ciphertext,
     /// X in the spec, obtained as `x G`
-    pub x: &'a Point<C>,
+    #[udigest(as = &crate::zk::common::encoding::Point)]
+    pub x: &'a C::ProjectivePoint,
 }
 
 /// Private data of prover
@@ -61,11 +66,16 @@ pub struct PrivateData<'a> {
 #[udigest(bound = "")]
 #[derive(Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct Commitment<C: Curve> {
+pub struct Commitment<C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
     #[udigest(as = crate::zk::common::encoding::Integer)]
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub a: Integer,
-    pub b_x: Point<C>,
+    #[udigest(as = crate::zk::common::encoding::Point)]
+    #[serde(with = "tecdsa_curve::serde_projective")]
+    pub b_x: C::ProjectivePoint,
     #[udigest(as = crate::zk::common::encoding::Integer)]
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub b_y: Integer,
@@ -122,7 +132,10 @@ pub struct Proof {
 /// Combines commitment and proof.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct NiProof<C: Curve> {
+pub struct NiProof<C: TecdsaCurve>
+where
+    FieldBytesSize<C>: ModulusSize,
+{
     pub commitment: Commitment<C>,
     pub proof: Proof,
 }
@@ -131,25 +144,29 @@ pub struct NiProof<C: Curve> {
 /// prover commits to data, verifier responds with a random challenge, and
 /// prover gives proof with commitment and challenge.
 pub mod interactive {
-    use generic_ec::{Curve, Point};
+    use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
     use rand_core::RngCore;
     use rug::Integer;
     use tecdsa_bigint::BigIntExt;
+    use tecdsa_curve::TecdsaCurve;
 
     use super::*;
     use crate::zk::{
-        common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason},
+        common::{fail_if, fail_if_ne, InvalidProof, InvalidProofReason},
         Error,
     };
 
     /// Create random commitment
-    pub fn commit<C: Curve, R: RngCore>(
+    pub fn commit<C: TecdsaCurve, R: RngCore>(
         aux: &Aux,
         data: Data<C>,
         pdata: PrivateData,
         security: &SecurityParams,
         mut rng: R,
-    ) -> Result<(Commitment<C>, PrivateCommitment), Error> {
+    ) -> Result<(Commitment<C>, PrivateCommitment), Error>
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let two_to_l = Integer::one() << security.l_x;
         let two_to_l_e = Integer::one() << (security.l_x + security.epsilon);
         let two_to_l_prime_e = Integer::one() << (security.l_y + security.epsilon);
@@ -171,7 +188,7 @@ pub mod interactive {
                 let alpha_at_c = data.key_j.omul(&alpha, data.c)?;
                 data.key_j.oadd(&alpha_at_c, &beta_enc_key0)?
             },
-            b_x: Point::<C>::generator() * alpha.to_scalar(),
+            b_x: C::generator() * C::scalar_from_integer(&alpha),
             b_y: data.key_i.encrypt_with(&beta, &r_y)?,
             e: aux.combine(&alpha, &gamma)?,
             s: aux.combine(pdata.x, &m)?,
@@ -192,12 +209,15 @@ pub mod interactive {
     }
 
     /// Compute proof for given data and prior protocol values
-    pub fn prove<C: Curve>(
+    pub fn prove<C: TecdsaCurve>(
         data: Data<C>,
         pdata: PrivateData,
         pcomm: &PrivateCommitment,
         challenge: &Challenge,
-    ) -> Result<Proof, Error> {
+    ) -> Result<Proof, Error>
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         Ok(Proof {
             z1: Integer::from(&pcomm.alpha + challenge * pdata.x),
             z2: Integer::from(&pcomm.beta + challenge * pdata.y),
@@ -218,14 +238,17 @@ pub mod interactive {
     }
 
     /// Verify the proof
-    pub fn verify<C: Curve>(
+    pub fn verify<C: TecdsaCurve>(
         aux: &Aux,
         data: Data<C>,
         commitment: &Commitment<C>,
         security: &SecurityParams,
         challenge: &Challenge,
         proof: &Proof,
-    ) -> Result<(), InvalidProof> {
+    ) -> Result<(), InvalidProof>
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         // Verify public data
         fail_if(
             InvalidProofReason::RangeCheck(1),
@@ -292,8 +315,8 @@ pub mod interactive {
             fail_if_ne(InvalidProofReason::EqualityCheck(10), lhs, rhs)?;
         }
         {
-            let lhs = Point::<C>::generator() * proof.z1.to_scalar();
-            let rhs = commitment.b_x + data.x * challenge.to_scalar();
+            let lhs = C::generator() * C::scalar_from_integer(&proof.z1);
+            let rhs = commitment.b_x + *data.x * C::scalar_from_integer(challenge);
             fail_if_ne(InvalidProofReason::EqualityCheck(11), lhs, rhs)?;
         }
         {
@@ -340,8 +363,11 @@ pub mod interactive {
     }
 
     /// Generate random challenge
-    pub fn challenge<C: Curve>(rng: &mut impl rand_core::RngCore) -> Integer {
-        let q = Integer::curve_order::<C>();
+    pub fn challenge<C: TecdsaCurve>(rng: &mut impl rand_core::RngCore) -> Integer
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
+        let q = C::order();
         Integer::from_rng_half_pm(rng, &q)
     }
 }
@@ -350,7 +376,8 @@ pub mod interactive {
 /// see the documentation of parent module.
 pub mod non_interactive {
     use digest::Digest;
-    use generic_ec::Curve;
+    use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
+    use tecdsa_curve::TecdsaCurve;
 
     use super::{Aux, Challenge, Commitment, Data, NiProof, PrivateData, SecurityParams};
     use crate::zk::{Error, InvalidProof};
@@ -359,14 +386,17 @@ pub mod non_interactive {
     /// deriving determenistic challenge.
     ///
     /// Obtained from the above interactive proof via Fiat-Shamir heuristic.
-    pub fn prove<C: Curve, D: Digest>(
+    pub fn prove<C: TecdsaCurve, D: Digest>(
         shared_state: &impl udigest::Digestable,
         aux: &Aux,
         data: Data<C>,
         pdata: PrivateData,
         security: &SecurityParams,
         rng: &mut impl rand_core::RngCore,
-    ) -> Result<NiProof<C>, Error> {
+    ) -> Result<NiProof<C>, Error>
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let (commitment, pcomm) = super::interactive::commit(aux, data, pdata, security, rng)?;
         let challenge = challenge::<C, D>(shared_state, aux, data, &commitment, security);
         let proof = super::interactive::prove(data, pdata, &pcomm, &challenge)?;
@@ -374,13 +404,16 @@ pub mod non_interactive {
     }
 
     /// Verify the proof, deriving challenge independently from same data
-    pub fn verify<C: Curve, D: Digest>(
+    pub fn verify<C: TecdsaCurve, D: Digest>(
         shared_state: &impl udigest::Digestable,
         aux: &Aux,
         data: Data<C>,
         security: &SecurityParams,
         proof: &NiProof<C>,
-    ) -> Result<(), InvalidProof> {
+    ) -> Result<(), InvalidProof>
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let challenge = challenge::<C, D>(shared_state, aux, data, &proof.commitment, security);
         super::interactive::verify(
             aux,
@@ -393,13 +426,16 @@ pub mod non_interactive {
     }
 
     /// Deterministically compute challenge based on prior known values in protocol
-    pub fn challenge<C: Curve, D: Digest>(
+    pub fn challenge<C: TecdsaCurve, D: Digest>(
         shared_state: &impl udigest::Digestable,
         aux: &Aux,
         data: Data<C>,
         commitment: &Commitment<C>,
         security: &SecurityParams,
-    ) -> Challenge {
+    ) -> Challenge
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let tag = "paillier_zk.paillier_affine_operation_in_range.ni_challenge";
         let aux = aux.digest_public_data();
         let seed = udigest::inline_struct!(tag {
@@ -416,19 +452,23 @@ pub mod non_interactive {
 
 #[cfg(test)]
 mod test {
-    use generic_ec::{Curve, Point};
+    use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
     use rug::Integer;
     use sha2::Digest;
     use tecdsa_bigint::BigIntExt;
+    use tecdsa_curve::TecdsaCurve;
 
-    use crate::zk::common::{test::random_key, IntegerExt, InvalidProofReason};
+    use crate::zk::common::{test::random_key, InvalidProofReason};
 
-    fn run<R: rand_core::RngCore + rand_core::CryptoRng, C: Curve, D: Digest>(
+    fn run<R: rand_core::RngCore + rand_core::CryptoRng, C: TecdsaCurve, D: Digest>(
         rng: &mut R,
         security: super::SecurityParams,
         x: Integer,
         y: Integer,
-    ) -> Result<(), crate::zk::common::InvalidProof> {
+    ) -> Result<(), crate::zk::common::InvalidProof>
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let dk0 = random_key(rng).unwrap();
         let dk1 = random_key(rng).unwrap();
         let ek0 = dk0.encryption_key().clone();
@@ -451,7 +491,7 @@ mod test {
             c: &c,
             d: &d,
             y: &y_enc_ek1,
-            x: &(x.to_scalar::<C>() * Point::generator()),
+            x: &(C::generator() * C::scalar_from_integer(&x)),
         };
         let pdata = super::PrivateData {
             x: &x,
@@ -470,7 +510,10 @@ mod test {
         super::non_interactive::verify::<C, D>(&shared_state, &aux, data, &security, &proof)
     }
 
-    fn passing_test<C: Curve, D: Digest>() {
+    fn passing_test<C: TecdsaCurve, D: Digest>()
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let mut rng = rand_dev::DevRng::new();
         let security = super::SecurityParams {
             l_x: 256,
@@ -482,7 +525,10 @@ mod test {
         run::<_, C, D>(&mut rng, security, x, y).expect("proof failed");
     }
 
-    fn failing_on_additive<C: Curve, D: Digest>() {
+    fn failing_on_additive<C: TecdsaCurve, D: Digest>()
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let mut rng = rand_dev::DevRng::new();
         let security = super::SecurityParams {
             l_x: 256,
@@ -498,7 +544,10 @@ mod test {
         }
     }
 
-    fn failing_on_multiplicative<C: Curve, D: Digest>() {
+    fn failing_on_multiplicative<C: TecdsaCurve, D: Digest>()
+    where
+        FieldBytesSize<C>: ModulusSize,
+    {
         let mut rng = rand_dev::DevRng::new();
         let security = super::SecurityParams {
             l_x: 256,
@@ -516,27 +565,14 @@ mod test {
 
     #[test]
     fn passing_p256() {
-        passing_test::<generic_ec::curves::Secp256r1, sha2::Sha256>()
+        passing_test::<p256::NistP256, sha2::Sha256>()
     }
     #[test]
     fn failing_p256_add() {
-        failing_on_additive::<generic_ec::curves::Secp256r1, sha2::Sha256>()
+        failing_on_additive::<p256::NistP256, sha2::Sha256>()
     }
     #[test]
     fn failing_p256_mul() {
-        failing_on_multiplicative::<generic_ec::curves::Secp256r1, sha2::Sha256>()
-    }
-
-    #[test]
-    fn passing_million() {
-        passing_test::<crate::zk::curve::C, sha2::Sha256>()
-    }
-    #[test]
-    fn failing_million_add() {
-        failing_on_additive::<crate::zk::curve::C, sha2::Sha256>()
-    }
-    #[test]
-    fn failing_million_mul() {
-        failing_on_multiplicative::<crate::zk::curve::C, sha2::Sha256>()
+        failing_on_multiplicative::<p256::NistP256, sha2::Sha256>()
     }
 }

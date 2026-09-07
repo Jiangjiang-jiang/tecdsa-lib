@@ -104,6 +104,15 @@ pub trait BigIntExt: Sized {
     fn sample_below(self, rng: &mut impl rand_core::RngCore) -> Self;
     /// Uniform sample in `[0, self)`. See [`BigIntExt::sample_below`].
     fn sample_below_ref(&self, rng: &mut impl rand_core::RngCore) -> Self;
+    /// Uniform sample from the symmetric range around zero:
+    /// `[-range/2, range/2]` when `range` is even, `[-(range-1)/2, (range-1)/2]`
+    /// when it is odd.
+    fn from_rng_half_pm(rng: &mut impl rand_core::RngCore, range: &Self) -> Self;
+
+    /// Whether `self` lies in the symmetric range described by
+    /// [`BigIntExt::from_rng_half_pm`].
+    fn is_in_half_pm(&self, range: &Self) -> bool;
+
     /// Uniform sample in `[1, self)`.
     ///
     /// Drawn as `1 + sample_below(self - 1)` rather than by rejecting zero, so
@@ -287,6 +296,25 @@ impl BigIntExt for rug::Integer {
         let mut adapter = crate::prime::SyncRng(rng);
         let mut rng = rug::rand::ThreadRandState::new_custom(&mut adapter);
         self.random_below_ref(&mut rng).complete()
+    }
+
+    fn from_rng_half_pm(rng: &mut impl rand_core::RngCore, range: &Self) -> Self {
+        if range.is_even() {
+            let half_range = (range >> 1u32).complete();
+            let range_plus_one = (range + 1u32).complete();
+            range_plus_one.sample_below(rng) - half_range
+        } else {
+            // `range` is odd, so `(range - 1) / 2` is just `range >> 1`.
+            let half_range_minus_one = (range >> 1u32).complete();
+            range.sample_below_ref(rng) - half_range_minus_one
+        }
+    }
+
+    fn is_in_half_pm(&self, range: &Self) -> bool {
+        // Even: `range >> 1` is exactly `range / 2`.
+        // Odd:  `range >> 1 == (range - 1) / 2`, the low bit being discarded.
+        let bound = (range >> 1u32).complete();
+        self.cmp_abs(&bound).is_le()
     }
 
     fn sample_positive_below(&self, rng: &mut impl rand_core::RngCore) -> Self {

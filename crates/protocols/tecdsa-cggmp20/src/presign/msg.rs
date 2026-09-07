@@ -1,16 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Message types for the CGGMP20 presigning protocol.
-//!
-//! **Curve constraint:** The ZK proof types (`pi_elog::NiProof`, `pi_aff::NiProof`,
-//! `pi_enc_elg::NiProof`) are parameterized over `generic_ec::curves::Secp256k1`
-//! because the upstream `paillier-zk` crate uses `generic_ec` rather than
-//! `elliptic-curve`.  This means `Cggmp20PresignMachine<C>` currently only compiles
-//! when `C = k256::Secp256k1`.  Supporting additional curves requires either
-//! extending `BridgeCurve` with a `GE` associated type propagated into message
-//! types, or forking `paillier-zk` to use `elliptic-curve` directly.
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
-use generic_ec::curves::Secp256k1 as GE;
 use serde::{Deserialize, Serialize};
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_paillier::{
@@ -71,15 +62,15 @@ where
     #[serde(with = "tecdsa_bigint::int_wire")]
     pub hat_big_f: Ciphertext,
     /// π_enc_elg proof that K_i encrypts k_i in range
-    pub psi0: pi_enc_elg::NiProof<GE>,
+    pub psi0: pi_enc_elg::NiProof<C>,
     /// π_enc_elg proof that G_i encrypts gamma_i in range
-    pub psi1: pi_enc_elg::NiProof<GE>,
+    pub psi1: pi_enc_elg::NiProof<C>,
     /// π_elog proof tying Gamma_i to El-Gamal commitment
-    pub tilde_psi: pi_elog::NiProof<GE>,
+    pub tilde_psi: pi_elog::NiProof<C>,
     /// π_aff_g proof for MtA D (gamma * K)
-    pub psi: pi_aff::NiProof<GE>,
+    pub psi: pi_aff::NiProof<C>,
     /// π_aff_g proof for MtA hat_D (x * K)
-    pub hat_psi: pi_aff::NiProof<GE>,
+    pub hat_psi: pi_aff::NiProof<C>,
 }
 
 /// Round 3 broadcast: delta, Delta, S shares with π_elog proof.
@@ -101,7 +92,7 @@ where
     #[serde(with = "tecdsa_curve::serde_projective")]
     pub big_s: C::ProjectivePoint,
     /// π_elog proof that Delta_i = k_i * Gamma
-    pub psi_prime: pi_elog::NiProof<GE>,
+    pub psi_prime: pi_elog::NiProof<C>,
 }
 
 /// Unified envelope for all presign messages.

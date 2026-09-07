@@ -20,7 +20,6 @@ tecdsa-core.workspace = true
 tecdsa-bigint.workspace = true
 tecdsa-curve.workspace = true
 elliptic-curve.workspace = true
-generic-ec.workspace = true
 tecdsa-protocol.workspace = true
 tecdsa-vss.workspace = true
 tecdsa-paillier.workspace = true
