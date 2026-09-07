@@ -13,7 +13,7 @@
 
 use elliptic_curve::PrimeField;
 use sha2::{Digest, Sha256};
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::ecdsa::{verify_ecdsa, DataToSign};
 use tecdsa_trout::{
@@ -49,7 +49,8 @@ fn test_trout_full_sign_3_of_5() {
     let t = 3u16; // reconstruction threshold: 3 parties needed to sign
 
     let mut rng = rand::rngs::OsRng;
-    let mut setup = ClSetup::new_secp256k1(seed).expect("CL setup");
+    let seed_int = parse_int_auto(seed).expect("parse seed");
+    let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
 
     // ---- KeyGen (trusted dealer) ----
     let shares = trusted_dealer_keygen(&mut setup, seed, n, t, false, &mut rng).expect("keygen");
@@ -68,7 +69,7 @@ fn test_trout_full_sign_3_of_5() {
 
     // Reconstruct the joint CL public key from the key share.
     // All shares have the same cl_pk_abc.
-    let mut setup2 = ClSetup::new_secp256k1(seed).expect("CL setup");
+    let mut setup2 = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
     let (pk_a, pk_b, pk_c) = &shares[0].cl_pk_abc;
     let cl_pk_qfi =
         tecdsa_trout::error::qfi_from_abc(pk_a, pk_b, pk_c).expect("reconstruct CL pk QFI");
@@ -164,7 +165,7 @@ fn test_trout_full_sign_3_of_5() {
 fn test_scaled_decrypt_standalone() {
     use tecdsa_class_group::scaled_decrypt::*;
 
-    let mut setup = ClSetup::new_secp256k1("8001").expect("setup");
+    let mut setup = ClSetup::new_secp256k1(8001u64).expect("setup");
     let mut rng = rand::rngs::OsRng;
     let (_cl_sk, cl_pk) = setup.keygen().expect("keygen");
 
@@ -185,23 +186,23 @@ fn test_scaled_decrypt_standalone() {
     let mut com_qfis = Vec::new();
 
     for i in 0..n {
-        let a_bytes = a[i].to_bytes_vec();
-        let b_bytes = b[i].to_bytes_vec();
+        let a_int = a[i].to_integer();
+        let b_int = b[i].to_integer();
 
         let (sk_tmp, _) = setup.keygen().expect("keygen");
-        let alpha_i = setup.sk_to_bytes(&sk_tmp).expect("sk_bytes");
+        let alpha_i = setup.sk_to_integer(&sk_tmp);
 
         let ct = setup
-            .encrypt_with_r_bytes(&cl_pk, &a_bytes, &alpha_i)
+            .encrypt_with_r(&cl_pk, &a_int, &alpha_i)
             .expect("encrypt");
         let (c1, c2) = setup.ct_components(&ct).expect("ct_comp");
         enc_components.push((c1, c2));
 
         let (sk_tmp2, _) = setup.keygen().expect("keygen");
-        let beta_i = setup.sk_to_bytes(&sk_tmp2).expect("sk_bytes");
+        let beta_i = setup.sk_to_integer(&sk_tmp2);
 
-        let h_beta = setup.power_of_h_bytes(&beta_i).expect("power_of_h");
-        let pk_b = setup.pk_pow_bytes(&cl_pk, &b_bytes).expect("exp");
+        let h_beta = setup.power_of_h(&beta_i).expect("power_of_h");
+        let pk_b = setup.pk_pow(&cl_pk, &b_int).expect("exp");
         let com = setup.compose(&h_beta, &pk_b).expect("compose");
         com_qfis.push(com);
 
@@ -218,12 +219,12 @@ fn test_scaled_decrypt_standalone() {
         .map(|i| ScaledDecryptPartyInput {
             alpha_i: alphas[i].clone(),
             beta_i: betas[i].clone(),
-            b_i: b[i].to_bytes_vec(),
+            b_i: b[i].to_integer(),
         })
         .collect();
 
-    let result_bytes = scaled_decrypt_local(&setup, &inputs, &public).expect("scaled_decrypt");
-    let result = k256::Secp256k1::scalar_from_bytes(&result_bytes);
+    let result_int = scaled_decrypt_local(&setup, &inputs, &public).expect("scaled_decrypt");
+    let result = k256::Secp256k1::scalar_from_integer(&result_int);
     assert_eq!(
         result, expected,
         "scaled decryption must correctly compute a*b mod q"

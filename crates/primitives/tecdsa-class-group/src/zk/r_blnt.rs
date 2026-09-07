@@ -30,11 +30,13 @@
 //! In our CL-HSMqk code: `g_q = h` (hidden-order generator), `f` (order-q
 //! generator), `ek = pk` (public key).
 
-use rug::{Complete, Integer};
-use tecdsa_bigint::BigIntExt;
+use rug::Integer;
 
 use super::{challenge_from_qfi, response_unbounded, sample_random, sample_random_mod_q};
-use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
+use crate::{
+    cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
+    dkg_cl::compute_h_q_pow_product,
+};
 
 /// Blinded chunk-encryption proof (`Z_Blnt` / `R_Blnt`).
 pub struct RBlntProof {
@@ -70,10 +72,10 @@ impl RBlntProof {
     /// - `pc`: Pedersen commitment `PC`.
     /// - `chunk_cts`: per-chunk ciphertexts `{(c_{l,0}, c_{l,1})}`.
     /// - `agg_ct`: aggregated GEnc ciphertext `(c_0, c_1)`.
-    /// - `chi_chunks`: per-chunk plaintexts `{chi_l}` (big-endian bytes, mod q).
-    /// - `chi_prime`: commitment randomness `chi'` (big-endian bytes).
-    /// - `r_chunks`: per-chunk encryption randomness `{r_l}` (big-endian bytes).
-    /// - `r_agg`: aggregated randomness `r` (big-endian bytes).
+    /// - `chi_chunks`: per-chunk plaintexts `{chi_l}` (mod q).
+    /// - `chi_prime`: commitment randomness `chi'`.
+    /// - `r_chunks`: per-chunk encryption randomness `{r_l}`.
+    /// - `r_agg`: aggregated randomness `r`.
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         setup: &mut ClSetup,
@@ -81,10 +83,10 @@ impl RBlntProof {
         pc: &Qfi,
         chunk_cts: &[(Qfi, Qfi)],
         agg_ct: &(Qfi, Qfi),
-        chi_chunks: &[Vec<u8>],
-        chi_prime: &[u8],
-        r_chunks: &[Vec<u8>],
-        r_agg: &[u8],
+        chi_chunks: &[Integer],
+        chi_prime: &Integer,
+        r_chunks: &[Integer],
+        r_agg: &Integer,
     ) -> ClResult<Self> {
         let num_chunks = chunk_cts.len();
         assert_eq!(chi_chunks.len(), num_chunks);
@@ -94,14 +96,14 @@ impl RBlntProof {
 
         // 1. Sample random commitment values.
         // a_{1l} <- Z_q (one per chunk)
-        let mut a1_vec: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
+        let mut a1_vec: Vec<Integer> = Vec::with_capacity(num_chunks);
         for _ in 0..num_chunks {
             a1_vec.push(sample_random_mod_q(setup)?);
         }
         // a_2 <- secretkey_bound (for chi' randomness)
         let a2 = sample_random(setup)?;
         // a_{3l} <- secretkey_bound (one per chunk, for r_l randomness)
-        let mut a3_vec: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
+        let mut a3_vec: Vec<Integer> = Vec::with_capacity(num_chunks);
         for _ in 0..num_chunks {
             a3_vec.push(sample_random(setup)?);
         }
@@ -113,30 +115,30 @@ impl RBlntProof {
 
         // 3. Compute commitments.
         // C = h^{a_2} * prod_l h^{q^l * a_{1l}}
-        let h_a2 = setup.power_of_h_bytes(&a2)?;
+        let h_a2 = setup.power_of_h(&a2)?;
         let c_commit = setup.compose(&h_a2, &h_q_pow_a1_product)?;
 
         // R_l = h^{a_{3l}}
         let mut r_chunks_commit: Vec<Qfi> = Vec::with_capacity(num_chunks);
         for a3l in &a3_vec {
-            r_chunks_commit.push(setup.power_of_h_bytes(a3l)?);
+            r_chunks_commit.push(setup.power_of_h(a3l)?);
         }
 
         // S_l = f^{a_{1l}} * pk^{a_{3l}}
         let pk_elt = pk.elt();
         let mut s_chunks_commit: Vec<Qfi> = Vec::with_capacity(num_chunks);
         for idx in 0..num_chunks {
-            let f_a1 = setup.power_of_f_bytes(&a1_vec[idx])?;
-            let pk_a3 = setup.exp_bytes(pk_elt, &a3_vec[idx])?;
+            let f_a1 = setup.power_of_f(&a1_vec[idx])?;
+            let pk_a3 = setup.exp(pk_elt, &a3_vec[idx])?;
             s_chunks_commit.push(setup.compose(&f_a1, &pk_a3)?);
         }
 
         // R_0 = h^{a_4} * prod_l h^{q^l * a_{1l}}
-        let h_a4 = setup.power_of_h_bytes(&a4)?;
+        let h_a4 = setup.power_of_h(&a4)?;
         let r_0 = setup.compose(&h_a4, &h_q_pow_a1_product)?;
 
         // S_0 = pk^{a_4} * prod_l h^{q^l * a_{1l}}
-        let pk_a4 = setup.exp_bytes(pk_elt, &a4)?;
+        let pk_a4 = setup.exp(pk_elt, &a4)?;
         let s_0 = setup.compose(&pk_a4, &h_q_pow_a1_product)?;
 
         // 4. Compute Fiat-Shamir challenge.
@@ -168,20 +170,20 @@ impl RBlntProof {
         // f^{z1l} in check 5 naturally reduces because f has order q).
         let mut z1_chunks_resp: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
         for idx in 0..num_chunks {
-            z1_chunks_resp.push(response_unbounded(&a1_vec[idx], &e, &chi_chunks[idx])?);
+            z1_chunks_resp.push(response_unbounded(&a1_vec[idx], &e, &chi_chunks[idx]));
         }
 
         // z_{3l} = a_{3l} + r_l * chal (unbounded)
         let mut z3_chunks_resp: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
         for idx in 0..num_chunks {
-            z3_chunks_resp.push(response_unbounded(&a3_vec[idx], &e, &r_chunks[idx])?);
+            z3_chunks_resp.push(response_unbounded(&a3_vec[idx], &e, &r_chunks[idx]));
         }
 
         // z_2 = a_2 + chal * chi' (unbounded)
-        let z2 = response_unbounded(&a2, &e, chi_prime)?;
+        let z2 = response_unbounded(&a2, &e, chi_prime);
 
         // z_4 = a_4 + chal * r (unbounded)
-        let z4 = response_unbounded(&a4, &e, r_agg)?;
+        let z4 = response_unbounded(&a4, &e, r_agg);
 
         Ok(Self {
             c_commit,
@@ -253,24 +255,38 @@ impl RBlntProof {
 
         let q = setup.cl().q();
 
+        let z1_chunks: Vec<Integer> = self
+            .z1_chunks
+            .iter()
+            .map(|z| Integer::from_digits(z, rug::integer::Order::Msf))
+            .collect();
+        let z3_chunks: Vec<Integer> = self
+            .z3_chunks
+            .iter()
+            .map(|z| Integer::from_digits(z, rug::integer::Order::Msf))
+            .collect();
+        let z2 = Integer::from_digits(&self.z2, rug::integer::Order::Msf);
+        let z4 = Integer::from_digits(&self.z4, rug::integer::Order::Msf);
+        let e = Integer::from_digits(&self.e, rug::integer::Order::Msf);
+
         // Compute the shared product term: prod_l h^{q^l * z_{1l}}
-        let h_q_pow_z1_product = compute_h_q_pow_product(setup, q, &self.z1_chunks)?;
+        let h_q_pow_z1_product = compute_h_q_pow_product(setup, q, &z1_chunks)?;
 
         // Check per-chunk equations (4) and (5).
         for (idx, (c_l_0, c_l_1)) in chunk_cts.iter().enumerate() {
             // Check 4: h^{z_{3l}} == R_l * c_{l,0}^{chal}
-            let lhs4 = setup.power_of_h_bytes(&self.z3_chunks[idx])?;
-            let c_l_0_e = setup.exp_bytes(c_l_0, &self.e)?;
+            let lhs4 = setup.power_of_h(&z3_chunks[idx])?;
+            let c_l_0_e = setup.exp(c_l_0, &e)?;
             let rhs4 = setup.compose(&self.r_chunks[idx], &c_l_0_e)?;
             if lhs4 != rhs4 {
                 return Ok(false);
             }
 
             // Check 5: f^{z_{1l}} * pk^{z_{3l}} == S_l * c_{l,1}^{chal}
-            let f_z1 = setup.power_of_f_bytes(&self.z1_chunks[idx])?;
-            let pk_z3 = setup.pk_pow_bytes(pk, &self.z3_chunks[idx])?;
+            let f_z1 = setup.power_of_f(&z1_chunks[idx])?;
+            let pk_z3 = setup.pk_pow(pk, &z3_chunks[idx])?;
             let lhs5 = setup.compose(&f_z1, &pk_z3)?;
-            let c_l_1_e = setup.exp_bytes(c_l_1, &self.e)?;
+            let c_l_1_e = setup.exp(c_l_1, &e)?;
             let rhs5 = setup.compose(&self.s_chunks[idx], &c_l_1_e)?;
             if lhs5 != rhs5 {
                 return Ok(false);
@@ -278,27 +294,27 @@ impl RBlntProof {
         }
 
         // Check 6: h^{z_4} * prod_l h^{q^l * z_{1l}} == R_0 * c_0^{chal}
-        let h_z4 = setup.power_of_h_bytes(&self.z4)?;
+        let h_z4 = setup.power_of_h(&z4)?;
         let lhs6 = setup.compose(&h_z4, &h_q_pow_z1_product)?;
-        let c_0_e = setup.exp_bytes(agg_c0, &self.e)?;
+        let c_0_e = setup.exp(agg_c0, &e)?;
         let rhs6 = setup.compose(&self.r_0, &c_0_e)?;
         if lhs6 != rhs6 {
             return Ok(false);
         }
 
         // Check 7: h^{z_2} * prod_l h^{q^l * z_{1l}} == C * PC^{chal}
-        let h_z2 = setup.power_of_h_bytes(&self.z2)?;
+        let h_z2 = setup.power_of_h(&z2)?;
         let lhs7 = setup.compose(&h_z2, &h_q_pow_z1_product)?;
-        let pc_e = setup.exp_bytes(pc, &self.e)?;
+        let pc_e = setup.exp(pc, &e)?;
         let rhs7 = setup.compose(&self.c_commit, &pc_e)?;
         if lhs7 != rhs7 {
             return Ok(false);
         }
 
         // Check 8: pk^{z_4} * prod_l h^{q^l * z_{1l}} == S_0 * c_1^{chal}
-        let pk_z4 = setup.pk_pow_bytes(pk, &self.z4)?;
+        let pk_z4 = setup.pk_pow(pk, &z4)?;
         let lhs8 = setup.compose(&pk_z4, &h_q_pow_z1_product)?;
-        let c_1_e = setup.exp_bytes(agg_c1, &self.e)?;
+        let c_1_e = setup.exp(agg_c1, &e)?;
         let rhs8 = setup.compose(&self.s_0, &c_1_e)?;
         if lhs8 != rhs8 {
             return Ok(false);
@@ -308,41 +324,15 @@ impl RBlntProof {
     }
 }
 
-/// Computes `prod_l h^{q^l * x_l}` for a list of exponents `x_l`.
-///
-/// Each `x_l` is big-endian bytes. The product iterates over `l = 0, 1, ...`
-/// computing `h^{q^l * x_l}` and composing them together.
-fn compute_h_q_pow_product(setup: &ClSetup, q: &Integer, exponents: &[Vec<u8>]) -> ClResult<Qfi> {
-    let mut product = setup.identity()?;
-    let mut q_pow_l = Integer::from(1); // q^0 = 1
-
-    for x_l in exponents {
-        // Compute q^l * x_l
-        let x = Integer::from_bytes_msf(x_l);
-        let exp = (&q_pow_l * &x).complete();
-
-        if !exp.is_zero() {
-            let exp_bytes = exp.to_bytes_msf();
-            let h_exp = setup.power_of_h_bytes(&exp_bytes)?;
-            product = setup.compose(&product, &h_exp)?;
-        }
-
-        // q^{l+1} = q^l * q
-        q_pow_l *= q;
-    }
-
-    Ok(product)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cl::ClSetup;
 
     /// Helper: compute the Pedersen commitment PC = h^{chi'} * prod_l h^{q^l * chi_l}
-    fn compute_pc(setup: &ClSetup, chi_prime: &[u8], chi_chunks: &[Vec<u8>]) -> ClResult<Qfi> {
+    fn compute_pc(setup: &ClSetup, chi_prime: &Integer, chi_chunks: &[Integer]) -> ClResult<Qfi> {
         let q = setup.cl().q();
-        let h_chi_prime = setup.power_of_h_bytes(chi_prime)?;
+        let h_chi_prime = setup.power_of_h(chi_prime)?;
         let product = compute_h_q_pow_product(setup, q, chi_chunks)?;
         setup.compose(&h_chi_prime, &product)
     }
@@ -353,17 +343,17 @@ mod tests {
     fn compute_agg_ct(
         setup: &ClSetup,
         pk: &ClHsmqkPublicKey,
-        chi_chunks: &[Vec<u8>],
-        r_agg: &[u8],
+        chi_chunks: &[Integer],
+        r_agg: &Integer,
     ) -> ClResult<(Qfi, Qfi)> {
         let q = setup.cl().q();
 
         let product = compute_h_q_pow_product(setup, q, chi_chunks)?;
 
-        let h_r = setup.power_of_h_bytes(r_agg)?;
+        let h_r = setup.power_of_h(r_agg)?;
         let c0 = setup.compose(&h_r, &product)?;
 
-        let pk_r = setup.exp_bytes(pk.elt(), r_agg)?;
+        let pk_r = setup.exp(pk.elt(), r_agg)?;
         let c1 = setup.compose(&pk_r, &product)?;
 
         Ok((c0, c1))
@@ -375,45 +365,42 @@ mod tests {
     fn compute_chunk_ct(
         setup: &ClSetup,
         pk: &ClHsmqkPublicKey,
-        chi_l: &[u8],
-        r_l: &[u8],
+        chi_l: &Integer,
+        r_l: &Integer,
     ) -> ClResult<(Qfi, Qfi)> {
-        let c_l_0 = setup.power_of_h_bytes(r_l)?;
-        let f_chi = setup.power_of_f_bytes(chi_l)?;
-        let pk_r = setup.exp_bytes(pk.elt(), r_l)?;
+        let c_l_0 = setup.power_of_h(r_l)?;
+        let f_chi = setup.power_of_f(chi_l)?;
+        let pk_r = setup.exp(pk.elt(), r_l)?;
         let c_l_1 = setup.compose(&f_chi, &pk_r)?;
         Ok((c_l_0, c_l_1))
     }
 
     #[test]
     fn r_blnt_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("90001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(90001u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         // Use 2 chunks for testing.
         let num_chunks = 2;
-        let chi_chunks: Vec<Vec<u8>> = vec![
-            Integer::from(42u32).to_bytes_msf(),
-            Integer::from(77u32).to_bytes_msf(),
-        ];
+        let chi_chunks: Vec<Integer> = vec![Integer::from(42u32), Integer::from(77u32)];
 
         // chi' (commitment randomness)
         let chi_prime = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
 
         // Per-chunk randomness
-        let mut r_chunks_witness: Vec<Vec<u8>> = Vec::new();
+        let mut r_chunks_witness: Vec<Integer> = Vec::new();
         for _ in 0..num_chunks {
             let (sk2, _) = setup.keygen().expect("kg");
-            r_chunks_witness.push(setup.sk_to_bytes(&sk2).expect("bytes"));
+            r_chunks_witness.push(setup.sk_to_integer(&sk2));
         }
 
         // Aggregated randomness
         let r_agg = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
 
         // Compute statement elements.
@@ -451,25 +438,25 @@ mod tests {
 
     #[test]
     fn r_blnt_single_chunk_verifies() {
-        let mut setup = ClSetup::new_secp256k1("90002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(90002u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
         // Single chunk.
-        let chi_chunks: Vec<Vec<u8>> = vec![Integer::from(100u32).to_bytes_msf()];
+        let chi_chunks: Vec<Integer> = vec![Integer::from(100u32)];
 
         let chi_prime = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
 
-        let r_chunks_witness: Vec<Vec<u8>> = vec![{
+        let r_chunks_witness: Vec<Integer> = vec![{
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         }];
 
         let r_agg = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
 
         let pc = compute_pc(&setup, &chi_prime, &chi_chunks).expect("pc");
@@ -501,33 +488,30 @@ mod tests {
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_blnt_rejects_wrong_chi() {
-        let mut setup = ClSetup::new_secp256k1("90003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(90003u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let chi_chunks: Vec<Vec<u8>> = vec![
-            Integer::from(42u32).to_bytes_msf(),
-            Integer::from(77u32).to_bytes_msf(),
-        ];
+        let chi_chunks: Vec<Integer> = vec![Integer::from(42u32), Integer::from(77u32)];
 
         let chi_prime = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
 
-        let r_chunks_witness: Vec<Vec<u8>> = vec![
+        let r_chunks_witness: Vec<Integer> = vec![
             {
                 let (sk2, _) = setup.keygen().expect("kg");
-                setup.sk_to_bytes(&sk2).expect("bytes")
+                setup.sk_to_integer(&sk2)
             },
             {
                 let (sk2, _) = setup.keygen().expect("kg");
-                setup.sk_to_bytes(&sk2).expect("bytes")
+                setup.sk_to_integer(&sk2)
             },
         ];
 
         let r_agg = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
 
         let pc = compute_pc(&setup, &chi_prime, &chi_chunks).expect("pc");
@@ -541,10 +525,7 @@ mod tests {
         let agg_ct = compute_agg_ct(&setup, &pk, &chi_chunks, &r_agg).expect("agg_ct");
 
         // Prove with WRONG chi_chunks.
-        let wrong_chi: Vec<Vec<u8>> = vec![
-            Integer::from(99u32).to_bytes_msf(),
-            Integer::from(77u32).to_bytes_msf(),
-        ];
+        let wrong_chi: Vec<Integer> = vec![Integer::from(99u32), Integer::from(77u32)];
 
         let proof = RBlntProof::prove(
             &mut setup,

@@ -33,7 +33,6 @@
 
 use std::collections::BTreeMap;
 
-use rug::{integer::Order, Integer};
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
     cl::{ClPublicKey, ClSetup, Qfi},
@@ -43,7 +42,7 @@ use tecdsa_class_group::{
     },
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{
     ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature},
     state_machine::Outgoing,
@@ -156,8 +155,8 @@ impl TroutSignMachine {
         }
 
         let r_scalar = my_presign.r_scalar;
-        let r_bytes = r_scalar.to_bytes_vec();
-        let m_bytes = (message.digest()).to_bytes_vec();
+        let r_int = r_scalar.to_integer();
+        let m_int = message.digest().to_integer();
         let broadcasts = &my_presign.all_broadcasts;
 
         // -----------------------------------------------------------
@@ -174,9 +173,11 @@ impl TroutSignMachine {
                 .ct_from_components(&c1, &c2)
                 .map_err(|e| TecdsaError::Other(format!("ct_from_components: {e}")))?;
 
+            let r_i_point = k256::ProjectivePoint::from_bytes_slice(&bcast.r_i_bytes)
+                .ok_or_else(|| TecdsaError::Other("invalid R_i point".into()))?;
             let cl_ec_ok = bcast
                 .pi_cl_ec
-                .verify(&setup, cl_pk, &kt_ct, &bcast.r_i_bytes)
+                .verify(&setup, cl_pk, &kt_ct, &r_i_point)
                 .map_err(|e| TecdsaError::Other(format!("R_CL-EC verify: {e}")))?;
             if !cl_ec_ok {
                 return Err(TecdsaError::InvalidProof(format!(
@@ -246,17 +247,17 @@ impl TroutSignMachine {
         let mut z_components = Vec::new();
         for (c1, c2) in &ct_scaled_components {
             let z_c1 = setup
-                .exp_bytes(c1, &r_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp_bytes: {e}")))?;
+                .exp(c1, &r_int)
+                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
             let z_c2 = setup
-                .exp_bytes(c2, &r_bytes)
-                .map_err(|e| TecdsaError::Other(format!("exp_bytes: {e}")))?;
+                .exp(c2, &r_int)
+                .map_err(|e| TecdsaError::Other(format!("exp: {e}")))?;
             z_components.push((z_c1, z_c2));
         }
 
         let f_m = setup
-            .power_of_f_bytes(&m_bytes)
-            .map_err(|e| TecdsaError::Other(format!("power_of_f_bytes: {e}")))?;
+            .power_of_f(&m_int)
+            .map_err(|e| TecdsaError::Other(format!("power_of_f: {e}")))?;
         let (old_c1, old_c2) = z_components.remove(0);
         let new_z0_c2 = setup
             .compose(&old_c2, &f_m)
@@ -299,21 +300,17 @@ impl TroutSignMachine {
         let sd1_input = ScaledDecryptPartyInput {
             alpha_i: my_presign.alpha_i.clone(),
             beta_i: my_presign.beta_i.clone(),
-            b_i: my_presign.u_i.to_bytes_vec(),
+            b_i: my_presign.u_i.to_integer(),
         };
         let f_i_1 = compute_f_share(&setup, &sd1_input, &sd1_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD1: {e}")))?;
 
         // SD2 input: alpha_z_i = r * l_i * delta_i, beta_i, b_i = u_i
-        let alpha_z = {
-            let r_val = Integer::from_digits(&r_bytes, Order::Msf);
-            let lid_val = Integer::from_digits(&my_presign.l_i_delta_i, Order::Msf);
-            (r_val * lid_val).to_digits::<u8>(Order::Msf)
-        };
+        let alpha_z = r_int.clone() * my_presign.l_i_delta_i.clone();
         let sd2_input = ScaledDecryptPartyInput {
             alpha_i: alpha_z,
             beta_i: my_presign.beta_i.clone(),
-            b_i: my_presign.u_i.to_bytes_vec(),
+            b_i: my_presign.u_i.to_integer(),
         };
         let f_i_2 = compute_f_share(&setup, &sd2_input, &sd2_public)
             .map_err(|e| TecdsaError::Other(format!("compute_f_share SD2: {e}")))?;
@@ -409,13 +406,13 @@ impl TroutSignMachine {
         }
 
         // Aggregate and solve SD1: u*k
-        let uk = k256::Secp256k1::scalar_from_bytes(
+        let uk = k256::Secp256k1::scalar_from_integer(
             &aggregate_and_solve(&fin.setup, &f1_shares)
                 .map_err(|e| TecdsaError::Other(format!("agg_solve SD1: {e}")))?,
         );
 
         // Aggregate and solve SD2: u*(H(m) + r*x)
-        let u_mx = k256::Secp256k1::scalar_from_bytes(
+        let u_mx = k256::Secp256k1::scalar_from_integer(
             &aggregate_and_solve(&fin.setup, &f2_shares)
                 .map_err(|e| TecdsaError::Other(format!("agg_solve SD2: {e}")))?,
         );

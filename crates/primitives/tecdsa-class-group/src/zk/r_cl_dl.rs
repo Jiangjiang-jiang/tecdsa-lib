@@ -13,6 +13,8 @@
 //! point: given `(pk, ct, Y)`, prover knows `(x, r)` such that
 //!   `ct = Enc(pk, x; r)`  and  `Y = f^x`.
 
+use rug::{integer::Order, Integer};
+
 use super::{
     challenge_from_qfi, challenge_from_qfi_with_prefix, response_mod_q, response_unbounded,
     sample_random, sample_random_mod_q,
@@ -44,28 +46,28 @@ impl RClDlProof {
         pk: &ClHsmqkPublicKey,
         ct: &ClHsmqkCiphertext,
         y: &Qfi,
-        x_bytes: &[u8],
-        r_bytes: &[u8],
+        x: &Integer,
+        r: &Integer,
     ) -> ClResult<Self> {
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
         // t1 = h^a1 (commitment to randomness)
-        let t1 = setup.power_of_h_bytes(&a1)?;
+        let t1 = setup.power_of_h(&a1)?;
         // t2 = pk^a1 * f^a2 (commitment to message)
         let pk_elt = pk.elt();
-        let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
-        let f_a2 = setup.power_of_f_bytes(&a2)?;
+        let pk_a1 = setup.pk_pow(pk, &a1)?;
+        let f_a2 = setup.power_of_f(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
         // s = f^a2 (commitment in F-subgroup)
-        let s = setup.power_of_f_bytes(&a2)?;
+        let s = setup.power_of_f(&a2)?;
 
         let (c1, c2) = setup.ct_components(ct)?;
         let e = challenge_from_qfi(setup, b"R_cl_dl", &[pk_elt, &c1, &c2, y, &t1, &t2, &s], &[])?;
 
-        let u1 = response_unbounded(&a1, &e, r_bytes)?;
-        let q_bytes = setup.q_bytes()?;
-        let u2 = response_mod_q(&a2, &e, x_bytes, &q_bytes)?;
+        let u1 = response_unbounded(&a1, &e, r);
+        let q = setup.cl().q();
+        let u2 = response_mod_q(&a2, &e, x, q);
 
         Ok(Self {
             t1,
@@ -98,19 +100,23 @@ impl RClDlProof {
             return Ok(false);
         }
 
+        let u1 = Integer::from_digits(&self.u1, Order::Msf);
+        let u2 = Integer::from_digits(&self.u2, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
         // Check 1: h^u1 == t1 * c1^e
-        let lhs1 = setup.power_of_h_bytes(&self.u1)?;
-        let c1_e = setup.exp_bytes(&c1, &self.e)?;
+        let lhs1 = setup.power_of_h(&u1)?;
+        let c1_e = setup.exp(&c1, &e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
         if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: pk^u1 * f^u2 == t2 * c2^e
-        let pk_u1 = setup.pk_pow_bytes(pk, &self.u1)?;
-        let f_u2 = setup.power_of_f_bytes(&self.u2)?;
+        let pk_u1 = setup.pk_pow(pk, &u1)?;
+        let f_u2 = setup.power_of_f(&u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
-        let c2_e = setup.exp_bytes(&c2, &self.e)?;
+        let c2_e = setup.exp(&c2, &e)?;
         let rhs2 = setup.compose(&self.t2, &c2_e)?;
         if lhs2 != rhs2 {
             return Ok(false);
@@ -132,18 +138,18 @@ impl RClDlProof {
         pk: &ClHsmqkPublicKey,
         ct: &ClHsmqkCiphertext,
         y: &Qfi,
-        x_bytes: &[u8],
-        r_bytes: &[u8],
+        x: &Integer,
+        r: &Integer,
     ) -> ClResult<Self> {
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
-        let t1 = setup.power_of_h_bytes(&a1)?;
+        let t1 = setup.power_of_h(&a1)?;
         let pk_elt = pk.elt();
-        let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
-        let f_a2 = setup.power_of_f_bytes(&a2)?;
+        let pk_a1 = setup.pk_pow(pk, &a1)?;
+        let f_a2 = setup.power_of_f(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
-        let s = setup.power_of_f_bytes(&a2)?;
+        let s = setup.power_of_f(&a2)?;
 
         let (c1, c2) = setup.ct_components(ct)?;
         let e = challenge_from_qfi_with_prefix(
@@ -154,9 +160,9 @@ impl RClDlProof {
             &[],
         )?;
 
-        let u1 = response_unbounded(&a1, &e, r_bytes)?;
-        let q_bytes = setup.q_bytes()?;
-        let u2 = response_mod_q(&a2, &e, x_bytes, &q_bytes)?;
+        let u1 = response_unbounded(&a1, &e, r);
+        let q = setup.cl().q();
+        let u2 = response_mod_q(&a2, &e, x, q);
 
         Ok(Self {
             t1,
@@ -192,17 +198,21 @@ impl RClDlProof {
             return Ok(false);
         }
 
-        let lhs1 = setup.power_of_h_bytes(&self.u1)?;
-        let c1_e = setup.exp_bytes(&c1, &self.e)?;
+        let u1 = Integer::from_digits(&self.u1, Order::Msf);
+        let u2 = Integer::from_digits(&self.u2, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
+        let lhs1 = setup.power_of_h(&u1)?;
+        let c1_e = setup.exp(&c1, &e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
         if lhs1 != rhs1 {
             return Ok(false);
         }
 
-        let pk_u1 = setup.pk_pow_bytes(pk, &self.u1)?;
-        let f_u2 = setup.power_of_f_bytes(&self.u2)?;
+        let pk_u1 = setup.pk_pow(pk, &u1)?;
+        let f_u2 = setup.power_of_f(&u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
-        let c2_e = setup.exp_bytes(&c2, &self.e)?;
+        let c2_e = setup.exp(&c2, &e)?;
         let rhs2 = setup.compose(&self.t2, &c2_e)?;
         if lhs2 != rhs2 {
             return Ok(false);
@@ -218,69 +228,62 @@ impl RClDlProof {
 
 #[cfg(test)]
 mod tests {
-    use rug::{integer::Order, Integer};
-
     use super::*;
     use crate::cl::ClSetup;
 
     #[test]
     fn r_cl_dl_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("3001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(3001u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x = "77";
-        let x_bytes = Integer::from(77u32).to_digits::<u8>(Order::Msf);
+        let x = Integer::from(77u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
-        let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
-        let y = setup.power_of_f(x).expect("f^x");
+        let ct = setup.encrypt_with_r(&pk, &x, &r).expect("encrypt");
+        let y = setup.power_of_f(&x).expect("f^x");
 
-        let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &x_bytes, &r).expect("prove");
+        let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &x, &r).expect("prove");
         assert!(proof.verify(&setup, &pk, &ct, &y).expect("verify"));
     }
 
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_cl_dl_rejects_wrong_x() {
-        let mut setup = ClSetup::new_secp256k1("3002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(3002u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x = "77";
+        let x = Integer::from(77u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
-        let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
-        let y = setup.power_of_f(x).expect("f^x");
+        let ct = setup.encrypt_with_r(&pk, &x, &r).expect("encrypt");
+        let y = setup.power_of_f(&x).expect("f^x");
 
         // Prove with wrong x.
-        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
-        let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &wrong_x_bytes, &r).expect("prove");
+        let wrong_x = Integer::from(99u32);
+        let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &wrong_x, &r).expect("prove");
         assert!(!proof.verify(&setup, &pk, &ct, &y).expect("verify"));
     }
 
     #[test]
     fn r_cl_dl_with_prefix_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("3003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(3003u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x = "77";
-        let x_bytes = Integer::from(77u32).to_digits::<u8>(Order::Msf);
+        let x = Integer::from(77u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
-        let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
-        let y = setup.power_of_f(x).expect("f^x");
+        let ct = setup.encrypt_with_r(&pk, &x, &r).expect("encrypt");
+        let y = setup.power_of_f(&x).expect("f^x");
 
         let prefix = b"session-1::party-2::round-3";
-        let proof = RClDlProof::prove_with_prefix(prefix, &mut setup, &pk, &ct, &y, &x_bytes, &r)
-            .expect("prove");
+        let proof =
+            RClDlProof::prove_with_prefix(prefix, &mut setup, &pk, &ct, &y, &x, &r).expect("prove");
         assert!(proof
             .verify_with_prefix(prefix, &setup, &pk, &ct, &y)
             .expect("verify"));
@@ -289,22 +292,19 @@ mod tests {
     #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_cl_dl_with_prefix_rejects_wrong_prefix() {
-        let mut setup = ClSetup::new_secp256k1("3004").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(3004u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let x = "77";
-        let x_bytes = Integer::from(77u32).to_digits::<u8>(Order::Msf);
+        let x = Integer::from(77u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let r_dec = Integer::from_digits(&r, Order::Msf).to_string_radix(10);
-        let ct = setup.encrypt_with_r(&pk, x, &r_dec).expect("encrypt");
-        let y = setup.power_of_f(x).expect("f^x");
+        let ct = setup.encrypt_with_r(&pk, &x, &r).expect("encrypt");
+        let y = setup.power_of_f(&x).expect("f^x");
 
-        let proof =
-            RClDlProof::prove_with_prefix(b"prefix-A", &mut setup, &pk, &ct, &y, &x_bytes, &r)
-                .expect("prove");
+        let proof = RClDlProof::prove_with_prefix(b"prefix-A", &mut setup, &pk, &ct, &y, &x, &r)
+            .expect("prove");
         assert!(!proof
             .verify_with_prefix(b"prefix-B", &setup, &pk, &ct, &y)
             .expect("verify"));

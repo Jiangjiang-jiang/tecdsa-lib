@@ -21,7 +21,7 @@
 //! 1. Each party `i` partially decrypts its encrypted share.
 //! 2. Combine `t` partial decryptions using Lagrange interpolation.
 
-use rug::{integer::Order, Integer};
+use rug::Integer;
 
 use crate::{
     cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
@@ -49,35 +49,30 @@ impl std::fmt::Debug for PvssDeal {
 /// Deals a PVSS: generates Shamir shares, encrypts each under the
 /// corresponding public key, and produces ZK proofs.
 ///
-/// - `secret_decimal`: the secret to share.
+/// - `secret`: the secret to share.
 /// - `pks`: public keys of each party (length = n).
 /// - `threshold`: the threshold `t` (requires `t` shares to reconstruct).
 ///
 /// Returns the dealing.
 pub fn deal(
     setup: &mut ClSetup,
-    secret_decimal: &str,
+    secret: &Integer,
     pks: &[ClHsmqkPublicKey],
     threshold: usize,
 ) -> ClResult<PvssDeal> {
     let n = pks.len();
-    let q_bytes = setup.q_bytes()?;
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
-    let secret = Integer::from_str_radix(secret_decimal, 10)
-        .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad secret: {e}")))?;
+    let q = setup.cl().q().clone();
 
     // Generate polynomial coefficients: a_0 = secret, a_1..a_{t-1} random.
-    let mut coeffs = vec![secret];
+    let mut coeffs = vec![secret.clone()];
     for _ in 1..threshold {
-        let r = crate::zk::sample_random_mod_q(setup)?;
-        let r_val = Integer::from_digits(&r, Order::Msf);
-        coeffs.push(r_val);
+        coeffs.push(crate::zk::sample_random_mod_q(setup)?);
     }
 
     // Compute commitments: f^{a_j} for each coefficient.
     let mut commitments = Vec::with_capacity(threshold);
     for coeff in &coeffs {
-        let c = setup.power_of_f(&coeff.to_string_radix(10))?;
+        let c = setup.power_of_f(coeff)?;
         commitments.push(c);
     }
 
@@ -99,15 +94,12 @@ pub fn deal(
     let mut proofs = Vec::with_capacity(n);
     for (i, share) in shares.iter().enumerate() {
         // Encrypt with known randomness so we can produce the proof.
-        let r_bytes = {
+        let r = {
             let (sk, _) = setup.keygen()?;
-            setup.sk_to_bytes(&sk)?
+            setup.sk_to_integer(&sk)
         };
-        let share_dec = share.to_string_radix(10);
-        let r_dec = Integer::from_digits(&r_bytes, Order::Msf).to_string_radix(10);
-        let ct = setup.encrypt_with_r(&pks[i], &share_dec, &r_dec)?;
-        let share_bytes = share.to_digits::<u8>(Order::Msf);
-        let proof = REncProof::prove(setup, &pks[i], &ct, &share_bytes, &r_bytes)?;
+        let ct = setup.encrypt_with_r(&pks[i], share, &r)?;
+        let proof = REncProof::prove(setup, &pks[i], &ct, share, &r)?;
         encrypted_shares.push(ct);
         proofs.push(proof);
     }
@@ -137,20 +129,15 @@ pub fn verify_deal(setup: &ClSetup, deal: &PvssDeal, pks: &[ClHsmqkPublicKey]) -
 /// Reconstructs the secret from `t` decrypted shares using Lagrange
 /// interpolation over Z/q.
 ///
-/// `shares` is a list of `(party_index, share_decimal)` pairs where
+/// `shares` is a list of `(party_index, share)` pairs where
 /// `party_index` is 1-based.
-pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String> {
-    let q_str = setup.cl().q().to_string();
-    let q = Integer::from_str_radix(&q_str, 10)
-        .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad q: {e}")))?;
+pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &Integer)]) -> ClResult<Integer> {
+    let q = setup.cl().q();
 
     let indices: Vec<usize> = shares.iter().map(|(i, _)| *i).collect();
     let mut secret = Integer::new();
 
     for (k, &(i_k, share_k)) in shares.iter().enumerate() {
-        let share_val = Integer::from_str_radix(share_k, 10)
-            .map_err(|e| crate::cl::ClError::InvalidParam(format!("bad share: {e}")))?;
-
         // Compute Lagrange coefficient lambda_k mod q.
         let mut num = Integer::from(1);
         let mut den = Integer::from(1);
@@ -166,21 +153,21 @@ pub fn reconstruct(setup: &ClSetup, shares: &[(usize, &str)]) -> ClResult<String
         }
 
         // lambda_k = num * den^{-1} mod q (Euclidean reduction -> non-negative)
-        let num_mod = num.modulo(&q);
-        let den_mod = den.modulo(&q);
+        let num_mod = num.modulo(q);
+        let den_mod = den.modulo(q);
 
         // Modular inverse of den via Fermat's little theorem: den^{q-2} mod q.
-        let q_minus_2 = Integer::from(&q - 2);
+        let q_minus_2 = Integer::from(q - 2);
         let den_inv = den_mod
-            .pow_mod(&q_minus_2, &q)
+            .pow_mod(&q_minus_2, q)
             .expect("q - 2 is non-negative");
 
-        let lambda = (num_mod * den_inv).modulo(&q);
+        let lambda = (num_mod * den_inv).modulo(q);
 
-        secret = (secret + share_val * lambda) % &q;
+        secret = (secret + share_k * lambda) % q;
     }
 
-    Ok(secret.to_string_radix(10))
+    Ok(secret)
 }
 
 #[cfg(test)]
@@ -190,11 +177,11 @@ mod tests {
 
     #[test]
     fn pvss_share_verify_reconstruct() {
-        let mut setup = ClSetup::new_secp256k1("16001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(16001u64).expect("setup");
 
         let n = 3;
         let t = 2;
-        let secret = "42";
+        let secret = Integer::from(42u32);
 
         // Generate key pairs for each party.
         let mut sks = Vec::new();
@@ -206,7 +193,7 @@ mod tests {
         }
 
         // Deal.
-        let pvss_deal = deal(&mut setup, secret, &pks, t).expect("deal");
+        let pvss_deal = deal(&mut setup, &secret, &pks, t).expect("deal");
 
         // Verify.
         assert!(verify_deal(&setup, &pvss_deal, &pks).expect("verify"));
@@ -219,10 +206,8 @@ mod tests {
         }
 
         // Reconstruct from first t shares.
-        let share_refs: Vec<(usize, &str)> = decrypted_shares[..t]
-            .iter()
-            .map(|(i, s)| (*i, s.as_str()))
-            .collect();
+        let share_refs: Vec<(usize, &Integer)> =
+            decrypted_shares[..t].iter().map(|(i, s)| (*i, s)).collect();
         let reconstructed = reconstruct(&setup, &share_refs).expect("reconstruct");
         assert_eq!(reconstructed, secret);
     }

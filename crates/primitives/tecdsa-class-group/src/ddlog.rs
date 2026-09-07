@@ -9,7 +9,7 @@
 //! full `DDLog` proof (`Pi_DDLog`) will be implemented in the ZK proofs
 //! task (Task 17).
 
-use rug::{integer::Order, Integer};
+use rug::Integer;
 
 use crate::cl::{ClResult, ClSetup, Qfi};
 
@@ -17,41 +17,41 @@ use crate::cl::{ClResult, ClSetup, Qfi};
 /// logarithm of the `F`-component of a class-group element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DdLogLabel {
-    /// The label value as big-endian bytes (in `[0, q)`).
-    value: Vec<u8>,
+    /// The label value (in `[0, q)`).
+    value: Integer,
 }
 
 impl DdLogLabel {
-    /// Creates a new `DDLog` label from big-endian bytes.
+    /// Creates a new `DDLog` label from an integer value.
     #[must_use]
-    pub fn new(value: Vec<u8>) -> Self {
+    pub fn new(value: Integer) -> Self {
         Self { value }
     }
 
-    /// Returns the label value as big-endian bytes.
+    /// Returns the label value.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub fn as_integer(&self) -> &Integer {
         &self.value
     }
 
-    /// Converts the label to an `Integer`.
+    /// Converts the label to an owned `Integer`.
     #[must_use]
     pub fn to_integer(&self) -> Integer {
-        Integer::from_digits(&self.value, Order::Msf)
+        self.value.clone()
     }
 
     /// Creates a label from an `Integer`.
     #[must_use]
     pub fn from_integer(v: &Integer) -> Self {
-        Self {
-            value: v.to_digits::<u8>(Order::Msf),
-        }
+        Self { value: v.clone() }
     }
 
     /// Returns the zero label.
     #[must_use]
     pub fn zero() -> Self {
-        Self { value: vec![0u8] }
+        Self {
+            value: Integer::new(),
+        }
     }
 }
 
@@ -75,8 +75,7 @@ pub fn ddlog_label(setup: &ClSetup, element: &Qfi) -> ClResult<DdLogLabel> {
     let alpha = setup.compose(element, &label_elt)?;
 
     // Discrete log in F.
-    #[allow(non_snake_case)]
-    let dlog = setup.dlog_in_F_bytes(&alpha)?;
+    let dlog = setup.dlog_in_F(&alpha)?;
     Ok(DdLogLabel::new(dlog))
 }
 
@@ -87,10 +86,8 @@ pub fn ddlog_label(setup: &ClSetup, element: &Qfi) -> ClResult<DdLogLabel> {
 /// # Errors
 ///
 /// Returns an error if the operations fail.
-pub fn ddlog_verify_power_of_f(setup: &ClSetup, m_bytes: &[u8]) -> ClResult<bool> {
-    let fm = setup.power_of_f_bytes(m_bytes)?;
+pub fn ddlog_verify_power_of_f(setup: &ClSetup, m: &Integer) -> ClResult<bool> {
+    let fm = setup.power_of_f(m)?;
     let label = ddlog_label(setup, &fm)?;
-    let label_val = Integer::from_digits(label.as_bytes(), Order::Msf);
-    let m_val = Integer::from_digits(m_bytes, Order::Msf);
-    Ok(label_val == m_val)
+    Ok(label.as_integer() == m)
 }

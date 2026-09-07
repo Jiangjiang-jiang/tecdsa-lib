@@ -364,7 +364,7 @@ fn wire_wmc24_keygen() {
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_llz25_keygen() {
-    use tecdsa_class_group::cl::ClSetup;
+    use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
     use tecdsa_llz25::keygen::Llz25KeygenMachine;
 
     let n = 3u16;
@@ -375,10 +375,11 @@ fn wire_llz25_keygen() {
     // LLZ25 interactive keygen needs a CL public key (pk_crs).
     // ClHsmqkPublicKey does not impl Clone, so each party creates its own
     // deterministic setup with the same seed and generates the same pk_crs.
+    let seed_int = parse_int_auto(seed).expect("parse seed");
     let machines: Vec<(PartyId, Llz25KeygenMachine)> = all_parties
         .iter()
         .map(|&pid| {
-            let mut setup = ClSetup::new_secp256k1(seed).expect("CL setup");
+            let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
             let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
             let machine = Llz25KeygenMachine::new(pid, all_parties.clone(), t, seed, false, pk_crs)
                 .expect("LLZ25 keygen machine construction");

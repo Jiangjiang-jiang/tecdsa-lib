@@ -45,12 +45,12 @@ pub mod machine;
 pub mod types;
 
 use rand_core::CryptoRngCore;
-use rug::{integer::Order, Integer};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
     cl::ClSetup,
     zk::{r_cl_dl_ec::RClDlEcProof, r_com_kwlg::RComKwlgProof},
 };
-use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 pub use types::{TroutPresignOutput, TroutRound1Broadcast, TroutRound1State};
 
 use crate::{
@@ -87,33 +87,32 @@ pub fn presign_round1(
     let (evrf_output, evrf_proof) = share.evrf_sk.eval(session_nonce, rng);
     let k_i = *share.evrf_sk.scalar();
 
-    let k_i_bytes = k_i.to_bytes_vec();
+    let k_i_int = k_i.to_integer();
     // R_i = k_i * G (ECDSA nonce point, using the curve generator)
     let r_i_proj = <k256::Secp256k1 as TecdsaCurve>::generator() * k_i;
-    let r_i_affine = elliptic_curve::group::Curve::to_affine(&r_i_proj);
-    let r_i_bytes = <k256::Secp256k1 as TecdsaCurve>::point_to_bytes(&r_i_affine);
+    let r_i_bytes = r_i_proj.to_bytes_vec();
 
     // 2. Choose random alpha_i, beta_i, u_i
     let u_i = <k256::Secp256k1 as TecdsaCurve>::random_scalar(&mut *rng);
-    let u_i_bytes = u_i.to_bytes_vec();
+    let u_i_int = u_i.to_integer();
 
     // alpha_i: random CL exponent (for encryption)
     let (sk_tmp, _) = setup.keygen()?;
-    let alpha_i = setup.sk_to_bytes(&sk_tmp)?;
+    let alpha_i = setup.sk_to_integer(&sk_tmp);
 
     // beta_i: random CL exponent (for commitment)
     let (sk_tmp2, _) = setup.keygen()?;
-    let beta_i = setup.sk_to_bytes(&sk_tmp2)?;
+    let beta_i = setup.sk_to_integer(&sk_tmp2);
 
     // 3. Compute K_tilde_i = Enc(alpha_i, k_i)
-    let kt_ct = setup.encrypt_with_r_bytes(cl_pk, &k_i_bytes, &alpha_i)?;
+    let kt_ct = setup.encrypt_with_r(cl_pk, &k_i_int, &alpha_i)?;
     let (kt_c1, kt_c2) = setup.ct_components(&kt_ct)?;
 
     // 4. Compute U_i = Com(beta_i, u_i) = h^beta_i * pk^u_i
     //    Uses (h, pk) as bases so the scaled decryption cross-terms cancel.
     let pk_elt = cl_pk.elt();
-    let h_beta = setup.power_of_h_bytes(&beta_i)?;
-    let pk_u = setup.exp_bytes(pk_elt, &u_i_bytes)?;
+    let h_beta = setup.power_of_h(&beta_i)?;
+    let pk_u = setup.exp(pk_elt, &u_i_int)?;
     let u_com = setup.compose(&h_beta, &pk_u)?;
 
     // 5. Compute Lagrange-scaled C_tilde_i
@@ -123,7 +122,7 @@ pub fn presign_round1(
         .position(|&p| p == my_idx)
         .ok_or_else(|| TroutError::InvalidParam("party not in signing set".into()))?;
     let l_i = lagrange_coeffs[my_party_pos];
-    let l_i_bytes = l_i.to_bytes_vec();
+    let l_i_int = l_i.to_integer();
 
     // Rebuild C_tilde_i from stored components
     let (c1_a, c1_b, c1_c, c2_a, c2_b, c2_c) = &share.ct_share_components;
@@ -131,22 +130,20 @@ pub fn presign_round1(
     let ct_c2 = qfi_from_abc(c2_a, c2_b, c2_c)?;
 
     // L_i * C_tilde_i: scale both components by l_i
-    let ct_scaled_c1 = setup.exp_bytes(&ct_c1, &l_i_bytes)?;
-    let ct_scaled_c2 = setup.exp_bytes(&ct_c2, &l_i_bytes)?;
+    let ct_scaled_c1 = setup.exp(&ct_c1, &l_i_int)?;
+    let ct_scaled_c2 = setup.exp(&ct_c2, &l_i_int)?;
 
     // The effective encryption randomness after scaling: L_i * delta_i.
     // We need this for the scaled decryption step.
-    // Compute as Integer: l_i_val * delta_i_val
-    let l_i_val = Integer::from_digits(&l_i_bytes, Order::Msf);
-    let delta_i_val = Integer::from_digits(&share.delta_i, Order::Msf);
-    let l_i_delta_i = (l_i_val * delta_i_val).to_digits::<u8>(Order::Msf);
+    let delta_i_int = rug::Integer::from_bytes_msf(&share.delta_i[..]);
+    let l_i_delta_i = l_i_int * delta_i_int;
 
     // 6. Prove R_{CL-EC}: K_tilde_i encrypts same k_i as R_i
-    let pi_cl_ec = RClDlEcProof::prove(setup, cl_pk, &kt_ct, &r_i_bytes, &k_i_bytes, &alpha_i)?;
+    let pi_cl_ec = RClDlEcProof::prove(setup, cl_pk, &kt_ct, &r_i_proj, &k_i_int, &alpha_i)?;
 
     // 7. Prove R_{ComKwlg}: knowledge of (u_i, beta_i) in U_i = Com(beta_i, u_i)
     //    U_i = h^beta_i * pk^u_i, so we use prove_with_base with pk as the second base.
-    let pi_com_kwlg = RComKwlgProof::prove_with_base(setup, &u_com, pk_elt, &u_i_bytes, &beta_i)?;
+    let pi_com_kwlg = RComKwlgProof::prove_with_base(setup, &u_com, pk_elt, &u_i_int, &beta_i)?;
 
     // Serialise QFI components
     let kt_c1_abc = qfi_to_abc(&kt_c1)?;

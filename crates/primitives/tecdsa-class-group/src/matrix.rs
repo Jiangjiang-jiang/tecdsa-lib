@@ -19,6 +19,8 @@
 //! The engine generates and verifies Sigma-protocol proofs for such
 //! matrix relations.
 
+use rug::{integer::Order, Integer};
+
 use crate::{
     cl::{ClResult, ClSetup, Qfi},
     zk::{challenge_from_qfi, response_unbounded, sample_random},
@@ -45,11 +47,11 @@ pub struct MatrixRelationProof {
 /// Generates a matrix-relation proof.
 ///
 /// - `rows`: the matrix of bases and targets.
-/// - `witnesses`: the witness values (big-endian bytes), one per column.
+/// - `witnesses`: the witness values, one per column.
 pub fn prove_matrix(
     setup: &mut ClSetup,
     rows: &[MatrixRow],
-    witnesses: &[&[u8]],
+    witnesses: &[&Integer],
 ) -> ClResult<MatrixRelationProof> {
     let num_witnesses = witnesses.len();
 
@@ -69,7 +71,7 @@ pub fn prove_matrix(
                 num_witnesses
             )));
         }
-        let t = setup.multiexp_bytes(&row.bases, &alphas)?;
+        let t = setup.multiexp(&row.bases, &alphas)?;
         commitments.push(t);
     }
 
@@ -86,7 +88,7 @@ pub fn prove_matrix(
     // Compute responses: z_j = alpha_j + e * w_j.
     let mut responses = Vec::with_capacity(num_witnesses);
     for (j, alpha) in alphas.iter().enumerate() {
-        let z = response_unbounded(alpha, &e, witnesses[j])?;
+        let z = response_unbounded(alpha, &e, witnesses[j]);
         responses.push(z);
     }
 
@@ -121,10 +123,16 @@ pub fn verify_matrix(
     }
 
     // For each row, check: product(bases[i,j]^{z_j}) == t_i * target_i^e.
+    let responses: Vec<Integer> = proof
+        .responses
+        .iter()
+        .map(|z| Integer::from_digits(z, Order::Msf))
+        .collect();
+    let e = Integer::from_digits(&proof.e, Order::Msf);
     for (i, row) in rows.iter().enumerate() {
-        let lhs = setup.multiexp_bytes(&row.bases, &proof.responses)?;
+        let lhs = setup.multiexp(&row.bases, &responses)?;
 
-        let target_e = setup.exp_bytes(&row.target, &proof.e)?;
+        let target_e = setup.exp(&row.target, &e)?;
         let rhs = setup.compose(&proof.commitments[i], &target_e)?;
 
         if lhs != rhs {
@@ -137,19 +145,19 @@ pub fn verify_matrix(
 
 #[cfg(test)]
 mod tests {
-    use rug::{integer::Order, Integer};
+    use rug::Integer;
 
     use super::*;
     use crate::cl::ClSetup;
 
     #[test]
     fn matrix_relation_single_row() {
-        let mut setup = ClSetup::new_secp256k1("17001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(17001u64).expect("setup");
 
         // Single row: h^w = target, where w = 42.
-        let w = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let w = Integer::from(42u32);
         let h = setup.cl().h().clone();
-        let target = setup.exp(&h, "42").expect("h^w");
+        let target = setup.exp(&h, &w).expect("h^w");
 
         let rows = vec![MatrixRow {
             bases: vec![h],
@@ -162,14 +170,14 @@ mod tests {
 
     #[test]
     fn matrix_relation_multi_row() {
-        let mut setup = ClSetup::new_secp256k1("17002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(17002u64).expect("setup");
 
-        let w1 = Integer::from(7u32).to_digits::<u8>(Order::Msf);
-        let w2 = Integer::from(13u32).to_digits::<u8>(Order::Msf);
+        let w1 = Integer::from(7u32);
+        let w2 = Integer::from(13u32);
         let h = setup.cl().h().clone();
 
-        let target1 = setup.exp(&h, "7").expect("h^w1");
-        let target2 = setup.exp(&h, "13").expect("h^w2");
+        let target1 = setup.exp(&h, &w1).expect("h^w1");
+        let target2 = setup.exp(&h, &w2).expect("h^w2");
 
         let id = setup.identity().expect("id");
         let h2 = setup.cl().h().clone();

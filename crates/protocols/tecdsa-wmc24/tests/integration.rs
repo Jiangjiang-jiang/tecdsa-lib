@@ -17,7 +17,7 @@
 //! Tests: keygen -> presign -> online sign -> verify.
 
 use elliptic_curve::CurveArithmetic;
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_protocol::PartyId;
 use tecdsa_wmc24::{
     key_share::Wmc24KeyShare,
@@ -81,10 +81,11 @@ fn run_presign(key_shares: &[Wmc24KeyShare], signer_indices: &[usize]) -> Vec<Wm
     for &idx in signer_indices {
         let share = &key_shares[idx];
         let pid = PartyId(share.party_index);
+        let seed_int = parse_int_auto(seed).expect("parse seed");
         let setup = if share.use_128bit_security {
-            ClSetup::new_secp256k1_128bit(seed).expect("ClSetup 128")
+            ClSetup::new_secp256k1_128bit(&seed_int).expect("ClSetup 128")
         } else {
-            ClSetup::new_secp256k1(seed).expect("ClSetup")
+            ClSetup::new_secp256k1(&seed_int).expect("ClSetup")
         };
 
         let machine = Wmc24PresignMachine::new(pid, signer_parties.clone(), share, setup)

@@ -70,9 +70,7 @@ pub(crate) fn challenge_from_qfi(
 
     let hash = hasher.finalize();
     let hash_uint = Integer::from_digits(&hash, Order::Msf);
-    let q_bytes = setup.q_bytes()?;
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
-    let e = hash_uint % &q;
+    let e = hash_uint % setup.cl().q();
     Ok(e.to_digits::<u8>(Order::Msf))
 }
 
@@ -102,48 +100,40 @@ pub(crate) fn challenge_from_qfi_with_prefix(
 
     let hash = hasher.finalize();
     let hash_uint = Integer::from_digits(&hash, Order::Msf);
-    let q_bytes = setup.q_bytes()?;
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
-    let e = hash_uint % &q;
+    let e = hash_uint % setup.cl().q();
     Ok(e.to_digits::<u8>(Order::Msf))
 }
 
 /// Samples a random value in `[0, secretkey_bound)` by generating a
-/// keypair and extracting the secret key scalar as big-endian bytes.
-pub(crate) fn sample_random(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
+/// keypair and extracting the secret key scalar.
+pub(crate) fn sample_random(setup: &mut ClSetup) -> ClResult<Integer> {
     let (sk, _pk) = setup.keygen()?;
-    setup.sk_to_bytes(&sk)
+    Ok(setup.sk_to_integer(&sk))
 }
 
 /// Samples a random value in `[0, q)` by sampling a larger value and
-/// reducing modulo q, returned as big-endian bytes.
-pub(crate) fn sample_random_mod_q(setup: &mut ClSetup) -> ClResult<Vec<u8>> {
+/// reducing modulo q.
+pub(crate) fn sample_random_mod_q(setup: &mut ClSetup) -> ClResult<Integer> {
     let r = sample_random(setup)?;
-    let r_uint = Integer::from_digits(&r, Order::Msf);
-    let q_bytes = setup.q_bytes()?;
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
-    let reduced = r_uint % &q;
-    Ok(reduced.to_digits::<u8>(Order::Msf))
+    Ok(r.modulo(setup.cl().q()))
 }
 
-/// Computes `(a + e * w) mod q` for big-integer big-endian byte slices.
-pub(crate) fn response_mod_q(a: &[u8], e: &[u8], w: &[u8], q: &[u8]) -> ClResult<Vec<u8>> {
-    let a = Integer::from_digits(a, Order::Msf);
+/// Computes `(a + e * w) mod q`, with the Fiat-Shamir challenge `e` given as
+/// big-endian bytes (as stored in a proof's wire field), returned as
+/// big-endian bytes.
+pub(crate) fn response_mod_q(a: &Integer, e: &[u8], w: &Integer, q: &Integer) -> Vec<u8> {
     let e = Integer::from_digits(e, Order::Msf);
-    let w = Integer::from_digits(w, Order::Msf);
-    let q = Integer::from_digits(q, Order::Msf);
-    let resp = (a + e * w) % q;
-    Ok(resp.to_digits::<u8>(Order::Msf))
+    let resp = (a + e * w).modulo(q);
+    resp.to_digits::<u8>(Order::Msf)
 }
 
-/// Computes `a + e * w` (unbounded, for class-group exponents),
-/// returned as big-endian bytes.
-pub(crate) fn response_unbounded(a: &[u8], e: &[u8], w: &[u8]) -> ClResult<Vec<u8>> {
-    let a = Integer::from_digits(a, Order::Msf);
+/// Computes `a + e * w` (unbounded, for class-group exponents), with the
+/// Fiat-Shamir challenge `e` given as big-endian bytes (as stored in a
+/// proof's wire field), returned as big-endian bytes.
+pub(crate) fn response_unbounded(a: &Integer, e: &[u8], w: &Integer) -> Vec<u8> {
     let e = Integer::from_digits(e, Order::Msf);
-    let w = Integer::from_digits(w, Order::Msf);
     let resp = a + e * w;
-    Ok(resp.to_digits::<u8>(Order::Msf))
+    resp.to_digits::<u8>(Order::Msf)
 }
 
 /// Verifies an F-subgroup Schnorr check in scalar arithmetic:
@@ -159,18 +149,15 @@ pub(crate) fn verify_f_check(
     e_bytes: &[u8],
     y_qfi: &Qfi,
 ) -> ClResult<bool> {
-    let dlog_t = setup.dlog_in_F_bytes(t_qfi)?;
-    let dlog_y = setup.dlog_in_F_bytes(y_qfi)?;
+    let dt = setup.dlog_in_F(t_qfi)?;
+    let dy = setup.dlog_in_F(y_qfi)?;
 
-    let q_bytes = setup.q_bytes()?;
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
-    let dt = Integer::from_digits(&dlog_t, Order::Msf);
-    let dy = Integer::from_digits(&dlog_y, Order::Msf);
+    let q = setup.cl().q();
     let ev = Integer::from_digits(e_bytes, Order::Msf);
     let zv = Integer::from_digits(z_bytes, Order::Msf);
 
-    let expected = (dt + ev * dy) % &q;
-    let z_mod = zv % &q;
+    let expected = (dt + ev * dy) % q;
+    let z_mod = zv % q;
 
     Ok(expected == z_mod)
 }

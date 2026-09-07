@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{cl::ClSetup, zk::r_cl_dl_ec::RClDlEcProof};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
@@ -268,7 +269,7 @@ pub(crate) fn transition_to_r3(
     r3_data: &mut BTreeMap<PartyId, R3ReceivedData>,
 ) -> tecdsa_core::Result<(
     k256::Scalar,                                     // combined_share
-    Vec<u8>,                                          // delta_i
+    rug::Integer,                                     // delta_i
     k256::ProjectivePoint,                            // public_key
     Vec<k256::ProjectivePoint>,                       // public_shares
     (String, String, String),                         // cl_pk_abc
@@ -378,18 +379,16 @@ pub(crate) fn transition_to_r3(
     let my_x_i_bytes = proj_to_bytes(&my_x_i_point);
 
     // 8. CL-encrypt combined share
-    let x_i_bytes = combined_share.to_bytes_vec();
+    let x_i_int = combined_share.to_integer();
 
     // Generate encryption randomness delta_i
     let (sk_tmp, _) = setup
         .keygen()
         .map_err(|e| TecdsaError::Other(format!("keygen for delta: {e}")))?;
-    let delta_i = setup
-        .sk_to_bytes(&sk_tmp)
-        .map_err(|e| TecdsaError::Other(format!("sk_to_bytes: {e}")))?;
+    let delta_i = setup.sk_to_integer(&sk_tmp);
 
     let ct = setup
-        .encrypt_with_r_bytes(&cl_pk, &x_i_bytes, &delta_i)
+        .encrypt_with_r(&cl_pk, &x_i_int, &delta_i)
         .map_err(|e| TecdsaError::Other(format!("encrypt: {e}")))?;
     let (c1, c2) = setup
         .ct_components(&ct)
@@ -398,7 +397,7 @@ pub(crate) fn transition_to_r3(
     let ct_c2_abc = qfi_to_abc(&c2).map_err(|e| TecdsaError::Other(format!("{e}")))?;
 
     // 9. Generate R_CL-EC proof
-    let proof = RClDlEcProof::prove(setup, &cl_pk, &ct, &my_x_i_bytes, &x_i_bytes, &delta_i)
+    let proof = RClDlEcProof::prove(setup, &cl_pk, &ct, &my_x_i_point, &x_i_int, &delta_i)
         .map_err(|e| TecdsaError::Other(format!("RClDlEcProof::prove: {e}")))?;
 
     let ser_proof = SerRClDlEcProof::from_proof(&proof)
@@ -461,7 +460,7 @@ pub(crate) fn finalize(
     r1_state: R1LocalState,
     setup: &mut ClSetup,
     combined_share: k256::Scalar,
-    delta_i: Vec<u8>,
+    delta_i: rug::Integer,
     public_key: k256::ProjectivePoint,
     public_shares: &[k256::ProjectivePoint],
     cl_pk_abc: (String, String, String),
@@ -501,10 +500,9 @@ pub(crate) fn finalize(
         let ct = setup
             .ct_from_components(&c1, &c2)
             .map_err(|e| TecdsaError::Other(format!("ct: {e}")))?;
-        let x_i_bytes = proj_to_bytes(&r3.x_i_point);
         let ok = r3
             .proof
-            .verify(setup, &cl_pk, &ct, &x_i_bytes)
+            .verify(setup, &cl_pk, &ct, &r3.x_i_point)
             .map_err(|e| TecdsaError::Other(format!("R_CL-EC verify: {e}")))?;
         if !ok {
             return Err(TecdsaError::Other(format!(
@@ -539,7 +537,7 @@ pub(crate) fn finalize(
     let key_share = TroutKeyShare {
         party_index: my_1based,
         secret_share: combined_share,
-        delta_i,
+        delta_i: delta_i.to_bytes_msf(),
         evrf_sk: r1_state.evrf_sk,
         evrf_pk: r1_state.evrf_pk,
         all_evrf_pks,

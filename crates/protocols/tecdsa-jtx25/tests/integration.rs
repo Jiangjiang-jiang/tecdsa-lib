@@ -18,7 +18,7 @@
 //! Robust tests require `--features robust`.
 
 use elliptic_curve::CurveArithmetic;
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_jtx25::{key_share::Jtx25KeyShare, keygen::Jtx25KeygenMachine};
 use tecdsa_protocol::PartyId;
 
@@ -75,7 +75,7 @@ fn run_robust_presign(
     key_shares: &[Jtx25KeyShare],
     signer_indices: &[usize],
 ) -> Vec<Jtx25RobustPresignature> {
-    let seed = &key_shares[0].cl_setup_seed;
+    let seed = parse_int_auto(&key_shares[0].cl_setup_seed).expect("parse seed");
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
         .map(|&i| PartyId(key_shares[i].party_index))
@@ -87,9 +87,9 @@ fn run_robust_presign(
         let share = &key_shares[idx];
         let pid = PartyId(share.party_index);
         let setup = if share.use_128bit_security {
-            ClSetup::new_secp256k1_128bit(seed).expect("ClSetup 128")
+            ClSetup::new_secp256k1_128bit(&seed).expect("ClSetup 128")
         } else {
-            ClSetup::new_secp256k1(seed).expect("ClSetup")
+            ClSetup::new_secp256k1(&seed).expect("ClSetup")
         };
 
         let machine = Jtx25RobustPresignMachine::new(pid, signer_parties.clone(), share, setup)
@@ -351,7 +351,7 @@ use tecdsa_jtx25::{
 };
 
 fn run_presign(key_shares: &[Jtx25KeyShare], signer_indices: &[usize]) -> Vec<Jtx25Presignature> {
-    let seed = &key_shares[0].cl_setup_seed;
+    let seed = parse_int_auto(&key_shares[0].cl_setup_seed).expect("parse seed");
     let signer_parties: Vec<PartyId> = signer_indices
         .iter()
         .map(|&i| PartyId(key_shares[i].party_index))
@@ -363,9 +363,9 @@ fn run_presign(key_shares: &[Jtx25KeyShare], signer_indices: &[usize]) -> Vec<Jt
         let share = &key_shares[idx];
         let pid = PartyId(share.party_index);
         let setup = if share.use_128bit_security {
-            ClSetup::new_secp256k1_128bit(seed).expect("ClSetup 128")
+            ClSetup::new_secp256k1_128bit(&seed).expect("ClSetup 128")
         } else {
-            ClSetup::new_secp256k1(seed).expect("ClSetup")
+            ClSetup::new_secp256k1(&seed).expect("ClSetup")
         };
 
         let machine = Jtx25PresignMachine::new(pid, signer_parties.clone(), share, setup)
@@ -527,34 +527,32 @@ fn test_threshold_subset_signing() {
 /// Minimal inline test to verify the CL homomorphic math.
 #[test]
 fn test_cl_homomorphic_math() {
-    use rug::{integer::Order, Complete, Integer};
+    use rug::{Complete, Integer};
     use tecdsa_class_group::{cl::ClSetup, t_cl};
 
-    let seed = "70001";
-    let mut setup = ClSetup::new_secp256k1(seed).unwrap();
+    let seed = Integer::from(70001u64);
+    let mut setup = ClSetup::new_secp256k1(&seed).unwrap();
     let (sk_raw, pk_raw) = setup.keygen().unwrap();
-    let sk_bytes = setup.sk_to_bytes(&sk_raw).unwrap();
+    let sk = setup.sk_to_integer(&sk_raw);
 
     let n = 3usize;
     let t = 2usize;
 
     // Share the SK for threshold decryption.
-    let sk_shares = tecdsa_jtx25::keygen::shamir_share_delta(&mut setup, &sk_bytes, n, t).unwrap();
+    let sk_shares = tecdsa_jtx25::keygen::shamir_share_delta(&mut setup, &sk, n, t).unwrap();
 
     // Sample phi and k as small test values.
-    let phi = "7";
-    let k = "11";
-    let m_val = "13";
-    let _x = "17";
-    let _r_x = "19"; // dummy r_x for test
+    let phi = Integer::from(7u32);
+    let k = Integer::from(11u32);
+    let m_val = Integer::from(13u32);
 
     // Encrypt phi under pk.
-    let ct_phi = setup.encrypt(&pk_raw, phi).unwrap();
+    let ct_phi = setup.encrypt(&pk_raw, &phi).unwrap();
 
     // Scalar multiply by k: ct_phi_k = ct_phi^k
     let (c1_phi, c2_phi) = setup.ct_components(&ct_phi).unwrap();
-    let c1_k = setup.exp(&c1_phi, k).unwrap();
-    let c2_k = setup.exp(&c2_phi, k).unwrap();
+    let c1_k = setup.exp(&c1_phi, &k).unwrap();
+    let c2_k = setup.exp(&c2_phi, &k).unwrap();
     let ct_phi_k = setup.ct_from_components(&c1_k, &c2_k).unwrap();
 
     // Partial decrypt ct_phi_k using threshold CL.
@@ -562,22 +560,21 @@ fn test_cl_homomorphic_math() {
     let pd2 = t_cl::partial_decrypt(&setup, &ct_phi_k, 2, &sk_shares[1]).unwrap();
     let p0 = t_cl::final_decrypt(&setup, &ct_phi_k, n, &[pd1, pd2]).unwrap();
 
-    let p0_bu = Integer::from_digits(&p0, Order::Msf);
     eprintln!(
         "[test_cl_homo] p0 (should be phi*k=77) = {}",
-        p0_bu.to_string_radix(10)
+        p0.to_string_radix(10)
     );
 
     // Also test addition: Enc(phi*m) = Enc(phi)^m
     let (c1_m, c2_m) = (
-        setup.exp(&c1_phi, m_val).unwrap(),
-        setup.exp(&c2_phi, m_val).unwrap(),
+        setup.exp(&c1_phi, &m_val).unwrap(),
+        setup.exp(&c2_phi, &m_val).unwrap(),
     );
     // Enc(phi*x*r_x)
-    let xr = "323"; // 17 * 19
+    let xr = Integer::from(323u32); // 17 * 19
     let (c1_xr, c2_xr) = (
-        setup.exp(&c1_phi, xr).unwrap(),
-        setup.exp(&c2_phi, xr).unwrap(),
+        setup.exp(&c1_phi, &xr).unwrap(),
+        setup.exp(&c2_phi, &xr).unwrap(),
     );
 
     // Add: Enc(phi*m + phi*x*r_x) = Enc(phi*(m + x*r_x))
@@ -590,21 +587,19 @@ fn test_cl_homomorphic_math() {
     let p1 = t_cl::final_decrypt(&setup, &ct_sum, n, &[pd1_sum, pd2_sum]).unwrap();
 
     // Expected: phi * (m + x * r_x) = 7 * (13 + 17*19) = 7 * (13 + 323) = 7 * 336 = 2352
-    let p1_bu = Integer::from_digits(&p1, Order::Msf);
     eprintln!(
         "[test_cl_homo] p1 (should be 2352) = {}",
-        p1_bu.to_string_radix(10)
+        p1.to_string_radix(10)
     );
 
     // s = p1 / p0 mod q = 2352 / 77 mod q
-    let q_bytes = setup.q_bytes().unwrap();
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
+    let q = setup.cl().q().clone();
     let q_minus_2 = Integer::from(&q - 2);
-    let p0_inv = p0_bu
+    let p0_inv = p0
         .pow_mod_ref(&q_minus_2, &q)
         .expect("q - 2 is non-negative")
         .complete();
-    let s = (p0_inv * &p1_bu).modulo(&q);
+    let s = (p0_inv * &p1).modulo(&q);
 
     // Expected: 2352 / 77 = 2352 * 77^(-1) mod q
     // 2352 / 77 = 30.545... but mod q: 77^{-1} mod q * 2352 mod q
@@ -627,10 +622,6 @@ fn test_cl_homomorphic_math() {
     );
 
     assert_eq!(s, expected_s, "s must match expected");
-    assert_eq!(p0_bu, Integer::from(77u32), "p0 must be phi*k = 77");
-    assert_eq!(
-        p1_bu,
-        Integer::from(2352u32),
-        "p1 must be phi*(m+x*r) = 2352"
-    );
+    assert_eq!(p0, Integer::from(77u32), "p0 must be phi*k = 77");
+    assert_eq!(p1, Integer::from(2352u32), "p1 must be phi*(m+x*r) = 2352");
 }

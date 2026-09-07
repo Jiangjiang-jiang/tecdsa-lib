@@ -15,6 +15,8 @@
 //!
 //! Follows the `CL_HSMqk_ZKAoKProof` pattern from BICYCL.
 
+use rug::{integer::Order, Integer};
+
 use super::{
     challenge_from_qfi, challenge_from_qfi_with_prefix, response_mod_q, response_unbounded,
     sample_random, sample_random_mod_q,
@@ -49,18 +51,18 @@ impl REncProof {
         setup: &mut ClSetup,
         pk: &ClHsmqkPublicKey,
         ct: &ClHsmqkCiphertext,
-        m_bytes: &[u8],
-        r_bytes: &[u8],
+        m: &Integer,
+        r: &Integer,
     ) -> ClResult<Self> {
         // 1. Sample random commitment values.
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
         // 2. Compute commitment: t = Enc(pk, a2; a1) => (h^a1, pk^a1 * f^a2).
-        let t1 = setup.power_of_h_bytes(&a1)?;
+        let t1 = setup.power_of_h(&a1)?;
         let pk_elt = pk.elt();
-        let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
-        let f_a2 = setup.power_of_f_bytes(&a2)?;
+        let pk_a1 = setup.pk_pow(pk, &a1)?;
+        let f_a2 = setup.power_of_f(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
 
         // 3. Compute challenge.
@@ -68,9 +70,9 @@ impl REncProof {
         let e = challenge_from_qfi(setup, b"R_enc", &[pk_elt, &c1, &c2, &t1, &t2], &[])?;
 
         // 4. Compute responses.
-        let u1 = response_unbounded(&a1, &e, r_bytes)?;
-        let q_bytes = setup.q_bytes()?;
-        let u2 = response_mod_q(&a2, &e, m_bytes, &q_bytes)?;
+        let u1 = response_unbounded(&a1, &e, r);
+        let q = setup.cl().q();
+        let u2 = response_mod_q(&a2, &e, m, q);
 
         Ok(Self { t1, t2, u1, u2, e })
     }
@@ -96,19 +98,23 @@ impl REncProof {
             return Ok(false);
         }
 
+        let u1 = Integer::from_digits(&self.u1, Order::Msf);
+        let u2 = Integer::from_digits(&self.u2, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
         // Check 1: h^u1 == t1 * c1^e
-        let lhs1 = setup.power_of_h_bytes(&self.u1)?;
-        let c1_e = setup.exp_bytes(&c1, &self.e)?;
+        let lhs1 = setup.power_of_h(&u1)?;
+        let c1_e = setup.exp(&c1, &e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
         if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: pk^u1 * f^u2 == t2 * c2^e
-        let pk_u1 = setup.pk_pow_bytes(pk, &self.u1)?;
-        let f_u2 = setup.power_of_f_bytes(&self.u2)?;
+        let pk_u1 = setup.pk_pow(pk, &u1)?;
+        let f_u2 = setup.power_of_f(&u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
-        let c2_e = setup.exp_bytes(&c2, &self.e)?;
+        let c2_e = setup.exp(&c2, &e)?;
         let rhs2 = setup.compose(&self.t2, &c2_e)?;
         if lhs2 != rhs2 {
             return Ok(false);
@@ -124,18 +130,18 @@ impl REncProof {
         setup: &mut ClSetup,
         pk: &ClHsmqkPublicKey,
         ct: &ClHsmqkCiphertext,
-        m_bytes: &[u8],
-        r_bytes: &[u8],
+        m: &Integer,
+        r: &Integer,
     ) -> ClResult<Self> {
         // 1. Sample random commitment values.
         let a1 = sample_random(setup)?;
         let a2 = sample_random_mod_q(setup)?;
 
         // 2. Compute commitment: t = Enc(pk, a2; a1) => (h^a1, pk^a1 * f^a2).
-        let t1 = setup.power_of_h_bytes(&a1)?;
+        let t1 = setup.power_of_h(&a1)?;
         let pk_elt = pk.elt();
-        let pk_a1 = setup.pk_pow_bytes(pk, &a1)?;
-        let f_a2 = setup.power_of_f_bytes(&a2)?;
+        let pk_a1 = setup.pk_pow(pk, &a1)?;
+        let f_a2 = setup.power_of_f(&a2)?;
         let t2 = setup.compose(&pk_a1, &f_a2)?;
 
         // 3. Compute challenge with prefix.
@@ -149,9 +155,9 @@ impl REncProof {
         )?;
 
         // 4. Compute responses.
-        let u1 = response_unbounded(&a1, &e, r_bytes)?;
-        let q_bytes = setup.q_bytes()?;
-        let u2 = response_mod_q(&a2, &e, m_bytes, &q_bytes)?;
+        let u1 = response_unbounded(&a1, &e, r);
+        let q = setup.cl().q();
+        let u2 = response_mod_q(&a2, &e, m, q);
 
         Ok(Self { t1, t2, u1, u2, e })
     }
@@ -180,19 +186,23 @@ impl REncProof {
             return Ok(false);
         }
 
+        let u1 = Integer::from_digits(&self.u1, Order::Msf);
+        let u2 = Integer::from_digits(&self.u2, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
         // Check 1: h^u1 == t1 * c1^e
-        let lhs1 = setup.power_of_h_bytes(&self.u1)?;
-        let c1_e = setup.exp_bytes(&c1, &self.e)?;
+        let lhs1 = setup.power_of_h(&u1)?;
+        let c1_e = setup.exp(&c1, &e)?;
         let rhs1 = setup.compose(&self.t1, &c1_e)?;
         if lhs1 != rhs1 {
             return Ok(false);
         }
 
         // Check 2: pk^u1 * f^u2 == t2 * c2^e
-        let pk_u1 = setup.pk_pow_bytes(pk, &self.u1)?;
-        let f_u2 = setup.power_of_f_bytes(&self.u2)?;
+        let pk_u1 = setup.pk_pow(pk, &u1)?;
+        let f_u2 = setup.power_of_f(&u2)?;
         let lhs2 = setup.compose(&pk_u1, &f_u2)?;
-        let c2_e = setup.exp_bytes(&c2, &self.e)?;
+        let c2_e = setup.exp(&c2, &e)?;
         let rhs2 = setup.compose(&self.t2, &c2_e)?;
         if lhs2 != rhs2 {
             return Ok(false);
@@ -209,18 +219,16 @@ mod tests {
 
     #[test]
     fn r_enc_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("1001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(1001u64).expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let _ = sk_raw;
 
-        let m = 42u32.to_be_bytes();
+        let m = Integer::from(42u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct = setup
-            .encrypt_with_r_bytes(&pk_raw, &m, &r)
-            .expect("encrypt");
+        let ct = setup.encrypt_with_r(&pk_raw, &m, &r).expect("encrypt");
         let proof = REncProof::prove(&mut setup, &pk_raw, &ct, &m, &r).expect("prove");
         assert!(proof.verify(&setup, &pk_raw, &ct).expect("verify"));
     }
@@ -228,37 +236,33 @@ mod tests {
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_enc_rejects_wrong_plaintext() {
-        let mut setup = ClSetup::new_secp256k1("1002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(1002u64).expect("setup");
         let (_sk_raw, pk_raw) = setup.keygen().expect("keygen");
 
-        let m = 42u32.to_be_bytes();
+        let m = Integer::from(42u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct = setup
-            .encrypt_with_r_bytes(&pk_raw, &m, &r)
-            .expect("encrypt");
+        let ct = setup.encrypt_with_r(&pk_raw, &m, &r).expect("encrypt");
 
-        let wrong_m = 99u32.to_be_bytes();
+        let wrong_m = Integer::from(99u32);
         let proof = REncProof::prove(&mut setup, &pk_raw, &ct, &wrong_m, &r).expect("prove");
         assert!(!proof.verify(&setup, &pk_raw, &ct).expect("verify"));
     }
 
     #[test]
     fn r_enc_with_prefix_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("1003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(1003u64).expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let _ = sk_raw;
 
-        let m = 42u32.to_be_bytes();
+        let m = Integer::from(42u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct = setup
-            .encrypt_with_r_bytes(&pk_raw, &m, &r)
-            .expect("encrypt");
+        let ct = setup.encrypt_with_r(&pk_raw, &m, &r).expect("encrypt");
         let prefix = b"session-1::party-2::round-3";
         let proof =
             REncProof::prove_with_prefix(prefix, &mut setup, &pk_raw, &ct, &m, &r).expect("prove");
@@ -270,18 +274,16 @@ mod tests {
     #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_enc_with_prefix_rejects_wrong_prefix() {
-        let mut setup = ClSetup::new_secp256k1("1004").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(1004u64).expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let _ = sk_raw;
 
-        let m = 42u32.to_be_bytes();
+        let m = Integer::from(42u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct = setup
-            .encrypt_with_r_bytes(&pk_raw, &m, &r)
-            .expect("encrypt");
+        let ct = setup.encrypt_with_r(&pk_raw, &m, &r).expect("encrypt");
         let proof = REncProof::prove_with_prefix(b"prefix-A", &mut setup, &pk_raw, &ct, &m, &r)
             .expect("prove");
         // Verify with a different prefix must fail.
@@ -292,17 +294,15 @@ mod tests {
     #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_enc_rejects_mutated_proof() {
-        let mut setup = ClSetup::new_secp256k1("1005").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(1005u64).expect("setup");
         let (_sk_raw, pk_raw) = setup.keygen().expect("keygen");
 
-        let m = 42u32.to_be_bytes();
+        let m = Integer::from(42u32);
         let r = {
             let (sk2, _) = setup.keygen().expect("keygen2");
-            setup.sk_to_bytes(&sk2).expect("sk_bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct = setup
-            .encrypt_with_r_bytes(&pk_raw, &m, &r)
-            .expect("encrypt");
+        let ct = setup.encrypt_with_r(&pk_raw, &m, &r).expect("encrypt");
         let mut proof = REncProof::prove(&mut setup, &pk_raw, &ct, &m, &r).expect("prove");
 
         // Mutate the u1 response field by flipping a byte.

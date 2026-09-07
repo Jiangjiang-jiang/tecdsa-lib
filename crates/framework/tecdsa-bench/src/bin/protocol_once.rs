@@ -276,10 +276,10 @@ fn mta_once() {
     });
     let paillier_ek = paillier_dk.encryption_key().clone();
 
-    let cl_setup_seed = "42042";
+    let cl_setup_seed = Integer::from(42042u64);
     let (_cl_sk, _cl_pk, _cl_setup) = time_once("mta/setup/cl_keygen", || {
-        let mut s =
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed).expect("cl setup");
+        let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
+            .expect("cl setup");
         let (sk, pk) = s.keygen().expect("cl keygen");
         (sk, pk, s)
     });
@@ -375,17 +375,17 @@ fn mta_once() {
         type M = ClMtA;
         let setup = ClMtaSetup {
             setup: RefCell::new(
-                tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+                tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
                     .expect("cl setup"),
             ),
             pk: {
-                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
                     .expect("cl");
                 let (_, pk) = tmp.keygen().expect("keygen");
                 pk
             },
             sk: {
-                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
                     .expect("cl");
                 let (sk, _) = tmp.keygen().expect("keygen");
                 sk
@@ -473,32 +473,29 @@ fn mta_once() {
     {
         use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
         let mut nim_setup =
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed).expect("cl");
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed).expect("cl");
         let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
-        let x_bytes = a.to_bytes_vec();
-        let y_bytes = b.to_bytes_vec();
+        let x_int = a.to_integer();
+        let y_int = b.to_integer();
         // V = x * G is the EC commitment bound by R_Ped to the Encode_A output.
-        let big_v = {
-            use elliptic_curve::group::GroupEncoding;
-            AsRef::<[u8]>::as_ref(&(Secp256k1::generator() * a).to_bytes()).to_vec()
-        };
+        let big_v = Secp256k1::generator() * a;
         let encode_a_out = time_once("mta/nim/encode_a", || {
             let mut nim = Nim::new(&mut nim_setup);
-            nim.encode_a(&x_bytes, &nim_pk).expect("encode_a")
+            nim.encode_a(&x_int, &nim_pk).expect("encode_a")
         });
         let encode_b_out = time_once("mta/nim/encode_b", || {
             let mut nim = Nim::new(&mut nim_setup);
-            nim.encode_b(&y_bytes, &nim_pk).expect("encode_b")
+            nim.encode_b(&y_int, &nim_pk).expect("encode_b")
         });
-        let r_bytes = encode_a_out.state.r_bytes.clone();
+        let r_nim = encode_a_out.state.r.clone();
         let ped_proof = time_once("mta/nim/r_ped_prove", || {
             RPedEcProof::prove(
                 &mut nim_setup,
                 &nim_pk,
                 &encode_a_out.pe_a,
                 &big_v,
-                &x_bytes,
-                &r_bytes,
+                &x_int,
+                &r_nim,
             )
             .expect("r_ped prove")
         });
@@ -1828,10 +1825,11 @@ fn tx25_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("tx25/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     cl_dkg_sweep("tx25", |pid, all, threshold| {
@@ -1866,10 +1864,11 @@ fn jtx25_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("jtx25/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     cl_dkg_sweep("jtx25", |pid, all, threshold| {
@@ -1901,8 +1900,10 @@ fn jtx25_robust_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // Keygen is shared with the normal variant; only presign/online differ, so we
     // run just the sign sweep to record the robust online communication.
@@ -1938,10 +1939,11 @@ fn wmy23_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg_data = make_data_to_sign(b"benchmark message");
 
     let cl_setup = time_once("wmy23/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     // DKG: sweep (n, t).
@@ -2077,10 +2079,11 @@ fn wmc24_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("wmc24/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     cl_dkg_sweep("wmc24", |pid, all, threshold| {
@@ -2116,10 +2119,11 @@ fn llz25_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("llz25/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     // Setup: CL CRS key (shared out-of-band, independent of n/t).
@@ -2268,10 +2272,11 @@ fn trout_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let message = make_data_to_sign(b"benchmark message");
 
     let cl_setup = time_once("trout/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     // DKG: sweep (n, t).

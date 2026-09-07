@@ -164,8 +164,8 @@ pub fn mtawc_alice_step1(
     pk_alice: &ClPublicKey,
     a: &k256::Scalar,
 ) -> MtAwcResult<(MtAwcAliceState, ClCiphertext)> {
-    let a_bytes = a.to_bytes_vec();
-    let ct = setup.encrypt_bytes(pk_alice, &a_bytes)?;
+    let a_int = a.to_integer();
+    let ct = setup.encrypt(pk_alice, &a_int)?;
     Ok((MtAwcAliceState { a: *a }, ct))
 }
 
@@ -191,13 +191,13 @@ pub fn mtawc_bob(
     let beta = k256::Secp256k1::random_scalar(rng);
 
     // Compute homomorphic scalar mul: b * c_a = Enc(a*b)
-    let b_bytes = b.to_bytes_vec();
-    let c_ab = setup.scal_ciphertext_bytes(pk_alice, c_a, &b_bytes)?;
+    let b_int = b.to_integer();
+    let c_ab = setup.scal_ciphertext(pk_alice, c_a, &b_int)?;
 
     // Compute Enc(-beta)
     let neg_beta = -beta;
-    let neg_beta_bytes = neg_beta.to_bytes_vec();
-    let c_neg_beta = setup.encrypt_bytes(pk_alice, &neg_beta_bytes)?;
+    let neg_beta_int = neg_beta.to_integer();
+    let c_neg_beta = setup.encrypt(pk_alice, &neg_beta_int)?;
 
     // Homomorphic add: c_alpha = Enc(a*b) + Enc(-beta) = Enc(a*b - beta)
     let c_alpha = setup.add_ciphertexts(pk_alice, &c_ab, &c_neg_beta)?;
@@ -239,8 +239,8 @@ pub fn mtawc_alice_step2(
     g_b: &k256::ProjectivePoint,
 ) -> MtAwcResult<MtAwcAliceOutput> {
     // Decrypt: alpha = Dec(sk, c_alpha)
-    let alpha_bytes = setup.decrypt_bytes(sk_alice, c_alpha)?;
-    let alpha = k256::Secp256k1::scalar_from_bytes(&alpha_bytes);
+    let alpha_int = setup.decrypt(sk_alice, c_alpha)?;
+    let alpha = k256::Secp256k1::scalar_from_integer(&alpha_int);
 
     // Check: g^alpha * g^beta == (g^b)^a
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
@@ -282,8 +282,8 @@ pub fn mtawc_alice_decrypt_and_check(
     g_b: &k256::ProjectivePoint,
 ) -> MtAwcResult<MtAwcAliceOutput> {
     // Decrypt: alpha = Dec(sk, c_alpha)
-    let alpha_bytes = setup.decrypt_bytes(sk_alice, c_alpha)?;
-    let alpha = k256::Secp256k1::scalar_from_bytes(&alpha_bytes);
+    let alpha_int = setup.decrypt(sk_alice, c_alpha)?;
+    let alpha = k256::Secp256k1::scalar_from_integer(&alpha_int);
 
     // WMY23 Figure 1 / Figure 5 (Phase 2), Step 3:
     //   check  g^alpha * g^beta == (g^b)^a
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_mtawc_correct() {
-        let mut setup = ClSetup::new_secp256k1("42").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(42u64).expect("CL setup");
         let (sk, pk) = setup.keygen().expect("CL keygen");
 
         let mut rng = rand::thread_rng();
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn test_mtawc_with_known_values() {
         // Test with small known values to catch conversion bugs.
-        let mut setup = ClSetup::new_secp256k1("99").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(99u64).expect("CL setup");
         let (sk, pk) = setup.keygen().expect("CL keygen");
         let mut rng = rand::thread_rng();
 
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_mtawc_zero_inputs() {
-        let mut setup = ClSetup::new_secp256k1("123").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(123u64).expect("CL setup");
         let (sk, pk) = setup.keygen().expect("CL keygen");
         let mut rng = rand::thread_rng();
 
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn test_mtawc_multiple_runs() {
         // Run MtAwc several times to exercise different random beta values.
-        let mut setup = ClSetup::new_secp256k1("77").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(77u64).expect("CL setup");
         let (sk, pk) = setup.keygen().expect("CL keygen");
 
         let mut rng = rand::thread_rng();

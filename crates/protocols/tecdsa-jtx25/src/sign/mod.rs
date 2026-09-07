@@ -46,11 +46,12 @@ pub mod robust;
 
 use std::collections::BTreeMap;
 
-use rug::{integer::Order, Integer};
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
-    cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
+    cl::{parse_int_auto, ClCiphertext, ClPublicKey, ClSetup, Qfi},
     t_cl::{final_decrypt as threshold_cl_combine, PartialDecryption as ClPartialDecryption},
     zk::r_part_dec::RPartDecProof,
 };
@@ -145,10 +146,12 @@ impl Jtx25OnlineSignMachine {
         // Rebuild the (global) CL public parameters from the stored seed, then
         // delegate. Benches holding the shared `ClSetup` call `new_with_setup`
         // to avoid timing this one-time global setup as online-sign cost.
+        let seed = parse_int_auto(&presignature.cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if presignature.use_128bit_security {
-            ClSetup::new_secp256k1_128bit(&presignature.cl_setup_seed)
+            ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            ClSetup::new_secp256k1(&presignature.cl_setup_seed)
+            ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup: {e}")))?;
         Self::new_with_setup(my_id, all_parties, presignature, message, public_key, setup)
@@ -169,10 +172,10 @@ impl Jtx25OnlineSignMachine {
         }
 
         let m = hash_message_to_scalar(message);
-        let m_bytes = m.to_bytes_vec();
+        let m_int = m.to_integer();
         let message_data = DataToSign::from_digest(m);
         let r_x = presignature.r_x;
-        let r_x_bytes = r_x.to_bytes_vec();
+        let r_x_int = r_x.to_integer();
 
         // Reconstruct phi_bar ciphertext.
         let pb_c1 = Qfi::from_bytes(&presignature.phi_bar_c1_bytes);
@@ -276,12 +279,12 @@ impl Jtx25OnlineSignMachine {
                 .compose(&prod_x2, &xc2)
                 .map_err(|e| TecdsaError::Other(format!("compose: {e}")))?;
         }
-        let exps = [m_bytes.to_vec(), r_x_bytes.to_vec()];
+        let exps = [m_int.clone(), r_x_int.clone()];
         let s1 = setup
-            .multiexp_bytes(&[&phb_c1, &prod_x1], &exps)
+            .multiexp(&[&phb_c1, &prod_x1], &exps)
             .map_err(|e| TecdsaError::Other(format!("dualexp c1: {e}")))?;
         let s2 = setup
-            .multiexp_bytes(&[&phb_c2, &prod_x2], &exps)
+            .multiexp(&[&phb_c2, &prod_x2], &exps)
             .map_err(|e| TecdsaError::Other(format!("dualexp c2: {e}")))?;
         let c1_ct = setup
             .ct_from_components(&s1, &s2)
@@ -290,7 +293,7 @@ impl Jtx25OnlineSignMachine {
         // --- Partial decryption ---
         // party_index is 1-based (matches PartyId convention and t-CL evaluation points).
         let my_party_index = presignature.party_index as usize;
-        let sk_share = &presignature.cl_sk_share;
+        let sk_share = Integer::from_bytes_msf(&presignature.cl_sk_share);
 
         let my_pk_data = presignature
             .cl_pk_share_bytes
@@ -305,18 +308,18 @@ impl Jtx25OnlineSignMachine {
             .ct_components(&c0)
             .map_err(|e| TecdsaError::Other(format!("c0 comp: {e}")))?;
         let pc_0 = setup
-            .exp_bytes(&c0_c1, sk_share)
+            .exp(&c0_c1, &sk_share)
             .map_err(|e| TecdsaError::Other(format!("pc_0: {e}")))?;
-        let pi_0 = RPartDecProof::prove(&mut setup, &my_pk_raw, &c0, &pc_0, sk_share)
+        let pi_0 = RPartDecProof::prove(&mut setup, &my_pk_raw, &c0, &pc_0, &sk_share)
             .map_err(|e| TecdsaError::Other(format!("pi_0: {e}")))?;
 
         let (c1_c1_comp, _) = setup
             .ct_components(&c1_ct)
             .map_err(|e| TecdsaError::Other(format!("c1 comp: {e}")))?;
         let pc_1 = setup
-            .exp_bytes(&c1_c1_comp, sk_share)
+            .exp(&c1_c1_comp, &sk_share)
             .map_err(|e| TecdsaError::Other(format!("pc_1: {e}")))?;
-        let pi_1 = RPartDecProof::prove(&mut setup, &my_pk_raw, &c1_ct, &pc_1, sk_share)
+        let pi_1 = RPartDecProof::prove(&mut setup, &my_pk_raw, &c1_ct, &pc_1, &sk_share)
             .map_err(|e| TecdsaError::Other(format!("pi_1: {e}")))?;
 
         // Serialize and broadcast.
@@ -403,20 +406,13 @@ impl Jtx25OnlineSignMachine {
             });
         }
 
-        let p0_bytes = threshold_cl_combine(&self.setup, &self.c0, n_parties_dkg, &pd_0s)
+        let p0 = threshold_cl_combine(&self.setup, &self.c0, n_parties_dkg, &pd_0s)
             .map_err(|e| TecdsaError::Other(format!("final_decrypt c0: {e}")))?;
 
-        let p1_bytes = threshold_cl_combine(&self.setup, &self.c1, n_parties_dkg, &pd_1s)
+        let p1 = threshold_cl_combine(&self.setup, &self.c1, n_parties_dkg, &pd_1s)
             .map_err(|e| TecdsaError::Other(format!("final_decrypt c1: {e}")))?;
 
-        let q_bytes = self
-            .setup
-            .q_bytes()
-            .map_err(|e| TecdsaError::Other(format!("q_bytes: {e}")))?;
-        let q = Integer::from_digits(&q_bytes, Order::Msf);
-
-        let p0 = Integer::from_digits(&p0_bytes, Order::Msf);
-        let p1 = Integer::from_digits(&p1_bytes, Order::Msf);
+        let q = self.setup.cl().q().clone();
 
         let q_minus_2 = Integer::from(&q - 2);
         let p0_inv = p0.pow_mod(&q_minus_2, &q).expect("q - 2 is non-negative");

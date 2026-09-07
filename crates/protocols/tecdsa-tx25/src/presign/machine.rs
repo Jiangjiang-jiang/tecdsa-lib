@@ -86,10 +86,8 @@ impl Tx25PresignMachine {
         //     )));
         // }
 
-        // Extract key material (ClSecretKey -> decimal, ClPublicKey -> inner).
-        let sk_decimal = setup
-            .sk_to_bytes(&key_share.cl_sk)
-            .map_err(|e| Tx25Error::InvalidInput(format!("sk_to_bytes: {e}")))?;
+        // Extract key material (ClSecretKey -> Integer, ClPublicKey -> inner).
+        let sk_int = setup.sk_to_integer(&key_share.cl_sk);
 
         // Key shares are produced for the full DKG committee, while presign may
         // run with a signer subset. Keep per-party public material ordered by
@@ -133,7 +131,7 @@ impl Tx25PresignMachine {
             .collect();
 
         let key_mat = KeyMaterial {
-            sk_decimal,
+            sk_int,
             raw_pks,
             x_i: key_share.secret_share,
             public_key: key_share.public_key,
@@ -147,9 +145,9 @@ impl Tx25PresignMachine {
         let gamma_i = k256::Secp256k1::random_scalar(&mut rng);
 
         // --- Step 2: MPMtA Round 1 for gamma_i ---
-        let gamma_bytes = gamma_i.to_bytes_vec();
+        let gamma_int = gamma_i.to_integer();
         let my_pk = &key_mat.raw_pks[my_idx_val];
-        let mpmta_r1 = mpmta_round1(&mut setup, my_pk, &gamma_bytes)?;
+        let mpmta_r1 = mpmta_round1(&mut setup, my_pk, &gamma_int)?;
 
         // --- Step 3: PVSS ShareDist for k_i ---
         let party_ids_u16: Vec<u16> = all_parties.iter().map(|p| p.0).collect();
@@ -518,7 +516,8 @@ mod tests {
     #[test]
     fn new_accepts_active_signer_subset_from_full_key_share() {
         let seed = "90001";
-        let mut setup = ClSetup::new_secp256k1(seed).expect("setup");
+        let seed_int = tecdsa_class_group::cl::parse_int_auto(seed).expect("parse seed");
+        let mut setup = ClSetup::new_secp256k1(&seed_int).expect("setup");
 
         let (_, cl_pk_1) = setup.keygen().expect("cl keygen 1");
         let (cl_sk_2, cl_pk_2) = setup.keygen().expect("cl keygen 2");
@@ -546,7 +545,7 @@ mod tests {
         };
 
         let active_signers = vec![PartyId(2), PartyId(3)];
-        let presign_setup = ClSetup::new_secp256k1(seed).expect("presign setup");
+        let presign_setup = ClSetup::new_secp256k1(&seed_int).expect("presign setup");
 
         let result = Tx25PresignMachine::new(PartyId(2), active_signers, &key_share, presign_setup);
 

@@ -4,13 +4,12 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::CurveArithmetic;
-use rug::Integer;
 use tecdsa_class_group::{
     cl::{ClSetup, Qfi},
     zk::r_enc::REncProof,
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{zk::ddh::DdhStatement, ScalarExt, TecdsaCurve};
+use tecdsa_curve::{zk::ddh::DdhStatement, TecdsaCurve};
 use tecdsa_elgamal::Ciphertext as ElGamalCiphertext;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
@@ -70,28 +69,21 @@ impl Wmc24PresignMachine {
         };
 
         // --- Round 1: Sample k_i, encrypt under threshold CL ---
-        let k_i = {
+        let k_i_int = {
             let (sk, _) = setup.keygen()?;
-            let sk_dec = sk.to_string();
-            let q_dec = setup.cl().q().to_string();
-            let q = Integer::from_str_radix(&q_dec, 10)
-                .map_err(|e| Wmc24Error::ScalarConversion(format!("parse q: {e}")))?;
-            let bu = Integer::from_str_radix(&sk_dec, 10)
-                .map_err(|e| Wmc24Error::ScalarConversion(format!("parse sk: {e}")))?;
-            let reduced = bu % &q;
-            k256::Secp256k1::scalar_from_integer(&reduced)
+            setup.sk_to_integer(&sk).modulo(setup.cl().q())
         };
-        let k_i_bytes = k_i.to_bytes_vec();
+        let k_i = k256::Secp256k1::scalar_from_integer(&k_i_int);
 
         let (r_sk, _) = setup.keygen()?;
-        let enc_randomness = setup.sk_to_bytes(&r_sk)?;
-        let k_bar_i = setup.encrypt_with_r_bytes(&key_mat.cl_pk, &k_i_bytes, &enc_randomness)?;
+        let enc_randomness = setup.sk_to_integer(&r_sk);
+        let k_bar_i = setup.encrypt_with_r(&key_mat.cl_pk, &k_i_int, &enc_randomness)?;
 
         let r_enc_proof = REncProof::prove(
             &mut setup,
             &key_mat.cl_pk,
             &k_bar_i,
-            &k_i_bytes,
+            &k_i_int,
             &enc_randomness,
         )?;
 

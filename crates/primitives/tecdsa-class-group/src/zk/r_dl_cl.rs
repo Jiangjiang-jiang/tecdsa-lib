@@ -19,6 +19,7 @@
 //! by the same secret `x` that is committed on the elliptic curve as `X = x * G`.
 
 use k256::{ProjectivePoint, Secp256k1};
+use rug::{integer::Order, Integer};
 use tecdsa_curve::{PointExt, TecdsaCurve};
 
 use super::{challenge_from_qfi, response_unbounded, sample_random};
@@ -50,7 +51,7 @@ impl RDlClProof {
         x_point: &ProjectivePoint,
         ct_in: &ClHsmqkCiphertext,
         ct_out: &ClHsmqkCiphertext,
-        x_bytes: &[u8],
+        x: &Integer,
     ) -> ClResult<Self> {
         let (c01, c02) = setup.ct_components(ct_in)?;
         let (c11, c12) = setup.ct_components(ct_out)?;
@@ -59,9 +60,9 @@ impl RDlClProof {
         let a = sample_random(setup)?;
 
         // 2. Compute commitments.
-        let t1 = setup.exp_bytes(&c01, &a)?;
-        let t2 = setup.exp_bytes(&c02, &a)?;
-        let a_scalar = Secp256k1::scalar_from_bytes(&a);
+        let t1 = setup.exp(&c01, &a)?;
+        let t2 = setup.exp(&c02, &a)?;
+        let a_scalar = Secp256k1::scalar_from_integer(&a);
         let t_ec = ProjectivePoint::GENERATOR * a_scalar;
         let t_ec_bytes = t_ec.to_bytes_vec();
 
@@ -76,7 +77,7 @@ impl RDlClProof {
         )?;
 
         // 4. Response: z = a + e * x (unbounded).
-        let z = response_unbounded(&a, &e, x_bytes)?;
+        let z = response_unbounded(&a, &e, x);
 
         Ok(Self {
             t1,
@@ -113,22 +114,19 @@ impl RDlClProof {
             return Ok(false);
         }
 
+        let z = Integer::from_digits(&self.z, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+
         // Check 1: c_{01}^z == t1 * c_{11}^e ⟺ c_{01}^z * c_{11}^{-e} == t1.
         // Both bases vary per proof, so one shared-squaring multi-exp beats two
         // separate exps.
-        let lhs1 = setup.multiexp_signed_bytes(
-            &[&c01, &c11],
-            &[(false, self.z.clone()), (true, self.e.clone())],
-        )?;
+        let lhs1 = setup.multiexp(&[&c01, &c11], &[z.clone(), -e.clone()])?;
         if lhs1 != self.t1 {
             return Ok(false);
         }
 
         // Check 2: c_{02}^z == t2 * c_{12}^e ⟺ c_{02}^z * c_{12}^{-e} == t2.
-        let lhs2 = setup.multiexp_signed_bytes(
-            &[&c02, &c12],
-            &[(false, self.z.clone()), (true, self.e.clone())],
-        )?;
+        let lhs2 = setup.multiexp(&[&c02, &c12], &[z, -e])?;
         if lhs2 != self.t2 {
             return Ok(false);
         }
@@ -148,45 +146,40 @@ impl RDlClProof {
 
 #[cfg(test)]
 mod tests {
-    use rug::{integer::Order, Integer};
-
     use super::*;
     use crate::cl::ClSetup;
 
     fn scalar_mul_components(
         setup: &ClSetup,
         ct: &ClHsmqkCiphertext,
-        x_bytes: &[u8],
+        x: &Integer,
     ) -> ClHsmqkCiphertext {
         let (c1, c2) = setup.ct_components(ct).expect("ct_components");
-        let c1_x = setup.exp_bytes(&c1, x_bytes).expect("exp c1");
-        let c2_x = setup.exp_bytes(&c2, x_bytes).expect("exp c2");
+        let c1_x = setup.exp(&c1, x).expect("exp c1");
+        let c2_x = setup.exp(&c2, x).expect("exp c2");
         setup.ct_from_components(&c1_x, &c2_x).expect("ct_from")
     }
 
     #[test]
     fn r_dl_cl_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("14001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(14001u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let m = Integer::from(42u32);
         let r_m = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct_in = setup
-            .encrypt_with_r_bytes(&pk, &m_bytes, &r_m)
-            .expect("enc");
+        let ct_in = setup.encrypt_with_r(&pk, &m, &r_m).expect("enc");
 
-        let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
+        let x = Integer::from(17u32);
 
-        let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
+        let ct_out = scalar_mul_components(&setup, &ct_in, &x);
 
         let x_scalar = k256::Scalar::from(17u64);
         let x_point = ProjectivePoint::GENERATOR * x_scalar;
 
-        let proof =
-            RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &x_bytes).expect("prove");
+        let proof = RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &x).expect("prove");
 
         assert!(proof
             .verify(&setup, &x_point, &ct_in, &ct_out)
@@ -196,27 +189,25 @@ mod tests {
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_dl_cl_rejects_wrong_x() {
-        let mut setup = ClSetup::new_secp256k1("14002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(14002u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let m = Integer::from(42u32);
         let r_m = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct_in = setup
-            .encrypt_with_r_bytes(&pk, &m_bytes, &r_m)
-            .expect("enc");
+        let ct_in = setup.encrypt_with_r(&pk, &m, &r_m).expect("enc");
 
-        let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
-        let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
+        let x = Integer::from(17u32);
+        let ct_out = scalar_mul_components(&setup, &ct_in, &x);
 
         let x_scalar = k256::Scalar::from(17u64);
         let x_point = ProjectivePoint::GENERATOR * x_scalar;
 
-        let wrong_x_bytes = Integer::from(99u32).to_digits::<u8>(Order::Msf);
-        let proof = RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &wrong_x_bytes)
-            .expect("prove");
+        let wrong_x = Integer::from(99u32);
+        let proof =
+            RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &wrong_x).expect("prove");
 
         assert!(!proof
             .verify(&setup, &x_point, &ct_in, &ct_out)
@@ -226,32 +217,25 @@ mod tests {
     #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_dl_cl_rejects_wrong_ciphertext() {
-        let mut setup = ClSetup::new_secp256k1("14003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(14003u64).expect("setup");
         let (_sk, pk) = setup.keygen().expect("keygen");
 
-        let m_bytes = Integer::from(42u32).to_digits::<u8>(Order::Msf);
+        let m = Integer::from(42u32);
         let r_m = {
             let (sk2, _) = setup.keygen().expect("kg");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
-        let ct_in = setup
-            .encrypt_with_r_bytes(&pk, &m_bytes, &r_m)
-            .expect("enc");
+        let ct_in = setup.encrypt_with_r(&pk, &m, &r_m).expect("enc");
 
-        let x_bytes = Integer::from(17u32).to_digits::<u8>(Order::Msf);
-        let ct_out = scalar_mul_components(&setup, &ct_in, &x_bytes);
+        let x = Integer::from(17u32);
+        let ct_out = scalar_mul_components(&setup, &ct_in, &x);
 
         let x_scalar = k256::Scalar::from(17u64);
         let x_point = ProjectivePoint::GENERATOR * x_scalar;
 
-        let proof =
-            RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &x_bytes).expect("prove");
+        let proof = RDlClProof::prove(&mut setup, &x_point, &ct_in, &ct_out, &x).expect("prove");
 
-        let wrong_ct_out = scalar_mul_components(
-            &setup,
-            &ct_in,
-            &Integer::from(3u32).to_digits::<u8>(Order::Msf),
-        );
+        let wrong_ct_out = scalar_mul_components(&setup, &ct_in, &Integer::from(3u32));
 
         assert!(!proof
             .verify(&setup, &x_point, &ct_in, &wrong_ct_out)

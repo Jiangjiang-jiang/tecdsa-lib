@@ -93,7 +93,7 @@ pub struct MpmtaRound1Output {
     pub proof: REncProof,
     /// Encryption randomness (kept by the prover, not broadcast).
     #[allow(dead_code)]
-    enc_randomness: Vec<u8>,
+    enc_randomness: Integer,
 }
 
 impl std::fmt::Debug for MpmtaRound1Output {
@@ -119,8 +119,8 @@ pub struct MpmtaRound2Output {
     pub betas: Vec<k256::Scalar>,
     /// `B_{i,j} = beta_{i,j} * G` (public, one per party).
     pub beta_points: Vec<k256::ProjectivePoint>,
-    /// `k* = k + e*q` (big-endian bytes, the lifted secret used in the affine operation).
-    pub k_star: Vec<u8>,
+    /// `k* = k + e*q` (the lifted secret used in the affine operation).
+    pub k_star: Integer,
     /// Aggregated `R_m-AffDL-Ec` proof.
     pub proof: RMAffDlEcProof,
     /// `R_i = (k mod q) * G` -- the EC point corresponding to the secret.
@@ -208,19 +208,19 @@ fn fiat_shamir_challenge(
 pub fn mpmta_round1(
     setup: &mut ClSetup,
     pk: &ClPublicKey,
-    gamma_bytes: &[u8],
+    gamma: &Integer,
 ) -> Result<MpmtaRound1Output, Tx25Error> {
     // Encrypt with known randomness so we can produce the R_Enc proof.
     let (r_sk, _) = setup.keygen()?;
-    let r_bytes = setup.sk_to_bytes(&r_sk)?;
+    let r = setup.sk_to_integer(&r_sk);
 
-    let ct = setup.encrypt_with_r_bytes(pk, gamma_bytes, &r_bytes)?;
-    let proof = REncProof::prove(setup, pk, &ct, gamma_bytes, &r_bytes)?;
+    let ct = setup.encrypt_with_r(pk, gamma, &r)?;
+    let proof = REncProof::prove(setup, pk, &ct, gamma, &r)?;
 
     Ok(MpmtaRound1Output {
         ciphertext: ct,
         proof,
-        enc_randomness: r_bytes,
+        enc_randomness: r,
     })
 }
 
@@ -259,7 +259,7 @@ pub fn mpmta_round2(
     my_index: usize,
     pks: &[ClPublicKey],
     c_gammas: &[ClCiphertext],
-    k_bytes: &[u8],
+    k: &Integer,
     rng: &mut impl CryptoRngCore,
 ) -> Result<MpmtaRound2Output, Tx25Error> {
     let n = party_ids.len();
@@ -276,23 +276,17 @@ pub fn mpmta_round2(
         )));
     }
 
-    let q_bytes = setup
-        .q_bytes()
-        .map_err(|e| Tx25Error::InvalidInput(format!("q_bytes: {e}")))?;
-    let q = Integer::from_digits(&q_bytes, Order::Msf);
+    let q = setup.cl().q().clone();
 
     // Step 1: Lift k to CL domain: k* = k + e*q.
     // Sample e from the encrypt randomness domain (secret-key range).
     let (e_sk, _) = setup.keygen()?;
-    let e_bytes_raw = setup.sk_to_bytes(&e_sk)?;
+    let e_val = setup.sk_to_integer(&e_sk);
 
-    let k_bu = Integer::from_digits(k_bytes, Order::Msf);
-    let e_bu = Integer::from_digits(&e_bytes_raw, Order::Msf);
-    let k_star_bu = k_bu + e_bu * q;
-    let k_star_bytes = k_star_bu.to_digits::<u8>(Order::Msf);
+    let k_star = k.clone() + e_val * &q;
 
     // Compute R_i = (k mod q) * G.
-    let k_scalar = k256::Secp256k1::scalar_from_bytes(k_bytes);
+    let k_scalar = k256::Secp256k1::scalar_from_integer(k);
     let r_point = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_scalar;
 
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
@@ -323,17 +317,17 @@ pub fn mpmta_round2(
         // Sample beta_{i,j} uniformly from Z_q.
         let beta_ij = k256::Secp256k1::random_scalar(rng);
         let neg_beta = -beta_ij;
-        let neg_beta_bytes = neg_beta.to_bytes_vec();
+        let neg_beta_int = neg_beta.to_integer();
 
         // Parse C_{gamma_j} = (c_{j,1}, c_{j,2}).
         let (cj1, cj2) = setup.ct_components(&c_gammas[j])?;
 
         // d1 = c_{j,1}^{k*}
-        let d1 = setup.exp_bytes(&cj1, &k_star_bytes)?;
+        let d1 = setup.exp(&cj1, &k_star)?;
 
         // d2 = c_{j,2}^{k*} * f^{-beta_{i,j}}
-        let cj2_k = setup.exp_bytes(&cj2, &k_star_bytes)?;
-        let f_neg_beta = setup.power_of_f_bytes(&neg_beta_bytes)?;
+        let cj2_k = setup.exp(&cj2, &k_star)?;
+        let f_neg_beta = setup.power_of_f(&neg_beta_int)?;
         let d2 = setup.compose(&cj2_k, &f_neg_beta)?;
 
         // Reconstruct as ciphertext.
@@ -362,7 +356,7 @@ pub fn mpmta_round2(
     let mut c2s = Vec::new();
     let mut d1s = Vec::new();
     let mut d2s = Vec::new();
-    let mut e_js: Vec<Vec<u8>> = Vec::new();
+    let mut e_js: Vec<Integer> = Vec::new();
     let mut agg_beta = k256::Scalar::ZERO;
     let mut agg_b_point = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
 
@@ -388,16 +382,16 @@ pub fn mpmta_round2(
         c2s.push(cj2);
         d1s.push(all_d1s[j].clone());
         d2s.push(all_d2s[j].clone());
-        e_js.push(e_j_bytes);
+        e_js.push(Integer::from_digits(&e_j_bytes, Order::Msf));
     }
 
-    let agg_c1 = setup.multiexp_bytes(&c1s.iter().collect::<Vec<_>>(), &e_js)?;
-    let agg_c2 = setup.multiexp_bytes(&c2s.iter().collect::<Vec<_>>(), &e_js)?;
-    let agg_d1 = setup.multiexp_bytes(&d1s.iter().collect::<Vec<_>>(), &e_js)?;
-    let agg_d2 = setup.multiexp_bytes(&d2s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_c1 = setup.multiexp(&c1s, &e_js)?;
+    let agg_c2 = setup.multiexp(&c2s, &e_js)?;
+    let agg_d1 = setup.multiexp(&d1s, &e_js)?;
+    let agg_d2 = setup.multiexp(&d2s, &e_js)?;
 
-    // Compute aggregated beta decimal for the proof.
-    let agg_beta_bytes = agg_beta.to_bytes_vec();
+    // Compute aggregated beta for the proof.
+    let agg_beta_int = agg_beta.to_integer();
 
     // Generate the R_m-AffDL-Ec proof on the aggregated values.
     let proof = RMAffDlEcProof::prove(
@@ -408,15 +402,15 @@ pub fn mpmta_round2(
         &agg_d2,
         &r_point,
         &agg_b_point,
-        &k_star_bytes,
-        &agg_beta_bytes,
+        &k_star,
+        &agg_beta_int,
     )?;
 
     Ok(MpmtaRound2Output {
         c_alphas,
         betas,
         beta_points,
-        k_star: k_star_bytes,
+        k_star,
         proof,
         r_point,
     })
@@ -445,8 +439,8 @@ pub fn mpmta_decrypt(
     beta: &k256::Scalar,
 ) -> Result<MpmtaDecryptOutput, Tx25Error> {
     // Decrypt: alpha = Dec(sk, C_alpha).
-    let alpha_bytes = setup.decrypt_bytes(sk, c_alpha)?;
-    let alpha = k256::Secp256k1::scalar_from_bytes(&alpha_bytes);
+    let alpha_int = setup.decrypt(sk, c_alpha)?;
+    let alpha = k256::Secp256k1::scalar_from_integer(&alpha_int);
 
     // delta = alpha + beta.
     let delta = alpha + beta;
@@ -488,7 +482,7 @@ pub fn mpmta_verify_round2(
     let mut c2s = Vec::new();
     let mut d1s = Vec::new();
     let mut d2s = Vec::new();
-    let mut e_js: Vec<Vec<u8>> = Vec::new();
+    let mut e_js: Vec<Integer> = Vec::new();
     let mut agg_b_point = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
 
     for j in 0..n {
@@ -513,13 +507,13 @@ pub fn mpmta_verify_round2(
         c2s.push(cj2);
         d1s.push(dj1);
         d2s.push(dj2);
-        e_js.push(e_j_bytes);
+        e_js.push(Integer::from_digits(&e_j_bytes, Order::Msf));
     }
 
-    let agg_c1 = setup.multiexp_bytes(&c1s.iter().collect::<Vec<_>>(), &e_js)?;
-    let agg_c2 = setup.multiexp_bytes(&c2s.iter().collect::<Vec<_>>(), &e_js)?;
-    let agg_d1 = setup.multiexp_bytes(&d1s.iter().collect::<Vec<_>>(), &e_js)?;
-    let agg_d2 = setup.multiexp_bytes(&d2s.iter().collect::<Vec<_>>(), &e_js)?;
+    let agg_c1 = setup.multiexp(&c1s, &e_js)?;
+    let agg_c2 = setup.multiexp(&c2s, &e_js)?;
+    let agg_d1 = setup.multiexp(&d1s, &e_js)?;
+    let agg_d2 = setup.multiexp(&d2s, &e_js)?;
 
     // Verify the aggregated proof.
     let ok = round2.proof.verify(

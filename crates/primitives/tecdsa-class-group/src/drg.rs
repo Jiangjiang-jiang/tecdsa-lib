@@ -30,7 +30,7 @@
 
 #![allow(non_snake_case)]
 
-use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use elliptic_curve::CurveArithmetic;
 use rand_core::CryptoRngCore;
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
@@ -192,11 +192,11 @@ pub struct DrgGenOutput {
     pub commitments: Vec<k256::ProjectivePoint>,
     /// CL ciphertext `c_{chi_i} = Enc(ek_i, chi_i; rho_i)`.
     pub ciphertext: ClCiphertext,
-    /// Encryption randomness `rho_i` (decimal string, needed for proof).
-    pub enc_randomness: Vec<u8>,
-    /// Compressed EC Pedersen commitment `PC = g^{chi_i} * h^{chi'_i}` (33 bytes).
-    /// This is `commitments[0]` serialised. Broadcast for R_Enc-PC verification.
-    pub pc_bytes: Vec<u8>,
+    /// Encryption randomness `rho_i` (needed for proof).
+    pub enc_randomness: rug::Integer,
+    /// EC Pedersen commitment `PC = g^{chi_i} * h^{chi'_i}`.
+    /// This is `commitments[0]`. Broadcast for R_Enc-PC verification.
+    pub pc: k256::ProjectivePoint,
     /// R_Enc-PC proof: proves `c_{chi_i}` encrypts the same `chi_i` committed in PC.
     pub proof: REncPcProof,
 }
@@ -215,9 +215,9 @@ pub struct DrgCombOutput {
     /// CL ciphertext `c_{x_i} = Enc(ek_i, x_i; rho_{x_i})`.
     pub ciphertext: ClCiphertext,
     /// Encryption randomness for the combined ciphertext.
-    pub enc_randomness: Vec<u8>,
-    /// Compressed EC Pedersen commitment bytes (33 bytes). Broadcast for R_Enc-PC verification.
-    pub pc_bytes: Vec<u8>,
+    pub enc_randomness: rug::Integer,
+    /// EC Pedersen commitment. Broadcast for R_Enc-PC verification.
+    pub pc: k256::ProjectivePoint,
     /// R_Enc-PC proof linking `c_{x_i}` to the EC Pedersen commitment.
     pub proof: REncPcProof,
 }
@@ -289,30 +289,21 @@ pub fn drg_gen_with_secret(
     let vss_output = pedersen_vss_share(secret, threshold, n, rng);
 
     // Step 3: Encrypt chi_i under own CL key with explicit randomness
-    let chi_bytes = secret.to_bytes_vec();
+    let chi = secret.to_integer();
 
     // Generate encryption randomness by sampling a CL secret key
     // (which lives in the correct range for CL randomness)
     let (r_sk, _r_pk) = setup.keygen()?;
-    let r_bytes = setup.sk_to_bytes(&r_sk)?;
+    let r = setup.sk_to_integer(&r_sk);
 
-    let ciphertext = setup.encrypt_with_r_bytes(pk, &chi_bytes, &r_bytes)?;
+    let ciphertext = setup.encrypt_with_r(pk, &chi, &r)?;
 
     // Step 4: Prove R_Enc-PC (cross-domain): ct encrypts chi_i AND
     // PC = g^{chi_i} * h^{chi'_i} uses the same chi_i.
     // PC = commitments[0] = g^{a_0} * h^{a'_0} = g^{chi_i} * h^{chi'_i}.
     let pc = vss_output.commitments[0];
-    let pc_bytes = pc.to_bytes().to_vec();
-    let chi_prime_bytes = vss_output.secret_randomness.to_bytes_vec();
-    let proof = REncPcProof::prove(
-        setup,
-        pk,
-        &ciphertext,
-        &pc_bytes,
-        &chi_bytes,
-        &chi_prime_bytes,
-        &r_bytes,
-    )?;
+    let chi_prime = vss_output.secret_randomness.to_integer();
+    let proof = REncPcProof::prove(setup, pk, &ciphertext, &pc, &chi, &chi_prime, &r)?;
 
     Ok(DrgGenOutput {
         secret: vss_output.secret,
@@ -320,8 +311,8 @@ pub fn drg_gen_with_secret(
         vss_shares: vss_output.shares,
         commitments: vss_output.commitments,
         ciphertext,
-        enc_randomness: r_bytes,
-        pc_bytes,
+        enc_randomness: r,
+        pc,
         proof,
     })
 }
@@ -348,7 +339,7 @@ pub fn drg_gen_verify(
     commitments: &[k256::ProjectivePoint],
     ciphertext: &ClCiphertext,
     proof: &REncPcProof,
-    pc_bytes: &[u8],
+    pc: &k256::ProjectivePoint,
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // Step 1: Verify Pedersen VSS share
@@ -359,7 +350,7 @@ pub fn drg_gen_verify(
     // Step 2: Verify R_Enc-PC proof (cross-domain).
     // The proof binds the CL ciphertext plaintext to the EC Pedersen
     // commitment `PC = commitments[0]`, ensuring the same chi_i.
-    let proof_ok = proof.verify(setup, pk_i, ciphertext, pc_bytes)?;
+    let proof_ok = proof.verify(setup, pk_i, ciphertext, pc)?;
     Ok(proof_ok)
 }
 
@@ -387,7 +378,7 @@ pub fn drg_gen_verify_full(
     commitments: &[k256::ProjectivePoint],
     ciphertext: &ClCiphertext,
     proof: &REncPcProof,
-    pc_bytes: &[u8],
+    pc: &k256::ProjectivePoint,
     my_share: &PedersenVssShare,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     // Step 1: Verify Pedersen VSS share
@@ -396,7 +387,7 @@ pub fn drg_gen_verify_full(
     }
 
     // Step 2: Verify R_Enc-PC proof (cross-domain)
-    let proof_ok = proof.verify(setup, pk_i, ciphertext, pc_bytes)?;
+    let proof_ok = proof.verify(setup, pk_i, ciphertext, pc)?;
     Ok(proof_ok)
 }
 
@@ -457,23 +448,22 @@ pub fn drg_comb(
     }
 
     // Step 4: Encrypt combined share under own CL key
-    let x_i_bytes = combined_share.to_bytes_vec();
+    let x_i = combined_share.to_integer();
     let (r_sk, _r_pk) = setup.keygen()?;
-    let r_bytes = setup.sk_to_bytes(&r_sk)?;
-    let ciphertext = setup.encrypt_with_r_bytes(pk, &x_i_bytes, &r_bytes)?;
+    let r = setup.sk_to_integer(&r_sk);
+    let ciphertext = setup.encrypt_with_r(pk, &x_i, &r)?;
 
     // Step 5: Prove R_Enc-PC (cross-domain)
     // PC = pedersen_commitment = g^{x_i} * h^{x'_i}
-    let pc_bytes = pedersen_commitment.to_bytes().to_vec();
-    let x_prime_i_bytes = combined_randomness.to_bytes_vec();
+    let x_prime_i = combined_randomness.to_integer();
     let proof = REncPcProof::prove(
         setup,
         pk,
         &ciphertext,
-        &pc_bytes,
-        &x_i_bytes,
-        &x_prime_i_bytes,
-        &r_bytes,
+        &pedersen_commitment,
+        &x_i,
+        &x_prime_i,
+        &r,
     )?;
 
     Ok(DrgCombOutput {
@@ -481,8 +471,8 @@ pub fn drg_comb(
         combined_randomness,
         pedersen_commitment,
         ciphertext,
-        enc_randomness: r_bytes,
-        pc_bytes,
+        enc_randomness: r,
+        pc: pedersen_commitment,
         proof,
     })
 }
@@ -508,12 +498,12 @@ pub fn drg_reveal_exp(
     let g = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR;
     let point = g * combined_share;
 
-    let x_bytes = combined_share.to_bytes_vec();
+    let x = combined_share.to_integer();
 
     // R_PC-DL proof: proves knowledge of x such that f^x = Y
     // The verifier checks that dlog_in_F(Y) matches the committed value.
-    let y = setup.power_of_f_bytes(&x_bytes)?;
-    let proof = RPcDlProof::prove(setup, &y, &x_bytes)?;
+    let y = setup.power_of_f(&x)?;
+    let proof = RPcDlProof::prove(setup, &y, &x)?;
 
     Ok(DrgRevealExpOutput {
         point,
@@ -626,7 +616,7 @@ pub fn drg_full_run(
                 &gen_outputs[i].commitments,
                 &gen_outputs[i].ciphertext,
                 &gen_outputs[i].proof,
-                &gen_outputs[i].pc_bytes,
+                &gen_outputs[i].pc,
                 share_for_j,
             )?;
             if !ok {
@@ -680,14 +670,14 @@ mod tests {
     fn make_cl_keys(
         setup: &mut ClSetup,
         n: usize,
-    ) -> Vec<(Vec<u8>, ClPublicKey, (Integer, Integer, Integer))> {
+    ) -> Vec<(Integer, ClPublicKey, (Integer, Integer, Integer))> {
         (0..n)
             .map(|_| {
                 let (sk_raw, pk) = setup.keygen().expect("CL keygen");
-                let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk to bytes");
+                let sk = setup.sk_to_integer(&sk_raw);
                 let pk_qfi = pk.elt();
                 let abc = (pk_qfi.a().clone(), pk_qfi.b().clone(), pk_qfi.c().clone());
-                (sk_bytes, pk, abc)
+                (sk, pk, abc)
             })
             .collect()
     }
@@ -779,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_drg_gen_basic() {
-        let mut setup = ClSetup::new_secp256k1("30001").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30001u64).expect("CL setup");
         let keys = make_cl_keys(&mut setup, 1);
         let mut rng = rand::thread_rng();
 
@@ -798,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_drg_gen_verify_accepts_honest() {
-        let mut setup = ClSetup::new_secp256k1("30002").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30002u64).expect("CL setup");
         let keys = make_cl_keys(&mut setup, 2);
         let mut rng = rand::thread_rng();
 
@@ -811,7 +801,7 @@ mod tests {
             &gen.commitments,
             &gen.ciphertext,
             &gen.proof,
-            &gen.pc_bytes,
+            &gen.pc,
             &gen.vss_shares[0], // share for party 1 (index 0 in vec)
         )
         .expect("drg_gen_verify");
@@ -821,7 +811,7 @@ mod tests {
     #[test]
     #[ignore = "redundant DRG variant"]
     fn test_drg_gen_verify_rejects_tampered() {
-        let mut setup = ClSetup::new_secp256k1("30003").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30003u64).expect("CL setup");
         let keys = make_cl_keys(&mut setup, 2);
         let mut rng = rand::thread_rng();
 
@@ -837,7 +827,7 @@ mod tests {
             &gen.commitments,
             &gen.ciphertext,
             &gen.proof,
-            &gen.pc_bytes,
+            &gen.pc,
             &bad_share,
         )
         .expect("drg_gen_verify");
@@ -846,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_drg_full_run_2_of_2() {
-        let mut setup = ClSetup::new_secp256k1("30004").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30004u64).expect("CL setup");
         let keys = make_cl_keys(&mut setup, 2);
         let pks: Vec<ClPublicKey> = keys
             .iter()
@@ -878,7 +868,7 @@ mod tests {
     #[test]
     #[ignore = "redundant DRG variant"]
     fn test_drg_full_run_3_of_3() {
-        let mut setup = ClSetup::new_secp256k1("30005").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30005u64).expect("CL setup");
         let keys = make_cl_keys(&mut setup, 3);
         let pks: Vec<ClPublicKey> = keys
             .iter()
@@ -904,7 +894,7 @@ mod tests {
 
     #[test]
     fn test_drg_reveal_exp() {
-        let mut setup = ClSetup::new_secp256k1("30006").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30006u64).expect("CL setup");
         let mut rng = rand::thread_rng();
         let x = k256::Secp256k1::random_scalar(&mut rng);
 
@@ -920,7 +910,7 @@ mod tests {
     fn test_drg_comb_shares_reconstruct_sum() {
         // End-to-end: run DRG for n parties, verify that the combined shares
         // reconstruct to the sum of individual secrets via Lagrange.
-        let mut setup = ClSetup::new_secp256k1("30007").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30007u64).expect("CL setup");
         let n = 3u16;
         let threshold = 2u16;
         let keys = make_cl_keys(&mut setup, n as usize);
@@ -973,7 +963,7 @@ mod tests {
     #[test]
     fn test_drg_r_enc_pc_proof_verifies() {
         // Test that the R_Enc-PC proof generated in DRG.Gen actually verifies.
-        let mut setup = ClSetup::new_secp256k1("30008").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30008u64).expect("CL setup");
         let keys = make_cl_keys(&mut setup, 1);
         let mut rng = rand::thread_rng();
 
@@ -982,7 +972,7 @@ mod tests {
         // Proof is always generated; verify using the stored PC bytes.
         let ok = gen
             .proof
-            .verify(&setup, &keys[0].1, &gen.ciphertext, &gen.pc_bytes)
+            .verify(&setup, &keys[0].1, &gen.ciphertext, &gen.pc)
             .expect("verify");
         assert!(ok, "R_Enc-PC proof should verify for honest generation");
     }
@@ -991,7 +981,7 @@ mod tests {
     #[ignore = "redundant DRG variant"]
     fn test_drg_gen_verify_full() {
         // Test drg_gen_verify_full with explicit Y value.
-        let mut setup = ClSetup::new_secp256k1("30009").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30009u64).expect("CL setup");
         let keys = make_cl_keys(&mut setup, 2);
         let mut rng = rand::thread_rng();
 
@@ -1003,7 +993,7 @@ mod tests {
             &gen.commitments,
             &gen.ciphertext,
             &gen.proof,
-            &gen.pc_bytes,
+            &gen.pc,
             &gen.vss_shares[0],
         )
         .expect("verify_full");
@@ -1014,7 +1004,7 @@ mod tests {
     #[ignore = "redundant DRG variant"]
     fn test_drg_reveal_exp_proof_verifies() {
         // Test that R_PC-DL proof verifies with explicit Y.
-        let mut setup = ClSetup::new_secp256k1("30010").expect("CL setup");
+        let mut setup = ClSetup::new_secp256k1(30010u64).expect("CL setup");
         let mut rng = rand::thread_rng();
         let x = k256::Secp256k1::random_scalar(&mut rng);
 

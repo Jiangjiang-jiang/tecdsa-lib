@@ -9,9 +9,9 @@ use std::{str::FromStr, sync::LazyLock};
 use criterion::{criterion_group, criterion_main, Criterion};
 use k256::Secp256k1;
 use rand::thread_rng;
-use rug::{integer::Order, Complete, Integer};
+use rug::{Complete, Integer};
 use tecdsa_bench::zk_fixtures::*;
-use tecdsa_class_group::cl::{Cleartext, SECP256K1_ORDER};
+use tecdsa_class_group::cl::SECP256K1_ORDER;
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::BigIntExt;
 
@@ -190,25 +190,22 @@ fn class_group_zk(c: &mut Criterion) {
     let rng = &mut thread_rng();
 
     let (mut setup, sk, pk) = cl_setup_with_keys();
-    let sk_bytes = setup.sk_to_bytes(&sk).expect("sk_bytes");
-    let m_bytes = 42u32.to_be_bytes().to_vec();
+    let sk_int = setup.sk_to_integer(&sk);
+    let m_int = Integer::from(42u32);
 
     // R_enc
     {
         use tecdsa_class_group::zk::r_enc::REncProof;
         let (r_sk, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&r_sk).expect("r_bytes");
-        let ct = setup
-            .encrypt_with_r_bytes(&pk, &m_bytes, &r_bytes)
-            .expect("enc");
-        let proof =
-            REncProof::prove(&mut setup, &pk, &ct, &m_bytes, &r_bytes).expect("r_enc prove");
+        let r_int = setup.sk_to_integer(&r_sk);
+        let ct = setup.encrypt_with_r(&pk, &m_int, &r_int).expect("enc");
+        let proof = REncProof::prove(&mut setup, &pk, &ct, &m_int, &r_int).expect("r_enc prove");
         assert!(
             proof.verify(&setup, &pk, &ct).expect("verify"),
             "REncProof fixture invalid"
         );
         g.bench_function("r_enc/prove", |b| {
-            b.iter(|| REncProof::prove(&mut setup, &pk, &ct, &m_bytes, &r_bytes))
+            b.iter(|| REncProof::prove(&mut setup, &pk, &ct, &m_int, &r_int))
         });
         g.bench_function("r_enc/verify", |b| {
             b.iter(|| proof.verify(&setup, &pk, &ct))
@@ -218,13 +215,13 @@ fn class_group_zk(c: &mut Criterion) {
     // R_key
     {
         use tecdsa_class_group::zk::r_key::RKeyProof;
-        let proof = RKeyProof::prove(&mut setup, &pk, &sk_bytes).expect("r_key prove");
+        let proof = RKeyProof::prove(&mut setup, &pk, &sk_int).expect("r_key prove");
         assert!(
             proof.verify(&setup, &pk).expect("verify"),
             "RKeyProof fixture invalid"
         );
         g.bench_function("r_key/prove", |b| {
-            b.iter(|| RKeyProof::prove(&mut setup, &pk, &sk_bytes))
+            b.iter(|| RKeyProof::prove(&mut setup, &pk, &sk_int))
         });
         g.bench_function("r_key/verify", |b| b.iter(|| proof.verify(&setup, &pk)));
     }
@@ -233,21 +230,21 @@ fn class_group_zk(c: &mut Criterion) {
     {
         use tecdsa_class_group::zk::r_dl_cl::RDlClProof;
         let x_scalar = C::random_scalar(rng);
-        let x_bytes = x_scalar.to_bytes_vec();
+        let x_int = x_scalar.to_integer();
         let x_point =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar;
-        let ct = setup.encrypt_bytes(&pk, &x_bytes).expect("enc");
+        let ct = setup.encrypt(&pk, &x_int).expect("enc");
         let (c1, c2) = setup.ct_components(&ct).expect("comp");
-        let c1_x = setup.exp_bytes(&c1, &x_bytes).expect("exp");
-        let c2_x = setup.exp_bytes(&c2, &x_bytes).expect("exp");
+        let c1_x = setup.exp(&c1, &x_int).expect("exp");
+        let c2_x = setup.exp(&c2, &x_int).expect("exp");
         let ct_x = setup.ct_from_components(&c1_x, &c2_x).expect("ct_from");
-        let proof = RDlClProof::prove(&mut setup, &x_point, &ct, &ct_x, &x_bytes).expect("prove");
+        let proof = RDlClProof::prove(&mut setup, &x_point, &ct, &ct_x, &x_int).expect("prove");
         assert!(
             proof.verify(&setup, &x_point, &ct, &ct_x).expect("verify"),
             "RDlClProof fixture invalid"
         );
         g.bench_function("r_dl_cl/prove", |b| {
-            b.iter(|| RDlClProof::prove(&mut setup, &x_point, &ct, &ct_x, &x_bytes))
+            b.iter(|| RDlClProof::prove(&mut setup, &x_point, &ct, &ct_x, &x_int))
         });
         g.bench_function("r_dl_cl/verify", |b| {
             b.iter(|| proof.verify(&setup, &x_point, &ct, &ct_x))
@@ -256,71 +253,40 @@ fn class_group_zk(c: &mut Criterion) {
 
     // R_enc_pc (cross-domain)
     {
-        use elliptic_curve::group::GroupEncoding;
         use tecdsa_class_group::zk::r_enc_pc::REncPcProof;
         let (r_sk, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&r_sk).expect("r_bytes");
-        let ct = setup
-            .encrypt_with_r_bytes(&pk, &m_bytes, &r_bytes)
-            .expect("enc");
+        let r_int = setup.sk_to_integer(&r_sk);
+        let ct = setup.encrypt_with_r(&pk, &m_int, &r_int).expect("enc");
         // EC Pedersen commitment: PC = g^m * h^{m'} (m' = m for simplicity)
-        let m_scalar = {
-            use elliptic_curve::ops::Reduce;
-            let mut buf = [0u8; 32];
-            let len = m_bytes.len().min(32);
-            buf[32 - len..].copy_from_slice(&m_bytes[m_bytes.len() - len..]);
-            let uint = k256::U256::from_be_slice(&buf);
-            k256::Scalar::reduce(&uint)
-        };
+        let m_scalar = Secp256k1::scalar_from_integer(&m_int);
         let g_ec = k256::ProjectivePoint::GENERATOR;
         let h_ec = <k256::Secp256k1 as tecdsa_curve::TecdsaCurve>::nums_pedersen_h();
         let pc = g_ec * m_scalar + h_ec * m_scalar;
-        let pc_bytes = pc.to_bytes();
-        let proof = REncPcProof::prove(
-            &mut setup,
-            &pk,
-            &ct,
-            pc_bytes.as_ref(),
-            &m_bytes,
-            &m_bytes,
-            &r_bytes,
-        )
-        .expect("prove");
+        let proof =
+            REncPcProof::prove(&mut setup, &pk, &ct, &pc, &m_int, &m_int, &r_int).expect("prove");
         assert!(
-            proof
-                .verify(&setup, &pk, &ct, pc_bytes.as_ref())
-                .expect("verify"),
+            proof.verify(&setup, &pk, &ct, &pc).expect("verify"),
             "REncPcProof fixture invalid"
         );
         g.bench_function("r_enc_pc/prove", |b| {
-            b.iter(|| {
-                REncPcProof::prove(
-                    &mut setup,
-                    &pk,
-                    &ct,
-                    pc_bytes.as_ref(),
-                    &m_bytes,
-                    &m_bytes,
-                    &r_bytes,
-                )
-            })
+            b.iter(|| REncPcProof::prove(&mut setup, &pk, &ct, &pc, &m_int, &m_int, &r_int))
         });
         g.bench_function("r_enc_pc/verify", |b| {
-            b.iter(|| proof.verify(&setup, &pk, &ct, pc_bytes.as_ref()))
+            b.iter(|| proof.verify(&setup, &pk, &ct, &pc))
         });
     }
 
     // R_pc_dl
     {
         use tecdsa_class_group::zk::r_pc_dl::RPcDlProof;
-        let y = setup.power_of_f_bytes(&m_bytes).expect("f^m");
-        let proof = RPcDlProof::prove(&mut setup, &y, &m_bytes).expect("prove");
+        let y = setup.power_of_f(&m_int).expect("f^m");
+        let proof = RPcDlProof::prove(&mut setup, &y, &m_int).expect("prove");
         assert!(
             proof.verify(&setup, &y).expect("verify"),
             "RPcDlProof fixture invalid"
         );
         g.bench_function("r_pc_dl/prove", |b| {
-            b.iter(|| RPcDlProof::prove(&mut setup, &y, &m_bytes))
+            b.iter(|| RPcDlProof::prove(&mut setup, &y, &m_int))
         });
         g.bench_function("r_pc_dl/verify", |b| b.iter(|| proof.verify(&setup, &y)));
     }
@@ -329,19 +295,17 @@ fn class_group_zk(c: &mut Criterion) {
     {
         use tecdsa_class_group::zk::r_dec_dl::RDecDlProof;
         let (r_sk, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&r_sk).expect("r_bytes");
-        let ct = setup
-            .encrypt_with_r_bytes(&pk, &m_bytes, &r_bytes)
-            .expect("enc");
+        let r_int = setup.sk_to_integer(&r_sk);
+        let ct = setup.encrypt_with_r(&pk, &m_int, &r_int).expect("enc");
         let (c1, _c2) = setup.ct_components(&ct).expect("comp");
-        let pd = setup.exp_bytes(&c1, &sk_bytes).expect("pd");
-        let proof = RDecDlProof::prove(&mut setup, &pk, &ct, &pd, &sk_bytes).expect("prove");
+        let pd = setup.exp(&c1, &sk_int).expect("pd");
+        let proof = RDecDlProof::prove(&mut setup, &pk, &ct, &pd, &sk_int).expect("prove");
         assert!(
             proof.verify(&setup, &pk, &ct, &pd).expect("verify"),
             "RDecDlProof fixture invalid"
         );
         g.bench_function("r_dec_dl/prove", |b| {
-            b.iter(|| RDecDlProof::prove(&mut setup, &pk, &ct, &pd, &sk_bytes))
+            b.iter(|| RDecDlProof::prove(&mut setup, &pk, &ct, &pd, &sk_int))
         });
         g.bench_function("r_dec_dl/verify", |b| {
             b.iter(|| proof.verify(&setup, &pk, &ct, &pd))
@@ -351,13 +315,13 @@ fn class_group_zk(c: &mut Criterion) {
     // R_cl_kwlg
     {
         use tecdsa_class_group::zk::r_cl_kwlg::RClKwlgProof;
-        let proof = RClKwlgProof::prove(&mut setup, &pk, &sk_bytes).expect("prove");
+        let proof = RClKwlgProof::prove(&mut setup, &pk, &sk_int).expect("prove");
         assert!(
             proof.verify(&setup, &pk).expect("verify"),
             "RClKwlgProof fixture invalid"
         );
         g.bench_function("r_cl_kwlg/prove", |b| {
-            b.iter(|| RClKwlgProof::prove(&mut setup, &pk, &sk_bytes))
+            b.iter(|| RClKwlgProof::prove(&mut setup, &pk, &sk_int))
         });
         g.bench_function("r_cl_kwlg/verify", |b| b.iter(|| proof.verify(&setup, &pk)));
     }
@@ -365,16 +329,16 @@ fn class_group_zk(c: &mut Criterion) {
     // R_bint
     {
         use tecdsa_class_group::zk::r_bint::RBintProof;
-        let x_bytes = 42u32.to_be_bytes().to_vec();
-        let y = setup.power_of_h("42").expect("h^x");
-        let proof = RBintProof::prove(&mut setup, &y, &x_bytes).expect("prove");
-        let bound = setup.secretkey_bound_bytes().expect("bound");
+        let x_int = Integer::from(42u32);
+        let y = setup.power_of_h(&Integer::from(42u32)).expect("h^x");
+        let proof = RBintProof::prove(&mut setup, &y, &x_int).expect("prove");
+        let bound = setup.secretkey_bound().clone();
         assert!(
             proof.verify(&setup, &y, &bound).expect("verify"),
             "RBintProof fixture invalid"
         );
         g.bench_function("r_bint/prove", |b| {
-            b.iter(|| RBintProof::prove(&mut setup, &y, &x_bytes))
+            b.iter(|| RBintProof::prove(&mut setup, &y, &x_int))
         });
         g.bench_function("r_bint/verify", |b| {
             b.iter(|| proof.verify(&setup, &y, &bound))
@@ -385,17 +349,17 @@ fn class_group_zk(c: &mut Criterion) {
     {
         use tecdsa_class_group::zk::r_com_kwlg::RComKwlgProof;
         let (r_sk2, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&r_sk2).expect("r_bytes");
-        let fm = setup.power_of_f_bytes(&m_bytes).expect("f^m");
-        let hr = setup.power_of_h_bytes(&r_bytes).expect("h^r");
+        let r_int = setup.sk_to_integer(&r_sk2);
+        let fm = setup.power_of_f(&m_int).expect("f^m");
+        let hr = setup.power_of_h(&r_int).expect("h^r");
         let commit = setup.compose(&fm, &hr).expect("compose");
-        let proof = RComKwlgProof::prove(&mut setup, &commit, &m_bytes, &r_bytes).expect("prove");
+        let proof = RComKwlgProof::prove(&mut setup, &commit, &m_int, &r_int).expect("prove");
         assert!(
             proof.verify(&setup, &commit).expect("verify"),
             "RComKwlgProof fixture invalid"
         );
         g.bench_function("r_com_kwlg/prove", |b| {
-            b.iter(|| RComKwlgProof::prove(&mut setup, &commit, &m_bytes, &r_bytes))
+            b.iter(|| RComKwlgProof::prove(&mut setup, &commit, &m_int, &r_int))
         });
         g.bench_function("r_com_kwlg/verify", |b| {
             b.iter(|| proof.verify(&setup, &commit))
@@ -405,20 +369,18 @@ fn class_group_zk(c: &mut Criterion) {
     // R_gdec_cl
     {
         use tecdsa_class_group::zk::r_gdec_cl::RGdecClProof;
-        let sk_dec = sk.to_string();
-        let ct = setup.encrypt(&pk, "42").expect("encrypt");
+        let ct = setup.encrypt(&pk, &Integer::from(42u32)).expect("encrypt");
         let (c1, c2) = setup.ct_components(&ct).expect("comp");
-        let mut c1_sk = setup.exp(&c1, &sk_dec).expect("c1^sk");
+        let mut c1_sk = setup.exp(&c1, &sk_int).expect("c1^sk");
         c1_sk.neg();
         let dec_result = setup.compose(&c2, &c1_sk).expect("dec");
-        let proof =
-            RGdecClProof::prove(&mut setup, &pk, &ct, &dec_result, &sk_bytes).expect("prove");
+        let proof = RGdecClProof::prove(&mut setup, &pk, &ct, &dec_result, &sk_int).expect("prove");
         assert!(
             proof.verify(&setup, &pk, &ct, &dec_result).expect("verify"),
             "RGdecClProof fixture invalid"
         );
         g.bench_function("r_gdec_cl/prove", |b| {
-            b.iter(|| RGdecClProof::prove(&mut setup, &pk, &ct, &dec_result, &sk_bytes))
+            b.iter(|| RGdecClProof::prove(&mut setup, &pk, &ct, &dec_result, &sk_int))
         });
         g.bench_function("r_gdec_cl/verify", |b| {
             b.iter(|| proof.verify(&setup, &pk, &ct, &dec_result))
@@ -428,20 +390,18 @@ fn class_group_zk(c: &mut Criterion) {
     // R_cl_dl — prove knowledge of plaintext + randomness with F-subgroup
     {
         use tecdsa_class_group::zk::r_cl_dl::RClDlProof;
-        let x_bytes = 77u32.to_be_bytes().to_vec();
+        let x_int = Integer::from(77u32);
         let (r_sk2, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&r_sk2).expect("r_bytes");
-        let ct = setup
-            .encrypt_with_r_bytes(&pk, &x_bytes, &r_bytes)
-            .expect("enc");
-        let y = setup.power_of_f_bytes(&x_bytes).expect("f^x");
-        let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &x_bytes, &r_bytes).expect("prove");
+        let r_int = setup.sk_to_integer(&r_sk2);
+        let ct = setup.encrypt_with_r(&pk, &x_int, &r_int).expect("enc");
+        let y = setup.power_of_f(&x_int).expect("f^x");
+        let proof = RClDlProof::prove(&mut setup, &pk, &ct, &y, &x_int, &r_int).expect("prove");
         assert!(
             proof.verify(&setup, &pk, &ct, &y).expect("verify"),
             "RClDlProof fixture invalid"
         );
         g.bench_function("r_cl_dl/prove", |b| {
-            b.iter(|| RClDlProof::prove(&mut setup, &pk, &ct, &y, &x_bytes, &r_bytes))
+            b.iter(|| RClDlProof::prove(&mut setup, &pk, &ct, &y, &x_int, &r_int))
         });
         g.bench_function("r_cl_dl/verify", |b| {
             b.iter(|| proof.verify(&setup, &pk, &ct, &y))
@@ -450,47 +410,40 @@ fn class_group_zk(c: &mut Criterion) {
 
     // R_cl_dl_ec — CL encryption + EC discrete-log
     {
-        use elliptic_curve::group::GroupEncoding;
         use tecdsa_class_group::zk::r_cl_dl_ec::RClDlEcProof;
-        let v_bytes = 42u32.to_be_bytes().to_vec();
+        let v_int = Integer::from(42u32);
         let (r_sk2, _) = setup.keygen().expect("keygen");
-        let r_bytes = setup.sk_to_bytes(&r_sk2).expect("r_bytes");
-        let ct = setup
-            .encrypt_with_r_bytes(&pk, &v_bytes, &r_bytes)
-            .expect("enc");
-        let v_scalar = Secp256k1::scalar_from_bytes(&v_bytes);
+        let r_int = setup.sk_to_integer(&r_sk2);
+        let ct = setup.encrypt_with_r(&pk, &v_int, &r_int).expect("enc");
+        let v_scalar = Secp256k1::scalar_from_integer(&v_int);
         let big_v =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * v_scalar;
-        let big_v_bytes = big_v.to_bytes().to_vec();
-        let proof = RClDlEcProof::prove(&mut setup, &pk, &ct, &big_v_bytes, &v_bytes, &r_bytes)
-            .expect("prove");
+        let proof =
+            RClDlEcProof::prove(&mut setup, &pk, &ct, &big_v, &v_int, &r_int).expect("prove");
         assert!(
-            proof
-                .verify(&setup, &pk, &ct, &big_v_bytes)
-                .expect("verify"),
+            proof.verify(&setup, &pk, &ct, &big_v).expect("verify"),
             "RClDlEcProof fixture invalid"
         );
         g.bench_function("r_cl_dl_ec/prove", |b| {
-            b.iter(|| RClDlEcProof::prove(&mut setup, &pk, &ct, &big_v_bytes, &v_bytes, &r_bytes))
+            b.iter(|| RClDlEcProof::prove(&mut setup, &pk, &ct, &big_v, &v_int, &r_int))
         });
         g.bench_function("r_cl_dl_ec/verify", |b| {
-            b.iter(|| proof.verify(&setup, &pk, &ct, &big_v_bytes))
+            b.iter(|| proof.verify(&setup, &pk, &ct, &big_v))
         });
     }
 
     // R_ddh_cl — DDH tuple in class group
     {
         use tecdsa_class_group::zk::r_ddh_cl::RDdhClProof;
-        let x_bytes = 42u32.to_be_bytes().to_vec();
-        let g_qfi = setup.power_of_h("1").expect("h");
-        let x_dec = "42";
-        let a = setup.exp(&g_qfi, x_dec).expect("g^x");
+        let x_int = Integer::from(42u32);
+        let g_qfi = setup.power_of_h(&Integer::from(1u32)).expect("h");
+        let a = setup.exp(&g_qfi, &x_int).expect("g^x");
         let (r_sk2, _) = setup.keygen().expect("keygen");
-        let r_dec = r_sk2.to_string();
-        let b_qfi = setup.exp(&g_qfi, &r_dec).expect("h^r");
-        let c_qfi = setup.exp(&b_qfi, x_dec).expect("B^x");
+        let r_int = setup.sk_to_integer(&r_sk2);
+        let b_qfi = setup.exp(&g_qfi, &r_int).expect("h^r");
+        let c_qfi = setup.exp(&b_qfi, &x_int).expect("B^x");
         let proof =
-            RDdhClProof::prove(&mut setup, &g_qfi, &a, &b_qfi, &c_qfi, &x_bytes).expect("prove");
+            RDdhClProof::prove(&mut setup, &g_qfi, &a, &b_qfi, &c_qfi, &x_int).expect("prove");
         assert!(
             proof
                 .verify(&setup, &g_qfi, &a, &b_qfi, &c_qfi)
@@ -498,7 +451,7 @@ fn class_group_zk(c: &mut Criterion) {
             "RDdhClProof fixture invalid"
         );
         g.bench_function("r_ddh_cl/prove", |b| {
-            b.iter(|| RDdhClProof::prove(&mut setup, &g_qfi, &a, &b_qfi, &c_qfi, &x_bytes))
+            b.iter(|| RDdhClProof::prove(&mut setup, &g_qfi, &a, &b_qfi, &c_qfi, &x_int))
         });
         g.bench_function("r_ddh_cl/verify", |b| {
             b.iter(|| proof.verify(&setup, &g_qfi, &a, &b_qfi, &c_qfi))
@@ -511,28 +464,19 @@ fn class_group_zk(c: &mut Criterion) {
         let gen = <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR;
         let eldk = k256::Scalar::from(42u64);
         let elek = gen * eldk;
-        let gamma_bytes = 17u32.to_be_bytes().to_vec();
-        let r_ec_bytes = 23u32.to_be_bytes().to_vec();
+        let gamma_int = Integer::from(17u32);
+        let r_ec_int = Integer::from(23u32);
         let gamma_scalar = k256::Scalar::from(17u64);
         let r_scalar = k256::Scalar::from(23u64);
         let elg_0 = gen * r_scalar;
         let elg_1 = gen * gamma_scalar + elek * r_scalar;
-        let ct = setup.encrypt_bytes(&pk, &55u32.to_be_bytes()).expect("enc");
+        let ct = setup.encrypt(&pk, &Integer::from(55u32)).expect("enc");
         let (ck_0, ck_1) = setup.ct_components(&ct).expect("comp");
-        let cgk_0 = setup.exp_bytes(&ck_0, &gamma_bytes).expect("exp");
-        let cgk_1 = setup.exp_bytes(&ck_1, &gamma_bytes).expect("exp");
+        let cgk_0 = setup.exp(&ck_0, &gamma_int).expect("exp");
+        let cgk_1 = setup.exp(&ck_1, &gamma_int).expect("exp");
         let proof = RElClProof::prove(
-            &mut setup,
-            &gen,
-            &elek,
-            &elg_0,
-            &elg_1,
-            &ck_0,
-            &ck_1,
-            &cgk_0,
-            &cgk_1,
-            &gamma_bytes,
-            &r_ec_bytes,
+            &mut setup, &gen, &elek, &elg_0, &elg_1, &ck_0, &ck_1, &cgk_0, &cgk_1, &gamma_int,
+            &r_ec_int,
         )
         .expect("prove");
         assert!(
@@ -544,17 +488,8 @@ fn class_group_zk(c: &mut Criterion) {
         g.bench_function("r_el_cl/prove", |b| {
             b.iter(|| {
                 RElClProof::prove(
-                    &mut setup,
-                    &gen,
-                    &elek,
-                    &elg_0,
-                    &elg_1,
-                    &ck_0,
-                    &ck_1,
-                    &cgk_0,
-                    &cgk_1,
-                    &gamma_bytes,
-                    &r_ec_bytes,
+                    &mut setup, &gen, &elek, &elg_0, &elg_1, &ck_0, &ck_1, &cgk_0, &cgk_1,
+                    &gamma_int, &r_ec_int,
                 )
             })
         });
@@ -569,63 +504,50 @@ fn class_group_zk(c: &mut Criterion) {
 
     // R_ped_ec — Pedersen CL commitment + EC point
     {
-        use elliptic_curve::group::GroupEncoding as _;
         use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
-        let x_bytes = 42u32.to_be_bytes().to_vec();
+        let x_int = Integer::from(42u32);
         let mut nim = Nim::new(&mut setup);
-        let encode_out = nim.encode_a(&x_bytes, &pk).expect("encode_a");
+        let encode_out = nim.encode_a(&x_int, &pk).expect("encode_a");
         let pe_a = encode_out.pe_a;
-        let r_bytes_nim = encode_out.state.r_bytes.clone();
-        let x_scalar = Secp256k1::scalar_from_bytes(&x_bytes);
+        let r_nim = encode_out.state.r.clone();
+        let x_scalar = Secp256k1::scalar_from_integer(&x_int);
         let big_v =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar;
-        let big_v_bytes = big_v.to_bytes().to_vec();
         let proof =
-            RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v_bytes, &x_bytes, &r_bytes_nim)
-                .expect("prove");
+            RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v, &x_int, &r_nim).expect("prove");
         assert!(
-            proof
-                .verify(&setup, &pk, &pe_a, &big_v_bytes)
-                .expect("verify"),
+            proof.verify(&setup, &pk, &pe_a, &big_v).expect("verify"),
             "RPedEcProof fixture invalid"
         );
         g.bench_function("r_ped_ec/prove", |b| {
-            b.iter(|| {
-                RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v_bytes, &x_bytes, &r_bytes_nim)
-            })
+            b.iter(|| RPedEcProof::prove(&mut setup, &pk, &pe_a, &big_v, &x_int, &r_nim))
         });
         g.bench_function("r_ped_ec/verify", |b| {
-            b.iter(|| proof.verify(&setup, &pk, &pe_a, &big_v_bytes))
+            b.iter(|| proof.verify(&setup, &pk, &pe_a, &big_v))
         });
     }
 
     // R_aff_com — affine operation with commitment
     {
         use tecdsa_class_group::zk::r_aff_com::RAffComProof;
-        let x_bytes = 5u32.to_be_bytes().to_vec();
-        let y_bytes = 10u32.to_be_bytes().to_vec();
+        let x_int = Integer::from(5u32);
+        let y_int = Integer::from(10u32);
         let (r_sk2, _) = setup.keygen().expect("kg");
-        let ct_in = setup.cl().encrypt_with_randomness(
-            &pk,
-            &Cleartext::from_mpz(setup.cl(), Integer::from_str("100").expect("enc")).expect("enc"),
-            &r_sk2,
-        );
+        let r_base = setup.sk_to_integer(&r_sk2);
+        let ct_in = setup
+            .encrypt_with_r(&pk, &Integer::from(100u32), &r_base)
+            .expect("enc");
         let (r_sk3, _) = setup.keygen().expect("kg");
-        let r1 = setup.sk_to_bytes(&r_sk3).expect("bytes");
+        let r1 = setup.sk_to_integer(&r_sk3);
         let q_bu = Integer::from_str(SECP256K1_ORDER).unwrap();
         let m_out =
             (Integer::from(5u32) * Integer::from(100u32) + Integer::from(10u32)).modulo(&q_bu);
-        let r_out = Integer::from(5u32) * r_sk2.as_mpz() + r_sk3.as_mpz();
-        let ct_out = setup.cl().encrypt_with_randomness(
-            &pk,
-            &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),
-            &r_out,
-        );
+        let r_out = Integer::from(5u32) * &r_base + &r1;
+        let ct_out = setup.encrypt_with_r(&pk, &m_out, &r_out).expect("enc");
         let (r_sk4, _) = setup.keygen().expect("kg");
-        let r2 = setup.sk_to_bytes(&r_sk4).expect("bytes");
-        let r2_dec = Integer::from_bytes_msf(&r2);
-        let h_r2 = setup.cl().power_of_h(&r2_dec);
-        let f_x = setup.power_of_f("5").expect("f_x");
+        let r2 = setup.sk_to_integer(&r_sk4);
+        let h_r2 = setup.power_of_h(&r2).expect("h_r2");
+        let f_x = setup.power_of_f(&Integer::from(5u32)).expect("f_x");
         let commitment = setup.compose(&h_r2, &f_x).expect("com");
         let proof = RAffComProof::prove(
             &mut setup,
@@ -633,8 +555,8 @@ fn class_group_zk(c: &mut Criterion) {
             &ct_in,
             &ct_out,
             &commitment,
-            &x_bytes,
-            &y_bytes,
+            &x_int,
+            &y_int,
             &r1,
             &r2,
         )
@@ -653,8 +575,8 @@ fn class_group_zk(c: &mut Criterion) {
                     &ct_in,
                     &ct_out,
                     &commitment,
-                    &x_bytes,
-                    &y_bytes,
+                    &x_int,
+                    &y_int,
                     &r1,
                     &r2,
                 )
@@ -668,31 +590,23 @@ fn class_group_zk(c: &mut Criterion) {
     // R_m_aff_dl — MtA affine DL with F-subgroup
     {
         use tecdsa_class_group::zk::r_m_aff_dl::RMAffDlProof;
-        let x_bytes = 3u32.to_be_bytes().to_vec();
-        let y_bytes = 7u32.to_be_bytes().to_vec();
+        let x_int = Integer::from(3u32);
+        let y_int = Integer::from(7u32);
         let (r_sk2, _) = setup.keygen().expect("kg");
-        let r_base = setup.sk_to_bytes(&r_sk2).expect("bytes");
+        let r_base = setup.sk_to_integer(&r_sk2);
         let (r_sk3, _) = setup.keygen().expect("kg");
-        let r_enc = setup.sk_to_bytes(&r_sk3).expect("bytes");
-        let r_base_dec = Integer::from_bytes_msf(&r_base);
-        let ct_in = setup.cl().encrypt_with_randomness(
-            &pk,
-            &Cleartext::from_mpz(setup.cl(), Integer::from_str("100").unwrap()).unwrap(),
-            &r_base_dec,
-        );
+        let r_enc = setup.sk_to_integer(&r_sk3);
+        let ct_in = setup
+            .encrypt_with_r(&pk, &Integer::from(100u32), &r_base)
+            .expect("enc_in");
         let q_bu = Integer::from_str(tecdsa_class_group::cl::SECP256K1_ORDER).unwrap();
         let m_out =
             (Integer::from(3u32) * Integer::from(100u32) + Integer::from(7u32)).modulo(&q_bu);
-        let r_out = Integer::from(3u32) * Integer::from_bytes_msf(&r_base)
-            + Integer::from_bytes_msf(&r_enc);
-        let ct_out = setup.cl().encrypt_with_randomness(
-            &pk,
-            &Cleartext::from_mpz(setup.cl(), m_out).unwrap(),
-            &r_out,
-        );
-        let y_point = setup.power_of_f("7").expect("f^y");
+        let r_out = Integer::from(3u32) * &r_base + &r_enc;
+        let ct_out = setup.encrypt_with_r(&pk, &m_out, &r_out).expect("enc_out");
+        let y_point = setup.power_of_f(&Integer::from(7u32)).expect("f^y");
         let proof = RMAffDlProof::prove(
-            &mut setup, &pk, &ct_in, &ct_out, &y_point, &x_bytes, &y_bytes, &r_enc,
+            &mut setup, &pk, &ct_in, &ct_out, &y_point, &x_int, &y_int, &r_enc,
         )
         .expect("prove");
         assert!(
@@ -704,7 +618,7 @@ fn class_group_zk(c: &mut Criterion) {
         g.bench_function("r_m_aff_dl/prove", |b| {
             b.iter(|| {
                 RMAffDlProof::prove(
-                    &mut setup, &pk, &ct_in, &ct_out, &y_point, &x_bytes, &y_bytes, &r_enc,
+                    &mut setup, &pk, &ct_in, &ct_out, &y_point, &x_int, &y_int, &r_enc,
                 )
             })
         });
@@ -716,42 +630,31 @@ fn class_group_zk(c: &mut Criterion) {
     // R_m_aff_dl_ec — MtA affine DL with EC checks
     {
         use tecdsa_class_group::zk::r_m_aff_dl_ec::RMAffDlEcProof;
-        let gamma_bytes = 42u32.to_be_bytes().to_vec();
+        let gamma_int = Integer::from(42u32);
         let (r_sk2, _) = setup.keygen().expect("kg");
-        let r_gamma = setup.sk_to_bytes(&r_sk2).expect("r");
+        let r_gamma = setup.sk_to_integer(&r_sk2);
         let ct = setup
-            .encrypt_with_r_bytes(&pk, &gamma_bytes, &r_gamma)
+            .encrypt_with_r(&pk, &gamma_int, &r_gamma)
             .expect("enc");
         let (c1, c2) = setup.ct_components(&ct).expect("ct");
         let (r_sk3, _) = setup.keygen().expect("kg");
-        let k_star = setup.sk_to_bytes(&r_sk3).expect("k");
-        let beta_bytes = 17u32.to_be_bytes().to_vec();
-        let q_bytes = setup.q_bytes().expect("q");
-        let d1 = setup.exp_bytes(&c1, &k_star).expect("d1");
-        let c2_k = setup.exp_bytes(&c2, &k_star).expect("c2k");
+        let k_star = setup.sk_to_integer(&r_sk3);
+        let beta_int = Integer::from(17u32);
+        let q_bu = setup.cl().q().clone();
+        let d1 = setup.exp(&c1, &k_star).expect("d1");
+        let c2_k = setup.exp(&c2, &k_star).expect("c2k");
         // negate_mod_q inlined
-        let q_bu = Integer::from_bytes_msf(&q_bytes);
-        let beta_bu = Integer::from_bytes_msf(&beta_bytes);
-        let neg_beta_bu = (&q_bu - &beta_bu.modulo(&q_bu)).complete().modulo(&q_bu);
-        let neg_beta = neg_beta_bu.to_bytes_msf();
-        let f_neg_beta = setup.power_of_f_bytes(&neg_beta).expect("f^-b");
+        let neg_beta = (&q_bu - beta_int.clone().modulo(&q_bu)).modulo(&q_bu);
+        let f_neg_beta = setup.power_of_f(&neg_beta).expect("f^-b");
         let d2 = setup.compose(&c2_k, &f_neg_beta).expect("d2");
-        let k_scalar = Secp256k1::scalar_from_bytes(&k_star);
+        let k_scalar = Secp256k1::scalar_from_integer(&k_star);
         let r_point =
             <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR * k_scalar;
         let beta_scalar = k256::Scalar::from(17u64);
         let b_point = <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint::GENERATOR
             * beta_scalar;
         let proof = RMAffDlEcProof::prove(
-            &mut setup,
-            &c1,
-            &c2,
-            &d1,
-            &d2,
-            &r_point,
-            &b_point,
-            &k_star,
-            &beta_bytes,
+            &mut setup, &c1, &c2, &d1, &d2, &r_point, &b_point, &k_star, &beta_int,
         )
         .expect("prove");
         assert!(
@@ -763,15 +666,7 @@ fn class_group_zk(c: &mut Criterion) {
         g.bench_function("r_m_aff_dl_ec/prove", |b| {
             b.iter(|| {
                 RMAffDlEcProof::prove(
-                    &mut setup,
-                    &c1,
-                    &c2,
-                    &d1,
-                    &d2,
-                    &r_point,
-                    &b_point,
-                    &k_star,
-                    &beta_bytes,
+                    &mut setup, &c1, &c2, &d1, &d2, &r_point, &b_point, &k_star, &beta_int,
                 )
             })
         });
@@ -795,13 +690,12 @@ fn class_group_zk(c: &mut Criterion) {
         // Inline create_pvss_ciphertexts
         let q_bu = setup.cl().q().clone();
         let (rho_sk, _) = setup.keygen().expect("kg");
-        let rho_bytes = setup.sk_to_bytes(&rho_sk).expect("rho");
-        let c1_sh = setup.power_of_h_bytes(&rho_bytes).expect("h^rho");
+        let rho_int = setup.sk_to_integer(&rho_sk);
+        let c1_sh = setup.power_of_h(&rho_int).expect("h^rho");
         let mut coeffs = Vec::new();
         for _ in 0..t {
             let (sk_c, _) = setup.keygen().expect("kg");
-            let c_bytes = setup.sk_to_bytes(&sk_c).expect("c");
-            coeffs.push(Integer::from_digits(&c_bytes, Order::Msf).modulo(&q_bu));
+            coeffs.push(setup.sk_to_integer(&sk_c).modulo(&q_bu));
         }
         let mut c2s_sh = Vec::new();
         for (idx, &id) in party_ids.iter().enumerate() {
@@ -812,16 +706,14 @@ fn class_group_zk(c: &mut Criterion) {
                 val = (val + coeff * &x_pow).modulo(&q_bu);
                 x_pow = (x_pow * &x).modulo(&q_bu);
             }
-            let share_bytes = val.to_digits(Order::Msf);
-            let pk_elt = pks[idx].elt();
-            let pk_rho = setup.exp_bytes(pk_elt, &rho_bytes).expect("pk^rho");
-            let f_v = setup.power_of_f_bytes(&share_bytes).expect("f^v");
+            let pk_rho = setup.pk_pow(&pks[idx], &rho_int).expect("pk^rho");
+            let f_v = setup.power_of_f(&val).expect("f^v");
             let c2 = setup.compose(&pk_rho, &f_v).expect("compose");
             c2s_sh.push(c2);
         }
         let c2_refs: Vec<&_> = c2s_sh.iter().collect();
         let proof = RShProof::prove(
-            &mut setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs, &rho_bytes,
+            &mut setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs, &rho_int,
         )
         .expect("prove");
         assert!(
@@ -833,7 +725,7 @@ fn class_group_zk(c: &mut Criterion) {
         g.bench_function("r_sh/prove", |b| {
             b.iter(|| {
                 RShProof::prove(
-                    &mut setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs, &rho_bytes,
+                    &mut setup, &party_ids, t, &pk_refs, &c1_sh, &c2_refs, &rho_int,
                 )
             })
         });

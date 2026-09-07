@@ -125,8 +125,8 @@ fn aggregate_products(
     c2s: &[&Qfi],
 ) -> ClResult<(Qfi, Qfi)> {
     let n = party_ids.len();
-    let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
-    let M = Integer::from_digits(&setup.cl().m().to_bytes_msf(), Order::Msf);
+    let q = setup.cl().q().clone();
+    let M = setup.cl().m().clone();
 
     // degree = n - t - 2  (the dual code degree).
     // When n <= t + 1, degree < 0 and there is no dual code check.
@@ -155,7 +155,7 @@ fn aggregate_products(
     // fold each product with a single shared-squaring multi-exponentiation
     // (`prod_U = ∏ pk_i^{exp_i}`, `prod_V = ∏ c2_i^{exp_i}`) instead of `n`
     // independent exp+compose pairs — the dominant O(n^2) keygen cost.
-    let mut exps: Vec<Vec<u8>> = Vec::with_capacity(n);
+    let mut exps: Vec<Integer> = Vec::with_capacity(n);
     for (idx, &i_id) in party_ids.iter().enumerate() {
         let i_big = Integer::from(i_id);
 
@@ -182,12 +182,12 @@ fn aggregate_products(
 
         // exp_i = c_i * M + den.
         let exp_i = Integer::from(&challenges[idx] * &M) + &den;
-        exps.push(exp_i.to_digits::<u8>(Order::Msf));
+        exps.push(exp_i);
     }
 
     let pk_refs: Vec<&Qfi> = pk_elts.iter().collect();
-    let prod_U = setup.multiexp_bytes(&pk_refs, &exps)?;
-    let prod_V = setup.multiexp_bytes(c2s, &exps)?;
+    let prod_U = setup.multiexp(&pk_refs, &exps)?;
+    let prod_V = setup.multiexp(c2s, &exps)?;
 
     Ok((prod_U, prod_V))
 }
@@ -222,7 +222,7 @@ impl RShProof {
     /// - `pks`: public keys indexed same as `party_ids`.
     /// - `c1`: shared ciphertext component `h^rho`.
     /// - `c2s`: per-party `c2_j` values indexed same as `party_ids`.
-    /// - `rho_bytes`: witness randomness rho (big-endian bytes).
+    /// - `rho`: witness randomness rho.
     #[allow(non_snake_case)]
     #[allow(unused_variables)]
     pub fn prove(
@@ -232,7 +232,7 @@ impl RShProof {
         pks: &[&ClHsmqkPublicKey],
         c1: &Qfi,
         c2s: &[&Qfi],
-        rho_bytes: &[u8],
+        rho: &Integer,
     ) -> ClResult<Self> {
         let n = party_ids.len();
         assert_eq!(n, pks.len());
@@ -252,26 +252,23 @@ impl RShProof {
 
         // 2. Compute the randomness bound for the Schnorr-like proof.
         //    B = secretkey_bound * 2^soundness * 2^lambda_distance
-        let sk_bound = Integer::from_digits(&setup.secretkey_bound_bytes()?, Order::Msf);
-        let B = Integer::from(&sk_bound << (SOUNDNESS_BITS + LAMBDA_DISTANCE));
+        let sk_bound = setup.secretkey_bound();
+        let B = Integer::from(sk_bound << (SOUNDNESS_BITS + LAMBDA_DISTANCE));
 
         // 3. Sample rho0 in [0, B).  We use sample_random and reduce mod B.
-        let rho0_raw = sample_random(setup)?;
-        let rho0_uint = Integer::from_digits(&rho0_raw, Order::Msf);
+        let rho0_uint = sample_random(setup)?;
         let rho0 = rho0_uint % &B;
-        let rho0_bytes = rho0.to_digits::<u8>(Order::Msf);
 
         // 4. Compute commitments R0 = h^{rho0}, V0 = prod_U^{rho0}.
-        let R0 = setup.power_of_h_bytes(&rho0_bytes)?;
-        let V0 = setup.exp_bytes(&prod_U, &rho0_bytes)?;
+        let R0 = setup.power_of_h(&rho0)?;
+        let V0 = setup.exp(&prod_U, &rho0)?;
 
         // 5. Fiat-Shamir challenge: k = H(prod_U, prod_V, R0, V0).
         let k_bytes = schnorr_challenge(&prod_U, &prod_V, &R0, &V0)?;
 
         // 6. Response: rho_response = k * rho + rho0.
         let k_uint = Integer::from_digits(&k_bytes, Order::Msf);
-        let rho_uint = Integer::from_digits(rho_bytes, Order::Msf);
-        let rho_response = k_uint * rho_uint + rho0;
+        let rho_response = k_uint * rho + rho0;
 
         Ok(Self {
             k: k_bytes,
@@ -303,9 +300,9 @@ impl RShProof {
 
         // 1. Check rho_response is in range: 0 <= rho_response <= bound.
         //    bound = (1 + 2^lambda_distance) * 2^soundness * secretkey_bound
-        let sk_bound = Integer::from_digits(&setup.secretkey_bound_bytes()?, Order::Msf);
+        let sk_bound = setup.secretkey_bound();
         let factor = Integer::two_pow(LAMBDA_DISTANCE) + 1;
-        let upper_bound = Integer::from(&sk_bound << SOUNDNESS_BITS) * &factor;
+        let upper_bound = Integer::from(sk_bound << SOUNDNESS_BITS) * &factor;
 
         let rho_resp = Integer::from_digits(&self.rho_response, Order::Msf);
         if rho_resp > upper_bound {
@@ -316,18 +313,15 @@ impl RShProof {
         let (prod_U, prod_V) = aggregate_products(setup, party_ids, threshold, pks, c2s)?;
 
         // 3. Reconstruct R0: R = h^{rho_response}, R_tmp = R / c1^k.
-        let rho_resp_bytes = rho_resp.to_digits::<u8>(Order::Msf);
-        let R = setup.power_of_h_bytes(&rho_resp_bytes)?;
-        let mut c1_k = setup.exp_bytes(c1, &self.k)?;
+        let k = Integer::from_digits(&self.k, Order::Msf);
+        let R = setup.power_of_h(&rho_resp)?;
+        let mut c1_k = setup.exp(c1, &k)?;
         c1_k.neg();
         let R_tmp = setup.compose(&R, &c1_k)?;
 
         // 4. Reconstruct V0: V_tmp = prod_U^{rho_response} · prod_V^{-k}, via one
         // shared-squaring multi-exp (both bases vary per proof).
-        let V_tmp = setup.multiexp_signed_bytes(
-            &[&prod_U, &prod_V],
-            &[(false, rho_resp_bytes.clone()), (true, self.k.clone())],
-        )?;
+        let V_tmp = setup.multiexp(&[&prod_U, &prod_V], &[rho_resp, -k])?;
 
         // 5. Check: k == H(prod_U, prod_V, R_tmp, V_tmp).
         let k_check = schnorr_challenge(&prod_U, &prod_V, &R_tmp, &V_tmp)?;
@@ -342,23 +336,21 @@ mod tests {
 
     /// Creates a PVSS dealing with shared randomness rho.
     ///
-    /// Returns (c1, c2s, rho_bytes).
+    /// Returns (c1, c2s, rho).
     #[allow(non_snake_case)]
     fn create_pvss_ciphertexts(
         setup: &mut ClSetup,
         party_ids: &[u16],
         threshold: u16,
         pks: &[&ClHsmqkPublicKey],
-    ) -> ClResult<(Qfi, Vec<Qfi>, Vec<u8>)> {
-        let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
+    ) -> ClResult<(Qfi, Vec<Qfi>, Integer)> {
+        let q = setup.cl().q().clone();
         let n = party_ids.len();
 
         // Generate degree-(t-1) polynomial coefficients.
         let mut coeffs = Vec::with_capacity(threshold as usize);
         for _ in 0..threshold {
-            let r = sample_random_mod_q(setup)?;
-            let r_val = Integer::from_digits(&r, Order::Msf);
-            coeffs.push(r_val);
+            coeffs.push(sample_random_mod_q(setup)?);
         }
 
         // Evaluate polynomial at each party's id.
@@ -371,34 +363,34 @@ mod tests {
                 val = (val + coeff * &x_pow) % &q;
                 x_pow = x_pow * &x % &q;
             }
-            shares.push(val.to_digits::<u8>(Order::Msf));
+            shares.push(val);
         }
 
         // Sample shared randomness rho.
-        let rho_bytes = {
+        let rho = {
             let (sk, _) = setup.keygen()?;
-            setup.sk_to_bytes(&sk)?
+            setup.sk_to_integer(&sk)
         };
 
         // c1 = h^rho.
-        let c1 = setup.power_of_h_bytes(&rho_bytes)?;
+        let c1 = setup.power_of_h(&rho)?;
 
         // c2_j = pk_j^rho * f^{v_j}.
         let mut c2s = Vec::with_capacity(n);
         for (idx, share) in shares.iter().enumerate() {
             let pk_elt = pks[idx].elt();
-            let pk_rho = setup.exp_bytes(pk_elt, &rho_bytes)?;
-            let f_v = setup.power_of_f_bytes(share)?;
+            let pk_rho = setup.exp(pk_elt, &rho)?;
+            let f_v = setup.power_of_f(share)?;
             let c2 = setup.compose(&pk_rho, &f_v)?;
             c2s.push(c2);
         }
 
-        Ok((c1, c2s, rho_bytes))
+        Ok((c1, c2s, rho))
     }
 
     #[test]
     fn r_sh_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("20001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(20001u64).expect("setup");
         let n = 5u16;
         let t = 2u16;
 
@@ -430,7 +422,7 @@ mod tests {
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_sh_rejects_wrong_rho() {
-        let mut setup = ClSetup::new_secp256k1("20002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(20002u64).expect("setup");
         let n = 5u16;
         let t = 2u16;
 
@@ -450,7 +442,7 @@ mod tests {
         // Prove with wrong rho.
         let wrong_rho = {
             let (sk2, _) = setup.keygen().expect("kg2");
-            setup.sk_to_bytes(&sk2).expect("bytes")
+            setup.sk_to_integer(&sk2)
         };
         let proof = RShProof::prove(
             &mut setup, &party_ids, t, &pk_refs, &c1, &c2_refs, &wrong_rho,
@@ -465,7 +457,7 @@ mod tests {
     #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_sh_rejects_wrong_shares() {
-        let mut setup = ClSetup::new_secp256k1("20003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(20003u64).expect("setup");
         let n = 5u16;
         let t = 2u16;
 
@@ -485,9 +477,9 @@ mod tests {
         // Tamper with one c2: replace c2[0] with a random element.
         let mut tampered_c2s = c2s;
         let random_val = sample_random_mod_q(&mut setup).expect("rand");
-        let f_bad = setup.power_of_f_bytes(&random_val).expect("f_bad");
+        let f_bad = setup.power_of_f(&random_val).expect("f_bad");
         let pk0_elt = &pks[0].elt();
-        let pk0_rho = setup.exp_bytes(pk0_elt, &rho).expect("pk0^rho");
+        let pk0_rho = setup.exp(pk0_elt, &rho).expect("pk0^rho");
         tampered_c2s[0] = setup.compose(&pk0_rho, &f_bad).expect("compose");
 
         let c2_refs: Vec<&Qfi> = tampered_c2s.iter().collect();
@@ -504,7 +496,7 @@ mod tests {
     #[ignore = "redundant ZK negative test"]
     #[test]
     fn r_sh_trivial_when_n_leq_t_plus_1() {
-        let mut setup = ClSetup::new_secp256k1("20004").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(20004u64).expect("setup");
         // n = 3, t = 2 => degree = 3 - 2 - 2 = -1 < 0 => trivial.
         let n = 3u16;
         let t = 2u16;

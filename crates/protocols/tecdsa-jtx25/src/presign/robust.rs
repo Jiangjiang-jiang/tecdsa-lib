@@ -46,7 +46,6 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
-use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
@@ -54,7 +53,7 @@ use tecdsa_class_group::{
     zk::{r_dl_cl::RDlClProof, r_enc::REncProof, r_pc_dl::RPcDlProof},
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
 
@@ -257,8 +256,8 @@ struct Round1State {
     my_id: PartyId,
     all_parties: Vec<PartyId>,
     phi_i: k256::Scalar,
-    _phi_i_bytes: Vec<u8>,
-    _enc_randomness: Vec<u8>,
+    _phi_i_int: rug::Integer,
+    _enc_randomness: rug::Integer,
     /// Own k_i secret (from DRG.Gen, used in DRG.Comb via own_drg_gen).
     _own_k_i: k256::Scalar,
     /// Own DRG.Gen output (for DRG.Comb in Round 2).
@@ -405,31 +404,23 @@ impl Jtx25RobustPresignMachine {
         };
 
         // --- Step 1: Sample phi_i ---
-        let phi_i = {
+        let phi_i_int = {
             let (sk, _) = setup.keygen()?;
-            let sk_dec = sk.to_string();
-            let q_dec = setup.cl().q().to_string();
-            let q = Integer::from_str_radix(&q_dec, 10)
-                .map_err(|e| Jtx25Error::ScalarConversion(format!("parse q: {e}")))?;
-            let bu = Integer::from_str_radix(&sk_dec, 10)
-                .map_err(|e| Jtx25Error::ScalarConversion(format!("parse sk: {e}")))?;
-            let reduced = bu % &q;
-            k256::Secp256k1::scalar_from_integer(&reduced)
+            setup.sk_to_integer(&sk).modulo(setup.cl().q())
         };
-        let phi_i_bytes = phi_i.to_bytes_vec();
+        let phi_i = k256::Secp256k1::scalar_from_integer(&phi_i_int);
 
         // --- Step 2: Encrypt phi_i under aggregate CL pk ---
         let (r_sk, _) = setup.keygen()?;
-        let enc_randomness = setup.sk_to_bytes(&r_sk)?;
-        let phi_bar_i =
-            setup.encrypt_with_r_bytes(&key_mat.cl_pk, &phi_i_bytes, &enc_randomness)?;
+        let enc_randomness = setup.sk_to_integer(&r_sk);
+        let phi_bar_i = setup.encrypt_with_r(&key_mat.cl_pk, &phi_i_int, &enc_randomness)?;
 
         // Generate R_enc proof.
         let r_enc_proof = REncProof::prove(
             &mut setup,
             &key_mat.cl_pk,
             &phi_bar_i,
-            &phi_i_bytes,
+            &phi_i_int,
             &enc_randomness,
         )?;
 
@@ -481,7 +472,7 @@ impl Jtx25RobustPresignMachine {
             r_enc_proof: r_enc_proof_ser,
             drg_commitments: drg_commits_ser,
             drg_ciphertext: drg_ct_ser,
-            drg_pc_bytes: drg_out.pc_bytes.clone(),
+            drg_pc_bytes: drg_out.pc.to_bytes_vec(),
             drg_proof: drg_proof_ser,
             drg_shares: drg_shares_ser,
         };
@@ -512,7 +503,7 @@ impl Jtx25RobustPresignMachine {
             my_id,
             all_parties,
             phi_i,
-            _phi_i_bytes: phi_i_bytes,
+            _phi_i_int: phi_i_int,
             _enc_randomness: enc_randomness,
             _own_k_i: k_i,
             own_drg_gen: drg_out,
@@ -598,11 +589,11 @@ impl Jtx25RobustPresignMachine {
         let r_point_i = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * k_i;
 
         // --- Step 2b: DRG.RevealExp — prove R_i = g^{k_i} via R_PC-DL ---
-        let k_i_bytes = k_i.to_bytes_vec();
+        let k_i_int = k_i.to_integer();
         let y_k = setup
-            .power_of_f_bytes(&k_i_bytes)
+            .power_of_f(&k_i_int)
             .map_err(|e| TecdsaError::Other(format!("power_of_f: {e}")))?;
-        let pi_pc_dl = RPcDlProof::prove(setup, &y_k, &k_i_bytes)
+        let pi_pc_dl = RPcDlProof::prove(setup, &y_k, &k_i_int)
             .map_err(|e| TecdsaError::Other(format!("R_PC-DL prove: {e}")))?;
 
         // --- Step 3: Compute phi_bar = sum of all phi_bar_j ---
@@ -629,9 +620,9 @@ impl Jtx25RobustPresignMachine {
             tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(&party_ids_1based);
         let lambda_i = lagrange_coeffs[my_idx];
         let lambda_x_i = lambda_i * key_mat.x_i;
-        let lambda_x_i_bytes = lambda_x_i.to_bytes_vec();
+        let lambda_x_i_int = lambda_x_i.to_integer();
 
-        let phi_bar_x_i = scalar_mul_ct(setup, &phi_bar, &lambda_x_i_bytes)
+        let phi_bar_x_i = scalar_mul_ct(setup, &phi_bar, &lambda_x_i_int)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_x_i: {e}")))?;
 
         // X_i_lambda = (lambda_i * x_i) * G for the R_dl-cl proof
@@ -643,16 +634,15 @@ impl Jtx25RobustPresignMachine {
             &x_i_lambda_point,
             &phi_bar,
             &phi_bar_x_i,
-            &lambda_x_i_bytes,
+            &lambda_x_i_int,
         )
         .map_err(|e| TecdsaError::Other(format!("R_dl-cl x prove: {e}")))?;
 
         // --- Step 5: Compute phi_bar_k_i = phi_bar * k_i ---
-        let k_i_bytes = k_i.to_bytes_vec();
-        let phi_bar_k_i = scalar_mul_ct(setup, &phi_bar, &k_i_bytes)
+        let phi_bar_k_i = scalar_mul_ct(setup, &phi_bar, &k_i_int)
             .map_err(|e| TecdsaError::Other(format!("scalar_mul phi_bar_k_i: {e}")))?;
 
-        let pi_dl_cl_k = RDlClProof::prove(setup, &r_point_i, &phi_bar, &phi_bar_k_i, &k_i_bytes)
+        let pi_dl_cl_k = RDlClProof::prove(setup, &r_point_i, &phi_bar, &phi_bar_k_i, &k_i_int)
             .map_err(|e| TecdsaError::Other(format!("R_dl-cl k prove: {e}")))?;
 
         // --- Step 6: Build Round 2 payload ---
@@ -681,7 +671,7 @@ impl Jtx25RobustPresignMachine {
             r_point_bytes: r_point_i.to_bytes().to_vec(),
             drg_comb_ct: drg_comb_ct_ser,
             drg_comb_proof: drg_comb_proof_ser,
-            drg_comb_pc_bytes: drg_comb_out.pc_bytes.clone(),
+            drg_comb_pc_bytes: drg_comb_out.pc.to_bytes_vec(),
             drg_comb_y: drg_comb_y_ser,
             pi_pc_dl: pi_pc_dl_ser,
         };
@@ -909,13 +899,15 @@ impl StateMachine for Jtx25RobustPresignMachine {
                     let drg_ct_copy = copy_ct(&self.setup, &drg_ct)
                         .map_err(|e| TecdsaError::Other(format!("copy drg_ct: {e}")))?;
                     let drg_ct_wrapped = drg_ct_copy;
+                    let drg_pc = point_from_bytes(&payload.drg_pc_bytes, "drg_pc")
+                        .map_err(TecdsaError::Other)?;
                     let drg_ok = drg_gen_verify(
                         &self.setup,
                         &from_cl_pk,
                         &drg_commitments,
                         &drg_ct_wrapped,
                         &drg_proof,
-                        &payload.drg_pc_bytes,
+                        &drg_pc,
                         &my_share,
                     )
                     .map_err(|e| TecdsaError::Other(format!("DRG verify from {from}: {e}")))?;

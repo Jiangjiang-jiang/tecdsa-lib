@@ -23,6 +23,11 @@ use crate::{
     zk::challenge_from_qfi,
 };
 
+/// Converts big-endian bytes to an `Integer` (helper for wire-format proof fields).
+fn int_from_bytes(bytes: &[u8]) -> Integer {
+    Integer::from_digits(bytes, Order::Msf)
+}
+
 /// A single proof instance for batch verification.
 ///
 /// Each instance represents a check of the form:
@@ -76,19 +81,19 @@ pub fn batch_verify(setup: &ClSetup, instances: &[BatchInstance]) -> ClResult<bo
         let mut idx_extras: Vec<&[u8]> = extra_refs.clone();
         idx_extras.push(&idx_bytes);
         let w_bytes = challenge_from_qfi(setup, b"R_batch", &weight_qfi_refs, &idx_extras)?;
-        let w = Integer::from_digits(&w_bytes, Order::Msf);
+        let w = int_from_bytes(&w_bytes);
 
         // lhs += base^{w * z}
-        let resp = Integer::from_digits(&inst.response, Order::Msf);
-        let wz = Integer::from(&w * &resp).to_digits::<u8>(Order::Msf);
-        let base_wz = setup.exp_bytes(&inst.base, &wz)?;
+        let resp = int_from_bytes(&inst.response);
+        let wz = Integer::from(&w * &resp);
+        let base_wz = setup.exp(&inst.base, &wz)?;
         lhs = setup.compose(&lhs, &base_wz)?;
 
         // rhs += commit^w * target^{w*e}
-        let commit_w = setup.exp_bytes(&inst.commitment, &w_bytes)?;
-        let chal = Integer::from_digits(&inst.challenge, Order::Msf);
-        let we = (w * chal).to_digits::<u8>(Order::Msf);
-        let target_we = setup.exp_bytes(&inst.target, &we)?;
+        let commit_w = setup.exp(&inst.commitment, &w)?;
+        let chal = int_from_bytes(&inst.challenge);
+        let we = w * chal;
+        let target_we = setup.exp(&inst.target, &we)?;
         let rhs_part = setup.compose(&commit_w, &target_we)?;
         rhs = setup.compose(&rhs, &rhs_part)?;
     }
@@ -103,16 +108,16 @@ mod tests {
 
     #[test]
     fn batch_aggregator_n_proofs() {
-        let mut setup = ClSetup::new_secp256k1("18001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(18001u64).expect("setup");
 
         // Generate 3 independent key-knowledge proofs and batch verify them.
         let mut instances = Vec::new();
         for _ in 0..3 {
             let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-            let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
+            let sk = setup.sk_to_integer(&sk_raw);
             let pk_elt = pk_raw.elt().clone();
 
-            let proof = RClKwlgProof::prove(&mut setup, &pk_raw, &sk_bytes).expect("prove");
+            let proof = RClKwlgProof::prove(&mut setup, &pk_raw, &sk).expect("prove");
 
             let h = setup.cl().h().clone();
             instances.push(BatchInstance {

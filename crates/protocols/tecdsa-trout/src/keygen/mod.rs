@@ -17,6 +17,7 @@ pub mod rounds;
 pub use machine::TroutKeygenMachine;
 pub use msg::TroutKeygenMsg;
 use rand_core::CryptoRngCore;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::cl::ClSetup;
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_evrf::EvrfSecretKey;
@@ -81,21 +82,21 @@ pub fn trusted_dealer_keygen(
     let mut ct_components = Vec::new();
     let mut deltas = Vec::new();
     for share in &shares {
-        let x_i_bytes = share.value.to_bytes_vec();
+        let x_i_int = share.value.to_integer();
 
         // Generate random delta_i (encryption randomness)
         let (sk_tmp, _) = setup.keygen()?;
-        let delta_i = setup.sk_to_bytes(&sk_tmp)?;
+        let delta_i_int = setup.sk_to_integer(&sk_tmp);
 
         // C_tilde_i = Enc(delta_i, x_i)
-        let ct = setup.encrypt_with_r_bytes(&cl_pk, &x_i_bytes, &delta_i)?;
+        let ct = setup.encrypt_with_r(&cl_pk, &x_i_int, &delta_i_int)?;
         let (c1, c2) = setup.ct_components(&ct)?;
 
         // Serialise QFI components
         let (c1_a, c1_b, c1_c) = qfi_to_abc(&c1)?;
         let (c2_a, c2_b, c2_c) = qfi_to_abc(&c2)?;
         ct_components.push((c1_a, c1_b, c1_c, c2_a, c2_b, c2_c));
-        deltas.push(delta_i);
+        deltas.push(delta_i_int.to_bytes_msf());
     }
 
     // 5. Build key shares

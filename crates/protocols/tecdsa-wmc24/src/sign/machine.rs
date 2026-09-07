@@ -3,8 +3,10 @@
 
 use std::collections::BTreeMap;
 
+use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
-    cl::{ClCiphertext, ClPublicKey, ClSetup, Qfi},
+    cl::{parse_int_auto, ClCiphertext, ClPublicKey, ClSetup, Qfi},
     t_cl::{self as threshold_cl, PartialDecryption as ClPartialDecryption},
     zk::r_part_dec::RPartDecProof,
 };
@@ -53,10 +55,12 @@ impl Wmc24OnlineSignMachine {
         // Rebuild the (global) CL public parameters from the stored seed, then
         // delegate. Benches holding the shared `ClSetup` call `new_with_setup`
         // to avoid timing this one-time global setup as online-sign cost.
+        let seed = parse_int_auto(&presignature.cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if presignature.use_128bit_security {
-            ClSetup::new_secp256k1_128bit(&presignature.cl_setup_seed)
+            ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            ClSetup::new_secp256k1(&presignature.cl_setup_seed)
+            ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup: {e}")))?;
         Self::new_with_setup(my_id, all_parties, presignature, message, public_key, setup)
@@ -77,10 +81,10 @@ impl Wmc24OnlineSignMachine {
         }
 
         let m = hash_message_to_scalar(message);
-        let m_bytes = m.to_bytes_vec();
+        let m_int = m.to_integer();
         let message_data = DataToSign::from_digest(m);
         let r_x = presignature.r_x;
-        let r_x_bytes = r_x.to_bytes_vec();
+        let r_x_int = r_x.to_integer();
 
         // Reconstruct k_bar ciphertext.
         let kb_c1 = Qfi::from_bytes(&presignature.k_bar_c1_abc.data);
@@ -124,12 +128,12 @@ impl Wmc24OnlineSignMachine {
         // Each signature ciphertext component is the two-base product
         // `k_bar^m · xk_bar^{r_x}`; fold it with one shared-squaring
         // dual-exponentiation instead of two exps + a compose.
-        let exps = [m_bytes.to_vec(), r_x_bytes.to_vec()];
+        let exps = [m_int.clone(), r_x_int.clone()];
         let sig_c1 = setup
-            .multiexp_bytes(&[&kb_c1_comp, &xk_c1_comp], &exps)
+            .multiexp(&[&kb_c1_comp, &xk_c1_comp], &exps)
             .map_err(|e| TecdsaError::Other(format!("dualexp sig c1: {e}")))?;
         let sig_c2 = setup
-            .multiexp_bytes(&[&kb_c2_comp, &xk_c2_comp], &exps)
+            .multiexp(&[&kb_c2_comp, &xk_c2_comp], &exps)
             .map_err(|e| TecdsaError::Other(format!("dualexp sig c2: {e}")))?;
         let c_sig = setup
             .ct_from_components(&sig_c1, &sig_c2)
@@ -138,7 +142,7 @@ impl Wmc24OnlineSignMachine {
         // Partial decrypt c_sig.
         // party_index is 1-based (matches PartyId convention and t-CL evaluation points).
         let my_party_index = presignature.party_index as usize;
-        let sk_share = &presignature.cl_sk_share;
+        let sk_share = Integer::from_bytes_msf(&presignature.cl_sk_share);
 
         let my_pk_abc = presignature
             .cl_pk_share_abcs
@@ -153,9 +157,9 @@ impl Wmc24OnlineSignMachine {
             .ct_components(&c_sig)
             .map_err(|e| TecdsaError::Other(format!("c_sig comp: {e}")))?;
         let pc = setup
-            .exp_bytes(&sig_c1_comp, sk_share)
+            .exp(&sig_c1_comp, &sk_share)
             .map_err(|e| TecdsaError::Other(format!("pc: {e}")))?;
-        let pi = RPartDecProof::prove(&mut setup, &my_pk_raw, &c_sig, &pc, sk_share)
+        let pi = RPartDecProof::prove(&mut setup, &my_pk_raw, &c_sig, &pc, &sk_share)
             .map_err(|e| TecdsaError::Other(format!("pi: {e}")))?;
 
         let pc_ser =
@@ -223,12 +227,12 @@ impl Wmc24OnlineSignMachine {
             });
         }
 
-        let s_bytes = threshold_cl::final_decrypt(&self.setup, &self.c_sig, n_parties_dkg, &pd_s)
+        let s_int = threshold_cl::final_decrypt(&self.setup, &self.c_sig, n_parties_dkg, &pd_s)
             .map_err(|e| TecdsaError::Other(format!("final_decrypt: {e}")))?;
 
         // s = km + rkx -- this is already the s value for ECDSA with R = g^{1/k}.
         // ECDSA verify: g^{s^{-1}m} * X^{s^{-1}r} = g^{(m+rx)/s} = g^{(m+rx)/(km+rkx)} = g^{1/k} = R
-        let s_raw = k256::Secp256k1::scalar_from_bytes(&s_bytes);
+        let s_raw = k256::Secp256k1::scalar_from_integer(&s_int);
         let s = low_s_normalize::<k256::Secp256k1>(s_raw);
 
         let sig = Signature { r: r_x, s };

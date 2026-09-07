@@ -47,7 +47,6 @@
 
 pub mod machine;
 
-use rug::{integer::Order, Integer};
 use tecdsa_class_group::{
     cl::ClSetup,
     scaled_decrypt::{
@@ -55,7 +54,7 @@ use tecdsa_class_group::{
         compute_f_share, ScaledDecryptPartyInput, ScaledDecryptPublic,
     },
 };
-use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 use tecdsa_protocol::ecdsa::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -88,8 +87,8 @@ pub fn sign_round2(
 ) -> TroutResult<Signature<k256::Secp256k1>> {
     let _n = all_presigns.len();
     let r_scalar = all_presigns[0].r_scalar;
-    let r_bytes = r_scalar.to_bytes_vec();
-    let m_bytes = (message.digest()).to_bytes_vec();
+    let r_int = r_scalar.to_integer();
+    let m_int = message.digest().to_integer();
 
     // ---------------------------------------------------------------
     // Reconstruct per-party components from broadcasts
@@ -106,9 +105,9 @@ pub fn sign_round2(
         let c2 = qfi_from_abc(c2_a, c2_b, c2_c)?;
         let kt_ct = setup.ct_from_components(&c1, &c2)?;
 
-        let cl_ec_ok = bcast
-            .pi_cl_ec
-            .verify(setup, cl_pk, &kt_ct, &bcast.r_i_bytes)?;
+        let r_i_point = k256::ProjectivePoint::from_bytes_slice(&bcast.r_i_bytes)
+            .ok_or_else(|| TroutError::InvalidParam("invalid R_i point".into()))?;
+        let cl_ec_ok = bcast.pi_cl_ec.verify(setup, cl_pk, &kt_ct, &r_i_point)?;
         if !cl_ec_ok {
             return Err(TroutError::ProofFailed(format!(
                 "R_CL-EC proof failed for party {}",
@@ -173,14 +172,14 @@ pub fn sign_round2(
     // ---------------------------------------------------------------
     let mut z_components = Vec::new();
     for (c1, c2) in &ct_scaled_components {
-        let z_c1 = setup.exp_bytes(c1, &r_bytes)?;
-        let z_c2 = setup.exp_bytes(c2, &r_bytes)?;
+        let z_c1 = setup.exp(c1, &r_int)?;
+        let z_c2 = setup.exp(c2, &r_int)?;
         z_components.push((z_c1, z_c2));
     }
 
     // Add Enc(0, H(m)) = (identity, f^m) to the first party's Z_tilde.
     // We replace z_components[0] in-place: keep c1, update c2.
-    let f_m = setup.power_of_f_bytes(&m_bytes)?;
+    let f_m = setup.power_of_f(&m_int)?;
     let (old_c1, old_c2) = z_components.remove(0);
     let new_z0_c2 = setup.compose(&old_c2, &f_m)?;
     z_components.insert(0, (old_c1, new_z0_c2));
@@ -205,7 +204,7 @@ pub fn sign_round2(
         .map(|p| ScaledDecryptPartyInput {
             alpha_i: p.alpha_i.clone(),
             beta_i: p.beta_i.clone(),
-            b_i: p.u_i.to_bytes_vec(),
+            b_i: p.u_i.to_integer(),
         })
         .collect();
 
@@ -214,7 +213,7 @@ pub fn sign_round2(
         let f_i = compute_f_share(setup, input, &sd1_public)?;
         f1_shares.push(f_i);
     }
-    let uk = k256::Secp256k1::scalar_from_bytes(&aggregate_and_solve(setup, &f1_shares)?);
+    let uk = k256::Secp256k1::scalar_from_integer(&aggregate_and_solve(setup, &f1_shares)?);
 
     // ---------------------------------------------------------------
     // Scaled Decryption #2: compute u * (H(m) + r*x)
@@ -236,14 +235,12 @@ pub fn sign_round2(
     let sd2_inputs: Vec<ScaledDecryptPartyInput> = all_presigns
         .iter()
         .map(|p| {
-            let r_val = Integer::from_digits(&r_scalar.to_bytes_vec(), Order::Msf);
-            let lid_val = Integer::from_digits(&p.l_i_delta_i, Order::Msf);
-            let alpha_z = (r_val * lid_val).to_digits::<u8>(Order::Msf);
+            let alpha_z = r_int.clone() * p.l_i_delta_i.clone();
 
             ScaledDecryptPartyInput {
                 alpha_i: alpha_z,
                 beta_i: p.beta_i.clone(),
-                b_i: p.u_i.to_bytes_vec(),
+                b_i: p.u_i.to_integer(),
             }
         })
         .collect();
@@ -253,7 +250,7 @@ pub fn sign_round2(
         let f_i = compute_f_share(setup, input, &sd2_public)?;
         f2_shares.push(f_i);
     }
-    let u_mx = k256::Secp256k1::scalar_from_bytes(&aggregate_and_solve(setup, &f2_shares)?);
+    let u_mx = k256::Secp256k1::scalar_from_integer(&aggregate_and_solve(setup, &f2_shares)?);
 
     // ---------------------------------------------------------------
     // Compute s = (u*k)^{-1} * u*(H(m)+r*x)

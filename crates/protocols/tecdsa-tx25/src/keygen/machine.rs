@@ -3,7 +3,10 @@
 
 use std::collections::BTreeMap;
 
-use tecdsa_class_group::{cl::ClSetup, zk::r_key::RKeyProof};
+use tecdsa_class_group::{
+    cl::{parse_int_auto, ClSetup},
+    zk::r_key::RKeyProof,
+};
 use tecdsa_core::TecdsaError;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
@@ -100,15 +103,13 @@ impl Tx25KeygenMachine {
         // }
 
         // Step 1 (per-party CL keypair) is provided by the caller.
-        let cl_sk_decimal = setup
-            .sk_to_bytes(&cl_sk_raw)
-            .map_err(|e| TecdsaError::Other(format!("sk_to_bytes failed: {e}")))?;
+        let cl_sk_int = setup.sk_to_integer(&cl_sk_raw);
 
         // Keep the CL public key element for wire serialization.
         let cl_pk_qfi = cl_pk_raw.elt().clone();
 
         // Step 2: Generate R_key proof.
-        let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_decimal)
+        let proof = RKeyProof::prove(&mut setup, &cl_pk_raw, &cl_sk_int)
             .map_err(|e| TecdsaError::Other(format!("R_key prove failed: {e}")))?;
 
         // Step 3: Serialize and queue Round 1 broadcast.
@@ -131,7 +132,7 @@ impl Tx25KeygenMachine {
             threshold,
             cl_sk_raw,
             cl_pk_raw,
-            cl_sk_decimal,
+            cl_sk_int,
             cl_pk_qfi,
             received: BTreeMap::new(),
             outgoing,
@@ -171,10 +172,12 @@ impl Tx25KeygenMachine {
         cl_setup_seed: &str,
         use_128bit_security: bool,
     ) -> tecdsa_core::Result<Self> {
+        let seed = parse_int_auto(cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if use_128bit_security {
-            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+            ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            ClSetup::new_secp256k1(cl_setup_seed)
+            ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 

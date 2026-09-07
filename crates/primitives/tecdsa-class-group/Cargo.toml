@@ -23,10 +23,10 @@ zeroize = { workspace = true }
 subtle = { workspace = true }
 tecdsa-curve = { workspace = true, features = ["secp256k1"] }
 tecdsa-protocol = { workspace = true }
+tecdsa-vss = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
-tecdsa-vss = { workspace = true }
 
 [features]
 gmp-hgcd = []

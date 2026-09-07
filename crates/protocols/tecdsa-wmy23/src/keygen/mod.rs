@@ -160,10 +160,12 @@ impl Wmy23KeygenMachine {
         cl_setup_seed: &str,
         use_128bit_security: bool,
     ) -> tecdsa_core::Result<Self> {
+        let seed = tecdsa_class_group::cl::parse_int_auto(cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if use_128bit_security {
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            tecdsa_class_group::cl::ClSetup::new_secp256k1(cl_setup_seed)
+            tecdsa_class_group::cl::ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 

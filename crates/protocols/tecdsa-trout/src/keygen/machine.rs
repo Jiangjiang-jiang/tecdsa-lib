@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::PrimeField;
 use rand::RngCore;
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
@@ -64,7 +64,7 @@ pub struct TroutKeygenMachine {
 
     // Intermediate values computed during R2->R3 transition, consumed during finalize.
     stash_combined_share: Option<k256::Scalar>,
-    stash_delta_i: Option<Vec<u8>>,
+    stash_delta_i: Option<rug::Integer>,
     stash_public_key: Option<k256::ProjectivePoint>,
     stash_public_shares: Option<Vec<k256::ProjectivePoint>>,
     stash_cl_pk_abc: Option<(String, String, String)>,
@@ -84,7 +84,8 @@ impl Drop for TroutKeygenMachine {
             s.zeroize();
         }
         if let Some(ref mut s) = self.stash_delta_i {
-            s.zeroize();
+            // `rug::Integer` doesn't implement `Zeroize`; best-effort clear.
+            *s = rug::Integer::new();
         }
         for share in self.r2_shares.values_mut() {
             share.zeroize();
@@ -248,10 +249,12 @@ impl TroutKeygenMachine {
         cl_setup_seed: &str,
         use_128bit: bool,
     ) -> tecdsa_core::Result<Self> {
+        let seed = parse_int_auto(cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if use_128bit {
-            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+            ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            ClSetup::new_secp256k1(cl_setup_seed)
+            ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 

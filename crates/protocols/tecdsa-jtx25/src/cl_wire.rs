@@ -6,6 +6,7 @@
 //! Eliminates duplication across presign, sign, and their robust variants.
 
 use elliptic_curve::group::GroupEncoding;
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "robust")]
 use tecdsa_class_group::zk::r_enc_pc::REncPcProof;
@@ -168,11 +169,11 @@ pub(crate) fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::Projec
 pub(crate) fn scalar_mul_ct(
     setup: &ClSetup,
     ct: &ClCiphertext,
-    x_bytes: &[u8],
+    x: &Integer,
 ) -> Result<ClCiphertext, Jtx25Error> {
     let (c1, c2) = setup.ct_components(ct)?;
-    let c1_x = setup.exp_bytes(&c1, x_bytes)?;
-    let c2_x = setup.exp_bytes(&c2, x_bytes)?;
+    let c1_x = setup.exp(&c1, x)?;
+    let c2_x = setup.exp(&c2, x)?;
     let result = setup.ct_from_components(&c1_x, &c2_x)?;
     Ok(result)
 }

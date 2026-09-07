@@ -36,133 +36,22 @@
 //! - **RevealVf**: verify `R_Dec-DL` proof.
 //! - **Aggregate**: compute aggregate public key via Lagrange interpolation.
 
-use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use elliptic_curve::CurveArithmetic;
 use k256::Secp256k1;
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
+// ---------------------------------------------------------------------------
+// Pedersen VSS: shared with `drg.rs` (`dkg_dl` reuses the same pattern).
+// ---------------------------------------------------------------------------
+/// A Pedersen VSS share for DKG-DL: index, value share, and randomness share.
+pub use crate::drg::PedersenVssShare as DkgDlPedersenShare;
 use crate::{
     cl::{Ciphertext as ClHsmqkCiphertext, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey},
+    drg::{pedersen_vss_share, pedersen_vss_verify},
     zk::{r_dec_dl::RDecDlProof, r_enc_pc::REncPcProof},
 };
-
-// ---------------------------------------------------------------------------
-// Pedersen VSS (reuses the same pattern as drg.rs)
-// ---------------------------------------------------------------------------
-
-/// A Pedersen VSS share for DKG-DL: index, value share, and randomness share.
-#[derive(Clone, Debug)]
-pub struct DkgDlPedersenShare {
-    /// 1-based participant index.
-    pub index: u16,
-    /// Value share: `f(index)`.
-    pub value: k256::Scalar,
-    /// Randomness share: `f'(index)`.
-    pub randomness: k256::Scalar,
-}
-
-/// Output of Pedersen VSS for DKG-DL.
-struct PedersenVssResult {
-    /// Shares for each party `j = 1..n`.
-    shares: Vec<DkgDlPedersenShare>,
-    /// Polynomial commitments `F_d = g^{a_d} * h^{a'_d}`, length = threshold.
-    commitments: Vec<k256::ProjectivePoint>,
-    /// The secret `chi = f(0)`.
-    secret: k256::Scalar,
-    /// The randomness `chi' = f'(0)`.
-    secret_randomness: k256::Scalar,
-}
-
-/// Create a Pedersen VSS sharing of `secret` with the given threshold and n.
-///
-/// Threshold is the reconstruction threshold: polynomial degree = threshold - 1.
-fn pedersen_vss_share_dl(
-    secret: &k256::Scalar,
-    threshold: u16,
-    n: u16,
-    rng: &mut impl CryptoRngCore,
-) -> PedersenVssResult {
-    assert!(threshold > 0, "threshold must be >= 1");
-    assert!(threshold <= n, "threshold must be <= n");
-
-    let t = threshold as usize;
-
-    // Build polynomial f(x): a_0 = secret, a_1..a_{t-1} random
-    let mut f_coeffs: Vec<k256::Scalar> = Vec::with_capacity(t);
-    f_coeffs.push(*secret);
-    for _ in 1..t {
-        f_coeffs.push(k256::Secp256k1::random_scalar(rng));
-    }
-
-    // Build polynomial f'(x): a'_0 = random, a'_1..a'_{t-1} random
-    let mut fp_coeffs: Vec<k256::Scalar> = Vec::with_capacity(t);
-    for _ in 0..t {
-        fp_coeffs.push(k256::Secp256k1::random_scalar(rng));
-    }
-
-    let g = <k256::Secp256k1 as TecdsaCurve>::generator();
-    let h = <k256::Secp256k1 as TecdsaCurve>::nums_pedersen_h();
-
-    // Commitments: F_d = g^{a_d} * h^{a'_d}
-    let commitments: Vec<k256::ProjectivePoint> = f_coeffs
-        .iter()
-        .zip(fp_coeffs.iter())
-        .map(|(a_d, ap_d)| g * a_d + h * ap_d)
-        .collect();
-
-    // Evaluate shares: for j = 1..n, share_j = (f(j), f'(j))
-    let shares: Vec<DkgDlPedersenShare> = (1..=n)
-        .map(|j| {
-            let x = k256::Scalar::from(u64::from(j));
-            let mut value = k256::Scalar::ZERO;
-            let mut randomness = k256::Scalar::ZERO;
-            let mut x_pow = k256::Scalar::ONE;
-            for d in 0..t {
-                value += f_coeffs[d] * x_pow;
-                randomness += fp_coeffs[d] * x_pow;
-                x_pow *= x;
-            }
-            DkgDlPedersenShare {
-                index: j,
-                value,
-                randomness,
-            }
-        })
-        .collect();
-
-    PedersenVssResult {
-        shares,
-        commitments,
-        secret: *secret,
-        secret_randomness: fp_coeffs[0],
-    }
-}
-
-/// Verify a Pedersen VSS share against polynomial commitments.
-///
-/// Checks: `g^{value} * h^{randomness} == prod_{d=0}^{t-1} F_d^{index^d}`
-#[must_use]
-pub fn pedersen_vss_verify_dl(
-    share: &DkgDlPedersenShare,
-    commitments: &[k256::ProjectivePoint],
-) -> bool {
-    let g = <k256::Secp256k1 as TecdsaCurve>::generator();
-    let h = <k256::Secp256k1 as TecdsaCurve>::nums_pedersen_h();
-
-    // LHS: g^{value} * h^{randomness}
-    let lhs = g * share.value + h * share.randomness;
-
-    // RHS: prod_{d=0}^{t-1} F_d^{index^d}
-    let x = k256::Scalar::from(u64::from(share.index));
-    let mut rhs = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
-    let mut x_pow = k256::Scalar::ONE;
-    for com in commitments {
-        rhs += *com * x_pow;
-        x_pow *= x;
-    }
-
-    lhs == rhs
-}
 
 // ---------------------------------------------------------------------------
 // Gen phase types
@@ -237,7 +126,7 @@ pub fn dkg_dl_gen(
     // Step 1: Sample chi_i and create Pedersen VSS.
     // Polynomial degree = threshold - 1, reconstruction needs threshold shares.
     let chi_i = k256::Secp256k1::random_scalar(rng);
-    let vss = pedersen_vss_share_dl(&chi_i, threshold as u16, n as u16, rng);
+    let vss = pedersen_vss_share(&chi_i, threshold as u16, n as u16, rng);
 
     // Step 2: For each recipient j, encrypt share and prove.
     let mut per_recipient = Vec::with_capacity(n);
@@ -248,7 +137,7 @@ pub fn dkg_dl_gen(
         let share = &vss.shares[j];
         let chi_ij = share.value;
         let chi_prime_ij = share.randomness;
-        let chi_ij_bytes = chi_ij.to_bytes_vec();
+        let chi_ij_int = chi_ij.to_integer();
 
         // EC Pedersen commitment: PC = g^{chi_ij} * h^{chi'_ij}
         // This equals evaluating the commitment polynomial at j's index.
@@ -259,22 +148,13 @@ pub fn dkg_dl_gen(
         // CL encrypt chi_ij under ek_j with explicit randomness.
         let pk_j = &all_pks[j];
         let (r_sk, _) = setup.keygen()?;
-        let r_bytes = setup.sk_to_bytes(&r_sk)?;
-        let ct = setup.encrypt_with_r_bytes(pk_j, &chi_ij_bytes, &r_bytes)?;
+        let r = setup.sk_to_integer(&r_sk);
+        let ct = setup.encrypt_with_r(pk_j, &chi_ij_int, &r)?;
 
         // R_Enc-PC proof (cross-domain): proves ct encrypts chi_ij AND
         // PC = g^{chi_ij} * h^{chi'_ij} uses the same chi_ij.
-        let pc_bytes = pc.to_bytes();
-        let chi_prime_ij_bytes = chi_prime_ij.to_bytes_vec();
-        let proof = REncPcProof::prove(
-            setup,
-            pk_j,
-            &ct,
-            pc_bytes.as_ref(),
-            &chi_ij_bytes,
-            &chi_prime_ij_bytes,
-            &r_bytes,
-        )?;
+        let chi_prime_ij_int = chi_prime_ij.to_integer();
+        let proof = REncPcProof::prove(setup, pk_j, &ct, &pc, &chi_ij_int, &chi_prime_ij_int, &r)?;
 
         per_recipient.push(DkgDlGenPerRecipient { pc, ct, proof });
         share_values.push(chi_ij);
@@ -323,17 +203,16 @@ pub fn dkg_dl_gen_verify(
     my_share: &DkgDlPedersenShare,
 ) -> ClResult<bool> {
     // Step 1: Verify Pedersen VSS share against commitments.
-    if !pedersen_vss_verify_dl(my_share, commitments) {
+    if !pedersen_vss_verify(my_share, commitments) {
         return Ok(false);
     }
 
     // Step 2: Verify R_Enc-PC proof (cross-domain).
     // The proof binds the CL ciphertext plaintext to the EC Pedersen commitment PC.
-    let pc_bytes = per_recipient.pc.to_bytes();
     let proof_ok =
         per_recipient
             .proof
-            .verify(setup, recipient_pk, &per_recipient.ct, pc_bytes.as_ref())?;
+            .verify(setup, recipient_pk, &per_recipient.ct, &per_recipient.pc)?;
     Ok(proof_ok)
 }
 
@@ -379,14 +258,14 @@ pub struct DkgDlRevealOutput {
 /// The Reveal output with combined share, public share, proof, and combined ct.
 pub fn dkg_dl_reveal(
     setup: &mut ClSetup,
-    my_sk_bytes: &[u8],
+    my_sk: &Integer,
     my_pk: &ClHsmqkPublicKey,
     received_cts: &[ClHsmqkCiphertext],
     n: usize,
 ) -> ClResult<DkgDlRevealOutput> {
     assert_eq!(received_cts.len(), n);
 
-    let sk = setup.sk_from_bytes(my_sk_bytes)?;
+    let sk = setup.sk_from_integer(my_sk)?;
 
     // Decrypt each ciphertext and sum shares.
     let mut combined_share = k256::Scalar::ZERO;
@@ -397,12 +276,10 @@ pub fn dkg_dl_reveal(
 
     for ct_j in received_cts {
         // Decrypt: chi_{ji} = CL.Dec(dk_i, c_{chi_ji})
-        let m_bytes = setup.decrypt_bytes(&sk, ct_j)?;
+        let m = setup.decrypt(&sk, ct_j)?;
 
-        // Convert decrypted bytes to scalar (reduce mod q implicitly via from_repr
-        // or manual conversion). The plaintext is already in [0, q), so interpret
-        // as a scalar.
-        let chi_ji = Secp256k1::scalar_from_bytes(&m_bytes);
+        // The plaintext is already in [0, q), so interpret as a scalar.
+        let chi_ji = Secp256k1::scalar_from_integer(&m);
         combined_share += chi_ji;
 
         // Accumulate ciphertext components: c_{x_i} = hom_sum c_{chi_ji}
@@ -419,10 +296,10 @@ pub fn dkg_dl_reveal(
 
     // Compute partial decryption: pd = c1^{sk}
     // The R_Dec-DL proof proves pk = h^{sk} and pd = c1^{sk}.
-    let pd = setup.exp_bytes(&combined_c1, my_sk_bytes)?;
+    let pd = setup.exp(&combined_c1, my_sk)?;
 
     // Prove R_Dec-DL
-    let proof = RDecDlProof::prove(setup, my_pk, &combined_ct, &pd, my_sk_bytes)?;
+    let proof = RDecDlProof::prove(setup, my_pk, &combined_ct, &pd, my_sk)?;
 
     Ok(DkgDlRevealOutput {
         combined_share,
@@ -462,8 +339,8 @@ pub fn dkg_dl_reveal_verify(
     // From the verifier's perspective: given X_i = g^{x_i} and the combined
     // ciphertext c = (c1, c2), the prover claims c2 / c1^{sk} = f^{x_i}.
     // So pd = c1^{sk} = c2 * (f^{x_i})^{-1}.
-    let x_i_bytes = reveal.combined_share.to_bytes_vec();
-    let f_xi = setup.power_of_f_bytes(&x_i_bytes)?;
+    let x_i = reveal.combined_share.to_integer();
+    let f_xi = setup.power_of_f(&x_i)?;
     let (_, c2) = setup.ct_components(&reveal.combined_ct)?;
     let mut f_xi_inv = f_xi;
     f_xi_inv.neg();
@@ -499,7 +376,7 @@ pub fn dkg_dl_aggregate(
     assert_eq!(public_shares.len(), party_indices_1based.len());
     assert!(!public_shares.is_empty());
 
-    let coeffs = lagrange_coefficients_at_zero(party_indices_1based);
+    let coeffs = tecdsa_vss::lagrange::coefficients::<k256::Secp256k1>(party_indices_1based);
 
     let mut aggregate = <k256::Secp256k1 as CurveArithmetic>::ProjectivePoint::IDENTITY;
     for (share, coeff) in public_shares.iter().zip(coeffs.iter()) {
@@ -507,31 +384,6 @@ pub fn dkg_dl_aggregate(
     }
 
     aggregate
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Lagrange coefficients at x=0 for 1-based indices over F_q.
-fn lagrange_coefficients_at_zero(indices: &[u16]) -> Vec<k256::Scalar> {
-    indices
-        .iter()
-        .map(|&i| {
-            let xi = k256::Scalar::from(u64::from(i));
-            indices
-                .iter()
-                .filter(|&&j| j != i)
-                .fold(k256::Scalar::ONE, |acc, &j| {
-                    let xj = k256::Scalar::from(u64::from(j));
-                    // l_i *= xj / (xj - xi)
-                    acc * xj
-                        * (xj - xi)
-                            .invert()
-                            .expect("distinct indices guarantee non-zero denominator")
-                })
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -552,14 +404,14 @@ mod tests {
         let n = 3;
         let t = 2; // reconstruction threshold: 2-of-2
 
-        let mut setup = ClSetup::new_secp256k1("60001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(60001u64).expect("setup");
 
         // Generate CL key pairs for all parties.
         let mut sk_bytes_vec = Vec::new();
         let mut pks = Vec::new();
         for _ in 0..n {
             let (sk, pk) = setup.keygen().expect("keygen");
-            let sk_bytes = setup.sk_to_bytes(&sk).expect("sk_bytes");
+            let sk_bytes = setup.sk_to_integer(&sk);
             sk_bytes_vec.push(sk_bytes);
             pks.push(pk);
         }
@@ -636,13 +488,13 @@ mod tests {
         let n = 3;
         let t = 2; // reconstruction threshold: 2-of-2
 
-        let mut setup = ClSetup::new_secp256k1("60002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(60002u64).expect("setup");
 
         let mut sk_bytes_vec = Vec::new();
         let mut pks = Vec::new();
         for _ in 0..n {
             let (sk, pk) = setup.keygen().expect("keygen");
-            sk_bytes_vec.push(setup.sk_to_bytes(&sk).expect("sk_bytes"));
+            sk_bytes_vec.push(setup.sk_to_integer(&sk));
             pks.push(pk);
         }
 
@@ -676,13 +528,13 @@ mod tests {
         let n = 2;
         let t = 2; // reconstruction threshold: 2-of-2
 
-        let mut setup = ClSetup::new_secp256k1("60003").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(60003u64).expect("setup");
 
         let mut sk_bytes_vec = Vec::new();
         let mut pks = Vec::new();
         for _ in 0..n {
             let (sk, pk) = setup.keygen().expect("keygen");
-            sk_bytes_vec.push(setup.sk_to_bytes(&sk).expect("sk_bytes"));
+            sk_bytes_vec.push(setup.sk_to_integer(&sk));
             pks.push(pk);
         }
 
