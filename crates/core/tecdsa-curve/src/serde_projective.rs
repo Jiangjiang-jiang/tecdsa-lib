@@ -18,15 +18,7 @@
 use elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-fn repr_from_slice<T: GroupEncoding>(bytes: &[u8]) -> Option<T::Repr> {
-    let mut repr = T::Repr::default();
-    let buf = repr.as_mut();
-    if bytes.len() != buf.len() {
-        return None;
-    }
-    buf.copy_from_slice(bytes);
-    Some(repr)
-}
+use crate::PointExt;
 
 /// Serialize a `GroupEncoding` type as its canonical byte representation.
 ///
@@ -54,7 +46,7 @@ where
     D: Deserializer<'de>,
 {
     let bytes = Vec::<u8>::deserialize(deserializer)?;
-    point_from_canonical_bytes::<T>(&bytes)
+    T::from_bytes_slice(&bytes)
         .ok_or_else(|| serde::de::Error::custom("invalid projective point encoding"))
 }
 
@@ -62,6 +54,8 @@ where
 pub mod vec {
     use elliptic_curve::group::GroupEncoding;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::PointExt;
 
     /// Serialize a `Vec<T>` where each `T: GroupEncoding`.
     ///
@@ -95,7 +89,7 @@ pub mod vec {
         byte_vecs
             .into_iter()
             .map(|bytes| {
-                super::point_from_canonical_bytes::<T>(&bytes)
+                T::from_bytes_slice(&bytes)
                     .ok_or_else(|| serde::de::Error::custom("invalid projective point encoding"))
             })
             .collect()

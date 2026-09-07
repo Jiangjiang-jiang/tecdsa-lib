@@ -19,7 +19,6 @@ repository = "https://github.com/Jiangjiang-jiang/tecdsa-lib"
 k256 = { version = "0.14.0-rc", default-features = false, features = ["arithmetic", "serde", "expose-field"] }
 p256 = { version = "0.14.0-rc", default-features = false, features = ["arithmetic", "serde"] }
 elliptic-curve = { version = "0.14.0-rc", default-features = false, features = ["sec1"] }
-generic-ec = { version = "0.5", features = ["curve-secp256k1", "serde"] }
 
 # Big integers
 gmp-mpfr-sys = "1.7"

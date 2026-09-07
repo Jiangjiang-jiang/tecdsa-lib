@@ -3,10 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
-};
-use generic_ec::curves::Secp256k1 as GE;
+use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
 use rug::Integer;
 use sha2::Sha256;
@@ -27,28 +24,6 @@ use crate::{
     key_share::{AuxInfo, Cggmp20CoreKeyShare},
     sign::types::{Presignature, PresignaturePublicData},
 };
-
-// ---------------------------------------------------------------------------
-// Generic conversion helpers (C: TecdsaCurve → generic_ec via bytes)
-// ---------------------------------------------------------------------------
-
-fn to_ge_point<C: TecdsaCurve>(p: &C::ProjectivePoint) -> generic_ec::Point<GE>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    let bytes = p.to_bytes();
-    generic_ec::Point::from_bytes(bytes.as_ref()).expect("valid point must decode")
-}
-
-fn to_ge_scalar<C: TecdsaCurve>(s: &C::Scalar) -> generic_ec::Scalar<GE>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let repr = s.to_repr();
-    let bytes: &[u8] = repr.as_ref();
-    generic_ec::Scalar::from_be_bytes_mod_order(bytes)
-}
 
 // ---------------------------------------------------------------------------
 // Fiat-Shamir tags for ZK proofs
@@ -300,33 +275,23 @@ where
             epsilon: self.epsilon,
         };
 
-        // Pre-convert own points to generic_ec for proof generation
-        let ge_big_y = to_ge_point::<C>(&self.own_round1.big_y);
-        let ge_a1 = to_ge_point::<C>(&self.own_round1.a1);
-        let ge_a2 = to_ge_point::<C>(&self.own_round1.a2);
-        let ge_b1 = to_ge_point::<C>(&self.own_round1.b1);
-        let ge_b2 = to_ge_point::<C>(&self.own_round1.b2);
-        let ge_gamma_i = to_ge_point::<C>(&big_gamma_i);
-        let ge_a_i = to_ge_scalar::<C>(&self.a_i);
-        let ge_b_i = to_ge_scalar::<C>(&self.b_i);
-
         // Generate tilde_psi (π_elog for Gamma_i) — same for all peers (no Aux)
-        let tilde_psi = pi_elog::non_interactive::prove::<GE, Sha256>(
+        let tilde_psi = pi_elog::non_interactive::prove::<C, Sha256>(
             &ProofElogTag {
                 session_id: self.session_id,
                 prover: self.my_index,
                 prime: false,
             },
             pi_elog::Data {
-                l: &ge_b1,
-                m: &ge_b2,
-                x: &ge_big_y,
-                y: &ge_gamma_i,
-                h: &generic_ec::Point::generator().to_point(),
+                l: &self.own_round1.b1,
+                m: &self.own_round1.b2,
+                x: &self.own_round1.big_y,
+                y: &big_gamma_i,
+                h: &C::generator(),
             },
             pi_elog::PrivateData {
-                y: &to_ge_scalar::<C>(&self.gamma_i),
-                lambda: &ge_b_i,
+                y: &self.gamma_i,
+                lambda: &self.b_i,
             },
             &mut rng,
         )
@@ -334,7 +299,6 @@ where
 
         // Pre-compute x_i_additive * G for hat_psi commitment
         let x_i_public = C::generator() * self.x_i_additive;
-        let ge_x_i_public = to_ge_point::<C>(&x_i_public);
 
         let k_i_int = self.k_i.to_integer();
 
@@ -400,7 +364,7 @@ where
             // --- Generate ZK proofs ---
 
             // psi0: π_enc_elg for K_i (proves K_i encrypts k_i in range)
-            let psi0 = pi_enc_elg::non_interactive::prove::<GE, Sha256>(
+            let psi0 = pi_enc_elg::non_interactive::prove::<C, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
                     prover: self.my_index,
@@ -410,14 +374,14 @@ where
                 pi_enc_elg::Data {
                     key: &self.ek_own,
                     ciphertext: &self.big_k_i,
-                    a: &ge_big_y,
-                    b: &ge_a1,
-                    x: &ge_a2,
+                    a: &self.own_round1.big_y,
+                    b: &self.own_round1.a1,
+                    x: &self.own_round1.a2,
                 },
                 pi_enc_elg::PrivateData {
                     plaintext: &k_i_int,
                     nonce: &self.rho_i,
-                    b: &ge_a_i,
+                    b: &self.a_i,
                 },
                 &security_enc,
                 &mut rng,
@@ -425,7 +389,7 @@ where
             .expect("psi0 proof generation must succeed");
 
             // psi1: π_enc_elg for G_i (proves G_i encrypts gamma_i in range)
-            let psi1 = pi_enc_elg::non_interactive::prove::<GE, Sha256>(
+            let psi1 = pi_enc_elg::non_interactive::prove::<C, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
                     prover: self.my_index,
@@ -435,14 +399,14 @@ where
                 pi_enc_elg::Data {
                     key: &self.ek_own,
                     ciphertext: &self.big_g_i,
-                    a: &ge_big_y,
-                    b: &ge_b1,
-                    x: &ge_b2,
+                    a: &self.own_round1.big_y,
+                    b: &self.own_round1.b1,
+                    x: &self.own_round1.b2,
                 },
                 pi_enc_elg::PrivateData {
                     plaintext: &self.gamma_i.to_integer(),
                     nonce: &self.gamma_nonce,
-                    b: &ge_b_i,
+                    b: &self.b_i,
                 },
                 &security_enc,
                 &mut rng,
@@ -450,7 +414,7 @@ where
             .expect("psi1 proof generation must succeed");
 
             // psi: π_aff_g for gamma MtA (D_ji, F_ji)
-            let psi = pi_aff::non_interactive::prove::<GE, Sha256>(
+            let psi = pi_aff::non_interactive::prove::<C, Sha256>(
                 &ProofPsiTag {
                     session_id: self.session_id,
                     prover: self.my_index,
@@ -463,7 +427,7 @@ where
                     c: &peer_round1.big_k,
                     d: &big_d,
                     y: &big_f,
-                    x: &ge_gamma_i,
+                    x: &big_gamma_i,
                 },
                 pi_aff::PrivateData {
                     x: &gamma_i_int,
@@ -477,7 +441,7 @@ where
             .expect("psi proof generation must succeed");
 
             // hat_psi: π_aff_g for x MtA (hat_D_ji, hat_F_ji)
-            let hat_psi = pi_aff::non_interactive::prove::<GE, Sha256>(
+            let hat_psi = pi_aff::non_interactive::prove::<C, Sha256>(
                 &ProofPsiTag {
                     session_id: self.session_id,
                     prover: self.my_index,
@@ -490,7 +454,7 @@ where
                     c: &peer_round1.big_k,
                     d: &hat_big_d,
                     y: &hat_big_f,
-                    x: &ge_x_i_public,
+                    x: &x_i_public,
                 },
                 pi_aff::PrivateData {
                     x: &x_i_int,
@@ -655,16 +619,8 @@ where
             let peer_round1 = &self.round1_msgs[&peer_pid];
             let peer_index = peer_pid.0;
 
-            // Convert peer's Round 1 points to generic_ec
-            let ge_peer_y = to_ge_point::<C>(&peer_round1.big_y);
-            let ge_peer_a1 = to_ge_point::<C>(&peer_round1.a1);
-            let ge_peer_a2 = to_ge_point::<C>(&peer_round1.a2);
-            let ge_peer_b1 = to_ge_point::<C>(&peer_round1.b1);
-            let ge_peer_b2 = to_ge_point::<C>(&peer_round1.b2);
-            let ge_peer_gamma = to_ge_point::<C>(&round2.big_gamma);
-
             // Verify psi0: peer's K encrypts k in range
-            pi_enc_elg::non_interactive::verify::<GE, Sha256>(
+            pi_enc_elg::non_interactive::verify::<C, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
                     prover: peer_index,
@@ -674,9 +630,9 @@ where
                 pi_enc_elg::Data {
                     key: peer_ek,
                     ciphertext: &peer_round1.big_k,
-                    a: &ge_peer_y,
-                    b: &ge_peer_a1,
-                    x: &ge_peer_a2,
+                    a: &peer_round1.big_y,
+                    b: &peer_round1.a1,
+                    x: &peer_round1.a2,
                 },
                 &round2.psi0,
                 &security_enc,
@@ -688,7 +644,7 @@ where
             })?;
 
             // Verify psi1: peer's G encrypts gamma in range
-            pi_enc_elg::non_interactive::verify::<GE, Sha256>(
+            pi_enc_elg::non_interactive::verify::<C, Sha256>(
                 &ProofEncTag {
                     session_id: self.session_id,
                     prover: peer_index,
@@ -698,9 +654,9 @@ where
                 pi_enc_elg::Data {
                     key: peer_ek,
                     ciphertext: &peer_round1.big_g,
-                    a: &ge_peer_y,
-                    b: &ge_peer_b1,
-                    x: &ge_peer_b2,
+                    a: &peer_round1.big_y,
+                    b: &peer_round1.b1,
+                    x: &peer_round1.b2,
                 },
                 &round2.psi1,
                 &security_enc,
@@ -712,18 +668,18 @@ where
             })?;
 
             // Verify tilde_psi: peer's Gamma ties to El-Gamal
-            pi_elog::non_interactive::verify::<GE, Sha256>(
+            pi_elog::non_interactive::verify::<C, Sha256>(
                 &ProofElogTag {
                     session_id: self.session_id,
                     prover: peer_index,
                     prime: false,
                 },
                 pi_elog::Data {
-                    l: &ge_peer_b1,
-                    m: &ge_peer_b2,
-                    x: &ge_peer_y,
-                    y: &ge_peer_gamma,
-                    h: &generic_ec::Point::generator().to_point(),
+                    l: &peer_round1.b1,
+                    m: &peer_round1.b2,
+                    x: &peer_round1.big_y,
+                    y: &round2.big_gamma,
+                    h: &C::generator(),
                 },
                 &round2.tilde_psi,
             )
@@ -735,7 +691,7 @@ where
 
             // Verify psi: π_aff_g for gamma MtA
             // Verifier's perspective: C = own K_i, D = received D, F = received F
-            pi_aff::non_interactive::verify::<GE, Sha256>(
+            pi_aff::non_interactive::verify::<C, Sha256>(
                 &ProofPsiTag {
                     session_id: self.session_id,
                     prover: peer_index,
@@ -748,7 +704,7 @@ where
                     c: &self.own_round1.big_k,
                     d: &round2.big_d,
                     y: &round2.big_f,
-                    x: &ge_peer_gamma,
+                    x: &round2.big_gamma,
                 },
                 &security_aff,
                 &round2.psi,
@@ -767,9 +723,8 @@ where
                 .expect("peer must be in signers list");
             let peer_lambda = lagrange_coeffs[peer_signer_pos];
             let peer_additive_public = self.public_shares[peer_party_idx] * peer_lambda;
-            let ge_peer_x_public = to_ge_point::<C>(&peer_additive_public);
 
-            pi_aff::non_interactive::verify::<GE, Sha256>(
+            pi_aff::non_interactive::verify::<C, Sha256>(
                 &ProofPsiTag {
                     session_id: self.session_id,
                     prover: peer_index,
@@ -782,7 +737,7 @@ where
                     c: &self.own_round1.big_k,
                     d: &round2.hat_big_d,
                     y: &round2.hat_big_f,
-                    x: &ge_peer_x_public,
+                    x: &peer_additive_public,
                 },
                 &security_aff,
                 &round2.hat_psi,
@@ -832,28 +787,22 @@ where
         let big_s_i = big_gamma * chi_i;
 
         // Generate psi_prime: π_elog proof that Delta_i = k_i * Gamma
-        let ge_own_a1 = to_ge_point::<C>(&self.own_round1.a1);
-        let ge_own_a2 = to_ge_point::<C>(&self.own_round1.a2);
-        let ge_own_y = to_ge_point::<C>(&self.own_round1.big_y);
-        let ge_delta_i = to_ge_point::<C>(&big_delta_i);
-        let ge_big_gamma = to_ge_point::<C>(&big_gamma);
-
-        let psi_prime = pi_elog::non_interactive::prove::<GE, Sha256>(
+        let psi_prime = pi_elog::non_interactive::prove::<C, Sha256>(
             &ProofElogTag {
                 session_id: self.session_id,
                 prover: self.my_index,
                 prime: true,
             },
             pi_elog::Data {
-                l: &ge_own_a1,
-                m: &ge_own_a2,
-                x: &ge_own_y,
-                y: &ge_delta_i,
-                h: &ge_big_gamma,
+                l: &self.own_round1.a1,
+                m: &self.own_round1.a2,
+                x: &self.own_round1.big_y,
+                y: &big_delta_i,
+                h: &big_gamma,
             },
             pi_elog::PrivateData {
-                y: &to_ge_scalar::<C>(&self.k_i),
-                lambda: &to_ge_scalar::<C>(&self.a_i),
+                y: &self.k_i,
+                lambda: &self.a_i,
             },
             &mut rng,
         )
@@ -953,30 +902,23 @@ where
 
     /// Verify psi_prime proofs, check consistency, produce presignature.
     pub fn finish(mut self) -> tecdsa_core::Result<(Presignature<C>, PresignaturePublicData<C>)> {
-        let ge_big_gamma = to_ge_point::<C>(&self.big_gamma);
-
         // Verify psi_prime from each peer
         for (&peer_pid, round3) in &self.round3_msgs {
             let peer_index = peer_pid.0;
             let peer_round1 = &self.round1_msgs[&peer_pid];
 
-            let ge_peer_a1 = to_ge_point::<C>(&peer_round1.a1);
-            let ge_peer_a2 = to_ge_point::<C>(&peer_round1.a2);
-            let ge_peer_y = to_ge_point::<C>(&peer_round1.big_y);
-            let ge_peer_delta = to_ge_point::<C>(&round3.big_delta);
-
-            pi_elog::non_interactive::verify::<GE, Sha256>(
+            pi_elog::non_interactive::verify::<C, Sha256>(
                 &ProofElogTag {
                     session_id: self.session_id,
                     prover: peer_index,
                     prime: true,
                 },
                 pi_elog::Data {
-                    l: &ge_peer_a1,
-                    m: &ge_peer_a2,
-                    x: &ge_peer_y,
-                    y: &ge_peer_delta,
-                    h: &ge_big_gamma,
+                    l: &peer_round1.a1,
+                    m: &peer_round1.a2,
+                    x: &peer_round1.big_y,
+                    y: &round3.big_delta,
+                    h: &self.big_gamma,
                 },
                 &round3.psi_prime,
             )

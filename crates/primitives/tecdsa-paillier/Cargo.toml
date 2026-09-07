@@ -21,7 +21,6 @@ digest = { workspace = true }
 rand_hash = "0.1"
 serde_with = { version = "2", default-features = false, features = ["macros"] }
 elliptic-curve = { workspace = true }
-generic-ec = { workspace = true, features = ["udigest"] }
 k256 = { workspace = true }
 rand_core = { workspace = true }
 serde = { workspace = true }
@@ -30,8 +29,8 @@ thiserror = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-# The vendored proof tests instantiate secp256r1 and a toy curve.
-generic-ec = { workspace = true, features = ["udigest", "all-curves"] }
+tecdsa-curve = { workspace = true, features = ["secp256k1", "secp256r1"] }
+p256 = { workspace = true }
 rand = { workspace = true }
 rand_dev = "0.1"
 bincode = { workspace = true }

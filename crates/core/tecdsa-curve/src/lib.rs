@@ -8,6 +8,7 @@ pub mod adapters;
 pub mod elgamal_exp;
 pub mod ext;
 pub mod serde_projective;
+pub mod serde_scalar;
 pub mod zk;
 
 use elliptic_curve::{

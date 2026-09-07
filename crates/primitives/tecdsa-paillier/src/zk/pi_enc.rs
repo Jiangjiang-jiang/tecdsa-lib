@@ -104,7 +104,7 @@ pub mod interactive {
         Aux, Challenge, Commitment, Data, PrivateCommitment, PrivateData, Proof, SecurityParams,
     };
     use crate::zk::{
-        common::{fail_if, fail_if_ne, IntegerExt, InvalidProof, InvalidProofReason},
+        common::{fail_if, fail_if_ne, InvalidProof, InvalidProofReason},
         BadExponent, Error,
     };
 
@@ -304,8 +304,9 @@ mod test {
     use rug::Integer;
     use sha2::Digest;
     use tecdsa_bigint::BigIntExt;
+    use tecdsa_curve::TecdsaCurve;
 
-    use crate::zk::common::{IntegerExt, InvalidProofReason};
+    use crate::zk::common::InvalidProofReason;
 
     fn run_with<D: Digest>(
         mut rng: &mut impl rand_core::CryptoRngCore,
@@ -338,7 +339,7 @@ mod test {
         let security = super::SecurityParams {
             l: 256,
             epsilon: 512,
-            q: Integer::curve_order::<generic_ec::curves::Secp256k1>(),
+            q: k256::Secp256k1::order(),
         };
         let plaintext = Integer::from_rng_half_pm(&mut rng, &(Integer::one() << security.l));
         let r = run_with::<sha2::Sha256>(&mut rng, security, plaintext);
@@ -353,7 +354,7 @@ mod test {
         let security = super::SecurityParams {
             l: 256,
             epsilon: 512,
-            q: Integer::curve_order::<generic_ec::curves::Secp256k1>(),
+            q: k256::Secp256k1::order(),
         };
         let plaintext = (Integer::one() << (security.l + security.epsilon)) + 1;
         let r = run_with::<sha2::Sha256>(&mut rng, security, plaintext);

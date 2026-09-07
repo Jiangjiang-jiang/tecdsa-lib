@@ -1359,9 +1359,8 @@ fn paillier_zk_facade(c: &mut Criterion) {
 
     // Pi_aff_g — affine operation in range with group commitment
     {
-        use tecdsa_paillier::zk::{bridge::point_to_ge, pi_aff_g as pi_aff};
+        use tecdsa_paillier::zk::pi_aff_g as pi_aff;
 
-        type GE = generic_ec::curves::Secp256k1;
         let x_val = Integer::from(7);
         let y_val = Integer::from(13);
         let (ct_c, _nonce_c) = paillier_encrypt(ek, &Integer::from(100));
@@ -1377,15 +1376,14 @@ fn paillier_zk_facade(c: &mut Criterion) {
             (c_x * enc_y).modulo(ek.nn())
         };
         let x_scalar = C::scalar_from_integer(&x_val);
-        let x_point_k256 = C::generator() * x_scalar;
-        let x_ge = point_to_ge(&x_point_k256);
-        let data = pi_aff::Data::<GE> {
+        let x_point = C::generator() * x_scalar;
+        let data = pi_aff::Data::<C> {
             key_j: ek,
             key_i: ek,
             c: &ct_c,
             d: &d_val,
             y: &ct_y,
-            x: &x_ge,
+            x: &x_point,
         };
         let pdata = pi_aff::PrivateData {
             x: &x_val,
@@ -1399,65 +1397,59 @@ fn paillier_zk_facade(c: &mut Criterion) {
             epsilon: 512,
         };
         let proof =
-            pi_aff::non_interactive::prove::<GE, Sha256>(&tag, &aux, data, pdata, &security, rng)
+            pi_aff::non_interactive::prove::<C, Sha256>(&tag, &aux, data, pdata, &security, rng)
                 .expect("pi_aff prove");
-        pi_aff::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &security, &proof)
+        pi_aff::non_interactive::verify::<C, Sha256>(&tag, &aux, data, &security, &proof)
             .expect("pi_aff verify");
         g.bench_function("pi_aff_g/prove", |b| {
             b.iter(|| {
-                pi_aff::non_interactive::prove::<GE, Sha256>(
-                    &tag, &aux, data, pdata, &security, rng,
-                )
+                pi_aff::non_interactive::prove::<C, Sha256>(&tag, &aux, data, pdata, &security, rng)
             })
         });
         g.bench_function("pi_aff_g/verify", |b| {
             b.iter(|| {
-                pi_aff::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &security, &proof)
+                pi_aff::non_interactive::verify::<C, Sha256>(&tag, &aux, data, &security, &proof)
             })
         });
     }
 
     // Pi_elog — dlog with El-Gamal commitment
     {
-        use tecdsa_paillier::zk::{bridge::scalar_to_ge, pi_elog};
-        type GE = generic_ec::curves::Secp256k1;
+        use tecdsa_paillier::zk::pi_elog;
         let y_scalar = C::random_scalar(rng);
         let lambda_scalar = C::random_scalar(rng);
-        let y_ge = scalar_to_ge(&y_scalar);
-        let lambda_ge = scalar_to_ge(&lambda_scalar);
-        let g_ge = generic_ec::Point::<GE>::generator();
-        let h_ge = g_ge * generic_ec::Scalar::<GE>::random(rng);
-        let x_ge = g_ge * y_ge;
-        let l_ge = g_ge * lambda_ge;
-        let m_ge = g_ge * y_ge + x_ge * lambda_ge;
-        let y_pt = h_ge * y_ge;
-        let data = pi_elog::Data::<GE> {
-            l: &l_ge,
-            m: &m_ge,
-            x: &x_ge,
+        let gen_pt = C::generator();
+        let h = gen_pt * C::random_scalar(rng);
+        let x = gen_pt * y_scalar;
+        let l = gen_pt * lambda_scalar;
+        let m = gen_pt * y_scalar + x * lambda_scalar;
+        let y_pt = h * y_scalar;
+        let data = pi_elog::Data::<C> {
+            l: &l,
+            m: &m,
+            x: &x,
             y: &y_pt,
-            h: &h_ge,
+            h: &h,
         };
-        let pdata = pi_elog::PrivateData::<GE> {
-            y: &y_ge,
-            lambda: &lambda_ge,
+        let pdata = pi_elog::PrivateData::<C> {
+            y: &y_scalar,
+            lambda: &lambda_scalar,
         };
-        let proof = pi_elog::non_interactive::prove::<GE, Sha256>(&tag, data, pdata, rng)
+        let proof = pi_elog::non_interactive::prove::<C, Sha256>(&tag, data, pdata, rng)
             .expect("pi_elog prove");
-        pi_elog::non_interactive::verify::<GE, Sha256>(&tag, data, &proof).expect("pi_elog verify");
+        pi_elog::non_interactive::verify::<C, Sha256>(&tag, data, &proof).expect("pi_elog verify");
         g.bench_function("pi_elog/prove", |b| {
-            b.iter(|| pi_elog::non_interactive::prove::<GE, Sha256>(&tag, data, pdata, rng))
+            b.iter(|| pi_elog::non_interactive::prove::<C, Sha256>(&tag, data, pdata, rng))
         });
         g.bench_function("pi_elog/verify", |b| {
-            b.iter(|| pi_elog::non_interactive::verify::<GE, Sha256>(&tag, data, &proof))
+            b.iter(|| pi_elog::non_interactive::verify::<C, Sha256>(&tag, data, &proof))
         });
     }
 
     // Pi_enc_elg — encryption in range with ElGamal
     {
-        use tecdsa_paillier::zk::{pi_enc_elg, IntegerExt as _};
+        use tecdsa_paillier::zk::pi_enc_elg;
 
-        type GE = generic_ec::curves::Secp256k1;
         let security = pi_enc_elg::SecurityParams {
             l: 256,
             epsilon: 512,
@@ -1465,40 +1457,40 @@ fn paillier_zk_facade(c: &mut Criterion) {
         let plaintext = Integer::from_rng_half_pm(rng, &Integer::two_pow(security.l as u32));
         let nonce = Integer::sample_in_mult_group_of(rng, ek.n());
         let ct = ek.encrypt_with(&plaintext, &nonce).expect("enc");
-        let a_scalar = generic_ec::Scalar::<GE>::random(rng);
-        let b_scalar_ge = generic_ec::Scalar::<GE>::random(rng);
-        let g_ge = generic_ec::Point::<GE>::generator();
-        let a_pt = g_ge * a_scalar;
-        let b_pt = g_ge * b_scalar_ge;
-        let x_pt = g_ge * (a_scalar * b_scalar_ge + plaintext.to_scalar());
-        let pdata = pi_enc_elg::PrivateData::<GE> {
+        let a_scalar = C::random_scalar(rng);
+        let b_scalar = C::random_scalar(rng);
+        let gen_pt = C::generator();
+        let a_pt = gen_pt * a_scalar;
+        let b_pt = gen_pt * b_scalar;
+        let x_pt = gen_pt * (a_scalar * b_scalar + C::scalar_from_integer(&plaintext));
+        let pdata = pi_enc_elg::PrivateData::<C> {
             plaintext: &plaintext,
             nonce: &nonce,
-            b: &b_scalar_ge,
+            b: &b_scalar,
         };
-        let data = pi_enc_elg::Data::<GE> {
+        let data = pi_enc_elg::Data::<C> {
             key: ek,
             ciphertext: &ct,
             a: &a_pt,
             b: &b_pt,
             x: &x_pt,
         };
-        let proof = pi_enc_elg::non_interactive::prove::<GE, Sha256>(
+        let proof = pi_enc_elg::non_interactive::prove::<C, Sha256>(
             &tag, &aux, data, pdata, &security, rng,
         )
         .expect("pi_enc_elg prove");
-        pi_enc_elg::non_interactive::verify::<GE, Sha256>(&tag, &aux, data, &proof, &security)
+        pi_enc_elg::non_interactive::verify::<C, Sha256>(&tag, &aux, data, &proof, &security)
             .expect("pi_enc_elg verify");
         g.bench_function("pi_enc_elg/prove", |b| {
             b.iter(|| {
-                pi_enc_elg::non_interactive::prove::<GE, Sha256>(
+                pi_enc_elg::non_interactive::prove::<C, Sha256>(
                     &tag, &aux, data, pdata, &security, rng,
                 )
             })
         });
         g.bench_function("pi_enc_elg/verify", |b| {
             b.iter(|| {
-                pi_enc_elg::non_interactive::verify::<GE, Sha256>(
+                pi_enc_elg::non_interactive::verify::<C, Sha256>(
                     &tag, &aux, data, &proof, &security,
                 )
             })

@@ -38,11 +38,8 @@ pub mod pi_eq;
 pub mod pia_pib;
 pub mod range_ni;
 
-#[cfg(test)]
-mod curve;
-
 use common::InvalidProofReason;
-pub use common::{BadExponent, IntegerExt, InvalidProof, PaillierError};
+pub use common::{BadExponent, InvalidProof, PaillierError};
 
 /// Error raised while constructing a proof.
 #[derive(Debug, Error)]

@@ -98,7 +98,6 @@ impl<C: TecdsaCurve> FullSignMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-    C: crate::bridge::BridgeCurve,
 {
     /// Create a new full-signing state machine with the default 128-bit security level.
     ///
@@ -149,7 +148,6 @@ where
     C::ProjectivePoint: LinearCombination<[(C::ProjectivePoint, C::Scalar); 2]>,
     C::Scalar:
         PrimeField<Repr = FieldBytes<C>> + serde::Serialize + for<'de> serde::Deserialize<'de>,
-    C: crate::bridge::BridgeCurve,
 {
     type Output = Signature<C>;
     type Inbound = FullSignMsg<C>;
