@@ -7,7 +7,7 @@
 //! - [`PiPrm`] -- proof of ring-Pedersen parameter validity (CGGMP20 Figure 13).
 //!
 //! For the Paillier-Blum modulus proof (Pi_mod, CGGMP20 Figure 12) use
-//! `tecdsa_paillier::zk::paillier_zk::paillier_blum_modulus`.
+//! `tecdsa_paillier::zk::pi_mod`.
 
 mod params;
 pub mod zk;

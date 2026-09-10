@@ -4,11 +4,14 @@
 use std::collections::BTreeMap;
 
 use rand_core::CryptoRngCore;
-use rug::{integer::Order, Integer};
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_paillier::{zk::pi_fac, BigIntExt, DecryptionKey, EncryptionKey};
-use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
+use tecdsa_paillier::{
+    zk::{pi_fac, pi_mod},
+    BigIntExt, DecryptionKey, EncryptionKey,
+};
+use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 
 use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3, PI_MOD_REPS};
@@ -552,25 +555,24 @@ mod tests {
 
     /// A π_mod proof is bound to the prover's party id, so party `j` cannot
     /// republish party `i`'s modulus and reuse `i`'s proof. Before the proof
-    /// was migrated onto `paillier_blum_modulus` its challenges were derived
-    /// from `(N, w)` alone, making exactly this replay possible.
+    /// was migrated onto `tecdsa_paillier::zk::pi_mod` its challenges were
+    /// derived from `(N, w)` alone, making exactly this replay possible.
     #[test]
     fn pi_mod_proof_is_bound_to_prover_id() {
-        use tecdsa_paillier::backend::Integer as PInt;
-
         let mut rng = tecdsa_core::Csprng::new();
-        let p = PInt::generate_safe_prime(&mut rng, 256);
-        let q = PInt::generate_safe_prime(&mut rng, 256);
+        let p = Integer::generate_safe_prime(&mut rng, 256);
+        let q = Integer::generate_safe_prime(&mut rng, 256);
         let dk = DecryptionKey::from_primes(p, q).expect("valid paillier key");
 
         let tag_of = |prover| AuxInfoProofTag {
             context: "pi_mod",
             prover,
         };
+        let data = || pi_mod::Data { n: dk.n() };
 
         let proof = pi_mod::non_interactive::prove::<PI_MOD_REPS, sha2::Sha256>(
             &tag_of(1),
-            pi_mod::Data { n: dk.n() },
+            data(),
             pi_mod::PrivateData {
                 p: dk.p(),
                 q: dk.q(),
@@ -582,7 +584,7 @@ mod tests {
         assert!(
             pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
                 &tag_of(1),
-                pi_mod::Data { n: dk.n() },
+                data(),
                 &proof,
                 &mut rng,
             )
@@ -593,7 +595,7 @@ mod tests {
         assert!(
             pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
                 &tag_of(2),
-                pi_mod::Data { n: dk.n() },
+                data(),
                 &proof,
                 &mut rng,
             )
