@@ -833,17 +833,11 @@ impl CL_HSMqk {
                                           // u ≡ w^{-1} (mod q^j), lifted to its odd representative in (-q^j, q^j].
                                           // (u must be odd so that b = u·q^j has the same parity as Δ.)
         let inv = w.modulo(&qj).invert(&qj).expect("w invertible mod q^j");
-        let u_pos = if inv.is_odd() {
-            inv
-        } else {
-            (&inv + &qj).complete()
-        };
+        let u_pos = if inv.is_odd() { inv } else { inv + &qj };
         let u = center(u_pos, &two_qj, &qj);
         let a = (&qj * &qj).complete(); // q^{2j}
-        let b = (&u * &qj).complete();
-        let q2v = (&qv * &qv).complete();
-        let c = ((&u * &u).complete() - (&q2v * &self.delta_k).complete())
-            .div_exact(&Integer::from(4u64));
+        let b = &u * qj;
+        let c = (u.square() - qv.square() * &self.delta_k).div_exact(&Integer::from(4u64));
         let mut form = QFI::from_abc(a, b, c);
         self.cl_delta.reduce(&mut form);
         form
@@ -865,9 +859,7 @@ impl CL_HSMqk {
         let v = self.k - j;
         let qv = self.q.clone().pow(v as u32);
         let u = fm.b().clone().div_exact(&qj);
-        let t0 = (&qv * &u.invert(&qj).expect("u invertible mod q^j"))
-            .complete()
-            .modulo(n);
+        let t0 = (qv * u.invert(&qj).expect("u invertible mod q^j")).modulo(n);
 
         // 2. Digit recovery: cur = 1 + t0√Δ_K, alpha = 1 + √Δ_K.
         let mut cur = (Integer::from(1u64), t0);
@@ -881,7 +873,7 @@ impl CL_HSMqk {
                 .invert_ref(n)
                 .map(Integer::from)
                 .expect("e invertible mod q^k");
-            let tc = (&cur.1 * &e_inv).complete().modulo(n);
+            let tc = (&cur.1 * e_inv).modulo(n);
             let mi = tc.div_exact(&qi).modulo(&self.q); // m_i = (tc / q^i) mod q
                                                         // cur ← cur · alpha^{-m_i}
             let a_mi = ring_pow(&alpha, &mi, &dk, n);
@@ -889,8 +881,8 @@ impl CL_HSMqk {
             cur = ring_mul(&cur, &a_mi_inv, &dk, n);
             // alpha ← alpha^q
             alpha = ring_pow(&alpha, &self.q, &dk, n);
-            m_acc = &m_acc + (&mi * &qi).complete();
-            qi = (&qi * &self.q).complete();
+            m_acc += mi * &qi;
+            qi *= &self.q;
         }
         m_acc
     }
@@ -948,7 +940,7 @@ fn reduce_track_generator(g: &QFI, q: &Integer) -> (Integer, Integer) {
     while a > c {
         // (e + f·√Δ_K)·(b + √Δ_K) = (e·b + f·Δ_K) + (e + f·b)·√Δ_K;  Δ_K ≡ 0.
         let nf = (&e + (&f * &b).complete()).modulo(q);
-        e = (&e * &b).complete().modulo(q);
+        e = (e * &b).modulo(q);
         f = nf;
         rho(&mut a, &mut b, &mut c);
     }
@@ -963,7 +955,7 @@ fn reduce_track_generator_exact(g: &QFI, delta_k: &Integer) -> (Integer, Integer
     normalize(&mut a, &mut b, &mut c);
     while a > c {
         let ne = (&e * &b).complete() + (&f * delta_k).complete(); // e·b + f·Δ_K
-        let nf = &e + (&f * &b).complete(); // e + f·b
+        let nf = e + f * &b; // e + f·b
         e = ne;
         f = nf;
         rho(&mut a, &mut b, &mut c);
@@ -975,8 +967,8 @@ fn reduce_track_generator_exact(g: &QFI, delta_k: &Integer) -> (Integer, Integer
 fn normalize(a: &mut Integer, b: &mut Integer, c: &mut Integer) {
     let two_a = (&*a << 1u32).complete();
     let r = (&*a - &*b).complete().div_rem_floor(two_a.clone()).0; // r = ⌊(a − b)/2a⌋
-    *c = &*c + (&r * (&*b + (&*a * &r).complete())); // c += r·(b + a·r)
-    *b = &*b + (&two_a * &r).complete(); // b += 2a·r
+    *c += &r * (&*b + (&*a * &r).complete()); // c += r·(b + a·r)
+    *b += two_a * r; // b += 2a·r
 }
 
 /// One ρ-reduction step: `(a,b,c) → (c, 2sc − b, a + s(sc − b))`,
@@ -1012,7 +1004,7 @@ fn ring_inv(x: &(Integer, Integer), dk: &Integer, n: &Integer) -> (Integer, Inte
     let norm = ((&x.0 * &x.0).complete() - (&x.1 * &x.1).complete() * dk).modulo(n);
     let inv = norm.invert(n).expect("ring element not invertible mod q^k");
     let e = (&x.0 * &inv).complete().modulo(n);
-    let f = (Integer::from(-&x.1) * &inv).modulo(n);
+    let f = (-(inv * &x.1)).modulo(n);
     (e, f)
 }
 
@@ -1064,6 +1056,8 @@ fn center(x: Integer, modulus: &Integer, half: &Integer) -> Integer {
 
 /// Lucas sequences `(U_n, V_n)` modulo `modn`, parameters `(P, Q)`, with
 /// `D = P² - 4Q` supplied as `d_param`.
+///
+/// `modn` must be odd and greater than two, as `q^k` is for odd prime `q`.
 fn lucas_uv(
     p_param: &Integer,
     q_param: &Integer,
@@ -1071,37 +1065,46 @@ fn lucas_uv(
     modn: &Integer,
     d_param: &Integer,
 ) -> (Integer, Integer) {
-    if n.is_zero() {
-        return (Integer::new(), Integer::from(2u64).modulo(modn));
-    }
-    let inv2 = Integer::from(2u64)
-        .invert(modn)
-        .expect("2 invertible mod q^k");
-    let pr = p_param.modulo_ref(modn).complete();
-    let qr = q_param.modulo_ref(modn).complete();
-    let dr = d_param.modulo_ref(modn).complete();
+    debug_assert!(modn.is_odd() && *modn > 2u32, "modulus must be odd and > 2");
 
-    let mut u = Integer::from(1u64).modulo(modn); // U_1
+    if n.is_zero() {
+        return (Integer::new(), Integer::from(2u64));
+    }
+
+    // `x / 2 mod modn` for `x` in `[0, modn)`: `x + modn` is even when `x` is
+    // odd, so this is a conditional add and a shift rather than a multiply by
+    // `2^{-1} mod modn`.
+    let half = |mut x: Integer| {
+        if x.is_odd() {
+            x += modn;
+        }
+        x >> 1u32
+    };
+
+    let pr = p_param.clone().modulo(modn);
+    let qr = q_param.clone().modulo(modn);
+    let dr = d_param.clone().modulo(modn);
+
+    let mut u = Integer::from(1u64); // U_1
     let mut v = pr.clone(); // V_1
     let mut qpow = qr.clone(); // Q^1
-    let nb = n.significant_bits();
-    for i in (0..nb - 1).rev() {
-        // double: index m -> 2m
-        let u2 = (&u * &v).complete().modulo(modn);
-        let v2 = ((&v * &v).complete() - (&qpow << 1u32).complete()).modulo(modn);
-        let q2 = (&qpow * &qpow).complete().modulo(modn);
+
+    for i in (0..n.significant_bits() - 1).rev() {
+        // Double: (U_m, V_m, Q^m) -> (U_2m, V_2m, Q^2m).
+        let u2 = (u * &v).modulo(modn);
+        let v2 = (v.square() - &qpow - &qpow).modulo(modn);
+        qpow = qpow.square().modulo(modn);
+
         if n.get_bit(i) {
-            // 2m -> 2m+1
-            let u_new = (((&pr * &u2).complete() + &v2) * &inv2).modulo(modn);
-            let v_new = (((&dr * &u2).complete() + (&pr * &v2).complete()) * &inv2).modulo(modn);
-            let q_new = (&q2 * &qr).complete().modulo(modn);
-            u = u_new;
-            v = v_new;
-            qpow = q_new;
+            // Increment to (U_2m+1, V_2m+1, Q^2m+1):
+            //   U = (P·U_2m + V_2m) / 2
+            //   V = (D·U_2m + P·V_2m) / 2
+            u = half((v2.clone() + &pr * &u2).modulo(modn));
+            v = half((v2 * &pr + &dr * &u2).modulo(modn));
+            qpow = (qpow * &qr).modulo(modn);
         } else {
             u = u2;
             v = v2;
-            qpow = q2;
         }
     }
     (u, v)

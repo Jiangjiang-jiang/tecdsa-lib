@@ -55,7 +55,7 @@ fn solve_lc(a: &Integer, b: &Integer, m: &Integer) -> Option<(Integer, Integer)>
         return None; // g ∤ b
     }
     let modulus = m.clone().div_exact(&g);
-    let x0 = (&q * &u).complete().modulo(&modulus);
+    let x0 = (q * u).modulo(&modulus);
     Some((x0, modulus))
 }
 
@@ -131,8 +131,7 @@ impl QFI {
     /// [`ClassGroup`].
     pub(crate) fn lift(&self, l: &Integer) -> QFI {
         let (a, b, c) = self.primitive_coprime_to(l);
-        let l2 = (l * l).complete();
-        QFI::from_abc(a, (&b * l).complete(), (&c * &l2).complete())
+        QFI::from_abc(a, b * l, c * l * l)
     }
 
     /// Map this form (of discriminant `l²·Δ_K`, in the order of conductor `l`)
@@ -145,7 +144,7 @@ impl QFI {
                                                        // 1 = u·l + v·a  ⇒  b′ = b·l⁻¹ ≡ b·u + a·v (mod 2a).
         let (_g, u, v) = gcdext(l, &a);
         let two_a = (&a << 1u32).complete();
-        let mut bn = ((&b * &u).complete() + (&a * &v).complete()).modulo(&two_a);
+        let mut bn = (&b * u + &a * v).modulo(&two_a);
         if bn > a {
             bn -= &two_a;
         }
@@ -354,9 +353,7 @@ impl ClassGroup {
         if *l == 2u64 {
             // requires Δ ≡ 1 (mod 8)
             b = Integer::from(1u64);
-            c = (&Integer::from(1u64) - &self.disc)
-                .complete()
-                .div_exact(&Integer::from(8u64));
+            c = (Integer::from(1u64) - &self.disc).div_exact(&Integer::from(8u64));
         } else {
             let dl = self.disc.modulo_ref(l).complete();
             let r = sqrt_mod_prime(&dl, l).expect("prime_form: l does not split the discriminant");
@@ -396,7 +393,7 @@ impl ClassGroup {
         // 3. solve (t·u)·k ≡ h·u + s·c  (mod s·t)
         let st = (&s * &t).complete();
         let tu = (&t * &u).complete();
-        let rhs3 = (&h * &u).complete() + (&s * c).complete();
+        let rhs3 = (&h * &u).complete() + &s * c;
         let (mu, nu) = solve_lc(&tu, &rhs3, &st).expect("compose: congruence (3) unsolvable");
 
         // 4. solve (t·ν)·n ≡ h − t·μ  (mod s)
@@ -405,14 +402,14 @@ impl ClassGroup {
         let (lambda, _) = solve_lc(&coef4, &rhs4, &s).expect("compose: congruence (4) unsolvable");
 
         // 5. k, l, m
-        let k = &mu + (&nu * &lambda).complete();
+        let k = mu + (&nu * &lambda);
         let l = ((&k * &t).complete() - &h).div_exact(&s);
-        let m = ((&tu * &k).complete() - (&h * &u).complete() - (c * &s).complete()).div_exact(&st);
+        let m = (tu * &k - rhs3).div_exact(&st);
 
         // 6. A = s·t, B = j·u − (k·t + l·s), C = k·l − j·m
         let aa = st;
-        let bb = (&j * &u).complete() - ((&k * &t).complete() + (&l * &s).complete());
-        let cc = (&k * &l).complete() - (&j * &m).complete();
+        let bb = &j * u - &k * t - &l * s;
+        let cc = k * l - j * m;
 
         let mut f3 = QFI::from_abc(aa, bb, cc);
         self.reduce(&mut f3);
@@ -444,7 +441,7 @@ impl ClassGroup {
             by = a1.clone().div_exact(&g);
             cy = a2.clone().div_exact(&g);
             dy = ss.clone().div_exact(&g);
-            bx0 = (&m * &u).complete().modulo(&by);
+            bx0 = (&m * u).modulo(&by);
         } else {
             let (gg, _x, _y) = gcdext(&ff, &ss);
             let hh = ff.clone().div_exact(&gg);
@@ -465,7 +462,7 @@ impl ClassGroup {
             // Degenerate partial reduction; plain composition is correct.
             return self.compose_dirichlet(f1, f2);
         }
-        self.nucomp_finish(&g, bx0, by, cy, dy, &m, c2, &ss)
+        self.nucomp_finish(g, bx0, by, cy, dy, m, c2, ss)
             .unwrap_or_else(|| self.compose_dirichlet(f1, f2))
     }
 
@@ -490,10 +487,10 @@ impl ClassGroup {
             Some(x) => x,
             None => return self.compose_dirichlet(f, f),
         };
-        let mu = (c * &binv).complete().modulo(a);
+        let mu = (c * binv).modulo(a);
         let aa = (a * a).complete(); // A = a²
         let bb = b - ((&mu * a).complete() << 1u32); // B = b - 2aμ
-        let cc = (&mu * &mu).complete() - ((b * &mu).complete() - c).div_exact(a); // C = μ² - (bμ-c)/a
+        let cc = (&mu * &mu).complete() - (b * mu - c).div_exact(a); // C = μ² - (bμ-c)/a
         let mut sq = QFI::from_abc(aa, bb, cc);
         self.reduce(&mut sq);
         sq
@@ -561,13 +558,13 @@ impl ClassGroup {
         // a non-exact one ⇒ bail to the caller's §3a fallback. (Measured: a
         // raw-mpz reused-scratch rewrite of this assembly gives no speedup — only
         // ~10 ops, so allocation is negligible next to the multiplications.)
-        let dx = div_exact_checked(&((&bx * &dy).complete() - (c * &x).complete()), &by0)?;
+        let dx = div_exact_checked(&(&bx * dy - c * &x), &by0)?;
         let dxa = (&dx * &ay).complete();
         let dy2 = div_exact_checked(&((&dxa + b).complete()), &ax)?;
-        let a3 = (&byr * &byr).complete() - (&ay * &dy2).complete();
-        let c3 = (&bx * &bx).complete() - (&ax * &dx).complete();
         // b₃ = ax·dy2 + ay·dx − (bx·cy2 + byr·cx) = 2·(dx·ay) + b − 2·bx·byr.
-        let b3 = ((&dxa + &dxa).complete() + b) - ((&bx * &byr).complete() << 1u32);
+        let b3 = ((dxa - &bx * &byr) << 1u32) + b;
+        let a3 = byr.square() - &ay * &dy2;
+        let c3 = bx.square() - &ax * &dx;
         if a3.is_zero() {
             return None;
         }
@@ -605,14 +602,14 @@ impl ClassGroup {
     #[allow(clippy::too_many_arguments)]
     fn nucomp_finish(
         &self,
-        g: &Integer,
+        g: Integer,
         bx0: Integer,
         by0: Integer,
         cy: Integer,
         dy: Integer,
-        m: &Integer,
+        m: Integer,
         w2: &Integer,
-        ss: &Integer,
+        ss: Integer,
     ) -> Option<QFI> {
         // Partial extended Euclidean on (bx, by) until bx <= L. Word-batched
         // schoolbook Lehmer is fastest in every practical range; recursive HGCD
@@ -638,22 +635,27 @@ impl ClassGroup {
         if x.is_zero() {
             return None; // ax = g·x would be 0
         }
-        let ax = (g * &x).complete();
-        let ay = (g * &y).complete();
+        let ay = &g * y;
+        let ax = g * &x;
         // Recover the remaining coefficients. The cofactor identity guarantees
         // `bx ≡ x·bx0 (mod by0)`, so `cx`, `dx` divide *exactly* by the **original**
         // `by0` (not the reduced `byr`); `cy2` then divides by the reduced `bx`.
         // Checked divisions: on the rare degenerate state a relation is non-exact
         // ⇒ bail and let the caller fall back to plain composition.
-        let cx = div_exact_checked(&((&bx * &cy).complete() - (m * &x).complete()), &by_orig)?;
-        let dx = div_exact_checked(&((&bx * &dy).complete() - (w2 * &x).complete()), &by_orig)?;
-        let cy2 = div_exact_checked(&((&byr * &cx).complete() + m), &bx)?;
-        let dy2 = div_exact_checked(&((&dx * &ay).complete() + ss), &ax)?; // d_y·a_x = d_x·a_y + ss
-                                                                           // Compound (vdP): the near-reduced product form (a₃, b₃, c₃).
-        let u3 = (&byr * &cy2).complete() - (&ay * &dy2).complete();
-        let w3 = (&bx * &cx).complete() - (&ax * &dx).complete();
-        let v3 = ((&ax * &dy2).complete() + (&ay * &dx).complete())
-            - ((&bx * &cy2).complete() + (&byr * &cx).complete());
+        let cx = div_exact_checked(&(&bx * cy - &m * &x), &by_orig)?;
+        let dx = div_exact_checked(&(&bx * dy - w2 * &x), &by_orig)?;
+        let byr_cx = (&byr * &cx).complete();
+        let dx_ay = (&dx * &ay).complete();
+        let nc = &byr_cx + m; // = bx·cy2
+        let nd = &dx_ay + ss; // = ax·dy2
+        let cy2 = div_exact_checked(&nc, &bx)?;
+        let dy2 = div_exact_checked(&nd, &ax)?;
+        // Compound (vdP): the near-reduced product form (a₃, b₃, c₃).
+        let u3 = byr * cy2 - ay * dy2;
+        let w3 = bx * cx - ax * dx;
+        // b₃ = ax·dy2 + ay·dx − (bx·cy2 + byr·cx); the divisions above are exact,
+        // so ax·dy2 = nd and bx·cy2 = nc. Same identity NUDUPL uses for its `b3`.
+        let v3 = (nd + dx_ay) - (nc + byr_cx);
         if u3.is_zero() {
             return None;
         }
@@ -931,7 +933,7 @@ mod tests {
         // discriminant preserved
         assert_eq!(f.discriminant(), d_before);
         // reduced predicate: |b| <= a <= c
-        assert!(f.b.abs_ref().complete() <= f.a);
+        assert!(f.b.abs() <= f.a);
         assert!(f.a <= f.c);
     }
 
@@ -1059,7 +1061,7 @@ mod tests {
         let a = Integer::from(37u64);
         let b = Integer::from(91u64);
         let lhs = cg.compose(&cg.exp(&f, &a), &cg.exp(&f, &b));
-        let rhs = cg.exp(&f, &(&a + &b).complete());
+        let rhs = cg.exp(&f, &(a + b));
         assert_eq!(lhs, rhs);
         // negative exponents
         assert_eq!(cg.exp(&f, &Integer::from(-1i64)), cg.inverse(&f));
@@ -1314,12 +1316,12 @@ mod tests {
             let (gg, u, _v) = gcdext(b, a);
             let by = a.clone().div_exact(&gg);
             let _dy = b.clone().div_exact(&gg);
-            let _bx0 = (&u * c).complete().modulo(&by);
+            let _bx0 = (u * c).modulo(&by);
         });
         // partial reduce
         let (gg, u, _v) = gcdext(b, a);
         let by0 = a.clone().div_exact(&gg);
-        let bx0 = (&u * c).complete().modulo(&by0);
+        let bx0 = (u * c).modulo(&by0);
         use std::sync::atomic::Ordering as AO;
         super::super::hgcd::PR_CALLS.store(0, AO::Relaxed);
         super::super::hgcd::PR_BATCHES.store(0, AO::Relaxed);
