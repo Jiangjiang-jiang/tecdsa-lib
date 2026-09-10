@@ -12,7 +12,7 @@ pub(crate) fn gcdext(a: &Integer, b: &Integer) -> (Integer, Integer, Integer) {
 
 /// Exact division, or `None` if `d` is zero or does not divide `x`.
 pub(crate) fn div_exact_checked(x: &Integer, d: &Integer) -> Option<Integer> {
-    (!d.is_zero() && x.is_divisible(d)).then(|| x.clone().div_exact(d))
+    (!d.is_zero() && x.is_divisible(d)).then(|| x.div_exact_ref(d).complete())
 }
 
 /// Tonelli–Shanks square root modulo an odd prime `p`.
@@ -59,7 +59,7 @@ pub fn sqrt_mod_prime(a: &Integer, p: &Integer) -> Option<Integer> {
     let mut t = am.clone().pow_mod(&q, p).expect(NONNEG_EXP);
     let mut r = am
         .clone()
-        .pow_mod(&((&q + 1u64).complete() >> 1u32), p)
+        .pow_mod(&((q + 1u64) >> 1u32), p)
         .expect(NONNEG_EXP); // a^((Q+1)/2)
 
     loop {
@@ -86,15 +86,13 @@ pub fn sqrt_mod_prime(a: &Integer, p: &Integer) -> Option<Integer> {
             .clone()
             .pow_mod(&Integer::from(2u64), p)
             .expect(NONNEG_EXP);
-        t = (&t * &c).complete().modulo(p);
-        r = (&r * &b).complete().modulo(p);
+        t = (t * &c).modulo(p);
+        r = (r * &b).modulo(p);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rug::Complete;
-
     use super::*;
     use crate::class_group::error::parse_int_auto;
 
@@ -105,7 +103,7 @@ mod tests {
         for a in 1u64..13 {
             let am = Integer::from(a);
             match sqrt_mod_prime(&am, &p) {
-                Some(x) => assert_eq!((&x * &x).complete().modulo(&p), am),
+                Some(x) => assert_eq!(x.square().modulo(&p), am),
                 None => assert_eq!(am.kronecker(&p), -1),
             }
         }
@@ -116,7 +114,7 @@ mod tests {
         let p = Integer::from(103u64); // 103 ≡ 3 mod 4
         let a = Integer::from(7u64);
         if let Some(x) = sqrt_mod_prime(&a, &p) {
-            assert_eq!((&x * &x).complete().modulo(&p), a);
+            assert_eq!(x.square().modulo(&p), a);
         } else {
             assert_eq!(a.kronecker(&p), -1);
         }
@@ -128,7 +126,7 @@ mod tests {
         // p256-ish? just ensure roundtrip for residues
         let a = Integer::from(123456789u64);
         if let Some(x) = sqrt_mod_prime(&a, &p) {
-            assert_eq!((&x * &x).complete().modulo(&p), a.modulo_ref(&p).complete());
+            assert_eq!(x.square().modulo(&p), a.modulo(&p));
         }
     }
 }

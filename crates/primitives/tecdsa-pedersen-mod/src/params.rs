@@ -66,7 +66,7 @@ impl PedersenModParams {
 
         // Sample r in Z*_N, compute t = r^2 mod N (quadratic residue)
         let r = sample_coprime(rng, &n);
-        let t = r.pow_mod(&Integer::from(2), &n).unwrap();
+        let t = r.square().modulo(&n);
 
         // Sample lambda in [1, phi(N))
         let lambda = phi_n.sample_positive_below(rng);

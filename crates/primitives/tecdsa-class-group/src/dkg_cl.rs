@@ -138,7 +138,7 @@ fn shamir_share_delta_signed(
     t: usize,
 ) -> ClResult<Vec<Integer>> {
     let delta = factorial(n);
-    let delta_s = (&delta * s).complete();
+    let delta_s = delta * s;
 
     // Random coefficients for degree 1..t-1.
     let mut coeffs = vec![delta_s];
@@ -656,16 +656,13 @@ fn lagrange_coefficients_delta(indices: &[usize], delta: &Integer) -> Vec<(usize
     let mut result = Vec::with_capacity(indices.len());
     for (k, &i_k) in indices.iter().enumerate() {
         let mut coeff = delta.clone();
-        let i_k_big = Integer::from(i_k as i64);
 
         for (j, &i_j) in indices.iter().enumerate() {
             if j == k {
                 continue;
             }
-            let i_j_big = Integer::from(i_j as i64);
-            let diff = (&i_k_big - &i_j_big).complete();
-            coeff /= diff;
-            coeff *= -i_j_big;
+            coeff /= i_k as i64 - i_j as i64;
+            coeff *= -(i_j as i64);
         }
 
         result.push((i_k, coeff));
@@ -877,8 +874,8 @@ mod tests {
             let mut acc = factorial(n);
             let mut n_pow = Integer::from(1u64);
             for _ in 1..t {
-                n_pow = (&n_pow * &n_mpz).complete();
-                acc = (&acc + &n_pow).complete();
+                n_pow *= &n_mpz;
+                acc += &n_pow;
             }
             acc
         };
@@ -886,7 +883,7 @@ mod tests {
 
         for &(n, t) in &[(2usize, 2usize), (5, 5), (10, 10), (20, 20)] {
             let new_chunks = num_chunks_for_bound(&share_magnitude_bound(&b, n, t), &q);
-            let worst_share = (&max_coeff * &poly(n, t)).complete();
+            let worst_share = &max_coeff * poly(n, t);
             let needed = decompose_q_ary(&worst_share, &q).len();
             assert!(
                 needed <= new_chunks,
@@ -898,7 +895,7 @@ mod tests {
         // The reported failing case must overflow the OLD secret-sized count
         // (i.e. the bug really was a truncation at n=t=20).
         let old_chunks = num_chunks_for_bound(&b, &q);
-        let worst_share_20 = (&max_coeff * &poly(20, 20)).complete();
+        let worst_share_20 = max_coeff * &poly(20, 20);
         assert!(
             decompose_q_ary(&worst_share_20, &q).len() > old_chunks,
             "n=t=20 share should overflow the old secret-sized chunk count",
