@@ -1107,6 +1107,7 @@ fn paillier_zk_facade_once(pf: &PaillierFixture, ped: &PedersenFixture) {
             pi_mod::non_interactive::prove::<80, Sha256>(&tag, data, pdata, rng)
                 .expect("pi_mod prove")
         });
+        size_of("zk/paillier_zk_facade/pi_mod_upstream", &proof);
         time_once("zk/paillier_zk_facade/pi_mod_upstream/verify", || {
             pi_mod::non_interactive::verify::<80, Sha256>(&tag, data, &proof, rng)
                 .expect("pi_mod verify")

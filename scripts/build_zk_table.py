@@ -76,7 +76,7 @@ SECTIONS = [
          "GG18", "GG18/gennaro2018fast"),
         (r"$\mathcal{R}_\text{mod}$",
          "modulus is a Paillier--Blum integer",
-         ["zk/pedersen_mod/pi_mod"],
+         ["zk/paillier_zk_facade/pi_mod_upstream"],
          "CGGMP20", "CGGMP20/canetti2020uc"),
         (r"$\mathcal{R}_\text{prm}$",
          "Ring-Pedersen parameters are well formed",
