@@ -3,8 +3,18 @@
 
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_paillier::{zk::paillier_zk::no_small_factor as pi_fac, EncryptionKey};
-use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
+use tecdsa_paillier::{
+    zk::paillier_zk::{no_small_factor as pi_fac, paillier_blum_modulus as pi_mod},
+    EncryptionKey,
+};
+use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
+
+/// Number of repetitions in the π_mod Paillier-Blum modulus proof.
+///
+/// π_mod's soundness error is `2^-PI_MOD_REPS`: a prover who does not know the
+/// factorisation passes a single repetition with probability 1/2. CGGMP20
+/// Figure 12 requires 80.
+pub const PI_MOD_REPS: usize = 80;
 
 /// Round 1 broadcast: hash commitment to the party's auxiliary material.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,14 +41,14 @@ pub struct MsgRound2 {
 /// ring-Pedersen parameters.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MsgRound3 {
-    pub pi_mod: PiMod,
+    pub pi_mod: pi_mod::NiProof<PI_MOD_REPS>,
     pub pi_fac: pi_fac::NiProof,
 }
 
 impl std::fmt::Debug for MsgRound3 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MsgRound3")
-            .field("pi_mod", &"<PiMod>")
+            .field("pi_mod", &"<NiProof>")
             .field("pi_fac", &"<NiProof>")
             .finish()
     }

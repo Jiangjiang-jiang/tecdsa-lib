@@ -207,7 +207,7 @@ fn curve_zk_once() {
 }
 
 fn pedersen_mod_zk_once(ped: &PedersenFixture) {
-    use tecdsa_pedersen_mod::zk::{PiMod, PiPrm};
+    use tecdsa_pedersen_mod::zk::PiPrm;
     let rng = &mut thread_rng();
 
     let params = &ped.params;
@@ -217,14 +217,6 @@ fn pedersen_mod_zk_once(ped: &PedersenFixture) {
     });
     size_of("zk/pedersen_mod/pi_prm", &piprm);
     time_once("zk/pedersen_mod/pi_prm/verify", || piprm.verify(params));
-
-    let pimod = time_once("zk/pedersen_mod/pi_mod/prove", || {
-        PiMod::prove(params, secret, rng).expect("pimod prove")
-    });
-    size_of("zk/pedersen_mod/pi_mod", &pimod);
-    time_once("zk/pedersen_mod/pi_mod/verify", || {
-        pimod.verify(params, rng)
-    });
 }
 
 fn class_group_zk_once(

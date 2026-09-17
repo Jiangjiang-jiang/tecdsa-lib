@@ -7,11 +7,14 @@ use rand_core::CryptoRngCore;
 use rug::{integer::Order, Integer};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_paillier::{zk::paillier_zk::no_small_factor as pi_fac, DecryptionKey, EncryptionKey};
-use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
+use tecdsa_paillier::{
+    zk::paillier_zk::{no_small_factor as pi_fac, paillier_blum_modulus as pi_mod},
+    DecryptionKey, EncryptionKey,
+};
+use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 
-use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3};
+use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3, PI_MOD_REPS};
 use crate::{bridge::pedersen_to_aux, key_share::AuxInfo, security_level::Cggmp20SecurityParams};
 
 /// Fiat-Shamir domain separation tag for aux-info ZK proofs.
@@ -305,11 +308,20 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
 
         // 4. Generate π_mod proof (same for all peers — only depends on own N).
         let mut rng = tecdsa_core::Csprng::new();
-        let paillier_n = Integer::from_digits(&self.dk.n().to_bytes_msf(), Order::Msf);
-        let paillier_p = Integer::from_digits(&self.dk.p().to_bytes_msf(), Order::Msf);
-        let paillier_q = Integer::from_digits(&self.dk.q().to_bytes_msf(), Order::Msf);
-        let pi_mod_proof = PiMod::prove_modulus(&paillier_n, &paillier_p, &paillier_q, &mut rng)
-            .ok_or_else(|| TecdsaError::Other("pi_mod proof generation failed".into()))?;
+        let pi_mod_tag = AuxInfoProofTag {
+            context: "pi_mod",
+            prover: self.my_id.0,
+        };
+        let pi_mod_proof = pi_mod::non_interactive::prove::<PI_MOD_REPS, sha2::Sha256>(
+            &pi_mod_tag,
+            pi_mod::Data { n: self.dk.n() },
+            pi_mod::PrivateData {
+                p: self.dk.p(),
+                q: self.dk.q(),
+            },
+            &mut rng,
+        )
+        .map_err(|e| TecdsaError::Other(format!("pi_mod proof generation failed: {e}")))?;
 
         // 5. Generate per-peer π_fac proofs and queue P2P MsgRound3 messages.
         let own_n = self.dk.n().clone();
@@ -451,14 +463,24 @@ impl Round3State {
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing round2 from {pid}")))?;
 
-            // Verify π_mod (Paillier-Blum modulus proof).
-            let peer_n_rug =
-                Integer::from_digits(&round2.paillier_ek.n().to_bytes_msf(), Order::Msf);
-            if !round3.pi_mod.verify_modulus(&peer_n_rug, &mut rng) {
-                return Err(TecdsaError::InvalidProof(format!(
-                    "party {pid} pi_mod verification failed"
-                )));
-            }
+            // Verify π_mod (Paillier-Blum modulus proof). The tag binds the
+            // proof to the prover's party id, so a peer cannot replay another
+            // party's proof for a modulus it does not know the factors of.
+            let pi_mod_tag = AuxInfoProofTag {
+                context: "pi_mod",
+                prover: pid.0,
+            };
+            pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
+                &pi_mod_tag,
+                pi_mod::Data {
+                    n: round2.paillier_ek.n(),
+                },
+                &round3.pi_mod,
+                &mut rng,
+            )
+            .map_err(|e| {
+                TecdsaError::InvalidProof(format!("party {pid} pi_mod verification failed: {e}"))
+            })?;
 
             // Verify π_fac (no-small-factor proof).
             let pi_fac_tag = AuxInfoProofTag {
@@ -511,5 +533,62 @@ impl Round3State {
             paillier_eks,
             pedersen_params: pedersen_params_vec,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A π_mod proof is bound to the prover's party id, so party `j` cannot
+    /// republish party `i`'s modulus and reuse `i`'s proof. Before the proof
+    /// was migrated onto `paillier_blum_modulus` its challenges were derived
+    /// from `(N, w)` alone, making exactly this replay possible.
+    #[test]
+    fn pi_mod_proof_is_bound_to_prover_id() {
+        use tecdsa_paillier::backend::Integer as PInt;
+
+        let mut rng = tecdsa_core::Csprng::new();
+        let p = PInt::generate_safe_prime(&mut rng, 256);
+        let q = PInt::generate_safe_prime(&mut rng, 256);
+        let dk = DecryptionKey::from_primes(p, q).expect("valid paillier key");
+
+        let tag_of = |prover| AuxInfoProofTag {
+            context: "pi_mod",
+            prover,
+        };
+
+        let proof = pi_mod::non_interactive::prove::<PI_MOD_REPS, sha2::Sha256>(
+            &tag_of(1),
+            pi_mod::Data { n: dk.n() },
+            pi_mod::PrivateData {
+                p: dk.p(),
+                q: dk.q(),
+            },
+            &mut rng,
+        )
+        .expect("prove must succeed for a valid Blum modulus");
+
+        assert!(
+            pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
+                &tag_of(1),
+                pi_mod::Data { n: dk.n() },
+                &proof,
+                &mut rng,
+            )
+            .is_ok(),
+            "honest proof must verify under the prover's own tag"
+        );
+
+        assert!(
+            pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
+                &tag_of(2),
+                pi_mod::Data { n: dk.n() },
+                &proof,
+                &mut rng,
+            )
+            .is_err(),
+            "proof must not verify under a different prover id"
+        );
     }
 }
