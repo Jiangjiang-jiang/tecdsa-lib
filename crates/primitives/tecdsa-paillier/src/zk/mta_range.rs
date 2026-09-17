@@ -28,24 +28,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
 
-// ---------------------------------------------------------------------------
-// Serde helper for Integer (MSF byte encoding)
-// ---------------------------------------------------------------------------
-
-mod ser_integer {
-    use fast_paillier::backend::Integer;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(val: &Integer, serializer: S) -> Result<S::Ok, S::Error> {
-        val.to_bytes_msf().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Integer, D::Error> {
-        let bytes = Vec::<u8>::deserialize(deserializer)?;
-        Ok(Integer::from_bytes_msf(&bytes))
-    }
-}
-
 use super::pdl_slack::{commitment_unknown_order, pow_mod_signed, sample_below};
 use crate::conv::{group_order_integer, integer_to_scalar};
 
@@ -93,15 +75,10 @@ pub struct NTildeParams {
 /// **Witness:** $(a, r)$.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AliceProof {
-    #[serde(with = "ser_integer")]
     z: Integer,
-    #[serde(with = "ser_integer")]
     e: Integer,
-    #[serde(with = "ser_integer")]
     s: Integer,
-    #[serde(with = "ser_integer")]
     s1: Integer,
-    #[serde(with = "ser_integer")]
     s2: Integer,
 }
 
@@ -268,21 +245,13 @@ fn alice_challenge(
 /// **Witness:** $(b, \beta', r)$.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BobProof {
-    #[serde(with = "ser_integer")]
     t: Integer,
-    #[serde(with = "ser_integer")]
     z: Integer,
-    #[serde(with = "ser_integer")]
     e: Integer,
-    #[serde(with = "ser_integer")]
     s: Integer,
-    #[serde(with = "ser_integer")]
     s1: Integer,
-    #[serde(with = "ser_integer")]
     s2: Integer,
-    #[serde(with = "ser_integer")]
     t1: Integer,
-    #[serde(with = "ser_integer")]
     t2: Integer,
 }
 
