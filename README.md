@@ -148,13 +148,14 @@ To reproduce the paper's results with the default settings, you need to:
    bash scripts/run_artifact.sh times twoparty
    ```
 
-   Note that by default, every protocol is executed 10 times for multi-party benchmarks. To run only the multi-party benchmarks with one execution per phase:
-   
+   Note that all benchmarks are executed multiple times to minimize the measurement errors. Among them, multi-party benchmarks are the most expensive, so we provide a flag `TECDSA_BENCH_RUNS` to control the number of executions. By setting it to a small value like `1`, multi-party benchmarks can complete faster with less measurement accuracy:
+
    ```bash
    TECDSA_BENCH_RUNS=1 bash scripts/run_artifact.sh times multiparty
    ```
+   
+   On the other hand, Setup, MtA, and ZK benchmarks are reasonably fast. For this reason, we directly use Criterion sampling for them, which cannot be controlled by `TECDSA_BENCH_RUNS`.
 
-   Also note that, Setup, MtA, and ZK benchmarks use Criterion sampling independently of TECDSA_BENCH_RUNS.
 3. Generate LaTeX tables from the saved measurements:
    ```bash
    bash scripts/run_artifact.sh tables all
