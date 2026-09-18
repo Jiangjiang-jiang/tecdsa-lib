@@ -125,62 +125,60 @@ Follow the [DKLs23 example](crates/protocols/tecdsa-dkls23/examples/dkls23_keyge
 
 The [header](crates/framework/tecdsa-wire/src/envelope.rs) contains session and protocol IDs, round, sender, and recipient. Header and payload use bincode 2 with big-endian, fixed-width integers.
 
-## Benchmarks
+## Benchmarks and Results
 
-Run the benchmarks with the default settings:
+The shell script `scripts/run_artifact.sh` is responsible for executing benchmarks and rendering results.
 
-```bash
-bash scripts/run_artifact.sh sizes
-bash scripts/run_artifact.sh times all
-```
+To reproduce the paper's results with the default settings, you need to:
+1. Get the proof and communication size of every protocol:
+   ```bash
+   bash scripts/run_artifact.sh sizes
+   ```
+2. Measure the time of every protocol:
+   ```bash
+   bash scripts/run_artifact.sh times all
+   ```
 
-Build files and measurements default to target/, while each command saves logs and tables in a timestamped directory under results/.
+   This is equivalent to:
 
-To run only the multi-party benchmarks with one execution per phase:
+   ```bash
+   bash scripts/run_artifact.sh times zk
+   bash scripts/run_artifact.sh times mta
+   bash scripts/run_artifact.sh times multiparty
+   bash scripts/run_artifact.sh times twoparty
+   ```
 
-```bash
-TECDSA_BENCH_RUNS=1 bash scripts/run_artifact.sh times multiparty
-```
+   Note that by default, every protocol is executed 10 times for multi-party benchmarks. To run only the multi-party benchmarks with one execution per phase:
+   
+   ```bash
+   TECDSA_BENCH_RUNS=1 bash scripts/run_artifact.sh times multiparty
+   ```
 
-Setup, MtA, and ZK benchmarks use Criterion sampling independently of this count.
+   Also note that, Setup, MtA, and ZK benchmarks use Criterion sampling independently of TECDSA_BENCH_RUNS.
+3. Generate LaTeX tables from the saved measurements:
+   ```bash
+   bash scripts/run_artifact.sh tables all
+   ```
 
-For more benchmarks, see the available suites and parameters:
+   This is equivalent to:
+
+   ```bash
+   bash scripts/run_artifact.sh tables zk
+   bash scripts/run_artifact.sh tables mta
+   bash scripts/run_artifact.sh tables multiparty
+   bash scripts/run_artifact.sh tables twoparty
+   ```
+
+   The LaTeX code for the paper's Tables 3-6 should be printed to stdout (as well as in `results/<timestamp of the run>/tables/` by default). Timing values may not match across different hardware, but the trends should be similar to those reported in the submitted version. Sizes should match or differ slightly from the reported values (due to the serialization of random values).
+
+---
+
+To customize the settings or run benchmarks with finer granularity, see the available suites and parameters:
 
 ```bash
 bash scripts/run_artifact.sh help
 bash scripts/run_artifact.sh list
 ```
-
-## Results
-
-Generate LaTeX tables from the saved measurements. The runner prints the output directory:
-
-```bash
-bash scripts/run_artifact.sh tables all
-```
-
-Table generation only reads saved data and does not rerun benchmarks. To choose an output path directly:
-
-```bash
-mkdir -p results/tables
-python3 scripts/build_zk_table.py > results/tables/zk.tex
-```
-
-Tables use preset configurations and show `--` for missing data. For custom configurations, use the raw measurements.
-
-```text
-target/
-|-- criterion/     timing estimates (JSON)
-|-- zk_sizes/      proof sizes (TSV)
-`-- comm_online/   communication (TSV)
-
-results/<timestamp>/
-|-- raw/           command output
-|-- run.log        commands, configuration, and elapsed times
-`-- tables/        generated LaTeX tables
-```
-
-Check run.log in the corresponding results directory for failed steps or worker panics.
 
 ## License
 
