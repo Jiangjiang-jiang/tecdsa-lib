@@ -26,7 +26,7 @@
 # so they are set per command rather than baked into the image. Defaults come
 # from crates/framework/tecdsa-bench/src/config.rs; override them per run:
 #
-#   TECDSA_BENCH_DKG_CONFIGS      DKG (n,t) pairs, `n:t,...`  (default 2:2,3:3,7:7,11:11,15:15,20:20)
+#   TECDSA_BENCH_DKG_CONFIGS      DKG (n,t) pairs, `n:t,...`  (default 2:2,3:3,7:7,11:11,20:20)
 #   TECDSA_BENCH_SIGN_N           presign/sign party count    (default 20)
 #   TECDSA_BENCH_SIGN_THRESHOLDS  signing thresholds, `t,...` (default 2,3,7,11,20)
 #   TECDSA_BENCH_RUNS             protocol executions per (phase, config);

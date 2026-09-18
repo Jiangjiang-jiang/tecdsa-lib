@@ -22,9 +22,9 @@
 //!
 //! The swept `(n, t)` configurations are read from the environment at run time
 //! (see [`tecdsa_bench::config`]), so they can be changed without recompiling:
-//! - **DKG** sweeps `TECDSA_BENCH_DKG_CONFIGS` (default `3:3,7:7,11:11,15:15,20:20`).
+//! - **DKG** sweeps `TECDSA_BENCH_DKG_CONFIGS` (default `2:2,3:3,7:7,11:11,20:20`).
 //! - **Presign/Sign** sweep `TECDSA_BENCH_SIGN_N` (default `20`) parties with the
-//!   thresholds in `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,15,20`); the
+//!   thresholds in `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,20`); the
 //!   signing quorum is parties `1..=t`.
 //!
 //! LN18 is benchmarked here too. Its per-session Init + Lagrange + Paillier/RP

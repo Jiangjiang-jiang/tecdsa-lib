@@ -31,7 +31,7 @@ Steps:
   tables  renders the named tables
 
 Environment:
-  TECDSA_BENCH_DKG_CONFIGS      DKG (n,t) pairs, `n:t,...`  (default 2:2,3:3,7:7,11:11,15:15,20:20)
+  TECDSA_BENCH_DKG_CONFIGS      DKG (n,t) pairs, `n:t,...`  (default 2:2,3:3,7:7,11:11,20:20)
   TECDSA_BENCH_SIGN_N           presign/sign party count    (default 20)
   TECDSA_BENCH_SIGN_THRESHOLDS  signing thresholds, `t,...`  (default 2,3,7,11,20)
   TECDSA_BENCH_RUNS             protocol executions per (phase, config);
@@ -294,7 +294,7 @@ if [ "$COMMAND" != tables ]; then
     cat <<EOF
 
 Benchmark configuration (env, effective for this run):
-  TECDSA_BENCH_DKG_CONFIGS      = $(show_var TECDSA_BENCH_DKG_CONFIGS "2:2,3:3,7:7,11:11,15:15,20:20" "skip the DKG sweep")
+  TECDSA_BENCH_DKG_CONFIGS      = $(show_var TECDSA_BENCH_DKG_CONFIGS "2:2,3:3,7:7,11:11,20:20" "skip the DKG sweep")
   TECDSA_BENCH_SIGN_N           = $(show_var TECDSA_BENCH_SIGN_N "20")
   TECDSA_BENCH_SIGN_THRESHOLDS  = $(show_var TECDSA_BENCH_SIGN_THRESHOLDS "2,3,7,11,20" "skip the presign/sign sweep")
   TECDSA_BENCH_RUNS             = $(show_var TECDSA_BENCH_RUNS "adaptive")

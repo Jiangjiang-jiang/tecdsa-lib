@@ -13,9 +13,9 @@
 //!
 //! The swept `(n, t)` configurations are read from the environment (see
 //! [`tecdsa_bench::config`]): DKG uses `TECDSA_BENCH_DKG_CONFIGS`
-//! (default `3:3,7:7,11:11,15:15,20:20`); presign/sign use `TECDSA_BENCH_SIGN_N`
+//! (default `2:2,3:3,7:7,11:11,20:20`); presign/sign use `TECDSA_BENCH_SIGN_N`
 //! (default `20`) parties with thresholds `TECDSA_BENCH_SIGN_THRESHOLDS`
-//! (default `2,3,7,11,15,20`), signing quorum parties `1..=t`.
+//! (default `2,3,7,11,20`), signing quorum parties `1..=t`.
 //!
 //! LN18 and GGN16 have external setup (Shamir re-sharing / threshold Paillier)
 //! timed separately.
