@@ -5,6 +5,22 @@ tecdsa-lib implements threshold ECDSA protocols in Rust, with examples for key g
 - **Multi-party:** GGN16, GG18, LN18, CGGMP20, DKLs23, XAL23, WMY23, TX25, JTX25, WMC24, and LLZ25.
 - **Two-party:** Lin17, KGG24, XAL21, and ABC24.
 
+## Layout
+
+```text
+tecdsa-lib/
+|-- crates/
+|   |-- core/        base types, curves, big integers
+|   |-- primitives/  cryptographic primitives
+|   |-- framework/   sessions, transport, tests, benchmarks
+|   |-- protocols/   protocol implementations
+|   `-- tecdsa/      public facade
+|-- scripts/        experiment runners and table generators
+|-- tests/vectors/  wire-format test vectors
+|-- vendor/         patched dependencies
+`-- Dockerfile      docker file
+```
+
 ## Usage
 
 1. **Clone the repository**
@@ -90,65 +106,45 @@ For a Rust application next to this checkout, add the protocol crate to Cargo.to
 tecdsa-dkls23 = { path = "../tecdsa-lib/crates/protocols/tecdsa-dkls23" }
 ```
 
-For a new application without a lockfile, start with the recorded dependency versions to keep the elliptic-curve prereleases compatible. Run these commands from the application directory:
+For a new application without a lockfile, reuse the tested dependency versions. Run from the application directory:
 
 ```bash
 cp ../tecdsa-lib/Cargo.lock Cargo.lock
 cargo build --release
 ```
 
-Follow the example through `Dkls23KeygenMachine`, `Dkls23PresignMachine`, and `Dkls23OnlineSignMachine`. Each implements [StateMachine](crates/framework/tecdsa-protocol/src/state_machine.rs) for sending and receiving protocol messages. The example handles message delivery locally through `Orchestrator`.
-
-Other protocol crates and their tests are under [crates/protocols](crates/protocols). Constructors and supported parameters differ by protocol. When using Paillier-based crates in another project, also copy the [workspace dependency patch](Cargo.toml#L142) into the application manifest and adjust its path.
+Follow the [DKLs23 example](crates/protocols/tecdsa-dkls23/examples/dkls23_keygen_sign.rs) for key generation and signing. Paillier-based crates also require the [dependency patch](Cargo.toml#L142), with its path adjusted for your application.
 
 ### Wire format
 
-The example passes messages directly between parties in one process. For network communication, [tecdsa-session](crates/framework/tecdsa-session/src/lib.rs) encodes messages through [tecdsa-wire](crates/framework/tecdsa-wire/src/codec.rs), which provides `encode` and `decode`. The current envelope is version 1:
+[tecdsa-wire](crates/framework/tecdsa-wire/src/codec.rs) provides `encode` and `decode` for this version 1 envelope:
 
 ```text
 "MPCE" | version (u32 LE) | header length (u32 BE) | header | payload
 ```
 
-The [header](crates/framework/tecdsa-wire/src/envelope.rs) contains the session ID, protocol ID, round, sender, and recipient. Recipient 0xFFFF denotes broadcast. Header and payload use bincode 2 with big-endian, fixed-width integers, and the payload type depends on the protocol phase.
-
-The transport must preserve message boundaries and provide authenticated, confidential delivery. Wire encoding itself supplies neither authentication nor encryption.
+The [header](crates/framework/tecdsa-wire/src/envelope.rs) contains session and protocol IDs, round, sender, and recipient. Header and payload use bincode 2 with big-endian, fixed-width integers.
 
 ## Benchmarks
 
-The benchmark runner measures proof sizes, communication, and execution time. Set the output directories and repetition count before running it:
+Run the benchmarks with the default settings:
 
 ```bash
-# Save logs and tables in results/.
-export RESULTS_DIR="$PWD/results"
-# Keep build files and measurements in target/.
-export CARGO_TARGET_DIR="$PWD/target"
-# Execute each measured protocol phase ten times.
-export TECDSA_BENCH_RUNS=10
-export TECDSA_BENCH_JOBS=1
-
 bash scripts/run_artifact.sh sizes
 bash scripts/run_artifact.sh times all
 ```
 
-The sizes command collects proof sizes and communication once. The times command runs the timing benchmarks. Select `zk`, `mta`, `multiparty`, or `twoparty` in place of `all` to run one suite. For example, run the multi-party suite with one execution per protocol phase:
+Build files and measurements default to target/, while each command saves logs and tables in a timestamped directory under results/.
+
+To run only the multi-party benchmarks with one execution per phase:
 
 ```bash
 TECDSA_BENCH_RUNS=1 bash scripts/run_artifact.sh times multiparty
 ```
 
-Setup, MtA, and ZK benchmarks use Criterion sampling independently of this count. To measure only DKLs23 once with n=3 and t=2:
+Setup, MtA, and ZK benchmarks use Criterion sampling independently of this count.
 
-```bash
-TECDSA_BENCH_PROTOCOLS=dkls23 \
-TECDSA_BENCH_DKG_CONFIGS=3:2 \
-TECDSA_BENCH_SIGN_N=3 \
-TECDSA_BENCH_SIGN_THRESHOLDS=2 \
-cargo run --locked --release -p tecdsa-bench --bin protocol_once
-```
-
-DKG configurations use comma-separated n:t pairs. Signing uses one total party count and a list of thresholds, each at most n. The protocol filter applies to the one-shot binary and the sizes command. It does not filter Criterion suites or change the example configuration.
-
-See the runner help for all options and data sources:
+For more benchmarks, see the available suites and parameters:
 
 ```bash
 bash scripts/run_artifact.sh help
@@ -157,19 +153,20 @@ bash scripts/run_artifact.sh list
 
 ## Results
 
-Generate LaTeX tables from the saved measurements:
+Generate LaTeX tables from the saved measurements. The runner prints the output directory:
 
 ```bash
 bash scripts/run_artifact.sh tables all
 ```
 
-This writes mta.tex, zk.tex, dkg.tex, sign.tex, and twoparty.tex under results/tables. Select a suite in place of `all` to generate only its tables. The Python scripts can also be run directly, for example:
+Table generation only reads saved data and does not rerun benchmarks. To choose an output path directly:
 
 ```bash
+mkdir -p results/tables
 python3 scripts/build_zk_table.py > results/tables/zk.tex
 ```
 
-Table generation reads existing data and does not rerun benchmarks. The generators use fixed parameter grids, so custom configurations should be read from the raw measurements. Missing measurements appear as `--`.
+Tables use preset configurations and show `--` for missing data. For custom configurations, use the raw measurements.
 
 ```text
 target/
@@ -177,13 +174,13 @@ target/
 |-- zk_sizes/      proof sizes (TSV)
 `-- comm_online/   communication (TSV)
 
-results/
+results/<timestamp>/
 |-- raw/           command output
 |-- run.log        commands, configuration, and elapsed times
 `-- tables/        generated LaTeX tables
 ```
 
-The one-shot binary prints timings to the terminal and writes communication data under target/comm_online. The runner also saves command output and logs. Check these logs for failures, as a worker panic may not produce a nonzero exit code.
+Check run.log in the corresponding results directory for failed steps or worker panics.
 
 ## License
 
