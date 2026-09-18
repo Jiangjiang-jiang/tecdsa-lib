@@ -5,7 +5,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-ALL_TABLES=(zk mta dkg sign twoparty)
+ALL_TABLES=(zk mta multiparty twoparty)
 
 usage() {
     cat <<'EOF'
@@ -19,11 +19,10 @@ Usage:
   bash scripts/run_artifact.sh help
 
 Tables (<name>, or `all` for every one of them):
-  zk        ZK proofs on the critical path   (benchmark: zk_proofs)
-  mta       per-instance MtA conversions     (benchmarks: primitives, zk_proofs)
-  dkg       multi-party key generation       (benchmark: multiparty, DKG sweep)
-  sign      multi-party signing              (benchmark: multiparty, sign sweep)
-  twoparty  two-party key generation+signing (benchmark: twoparty)
+  zk          ZK proofs on the critical path         (benchmark: zk_proofs)
+  mta         per-instance MtA conversions           (benchmarks: primitives, zk_proofs)
+  multiparty  multi-party key generation and signing (benchmark: multiparty)
+  twoparty    two-party key generation and signing   (benchmark: twoparty)
 
 Steps:
   sizes   measures the proof and communication sizes (covers every table)
@@ -49,22 +48,21 @@ Examples:
   bash scripts/run_artifact.sh times zk && bash scripts/run_artifact.sh tables zk
   TECDSA_BENCH_RUNS=1 bash scripts/run_artifact.sh times all
   TECDSA_BENCH_SIGN_N=7 TECDSA_BENCH_SIGN_THRESHOLDS=2,7 \
-      bash scripts/run_artifact.sh times sign
+      bash scripts/run_artifact.sh times multiparty
 
 Every command is echoed with its output and captured under results/<timestamp>/.
 EOF
 }
 
 # ─────────────────────────────────────────────────────────────────────────
-# Table metadata: generator, description, and the benchmarks it reads.
+# Table metadata: generators, description, and the benchmarks it reads.
 # Mirrors the sources documented at the top of each generator.
 # ─────────────────────────────────────────────────────────────────────────
 table_py() {
     case "$1" in
         zk) echo build_zk_table.py ;;
         mta) echo build_mta_table.py ;;
-        dkg) echo build_dkg_table.py ;;
-        sign) echo build_sign_table.py ;;
+        multiparty) echo build_dkg_table.py build_sign_table.py ;;
         twoparty) echo build_twoparty_table.py ;;
         *) return 1 ;;
     esac
@@ -74,8 +72,7 @@ table_desc() {
     case "$1" in
         zk) echo "ZK proofs on the critical path: prove/verify from zk_proofs, size from zk_once" ;;
         mta) echo "per-instance MtA conversions: phases from primitives plus zk/class_group/r_enc, comm from protocol_once" ;;
-        dkg) echo "multi-party key generation: setup/dkg/aux-info from multiparty" ;;
-        sign) echo "multi-party signing: presign/online-sign from multiparty, comm from protocol_once" ;;
+        multiparty) echo "multi-party key generation (setup/dkg/aux-info) and signing (presign/online-sign), comm from protocol_once" ;;
         twoparty) echo "two-party key generation and signing: twoparty benches, comm from protocol_once" ;;
         *) return 1 ;;
     esac
@@ -138,8 +135,8 @@ esac
 if [ "$COMMAND" = list ]; then
     printf 'Tables:\n\n'
     for t in "${ALL_TABLES[@]}"; do
-        printf '  %-9s %s\n' "$t" "$(table_desc "$t")"
-        printf '  %-9s generator: %s\n\n' "" "$(table_py "$t")"
+        printf '  %-11s %s\n' "$t" "$(table_desc "$t")"
+        printf '  %-11s generators: %s\n\n' "" "$(table_py "$t")"
     done
     cat <<'EOF'
 Order of work:
@@ -230,34 +227,17 @@ have_artifacts() {  # <dir> -- true when the one-shot binaries wrote something
 # ─────────────────────────────────────────────────────────────────────────
 # What do the requested tables need?
 # ─────────────────────────────────────────────────────────────────────────
-want_zk=0 want_mta=0 want_dkg=0 want_sign=0 want_twoparty=0
+want_zk=0 want_mta=0 want_multiparty=0 want_twoparty=0
 for t in "${TABLES[@]:-}"; do
     case "$t" in
         zk) want_zk=1 ;;
         mta) want_mta=1 ;;
-        dkg) want_dkg=1 ;;
-        sign) want_sign=1 ;;
+        multiparty) want_multiparty=1 ;;
         twoparty) want_twoparty=1 ;;
     esac
 done
 
 NOTES=()
-
-if [ "$COMMAND" = times ]; then
-    # The multiparty suite runs a DKG sweep and a presign/sign sweep, each gated
-    # by its own variable. The real protocol executions happen outside
-    # Criterion's filter, so an unused sweep can only be switched off through
-    # the environment. Narrow it to the phase the requested tables report,
-    # unless the reviewer set the variable explicitly.
-    if [ "$want_dkg" = 1 ] && [ "$want_sign" = 0 ] && [ -z "${TECDSA_BENCH_SIGN_THRESHOLDS+set}" ]; then
-        export TECDSA_BENCH_SIGN_THRESHOLDS=
-        NOTES+=("dkg table: presign/sign sweep switched off (TECDSA_BENCH_SIGN_THRESHOLDS=); set it to override")
-    fi
-    if [ "$want_sign" = 1 ] && [ "$want_dkg" = 0 ] && [ -z "${TECDSA_BENCH_DKG_CONFIGS+set}" ]; then
-        export TECDSA_BENCH_DKG_CONFIGS=
-        NOTES+=("sign table: DKG sweep switched off (TECDSA_BENCH_DKG_CONFIGS=); set it to override")
-    fi
-fi
 
 # zk_proofs: the zk table needs every proof relation, the mta table only the CL
 # proof measured outside the MtA cycle (see build_mta_table.py ROWS).
@@ -323,7 +303,7 @@ fi
 if [ "$COMMAND" = times ]; then
     section "Criterion benchmarks for: ${TABLES[*]}"
 
-    if [ "$want_dkg" = 1 ] || [ "$want_sign" = 1 ]; then
+    if [ "$want_multiparty" = 1 ]; then
         # shellcheck disable=SC2086  # BENCH_ARGS is an intentional word list
         run bench-multiparty cargo bench -p tecdsa-bench --bench multiparty -- $BENCH_ARGS
     fi
@@ -372,24 +352,28 @@ if [ "$COMMAND" = tables ]; then
     fi
 
     for t in "${TABLES[@]}"; do
-        name="$(table_py "$t")"
-        if ! generator="$(find_generator "$name")"; then
-            printf -- '--- table %s: generator %s not found (skipped)\n' "$t" "$name"
-            continue
-        fi
-        tex="$TABLE_DIR/${t}.tex"
-        err="$TABLE_DIR/${t}.err"
-        printf '\n$ python3 %s\n' "$generator"
-        if python3 "$generator" > "$tex" 2> "$err"; then
-            cat "$tex"
-            printf -- '--- table %s: ok (%s)\n' "$t" "$tex"
-            TIMINGS+=("$(printf '%-24s         ok' "table $t")")
-        else
-            cat "$err"
-            printf -- '--- table %s: FAILED (%s)\n' "$t" "$err"
-            TIMINGS+=("$(printf '%-24s         FAILED' "table $t")")
-            FAILURES+=("table $t")
-        fi
+        for name in $(table_py "$t"); do
+            # build_<label>_table.py -> <label>.tex
+            label="${name#build_}"
+            label="${label%_table.py}"
+            if ! generator="$(find_generator "$name")"; then
+                printf -- '--- table %s: generator %s not found (skipped)\n' "$label" "$name"
+                continue
+            fi
+            tex="$TABLE_DIR/${label}.tex"
+            err="$TABLE_DIR/${label}.err"
+            printf '\n$ python3 %s\n' "$generator"
+            if python3 "$generator" > "$tex" 2> "$err"; then
+                cat "$tex"
+                printf -- '--- table %s: ok (%s)\n' "$label" "$tex"
+                TIMINGS+=("$(printf '%-24s         ok' "table $label")")
+            else
+                cat "$err"
+                printf -- '--- table %s: FAILED (%s)\n' "$label" "$err"
+                TIMINGS+=("$(printf '%-24s         FAILED' "table $label")")
+                FAILURES+=("table $label")
+            fi
+        done
     done
 fi
 

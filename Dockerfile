@@ -74,7 +74,7 @@ RUN printf '%s\n' \
     '  1. bash scripts/run_artifact.sh sizes            # proof sizes + communication (once)' \
     '  2. bash scripts/run_artifact.sh times <name>...  # benchmark the timings' \
     '  3. bash scripts/run_artifact.sh tables <name>... # render the tables' \
-    'Tables: zk, mta, dkg, sign, twoparty, all   (bash scripts/run_artifact.sh list)' \
+    'Tables: zk, mta, multiparty, twoparty, all  (bash scripts/run_artifact.sh list)' \
     'Details: bash scripts/run_artifact.sh help' \
     'BANNER' \
     >> /root/.bashrc

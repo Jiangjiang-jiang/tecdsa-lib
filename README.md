@@ -158,16 +158,10 @@ To reproduce a selected table, set the run count above and use its timing comman
   bash scripts/run_artifact.sh times zk
   ```
 
-- **Table 5(a):** one-time setup and per-party DKG time at t=n, with CGGMP20 auxiliary setup reported separately inside the DKG cell. The output is dkg.tex.
+- **Table 5:** both parts come from the multiparty benchmark, so one timing run covers them. Part (a) is one-time setup and per-party DKG time at t=n, with CGGMP20 auxiliary setup reported separately inside the DKG cell, written to dkg.tex. Part (b) is per-party offline/online signing time and communication at n=20 and t=2,3,7,11,20, written to sign.tex. WMY23 in the code corresponds to WMYC23 in the paper.
 
   ```bash
-  TECDSA_BENCH_SIGN_THRESHOLDS= bash scripts/run_artifact.sh times dkg
-  ```
-
-- **Table 5(b):** per-party offline/online signing time and communication at n=20 and t=2,3,7,11,20. The output is sign.tex. WMY23 in the code corresponds to WMYC23 in the paper.
-
-  ```bash
-  TECDSA_BENCH_DKG_CONFIGS= bash scripts/run_artifact.sh times sign
+  bash scripts/run_artifact.sh times multiparty
   ```
 
 - **Table 6:** two-party key generation and signing at t=n=2, reported separately for P1 and P2. The output is twoparty.tex.
