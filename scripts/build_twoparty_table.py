@@ -41,17 +41,27 @@ from pathlib import Path
 CRITERION_DIR = Path("target/criterion")
 COMM_DIR = Path("target/comm_online")  # per-process comm TSVs, written by protocol_once
 SCAFFOLD = "--"  # cell with no measurement
+# Phase that does not exist for a role (as opposed to one not yet measured):
+# ABC+24's P2 has no presigning work, so its bench reads ~0 rather than a time.
+NO_PHASE = "/"
 
-# (slug, name, cite, DKG Type, Setup, DKG rounds, Para./Prim., Rounds(o/s))
+# (slug, name, cite, DKG Type, Material, DKG rounds,
+#  Paradigm, Primitive, Rounds(o/s), parties with no offline phase)
+# Row order and the last four fields are copied verbatim from the .tex; the
+# script only fills Time (s), the DKG/Offline/Online times and Comm.
 META = [
     ("lin17", "Lin17", "Lin17/lindell2021fast",
-     r"Commit $+$ Paillier $+$ PDL", r"Paillier $+$ PDL", "3", "P1, PL", "3/1"),
+     r"Commit $+$ Paillier $+$ PDL", r"Paillier $+$ PDL", "3",
+     r"$x_1 x_2,\, k_1 k_2$", "PL", "3/1", ()),
+    ("xal21", "XAL+21", "XAL+21/xue2021efficient",
+     r"Commit $+$ DL PoK", r"MtA primitive (PL/CL/OT)", "3",
+     r"$x_1{+}x_2,\, k_1(r_1{+}k_2)$", "PL", "3/1", ()),
     ("kgg24", "KGG24", "KGG24/koziel2024fast",
-     r"Commit $+$ Paillier $+$ DL-equality proof", r"Paillier", "3", "P1, PL", "2/1"),
-    ("xal21", "XAL21", "XAL+21/xue2021efficient",
-     r"Commit $+$ DL PoK", r"MtA backend (PL/CL/OT)", "3", "P1, PL", "3/1"),
-    ("abc24", "ABC24", "ABC+24/adjedj2024two",
-     r"Commit $+$ DL PoK $+$ Paillier-OLE", r"Paillier $+$ DF (server)", "2", "P1, PL", "1/1"),
+     r"Commit $+$ Paillier $+$ DL-equality proof", r"Paillier", "3",
+     r"$x_1{+}x_2,\, k_1 k_2$", "PL", "2/1", ()),
+    ("abc24", "ABC+24", "ABC+24/adjedj2024two",
+     r"Commit $+$ DL PoK $+$ Paillier-OLE", r"Paillier $+$ DF (server)", "2",
+     r"$x_1{+}x_2,\, k_1 k_2$", "PL", "1/1", (2,)),
 ]
 
 
@@ -139,25 +149,30 @@ def main():
 
     namecites = [f"{name}~\\cite{{{cite}}}" for _, name, cite, *_ in META]
     w = max(len(s) for s in namecites)
+    wt = max(len(m[3]) for m in META)
+    wm = max(len(m[4]) for m in META)
+    wp = max(len(m[6]) for m in META)
 
     # ---- (a) Key generation ----
-    print("% ---- (a) Key generation rows (Setup (s) from setup/<proto>) ----")
-    for (slug, _, _, dkg_type, setup, rounds, _, _), nc in zip(META, namecites):
-        p1 = cell(slug, "dkg", 1)
-        p2 = cell(slug, "dkg", 2)
-        print(f"{nc:<{w}} & {dkg_type:<42} & {setup:<24} & {setup_s(slug)} & {rounds} "
-              f"& {p1} & {p2} \\\\")
+    # Protocol | Rounds | DKG Type | Material | Time (s) | P1 | P2
+    print(r"% ---- (a) Key generation rows ----")
+    for m, nc in zip(META, namecites):
+        slug, dkg_type, material, rounds = m[0], m[3], m[4], m[5]
+        p1, p2 = cell(slug, "dkg", 1), cell(slug, "dkg", 2)
+        print(f"{nc:<{w}} & {rounds} & {dkg_type:<{wt}} & {material:<{wm}} & "
+              f"{setup_s(slug)} & {p1} & {p2} \\\\")
 
     print()
     # ---- (b) Signing ----
-    print("% ---- (b) Signing rows (Comm. P1/P2 total, merged from target/comm_online/) ----")
-    for (slug, _, _, _, _, _, para, ros), nc in zip(META, namecites):
-        off1, off2 = cell(slug, "presign", 1), cell(slug, "presign", 2)
-        on1, on2 = cell(slug, "online_sign", 1), cell(slug, "online_sign", 2)
-        c1, c2 = comm_kb(slug, 1), comm_kb(slug, 2)
-        print(f"{nc:<{w}} & {para:<6} & {ros} "
-              f"& {off1} & {off2} & {on1} & {on2} & {c1} & {c2} \\\\")
-
+    # Protocol | Paradigm | Primitive | Rounds (o/s) | Offline P1/P2 | Online P1/P2 | Comm P1/P2
+    print(r"% ---- (b) Signing rows (Comm. is per-party offline+online, KB) ----")
+    for m, nc in zip(META, namecites):
+        slug, paradigm, primitive, ros, no_offline = m[0], m[6], m[7], m[8], m[9]
+        off = [NO_PHASE if i in no_offline else cell(slug, "presign", i) for i in (1, 2)]
+        on = [cell(slug, "online_sign", i) for i in (1, 2)]
+        cm = [comm_kb(slug, i) for i in (1, 2)]
+        print(f"{nc:<{w}} & {paradigm:<{wp}} & {primitive} & {ros} & "
+              + " & ".join(off + on + cm) + r" \\")
 
 if __name__ == "__main__":
     if not CRITERION_DIR.is_dir():

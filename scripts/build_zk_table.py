@@ -37,47 +37,55 @@ CRITERION_DIR = Path("target/criterion")
 ZK_SIZES_DIR = Path("target/zk_sizes")
 SCAFFOLD = "--"
 
+# Statement column pad width; the one longer statement (R_CL-Enc) overflows
+# instead of widening the column for every row.
+STMT_W = 50
+
 # Sections of tab:zk-impl. Each row is
-#   (name LaTeX, statement, [proof-ids], cite-key)
+#   (name LaTeX, statement, [proof-ids], source label, cite key)
 # where each proof-id is both the criterion group (<id>/prove, <id>/verify) and
-# the zk_once size key (<id>). Multi-proof rows are summed.
+# the zk_once size key (<id>). Multi-proof rows are summed. The source column is
+# rendered "<label>~\cite{<cite key>}", as in build_dkg_table.py.
 SECTIONS = [
     ("MtA proofs", [
         (r"$\mathcal{R}_\text{MtA-A},\mathcal{R}_\text{MtA-B}$",
          "Paillier MtA inputs in range",
          ["zk/paillier/alice_range", "zk/paillier/bob"],
-         "GG18/gennaro2018fast"),
+         "GG18", "GG18/gennaro2018fast"),
         (r"$\mathcal{R}_\text{enc},\mathcal{R}_\text{aff-g}$",
          "Paillier ciphertext and affine operation in range",
          ["zk/paillier_zk_facade/pi_enc", "zk/paillier_zk_facade/pi_aff_g"],
-         "CGGMP20/canetti2020uc"),
+         "CGGMP20", "CGGMP20/canetti2020uc"),
         (r"$\mathcal{R}_\text{JL-enc},\mathcal{R}_\text{JL-aff}$",
          "JL encryption and affine operation in range",
          ["zk/joye_libert/zkjl_enc", "zk/joye_libert/zkjl_aff"],
-         "XAL+23/xue2023efficient"),
+         "XAL+23", "XAL+23/xue2023efficient"),
         (r"$\mathcal{R}_\text{Ped}$",
          "CL and EC Pedersen commitments hold the same value",
          ["zk/class_group/r_ped_ec"],
-         "LLZ+25/lyu2025threshold"),
-        (r"$\mathcal{R}_\text{CL-Enc}$", "CL ciphertext is a well-formed encryption of a known value", ["zk/class_group/r_enc"], "WMC24/wong2024secure")
+         "LLZ+25", "LLZ+25/lyu2025threshold"),
+        (r"$\mathcal{R}_\text{CL-Enc}$",
+         "CL ciphertext is a well-formed encryption of a known value",
+         ["zk/class_group/r_enc"],
+         "WMC24", "WMC24/wong2024secure"),
     ]),
     ("One-time setup proofs", [
         (r"$\mathcal{R}_\text{ck}$",
          "Paillier modulus is well formed",
          ["zk/paillier/correct_key_ni"],
-         "GG18/gennaro2018fast"),
+         "GG18", "GG18/gennaro2018fast"),
         (r"$\mathcal{R}_\text{mod}$",
          "modulus is a Paillier--Blum integer",
          ["zk/pedersen_mod/pi_mod"],
-         "CGGMP20/canetti2020uc"),
+         "CGGMP20", "CGGMP20/canetti2020uc"),
         (r"$\mathcal{R}_\text{prm}$",
          "Ring-Pedersen parameters are well formed",
          ["zk/pedersen_mod/pi_prm"],
-         "CGGMP20/canetti2020uc"),
+         "CGGMP20", "CGGMP20/canetti2020uc"),
         (r"$\mathcal{R}_\text{JLmod}$",
          "modulus has the JL structure",
          ["zk/joye_libert/zkjlmod"],
-         "XAL+23/xue2023efficient"),
+         "XAL+23", "XAL+23/xue2023efficient"),
     ]),
 ]
 
@@ -167,18 +175,19 @@ def main():
 
     rows = [r for _, sect in SECTIONS for r in sect]
     name_w = max(len(name) for name, *_ in rows)
-    stmt_w = max(len(stmt) for _, stmt, *_ in rows)
 
     for i, (sect_name, sect_rows) in enumerate(SECTIONS):
-        if i > 0:  # the first section follows the header \midrule in the template
-            print(r"\midrule")
+        # The first section follows the header \midrule in the template; every
+        # later one is separated by a \midrule trailing the preceding row.
         print(rf"\multicolumn{{6}}{{l}}{{\emph{{{sect_name}}}}} \\")
-        for name, stmt, pids, cite in sect_rows:
+        more = i < len(SECTIONS) - 1
+        for j, (name, stmt, pids, label, cite) in enumerate(sect_rows):
             pr = fmt(prove_ms(pids))
             ve = fmt(verify_ms(pids))
             sz = fmt(size_kb(pids))
-            print(f"{name:<{name_w}} & {stmt:<{stmt_w}} & {pr:>8} & {ve:>8} "
-                  f"& {sz:>8} & \\cite{{{cite}}} \\\\")
+            end = r"\\" + (r"\midrule" if more and j == len(sect_rows) - 1 else "")
+            print(f"{name:<{name_w}} & {stmt:<{STMT_W}} & {pr:>8} & {ve:>8} "
+                  f"& {sz:>8} & {label}~\\cite{{{cite}}} {end}")
 
 
 if __name__ == "__main__":

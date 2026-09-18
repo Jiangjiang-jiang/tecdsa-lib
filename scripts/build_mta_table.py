@@ -33,7 +33,7 @@ table's ZK-proof column:
   CL           : WMY23 MtAwc check (g^alpha) + R_{CL-Enc}   -- proof added on top
   JL           : ZkJlEnc + ZkJlAff       (R_JL-enc, R_JL-aff) -- in the cycle
   NIM          : R_Ped (RPedEcProof, LLZ25)                 -- prove + verify
-  OT (VOLE)    : none (RVOLE soft-spoken OT consistency)    -- ---
+  OT (VOLE)    : none (RVOLE soft-spoken OT consistency)    -- /
 
 Formatting matches build_twoparty_table.py: ms values > 1 are rounded to 5
 significant figures, <= 1 keep 4 decimals; KB to 5 sig figs (>1) / 4 decimals.
@@ -82,7 +82,7 @@ ROWS = [
     # measured by the single `full_cycle` bench (init+respond+compute+finish).
     # This equals sum-of-phases for the others: e.g. paillier sum 180.44 ms vs
     # its full_cycle 180.55 ms.
-    ("rvole", "OT (VOLE)", r"---", ["full_cycle"], []),
+    ("rvole", "OT (VOLE)", r"/", ["full_cycle"], []),
 ]
 
 

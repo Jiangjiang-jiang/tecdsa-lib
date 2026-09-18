@@ -52,19 +52,18 @@ COMM_SLUG = {"ln18": "ln18-paillier"}
 #   offline kind: protocol slug (presign bench) | "EMDASH" | None (scaffold)
 #   online  kind: protocol slug (online_sign bench) | "cggmp20" | None (scaffold)
 META = [
-    ("CGGMP20", "CGGMP20/canetti2020uc",         "P1, PL", "3/1", "cggmp20",      "cggmp20"),
-    ("GG18",    "GG18/gennaro2018fast",          "P2, PL", "4/4", "gg18",         "gg18"),
     ("GGN16",   "GGN16/gennaro2016threshold",    "P1, PL", "4/2", "ggn16",        "ggn16"),
+    ("GG18",    "GG18/gennaro2018fast",          "P2, PL", "4/5", "gg18",         "gg18"),
     ("LN18",    "LN18/lindell2018fast",          "P1, PL", "2/6", "ln18",         "ln18"),
-    ("XAL23",   "XAL+23/xue2023efficient",       "P2, JL", "4/1", "xal23",        "xal23"),
+    ("CGGMP20", "CGGMP20/canetti2020uc",         "P1, PL", "3/1", "cggmp20",      "cggmp20"),
+    ("XAL+23",  "XAL+23/xue2023efficient",       "P2, JL", "4/1", "xal23",        "xal23"),
     ("DKLs23",  "DKLs23/doerner2024threshold",   "P1, OT", "2/1", "dkls23",       "dkls23"),
+    ("WMYC23",  "WMY23/wong2023real",            "P2, CL", "4/1", "wmy23",        "wmy23"),
+    ("WMC24",   "WMC24/wong2024secure",          "P2, CL", "3/1", "wmc24",        "wmc24"),
     ("TX25",    "TX25/tang2025robust",           "P1, CL", "2/1", "tx25",         "tx25"),
-    ("WMY23",   "WMY23/wong2023real",            "P2, CL", "4/1", "wmy23",        "wmy23"),
     ("JTX25-N", "JTX25/jiang2025three",          "P1, CL", "2/1", "jtx25",        "jtx25"),
     ("JTX25-R", "JTX25/jiang2025three",          "P1, CL", "2/1", "jtx25_robust", "jtx25_robust"),
     ("LLZ+25",  "LLZ+25/lyu2025threshold",       "P1, CL", "1/1", "llz25",        "llz25"),
-    ("Trout",   "DNP25/dahari2025trout",         "P1, CL", "0/2", "EMDASH",       "trout"),
-    ("WMC24",   "WMC24/wong2024secure",          "P2, CL", "3/1", "wmc24",        "wmc24"),
 ]
 
 
@@ -168,8 +167,10 @@ def main():
     namecites = [f"{name}~\\cite{{{cite}}}" for name, cite, *_ in META]
     w = max(len(s) for s in namecites)
 
-    print("% Multi-party rows of tab:sign (Offline/Online/Comm. filled)")
-    print("% Times in ms (>1 at 5 sig figs, <=1 at 4 decimals); Comm. per-party online in KB.")
+    # --- drop-in LaTeX rows for sub-table (b) ---
+    print(r"% ---- (b) Signing rows ----")
+    print(r"% Times in ms (>1 at 5 sig figs, <=1 at 4 decimals); "
+          r"Comm. is per-party offline+online in KB.")
     for (name, cite, para, rounds, off_kind, on_kind), nc in zip(META, namecites):
         cells = []
         for t in T_VALUES:
@@ -177,7 +178,6 @@ def main():
             cells.append(fmt(online(on_kind, t)))
             cells.append(fmt(comm_kb(on_kind, t)))
         print(f"{nc:<{w}} & {para:<7} & {rounds} & " + " & ".join(cells) + r" \\")
-
 
 if __name__ == "__main__":
     if not CRITERION_DIR.is_dir():
