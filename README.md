@@ -129,6 +129,14 @@ The [header](crates/framework/tecdsa-wire/src/envelope.rs) contains session and 
 
 The shell script `scripts/run_artifact.sh` is responsible for executing benchmarks and rendering results.
 
+### System requirements
+
+The paper's reported measurements were taken on a Linux PC with an Intel Core i9-12900K (16 cores, 24 threads) and 64 GB of RAM.
+
+No special hardware is required, and less powerful machines are very likely able to run the benchmarks as well, although we have not tested them.
+
+### Reproducing the results
+
 To reproduce the paper's results with the default settings, you need to:
 1. Get the proof and communication size of every protocol:
    ```bash
