@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! KU25 end-to-end integration tests.
+//! KU24 end-to-end integration tests.
 //!
 //! Covers PRSS setup -> keygen -> batch presign -> online sign -> ECDSA verify,
 //! plus the two properties the paper is about: presignatures are
@@ -10,14 +10,14 @@ use elliptic_curve::PrimeField;
 use k256::{ProjectivePoint, Scalar, Secp256k1};
 use sha2::{Digest, Sha256};
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_ku25::{
-    error::Ku25Error,
-    keygen::Ku25KeygenMachine,
-    presign::{Ku25PresignBatch, Ku25PresignMachine, Ku25Presignature},
+use tecdsa_ku24::{
+    error::Ku24Error,
+    keygen::Ku24KeygenMachine,
+    presign::{Ku24PresignBatch, Ku24PresignMachine, Ku24Presignature},
     prss::PrssKeys,
-    setup::Ku25SetupMachine,
-    sign::Ku25SignMachine,
-    Ku25KeyShare, Ku25Protocol,
+    setup::Ku24SetupMachine,
+    sign::Ku24SignMachine,
+    Ku24KeyShare, Ku24Protocol,
 };
 use tecdsa_protocol::{
     ecdsa::{verify_ecdsa, DataToSign, Signature},
@@ -57,7 +57,7 @@ fn run_setup(n: u16, threshold: u16) -> Vec<PrssKeys<C>> {
         .map(|&pid| {
             (
                 pid,
-                Ku25SetupMachine::<C>::new(pid, parties.clone(), threshold)
+                Ku24SetupMachine::<C>::new(pid, parties.clone(), threshold)
                     .expect("PRSS setup machine"),
             )
         })
@@ -65,7 +65,7 @@ fn run_setup(n: u16, threshold: u16) -> Vec<PrssKeys<C>> {
     run(machines, 4)
 }
 
-fn run_keygen(n: u16, prss: &[PrssKeys<C>], key_id: &[u8; 32]) -> Vec<Ku25KeyShare<C>> {
+fn run_keygen(n: u16, prss: &[PrssKeys<C>], key_id: &[u8; 32]) -> Vec<Ku24KeyShare<C>> {
     let parties = party_ids(n);
     let machines = parties
         .iter()
@@ -73,7 +73,7 @@ fn run_keygen(n: u16, prss: &[PrssKeys<C>], key_id: &[u8; 32]) -> Vec<Ku25KeySha
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25KeygenMachine::new(pid, parties.clone(), keys, key_id).expect("keygen machine"),
+                Ku24KeygenMachine::new(pid, parties.clone(), keys, key_id).expect("keygen machine"),
             )
         })
         .collect();
@@ -85,7 +85,7 @@ fn run_presign(
     prss: &[PrssKeys<C>],
     m: usize,
     session: &[u8; 32],
-) -> Vec<Ku25PresignBatch<C>> {
+) -> Vec<Ku24PresignBatch<C>> {
     let parties = party_ids(n);
     let machines = parties
         .iter()
@@ -93,7 +93,7 @@ fn run_presign(
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25PresignMachine::new_with_session(pid, parties.clone(), keys, m, session)
+                Ku24PresignMachine::new_with_session(pid, parties.clone(), keys, m, session)
                     .expect("presign machine"),
             )
         })
@@ -103,8 +103,8 @@ fn run_presign(
 
 fn run_sign(
     n: u16,
-    shares: &[Ku25KeyShare<C>],
-    presigs: Vec<Ku25Presignature<C>>,
+    shares: &[Ku24KeyShare<C>],
+    presigs: Vec<Ku24Presignature<C>>,
     digest: DataToSign<C>,
 ) -> Vec<Signature<C>> {
     let parties = party_ids(n);
@@ -115,7 +115,7 @@ fn run_sign(
         .map(|((&pid, share), presig)| {
             (
                 pid,
-                Ku25SignMachine::new(pid, parties.clone(), share, presig, digest)
+                Ku24SignMachine::new(pid, parties.clone(), share, presig, digest)
                     .expect("sign machine"),
             )
         })
@@ -133,7 +133,7 @@ fn digest_of(msg: &[u8]) -> DataToSign<C> {
 }
 
 /// Pull presignature `index` out of every party's batch.
-fn take_presignature(batches: &[Ku25PresignBatch<C>], index: usize) -> Vec<Ku25Presignature<C>> {
+fn take_presignature(batches: &[Ku24PresignBatch<C>], index: usize) -> Vec<Ku24Presignature<C>> {
     batches
         .iter()
         .map(|b| b.get(index).expect("presignature index in range").clone())
@@ -142,8 +142,8 @@ fn take_presignature(batches: &[Ku25PresignBatch<C>], index: usize) -> Vec<Ku25P
 
 fn sign_and_verify(
     n: u16,
-    shares: &[Ku25KeyShare<C>],
-    presigs: Vec<Ku25Presignature<C>>,
+    shares: &[Ku24KeyShare<C>],
+    presigs: Vec<Ku24Presignature<C>>,
     msg: &[u8],
 ) -> Signature<C> {
     let digest = digest_of(msg);
@@ -207,7 +207,7 @@ fn full_protocol_5_parties_threshold_3() {
         );
     }
 
-    sign_and_verify(n, &shares, take_presignature(&batches, 0), b"hello KU25");
+    sign_and_verify(n, &shares, take_presignature(&batches, 0), b"hello KU24");
 }
 
 #[test]
@@ -266,14 +266,14 @@ fn batch_presigning_is_constant_round_and_all_entries_usable() {
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25PresignMachine::new_with_session(pid, parties.clone(), keys, m, &[9u8; 32])
+                Ku24PresignMachine::new_with_session(pid, parties.clone(), keys, m, &[9u8; 32])
                     .expect("presign machine"),
             )
         })
         .collect();
     // The presign phase advertises four rounds; give the orchestrator exactly
     // that many and confirm the batch still completes regardless of m.
-    let batches: Vec<Ku25PresignBatch<C>> = Orchestrator::new(machines, 4)
+    let batches: Vec<Ku24PresignBatch<C>> = Orchestrator::new(machines, 4)
         .run()
         .expect("presign must complete within 4 rounds")
         .into_iter()
@@ -320,7 +320,7 @@ fn signing_rejects_a_mismatched_presignature() {
         .map(|((&pid, share), presig)| {
             (
                 pid,
-                Ku25SignMachine::new(pid, parties.clone(), share, presig, digest)
+                Ku24SignMachine::new(pid, parties.clone(), share, presig, digest)
                     .expect("sign machine"),
             )
         })
@@ -335,19 +335,19 @@ fn signing_rejects_a_mismatched_presignature() {
 fn keygen_rejects_an_inconsistent_broadcast() {
     // A party that broadcasts a wrong g^{x_j} is caught by the degree-t
     // consistency check across all n points.
-    use tecdsa_ku25::keygen::Ku25KeygenMsg;
+    use tecdsa_ku24::keygen::Ku24KeygenMsg;
 
     let (n, threshold) = (5u16, 3u16);
     let prss = run_setup(n, threshold);
     let parties = party_ids(n);
 
-    let mut machines: Vec<(PartyId, Ku25KeygenMachine<C>)> = parties
+    let mut machines: Vec<(PartyId, Ku24KeygenMachine<C>)> = parties
         .iter()
         .zip(&prss)
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25KeygenMachine::new(pid, parties.clone(), keys, &[0x30; 32]).unwrap(),
+                Ku24KeygenMachine::new(pid, parties.clone(), keys, &[0x30; 32]).unwrap(),
             )
         })
         .collect();
@@ -359,7 +359,7 @@ fn keygen_rejects_an_inconsistent_broadcast() {
         assert_eq!(out.len(), 1);
         broadcasts.push((*pid, out.into_iter().next().unwrap().msg));
     }
-    let bogus = Ku25KeygenMsg::Round1(<C as TecdsaCurve>::point_to_bytes(
+    let bogus = Ku24KeygenMsg::Round1(<C as TecdsaCurve>::point_to_bytes(
         &(ProjectivePoint::GENERATOR * Scalar::from(1234u64)).to_affine(),
     ));
 
@@ -387,7 +387,7 @@ fn keygen_rejects_an_inconsistent_broadcast() {
 /// before any presignature is released (Section 4 / Lemma 1).
 #[test]
 fn presign_detects_an_additive_attack_on_f_wmult() {
-    use tecdsa_ku25::presign::Ku25PresignMsg;
+    use tecdsa_ku24::presign::Ku24PresignMsg;
     use tecdsa_protocol::Recipient;
 
     let (n, threshold) = (5u16, 3u16);
@@ -395,13 +395,13 @@ fn presign_detects_an_additive_attack_on_f_wmult() {
     let parties = party_ids(n);
     let cheater = PartyId(n);
 
-    let mut machines: Vec<(PartyId, Ku25PresignMachine<C>)> = parties
+    let mut machines: Vec<(PartyId, Ku24PresignMachine<C>)> = parties
         .iter()
         .zip(&prss)
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25PresignMachine::new_with_session(pid, parties.clone(), keys, 2, &[0x40; 32])
+                Ku24PresignMachine::new_with_session(pid, parties.clone(), keys, 2, &[0x40; 32])
                     .unwrap(),
             )
         })
@@ -425,10 +425,10 @@ fn presign_detects_an_additive_attack_on_f_wmult() {
             // The cheater shifts its first F_wmult share by 1, which shifts the
             // reconstructed product k_1 a_1 by a non-zero multiple of that.
             let msg = match (from == cheater, &out.msg) {
-                (true, Ku25PresignMsg::Round1(e)) => {
+                (true, Ku24PresignMsg::Round1(e)) => {
                     let mut e = e.clone();
                     e[31] ^= 1;
-                    Ku25PresignMsg::Round1(e)
+                    Ku24PresignMsg::Round1(e)
                 }
                 _ => out.msg.clone(),
             };
@@ -458,8 +458,8 @@ fn presign_detects_an_additive_attack_on_f_wmult() {
 
 #[test]
 fn rejects_dishonest_majority_configurations() {
-    fn setup_err(me: PartyId, parties: Vec<PartyId>, threshold: u16) -> Ku25Error {
-        match Ku25SetupMachine::<C>::new(me, parties, threshold) {
+    fn setup_err(me: PartyId, parties: Vec<PartyId>, threshold: u16) -> Ku24Error {
+        match Ku24SetupMachine::<C>::new(me, parties, threshold) {
             Ok(_) => panic!("expected the configuration to be rejected"),
             Err(e) => e,
         }
@@ -468,21 +468,21 @@ fn rejects_dishonest_majority_configurations() {
     let parties = party_ids(5);
     // t = 3 needs n >= 7.
     let err = setup_err(PartyId(1), parties.clone(), 4);
-    assert!(matches!(err, Ku25Error::InvalidThreshold { .. }), "{err}");
+    assert!(matches!(err, Ku24Error::InvalidThreshold { .. }), "{err}");
 
     // A party outside the set.
     let err = setup_err(PartyId(9), parties, 3);
-    assert!(matches!(err, Ku25Error::NotAParticipant(_)), "{err}");
+    assert!(matches!(err, Ku24Error::NotAParticipant(_)), "{err}");
 
     // Committees beyond the PRSS blow-up limit are refused outright.
     let err = setup_err(PartyId(1), party_ids(24), 12);
-    assert!(matches!(err, Ku25Error::TooManyParties { .. }), "{err}");
+    assert!(matches!(err, Ku24Error::TooManyParties { .. }), "{err}");
 }
 
 #[test]
 fn protocol_metadata_is_consistent() {
-    let meta = <Ku25Protocol<C> as Protocol>::METADATA;
-    assert_eq!(meta.name, "KU25");
+    let meta = <Ku24Protocol<C> as Protocol>::METADATA;
+    assert_eq!(meta.name, "KU24");
     assert_eq!(meta.presign_rounds, 4);
     assert_eq!(meta.online_sign_rounds, 1);
     assert_eq!(meta.keygen_rounds, 1);

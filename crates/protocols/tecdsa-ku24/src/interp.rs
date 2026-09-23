@@ -6,7 +6,7 @@
 //! of the degree-`d` polynomial at `j`, *returning `None` if the values are not
 //! consistent with any polynomial of degree at most `d`*.
 //!
-//! Every interpolation performed by KU25 uses the same evaluation set (the
+//! Every interpolation performed by KU24 uses the same evaluation set (the
 //! indices of all `n` parties) and the same target point (`x = 0`), so the
 //! Lagrange coefficients are precomputed once in [`Interp::new`] and reused.
 //!

@@ -9,12 +9,12 @@ use elliptic_curve::{
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
-use super::{msg::Ku25KeygenMsg, STREAM_KEYGEN};
+use super::{msg::Ku24KeygenMsg, STREAM_KEYGEN};
 use crate::{
     committee::Committee,
-    error::{Ku25Error, Ku25Result},
+    error::{Ku24Error, Ku24Result},
     interp::Interp,
-    key_share::Ku25KeyShare,
+    key_share::Ku24KeyShare,
     prss::PrssKeys,
     wire,
 };
@@ -25,16 +25,16 @@ where
 {
     /// Collecting `X_j` broadcasts.
     Round1(BTreeMap<u16, C::ProjectivePoint>),
-    Done(Ku25KeyShare<C>),
+    Done(Ku24KeyShare<C>),
     Poisoned,
 }
 
-/// KU25 key generation state machine (one broadcast round).
+/// KU24 key generation state machine (one broadcast round).
 ///
-/// Requires the PRSS setup ([`crate::setup::Ku25SetupMachine`]) to have
+/// Requires the PRSS setup ([`crate::setup::Ku24SetupMachine`]) to have
 /// completed.  `key_id` is the PRSS domain separator for this key: distinct
 /// keys **must** use distinct identifiers, otherwise they would be the same key.
-pub struct Ku25KeygenMachine<C: TecdsaCurve>
+pub struct Ku24KeygenMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -42,10 +42,10 @@ where
     interp: Interp<C>,
     secret_share: C::Scalar,
     round: KeygenRound<C>,
-    outgoing: Vec<Outgoing<Ku25KeygenMsg>>,
+    outgoing: Vec<Outgoing<Ku24KeygenMsg>>,
 }
 
-impl<C: TecdsaCurve> Ku25KeygenMachine<C>
+impl<C: TecdsaCurve> Ku24KeygenMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
@@ -60,17 +60,17 @@ where
         all_parties: Vec<PartyId>,
         prss: &PrssKeys<C>,
         key_id: &[u8; 32],
-    ) -> Ku25Result<Self> {
+    ) -> Ku24Result<Self> {
         let committee = Committee::new(my_id, all_parties, prss.threshold())?;
         if committee.n() != prss.n() || committee.my_index() != prss.my_index() {
-            return Err(Ku25Error::InvalidPartySet(
+            return Err(Ku24Error::InvalidPartySet(
                 "participant set does not match the PRSS setup".into(),
             ));
         }
 
         let secret_share = prss.rand(key_id, STREAM_KEYGEN, 1)[0];
         if secret_share == C::Scalar::ZERO {
-            return Err(Ku25Error::Other("PRSS produced a zero key share".into()));
+            return Err(Ku24Error::Other("PRSS produced a zero key share".into()));
         }
         let my_point = C::generator() * secret_share;
 
@@ -80,7 +80,7 @@ where
         let interp = Interp::<C>::new(&committee.indices(), usize::from(committee.degree()));
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
-            msg: Ku25KeygenMsg::Round1(wire::encode_point::<C>(&my_point)?),
+            msg: Ku24KeygenMsg::Round1(wire::encode_point::<C>(&my_point)?),
         }];
 
         let mut machine = Self {
@@ -94,7 +94,7 @@ where
         Ok(machine)
     }
 
-    fn try_finalize(&mut self) -> Ku25Result<()> {
+    fn try_finalize(&mut self) -> Ku24Result<()> {
         let KeygenRound::Round1(received) = &self.round else {
             return Ok(());
         };
@@ -110,17 +110,17 @@ where
         let public_key =
             self.interp
                 .point(&public_shares)
-                .ok_or(Ku25Error::InconsistentShares {
+                .ok_or(Ku24Error::InconsistentShares {
                     what: "key shares g^{x_j}",
                     degree: usize::from(self.committee.degree()),
                 })?;
         if bool::from(public_key.is_identity()) {
-            return Err(Ku25Error::Other(
+            return Err(Ku24Error::Other(
                 "derived public key is the identity".into(),
             ));
         }
 
-        self.round = KeygenRound::Done(Ku25KeyShare {
+        self.round = KeygenRound::Done(Ku24KeyShare {
             party_index: self.committee.my_index(),
             secret_share: self.secret_share,
             public_key,
@@ -131,17 +131,17 @@ where
         Ok(())
     }
 
-    fn handle_inner(&mut self, from: PartyId, msg: Ku25KeygenMsg) -> Ku25Result<()> {
+    fn handle_inner(&mut self, from: PartyId, msg: Ku24KeygenMsg) -> Ku24Result<()> {
         let index = self.committee.sender_index(from)?;
         let KeygenRound::Round1(received) = &mut self.round else {
-            return Err(Ku25Error::RoundMismatch {
+            return Err(Ku24Error::RoundMismatch {
                 expected: 2,
                 got: 1,
             });
         };
-        let Ku25KeygenMsg::Round1(bytes) = msg;
+        let Ku24KeygenMsg::Round1(bytes) = msg;
         if received.contains_key(&index) {
-            return Err(Ku25Error::DuplicateMessage {
+            return Err(Ku24Error::DuplicateMessage {
                 round: 1,
                 party: from,
             });
@@ -151,18 +151,18 @@ where
     }
 }
 
-impl<C: TecdsaCurve> StateMachine for Ku25KeygenMachine<C>
+impl<C: TecdsaCurve> StateMachine for Ku24KeygenMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    type Output = Ku25KeyShare<C>;
-    type Inbound = Ku25KeygenMsg;
-    type Outbound = Ku25KeygenMsg;
+    type Output = Ku24KeyShare<C>;
+    type Inbound = Ku24KeygenMsg;
+    type Outbound = Ku24KeygenMsg;
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
         if matches!(self.round, KeygenRound::Poisoned) {
-            return Err(Ku25Error::Poisoned.into());
+            return Err(Ku24Error::Poisoned.into());
         }
         self.handle_inner(from, msg).map_err(|e| {
             self.round = KeygenRound::Poisoned;
@@ -181,7 +181,7 @@ where
     fn finish(self) -> tecdsa_core::Result<Self::Output> {
         match self.round {
             KeygenRound::Done(share) => Ok(share),
-            _ => Err(Ku25Error::NotComplete("keygen").into()),
+            _ => Err(Ku24Error::NotComplete("keygen").into()),
         }
     }
 

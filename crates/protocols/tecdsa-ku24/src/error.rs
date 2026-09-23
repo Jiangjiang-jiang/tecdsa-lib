@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Error types for the KU25 protocol.
+//! Error types for the KU24 protocol.
 
 use tecdsa_protocol::PartyId;
 
-/// Errors raised by the KU25 protocol.
+/// Errors raised by the KU24 protocol.
 #[derive(Debug, thiserror::Error)]
-pub enum Ku25Error {
+pub enum Ku24Error {
     /// The (n, t) configuration is not compatible with an honest majority.
     #[error("invalid threshold configuration: n = {n}, reconstruction threshold = {threshold} (need 1 <= t and n >= 2t+1 with t = threshold - 1)")]
     InvalidThreshold {
@@ -106,22 +106,22 @@ pub enum Ku25Error {
     Other(String),
 }
 
-impl From<Ku25Error> for tecdsa_core::TecdsaError {
-    fn from(e: Ku25Error) -> Self {
+impl From<Ku24Error> for tecdsa_core::TecdsaError {
+    fn from(e: Ku24Error) -> Self {
         match e {
-            Ku25Error::InconsistentShares { .. }
-            | Ku25Error::TripleCheckFailed
-            | Ku25Error::Degenerate { .. } => tecdsa_core::TecdsaError::InvalidShare(e.to_string()),
-            Ku25Error::InvalidSignature => tecdsa_core::TecdsaError::InvalidProof(e.to_string()),
-            Ku25Error::UnknownSender(p) => tecdsa_core::TecdsaError::UnknownSender(p.0),
-            Ku25Error::DuplicateMessage { party, .. } => {
+            Ku24Error::InconsistentShares { .. }
+            | Ku24Error::TripleCheckFailed
+            | Ku24Error::Degenerate { .. } => tecdsa_core::TecdsaError::InvalidShare(e.to_string()),
+            Ku24Error::InvalidSignature => tecdsa_core::TecdsaError::InvalidProof(e.to_string()),
+            Ku24Error::UnknownSender(p) => tecdsa_core::TecdsaError::UnknownSender(p.0),
+            Ku24Error::DuplicateMessage { party, .. } => {
                 tecdsa_core::TecdsaError::DuplicateMessage(party.0)
             }
-            Ku25Error::RoundMismatch { expected, got } => {
+            Ku24Error::RoundMismatch { expected, got } => {
                 tecdsa_core::TecdsaError::RoundMismatch { expected, got }
             }
-            Ku25Error::Malformed(_) => tecdsa_core::TecdsaError::Serialization(e.to_string()),
-            Ku25Error::PresignatureMismatch(_) | Ku25Error::Poisoned => {
+            Ku24Error::Malformed(_) => tecdsa_core::TecdsaError::Serialization(e.to_string()),
+            Ku24Error::PresignatureMismatch(_) | Ku24Error::Poisoned => {
                 tecdsa_core::TecdsaError::Abort(e.to_string())
             }
             other => tecdsa_core::TecdsaError::Other(other.to_string()),
@@ -129,5 +129,5 @@ impl From<Ku25Error> for tecdsa_core::TecdsaError {
     }
 }
 
-/// Convenience alias for KU25 results.
-pub type Ku25Result<T> = Result<T, Ku25Error>;
+/// Convenience alias for KU24 results.
+pub type Ku24Result<T> = Result<T, Ku24Error>;

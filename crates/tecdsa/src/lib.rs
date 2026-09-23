@@ -14,8 +14,8 @@ pub use tecdsa_gg18 as gg18;
 pub use tecdsa_ggn16 as ggn16;
 #[cfg(feature = "jtx25")]
 pub use tecdsa_jtx25 as jtx25;
-#[cfg(feature = "ku25")]
-pub use tecdsa_ku25 as ku25;
+#[cfg(feature = "ku24")]
+pub use tecdsa_ku24 as ku24;
 #[cfg(feature = "llz25")]
 pub use tecdsa_llz25 as llz25;
 #[cfg(feature = "ln18")]

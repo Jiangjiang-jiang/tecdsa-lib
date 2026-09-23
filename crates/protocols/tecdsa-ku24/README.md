@@ -1,6 +1,6 @@
-# tecdsa-ku25
+# tecdsa-ku24
 
-KU25: Honest-Majority Threshold ECDSA with Batch Generation of Key-Independent
+KU24: Honest-Majority Threshold ECDSA with Batch Generation of Key-Independent
 Presignatures (Jonathan Katz, Antoine Urban).
 
 Part of the [tecdsa](../../) threshold ECDSA workspace.
@@ -8,7 +8,7 @@ Part of the [tecdsa](../../) threshold ECDSA workspace.
 ## What is different about this protocol
 
 Most threshold ECDSA protocols assume a dishonest majority and generate
-*key-dependent* presignatures one at a time. KU25 targets **key-management
+*key-dependent* presignatures one at a time. KU24 targets **key-management
 networks** -- a fixed set of `n` servers holding shares of a large number of
 keys -- and exploits the honest-majority assumption (`n >= 2t + 1`) to offer two
 properties that matter in that deployment:

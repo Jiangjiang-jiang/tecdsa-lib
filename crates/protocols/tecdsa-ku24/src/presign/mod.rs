@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Batch generation of key-independent presignatures.
 //!
-//! This module fuses the three protocols of the paper that make up the KU25
+//! This module fuses the three protocols of the paper that make up the KU24
 //! preprocessing phase:
 //!
 //! * `Pi_wmult` (Appendix A, Figure 8) -- degree reduction, secure *up to
@@ -77,13 +77,13 @@ pub mod msg;
 use std::collections::BTreeMap;
 
 use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
-pub use machine::Ku25PresignMachine;
-pub use msg::Ku25PresignMsg;
+pub use machine::Ku24PresignMachine;
+pub use msg::Ku24PresignMsg;
 use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
 
 use crate::{
-    error::{Ku25Error, Ku25Result},
+    error::{Ku24Error, Ku24Result},
     interp::Interp,
 };
 
@@ -112,7 +112,7 @@ pub mod streams {
 ///
 /// Holds `r_i = F(R_i)`, a degree-`t` share of `k_i^{-1}` and a degree-`2t`
 /// share of zero.  Must be used **at most once** (see [`crate::sign`]).
-pub struct Ku25Presignature<C: TecdsaCurve>
+pub struct Ku24Presignature<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -132,7 +132,7 @@ where
     pub zero_share: C::Scalar,
 }
 
-impl<C: TecdsaCurve> Clone for Ku25Presignature<C>
+impl<C: TecdsaCurve> Clone for Ku24Presignature<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -149,7 +149,7 @@ where
     }
 }
 
-impl<C: TecdsaCurve> Zeroize for Ku25Presignature<C>
+impl<C: TecdsaCurve> Zeroize for Ku24Presignature<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -159,7 +159,7 @@ where
     }
 }
 
-impl<C: TecdsaCurve> Drop for Ku25Presignature<C>
+impl<C: TecdsaCurve> Drop for Ku24Presignature<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -168,27 +168,27 @@ where
     }
 }
 
-impl<C: TecdsaCurve> core::fmt::Debug for Ku25Presignature<C>
+impl<C: TecdsaCurve> core::fmt::Debug for Ku24Presignature<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Ku25Presignature")
+        f.debug_struct("Ku24Presignature")
             .field("party_index", &self.party_index)
             .finish_non_exhaustive()
     }
 }
 
 /// The output of one run of the presigning protocol: `m` presignatures.
-pub struct Ku25PresignBatch<C: TecdsaCurve>
+pub struct Ku24PresignBatch<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     /// The presignatures, in generation order.
-    pub presignatures: Vec<Ku25Presignature<C>>,
+    pub presignatures: Vec<Ku24Presignature<C>>,
 }
 
-impl<C: TecdsaCurve> Ku25PresignBatch<C>
+impl<C: TecdsaCurve> Ku24PresignBatch<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -206,23 +206,23 @@ where
 
     /// Borrow the presignature at `index`.
     #[must_use]
-    pub fn get(&self, index: usize) -> Option<&Ku25Presignature<C>> {
+    pub fn get(&self, index: usize) -> Option<&Ku24Presignature<C>> {
         self.presignatures.get(index)
     }
 
     /// Consume the batch and return the presignatures.
     #[must_use]
-    pub fn into_vec(self) -> Vec<Ku25Presignature<C>> {
+    pub fn into_vec(self) -> Vec<Ku24Presignature<C>> {
         self.presignatures
     }
 }
 
-impl<C: TecdsaCurve> core::fmt::Debug for Ku25PresignBatch<C>
+impl<C: TecdsaCurve> core::fmt::Debug for Ku24PresignBatch<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Ku25PresignBatch")
+        f.debug_struct("Ku24PresignBatch")
             .field("len", &self.presignatures.len())
             .finish()
     }
@@ -269,7 +269,7 @@ pub(crate) fn open_scalars<C>(
     count: usize,
     shares: &BTreeMap<u16, Vec<C::Scalar>>,
     what: &'static str,
-) -> Ku25Result<Vec<C::Scalar>>
+) -> Ku24Result<Vec<C::Scalar>>
 where
     C: TecdsaCurve,
     FieldBytesSize<C>: ModulusSize,
@@ -284,7 +284,7 @@ where
         out.push(
             interp
                 .scalar(&column)
-                .ok_or(Ku25Error::InconsistentShares {
+                .ok_or(Ku24Error::InconsistentShares {
                     what,
                     degree: interp.degree(),
                 })?,
@@ -300,7 +300,7 @@ pub(crate) fn open_points<C>(
     count: usize,
     shares: &BTreeMap<u16, Vec<C::ProjectivePoint>>,
     what: &'static str,
-) -> Ku25Result<Vec<C::ProjectivePoint>>
+) -> Ku24Result<Vec<C::ProjectivePoint>>
 where
     C: TecdsaCurve,
     FieldBytesSize<C>: ModulusSize,
@@ -313,7 +313,7 @@ where
         for j in 1..=n {
             column.push(shares[&j][i]);
         }
-        out.push(interp.point(&column).ok_or(Ku25Error::InconsistentShares {
+        out.push(interp.point(&column).ok_or(Ku24Error::InconsistentShares {
             what,
             degree: interp.degree(),
         })?);
@@ -327,14 +327,14 @@ pub(crate) fn open_scalar<C>(
     n: u16,
     shares: &BTreeMap<u16, C::Scalar>,
     what: &'static str,
-) -> Ku25Result<C::Scalar>
+) -> Ku24Result<C::Scalar>
 where
     C: TecdsaCurve,
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     let column: Vec<C::Scalar> = (1..=n).map(|j| shares[&j]).collect();
-    interp.scalar(&column).ok_or(Ku25Error::InconsistentShares {
+    interp.scalar(&column).ok_or(Ku24Error::InconsistentShares {
         what,
         degree: interp.degree(),
     })

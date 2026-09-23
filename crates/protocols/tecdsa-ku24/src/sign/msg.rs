@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire messages for KU25 online signing.
+//! Wire messages for KU24 online signing.
 
 use serde::{Deserialize, Serialize};
 
 /// Sign wire message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Ku25SignMsg {
+pub enum Ku24SignMsg {
     /// Round 1: `(r_i, s_j)`, the pair the paper sends to the coordinator.
     ///
     /// `r` is echoed so that a mismatch (two parties using different

@@ -16,7 +16,7 @@ pub struct KeyEntry {
 
 /// Setup wire message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Ku25SetupMsg {
+pub enum Ku24SetupMsg {
     /// Round 1 (point-to-point): the keys this party deals to the recipient.
     ///
     /// Sent over the private channel; there is no broadcast and no

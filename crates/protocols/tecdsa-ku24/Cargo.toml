@@ -1,11 +1,11 @@
 [package]
-name = "tecdsa-ku25"
+name = "tecdsa-ku24"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "KU25 honest-majority threshold ECDSA with batch generation of key-independent presignatures (Katz-Urban)"
+description = "KU24 honest-majority threshold ECDSA with batch generation of key-independent presignatures (Katz-Urban)"
 
 [features]
 default = ["secp256k1"]

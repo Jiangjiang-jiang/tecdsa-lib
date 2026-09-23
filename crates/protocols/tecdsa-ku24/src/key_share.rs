@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! KU25 key share.
+//! KU24 key share.
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
 use tecdsa_curve::TecdsaCurve;
@@ -7,10 +7,10 @@ use zeroize::Zeroize;
 
 /// A `(t + 1)`-out-of-`n` Shamir share of an ECDSA private key.
 ///
-/// KU25 presignatures are **key-independent**, so a single party may hold an
+/// KU24 presignatures are **key-independent**, so a single party may hold an
 /// arbitrary number of these -- one per key hosted by the key-management
 /// network -- and use any of them with any presignature.
-pub struct Ku25KeyShare<C: TecdsaCurve>
+pub struct Ku24KeyShare<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -28,7 +28,7 @@ where
     pub total: u16,
 }
 
-impl<C: TecdsaCurve> Clone for Ku25KeyShare<C>
+impl<C: TecdsaCurve> Clone for Ku24KeyShare<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -44,7 +44,7 @@ where
     }
 }
 
-impl<C: TecdsaCurve> Zeroize for Ku25KeyShare<C>
+impl<C: TecdsaCurve> Zeroize for Ku24KeyShare<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -55,7 +55,7 @@ where
     }
 }
 
-impl<C: TecdsaCurve> Drop for Ku25KeyShare<C>
+impl<C: TecdsaCurve> Drop for Ku24KeyShare<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -64,12 +64,12 @@ where
     }
 }
 
-impl<C: TecdsaCurve> core::fmt::Debug for Ku25KeyShare<C>
+impl<C: TecdsaCurve> core::fmt::Debug for Ku24KeyShare<C>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Ku25KeyShare")
+        f.debug_struct("Ku24KeyShare")
             .field("party_index", &self.party_index)
             .field("threshold", &self.threshold)
             .field("total", &self.total)

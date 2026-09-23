@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Wire messages for KU25 batch presigning.
+//! Wire messages for KU24 batch presigning.
 //!
 //! All payloads are flat, fixed-width blobs (see [`crate::wire`]) so that the
 //! per-message overhead stays independent of the batch size.
@@ -30,7 +30,7 @@ pub struct PresignRound4 {
 
 /// Presign wire message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Ku25PresignMsg {
+pub enum Ku24PresignMsg {
     /// Round 1 (broadcast): `F_wmult` #1 -- `2m` packed scalars `e_j[i]` for the
     /// pairs `(k_i, a_i)` followed by the pairs `(r, a_i)`.
     Round1(Vec<u8>),

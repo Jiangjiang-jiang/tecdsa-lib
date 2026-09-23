@@ -3,7 +3,7 @@
 //!
 //! The paper explicitly leaves DKG out of scope (Section 1.2) and assumes the
 //! parties already hold `(t + 1)`-out-of-`n` Shamir shares of one or more keys.
-//! Since KU25 already sets up PRSS keys, the natural way to produce such shares
+//! Since KU24 already sets up PRSS keys, the natural way to produce such shares
 //! costs a single round and no extra machinery:
 //!
 //! 1. Each party derives `x_j <- F_rss.Rand` locally (Section 5).  By
@@ -15,7 +15,7 @@
 //!
 //! With `n >= 2t + 1` the `t + 1` honest points already determine the sharing
 //! polynomial, so step 3 catches any corrupted party that broadcasts a wrong
-//! `X_j`; honest parties then abort.  This matches KU25's security-with-abort
+//! `X_j`; honest parties then abort.  This matches KU24's security-with-abort
 //! model.
 //!
 //! Because presignatures are key-independent, this phase can be re-run for as
@@ -25,8 +25,8 @@
 pub mod machine;
 pub mod msg;
 
-pub use machine::Ku25KeygenMachine;
-pub use msg::Ku25KeygenMsg;
+pub use machine::Ku24KeygenMachine;
+pub use msg::Ku24KeygenMsg;
 
 /// PRSS stream identifier reserved for key generation.
 ///

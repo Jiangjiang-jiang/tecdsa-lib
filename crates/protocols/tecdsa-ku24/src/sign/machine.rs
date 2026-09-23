@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! One-round state machine for KU25 online signing.
+//! One-round state machine for KU24 online signing.
 
 use std::collections::BTreeMap;
 
@@ -13,13 +13,13 @@ use tecdsa_protocol::{
     IaReport, PartyId, Recipient, StateMachine,
 };
 
-use super::{msg::Ku25SignMsg, partial_signature};
+use super::{msg::Ku24SignMsg, partial_signature};
 use crate::{
     committee::Committee,
-    error::{Ku25Error, Ku25Result},
+    error::{Ku24Error, Ku24Result},
     interp::Interp,
-    key_share::Ku25KeyShare,
-    presign::Ku25Presignature,
+    key_share::Ku24KeyShare,
+    presign::Ku24Presignature,
     wire,
 };
 
@@ -32,10 +32,10 @@ where
     Poisoned,
 }
 
-/// KU25 online signing state machine (one broadcast round).
+/// KU24 online signing state machine (one broadcast round).
 ///
 /// Consumes one presignature; the caller is responsible for never reusing it.
-pub struct Ku25SignMachine<C: TecdsaCurve>
+pub struct Ku24SignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -45,10 +45,10 @@ where
     public_key: C::ProjectivePoint,
     digest: DataToSign<C>,
     round: SignRound<C>,
-    outgoing: Vec<Outgoing<Ku25SignMsg>>,
+    outgoing: Vec<Outgoing<Ku24SignMsg>>,
 }
 
-impl<C: TecdsaCurve> Ku25SignMachine<C>
+impl<C: TecdsaCurve> Ku24SignMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
@@ -64,13 +64,13 @@ where
     pub fn new(
         my_id: PartyId,
         all_parties: Vec<PartyId>,
-        key_share: &Ku25KeyShare<C>,
-        presignature: Ku25Presignature<C>,
+        key_share: &Ku24KeyShare<C>,
+        presignature: Ku24Presignature<C>,
         digest: DataToSign<C>,
-    ) -> Ku25Result<Self> {
+    ) -> Ku24Result<Self> {
         let committee = Committee::new(my_id, all_parties, key_share.threshold)?;
         if key_share.total != committee.n() || key_share.party_index != committee.my_index() {
-            return Err(Ku25Error::InvalidPartySet(
+            return Err(Ku24Error::InvalidPartySet(
                 "key share does not match the participant set".into(),
             ));
         }
@@ -78,7 +78,7 @@ where
             || presignature.threshold != key_share.threshold
             || presignature.party_index != key_share.party_index
         {
-            return Err(Ku25Error::InvalidPartySet(
+            return Err(Ku24Error::InvalidPartySet(
                 "presignature does not match the key share".into(),
             ));
         }
@@ -93,7 +93,7 @@ where
 
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
-            msg: Ku25SignMsg::Round1 {
+            msg: Ku24SignMsg::Round1 {
                 r: wire::encode_scalar::<C>(&r),
                 s: wire::encode_scalar::<C>(&s_share),
             },
@@ -114,7 +114,7 @@ where
         Ok(machine)
     }
 
-    fn try_finalize(&mut self) -> Ku25Result<()> {
+    fn try_finalize(&mut self) -> Ku24Result<()> {
         let SignRound::Round1(received) = &self.round else {
             return Ok(());
         };
@@ -127,12 +127,12 @@ where
         let s = self
             .interp_2t
             .scalar(&shares)
-            .ok_or(Ku25Error::InconsistentShares {
+            .ok_or(Ku24Error::InconsistentShares {
                 what: "partial signatures",
                 degree: self.interp_2t.degree(),
             })?;
         if s == C::Scalar::ZERO {
-            return Err(Ku25Error::InvalidSignature);
+            return Err(Ku24Error::InvalidSignature);
         }
         let signature = Signature {
             r: self.r,
@@ -141,29 +141,29 @@ where
         // The paper's coordinator verifies against the public key before
         // releasing the signature; a failure here means some party deviated.
         verify_ecdsa::<C>(&signature, &self.public_key, &self.digest)
-            .map_err(|_| Ku25Error::InvalidSignature)?;
+            .map_err(|_| Ku24Error::InvalidSignature)?;
 
         self.round = SignRound::Done(signature);
         Ok(())
     }
 
-    fn handle_inner(&mut self, from: PartyId, msg: Ku25SignMsg) -> Ku25Result<()> {
+    fn handle_inner(&mut self, from: PartyId, msg: Ku24SignMsg) -> Ku24Result<()> {
         let index = self.committee.sender_index(from)?;
-        let Ku25SignMsg::Round1 { r, s } = msg;
+        let Ku24SignMsg::Round1 { r, s } = msg;
         let r = wire::decode_scalar::<C>(&r)?;
         if r != self.r {
-            return Err(Ku25Error::PresignatureMismatch(from));
+            return Err(Ku24Error::PresignatureMismatch(from));
         }
         let s = wire::decode_scalar::<C>(&s)?;
 
         let SignRound::Round1(received) = &mut self.round else {
-            return Err(Ku25Error::RoundMismatch {
+            return Err(Ku24Error::RoundMismatch {
                 expected: 2,
                 got: 1,
             });
         };
         if received.contains_key(&index) {
-            return Err(Ku25Error::DuplicateMessage {
+            return Err(Ku24Error::DuplicateMessage {
                 round: 1,
                 party: from,
             });
@@ -173,19 +173,19 @@ where
     }
 }
 
-impl<C: TecdsaCurve> StateMachine for Ku25SignMachine<C>
+impl<C: TecdsaCurve> StateMachine for Ku24SignMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
     C::ProjectivePoint: LinearCombination<[(C::ProjectivePoint, C::Scalar); 2]>,
 {
     type Output = Signature<C>;
-    type Inbound = Ku25SignMsg;
-    type Outbound = Ku25SignMsg;
+    type Inbound = Ku24SignMsg;
+    type Outbound = Ku24SignMsg;
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
         if matches!(self.round, SignRound::Poisoned) {
-            return Err(Ku25Error::Poisoned.into());
+            return Err(Ku24Error::Poisoned.into());
         }
         self.handle_inner(from, msg).map_err(|e| {
             self.round = SignRound::Poisoned;
@@ -204,7 +204,7 @@ where
     fn finish(self) -> tecdsa_core::Result<Self::Output> {
         match self.round {
             SignRound::Done(sig) => Ok(sig),
-            _ => Err(Ku25Error::NotComplete("signing").into()),
+            _ => Err(Ku24Error::NotComplete("signing").into()),
         }
     }
 

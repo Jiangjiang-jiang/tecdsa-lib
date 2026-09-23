@@ -26,8 +26,8 @@
 pub mod machine;
 pub mod msg;
 
-pub use machine::Ku25SetupMachine;
-pub use msg::{KeyEntry, Ku25SetupMsg};
+pub use machine::Ku24SetupMachine;
+pub use msg::{KeyEntry, Ku24SetupMsg};
 
 #[cfg(test)]
 mod tests {
@@ -39,12 +39,12 @@ mod tests {
 
     fn run(n: u16, threshold: u16) -> Vec<PrssKeys<Secp256k1>> {
         let parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
-        let machines: Vec<(PartyId, Ku25SetupMachine<Secp256k1>)> = parties
+        let machines: Vec<(PartyId, Ku24SetupMachine<Secp256k1>)> = parties
             .iter()
             .map(|&pid| {
                 (
                     pid,
-                    Ku25SetupMachine::new(pid, parties.clone(), threshold).expect("setup machine"),
+                    Ku24SetupMachine::new(pid, parties.clone(), threshold).expect("setup machine"),
                 )
             })
             .collect();
@@ -96,6 +96,6 @@ mod tests {
     #[test]
     fn setup_rejects_dishonest_majority() {
         let parties: Vec<PartyId> = (1..=5).map(PartyId).collect();
-        assert!(Ku25SetupMachine::<Secp256k1>::new(PartyId(1), parties, 4).is_err());
+        assert!(Ku24SetupMachine::<Secp256k1>::new(PartyId(1), parties, 4).is_err());
     }
 }

@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::doc_markdown)]
 
-//! KU25 -- honest-majority threshold ECDSA with batch generation of
+//! KU24 -- honest-majority threshold ECDSA with batch generation of
 //! key-independent presignatures (Katz and Urban).
 //!
 //! The protocol targets *key-management networks*: a fixed set of `n` servers
@@ -68,9 +68,9 @@
 //! ```
 //! use elliptic_curve::Field;
 //! use k256::{Scalar, Secp256k1};
-//! use tecdsa_ku25::{
-//!     keygen::Ku25KeygenMachine, presign::Ku25PresignMachine, setup::Ku25SetupMachine,
-//!     sign::Ku25SignMachine,
+//! use tecdsa_ku24::{
+//!     keygen::Ku24KeygenMachine, presign::Ku24PresignMachine, setup::Ku24SetupMachine,
+//!     sign::Ku24SignMachine,
 //! };
 //! use tecdsa_protocol::{ecdsa::DataToSign, PartyId, StateMachine};
 //! use tecdsa_testkit::Orchestrator;
@@ -86,7 +86,7 @@
 //!         .map(|&p| {
 //!             (
 //!                 p,
-//!                 Ku25SetupMachine::<Secp256k1>::new(p, parties.clone(), threshold).unwrap(),
+//!                 Ku24SetupMachine::<Secp256k1>::new(p, parties.clone(), threshold).unwrap(),
 //!             )
 //!         })
 //!         .collect(),
@@ -104,7 +104,7 @@
 //!         .map(|(&p, k)| {
 //!             (
 //!                 p,
-//!                 Ku25KeygenMachine::new(p, parties.clone(), k, &[7u8; 32]).unwrap(),
+//!                 Ku24KeygenMachine::new(p, parties.clone(), k, &[7u8; 32]).unwrap(),
 //!             )
 //!         })
 //!         .collect(),
@@ -123,7 +123,7 @@
 //!         .map(|(&p, k)| {
 //!             (
 //!                 p,
-//!                 Ku25PresignMachine::new_with_session(p, parties.clone(), k, 4, &session)
+//!                 Ku24PresignMachine::new_with_session(p, parties.clone(), k, 4, &session)
 //!                     .unwrap(),
 //!             )
 //!         })
@@ -144,7 +144,7 @@
 //!             let presig = batch.into_vec().remove(0);
 //!             (
 //!                 p,
-//!                 Ku25SignMachine::new(p, parties.clone(), share, presig, digest).unwrap(),
+//!                 Ku24SignMachine::new(p, parties.clone(), share, presig, digest).unwrap(),
 //!             )
 //!         })
 //!         .collect(),
@@ -177,22 +177,22 @@ pub use committee::Committee;
 use elliptic_curve::{
     ops::LinearCombination, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
-pub use error::{Ku25Error, Ku25Result};
-pub use key_share::Ku25KeyShare;
-pub use keygen::Ku25KeygenMachine;
-pub use presign::{Ku25PresignBatch, Ku25PresignMachine, Ku25Presignature};
+pub use error::{Ku24Error, Ku24Result};
+pub use key_share::Ku24KeyShare;
+pub use keygen::Ku24KeygenMachine;
+pub use presign::{Ku24PresignBatch, Ku24PresignMachine, Ku24Presignature};
 pub use prss::PrssKeys;
-pub use setup::Ku25SetupMachine;
-pub use sign::Ku25SignMachine;
+pub use setup::Ku24SetupMachine;
+pub use sign::Ku24SignMachine;
 use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{NoRefreshMachine, Protocol, ProtocolMetadata};
 
-/// KU25 protocol descriptor, generic over the curve.
-pub struct Ku25Protocol<C: TecdsaCurve>(PhantomData<C>)
+/// KU24 protocol descriptor, generic over the curve.
+pub struct Ku24Protocol<C: TecdsaCurve>(PhantomData<C>)
 where
     FieldBytesSize<C>: ModulusSize;
 
-impl<C: TecdsaCurve> Protocol for Ku25Protocol<C>
+impl<C: TecdsaCurve> Protocol for Ku24Protocol<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
@@ -200,23 +200,23 @@ where
 {
     type Curve = C;
 
-    type KeyShare = Ku25KeyShare<C>;
+    type KeyShare = Ku24KeyShare<C>;
     type PublicKey = C::ProjectivePoint;
     /// The key-independent PRSS material produced by [`setup`].
     type AuxInfo = PrssKeys<C>;
-    /// A whole batch: KU25's unit of presignature production is `m` at a time.
-    type Presignature = Ku25PresignBatch<C>;
+    /// A whole batch: KU24's unit of presignature production is `m` at a time.
+    type Presignature = Ku24PresignBatch<C>;
     type Signature = tecdsa_protocol::Signature<C>;
 
-    type KeyGen = Ku25KeygenMachine<C>;
-    type AuxGen = Ku25SetupMachine<C>;
-    type Presign = Ku25PresignMachine<C>;
-    type Sign = Ku25SignMachine<C>;
-    /// KU25 has no refresh protocol; re-running [`setup`] rotates the PRSS keys.
-    type Refresh = NoRefreshMachine<Ku25KeyShare<C>>;
+    type KeyGen = Ku24KeygenMachine<C>;
+    type AuxGen = Ku24SetupMachine<C>;
+    type Presign = Ku24PresignMachine<C>;
+    type Sign = Ku24SignMachine<C>;
+    /// KU24 has no refresh protocol; re-running [`setup`] rotates the PRSS keys.
+    type Refresh = NoRefreshMachine<Ku24KeyShare<C>>;
 
     const METADATA: ProtocolMetadata = crate::metadata::METADATA;
 }
 
-/// KU25 over secp256k1.
-pub type Ku25 = Ku25Protocol<k256::Secp256k1>;
+/// KU24 over secp256k1.
+pub type Ku24 = Ku24Protocol<k256::Secp256k1>;

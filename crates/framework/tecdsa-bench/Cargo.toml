@@ -40,7 +40,7 @@ tecdsa-wmc24 = { workspace = true }
 tecdsa-llz25 = { workspace = true }
 tecdsa-trout = { workspace = true }
 tecdsa-xal23 = { workspace = true }
-tecdsa-ku25 = { workspace = true }
+tecdsa-ku24 = { workspace = true }
 tecdsa-core = { workspace = true }
 criterion = { workspace = true }
 serde = { workspace = true }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Four-round state machine for KU25 batch presigning.
+//! Four-round state machine for KU24 batch presigning.
 
 use std::collections::BTreeMap;
 
@@ -13,13 +13,13 @@ use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
 use super::{
-    msg::{Ku25PresignMsg, PresignRound3, PresignRound4},
+    msg::{Ku24PresignMsg, PresignRound3, PresignRound4},
     open_points, open_scalar, open_scalars, streams, triple_check_share, wmult_contribution,
-    Ku25PresignBatch, Ku25Presignature,
+    Ku24PresignBatch, Ku24Presignature,
 };
 use crate::{
     committee::Committee,
-    error::{Ku25Error, Ku25Result},
+    error::{Ku24Error, Ku24Result},
     interp::Interp,
     prss::PrssKeys,
     wire,
@@ -52,11 +52,11 @@ where
     Round2(BTreeMap<u16, Vec<C::Scalar>>),
     Round3(BTreeMap<u16, R3<C>>),
     Round4(BTreeMap<u16, R4<C>>),
-    Done(Ku25PresignBatch<C>),
+    Done(Ku24PresignBatch<C>),
     Poisoned,
 }
 
-/// KU25 batch presigning state machine.
+/// KU24 batch presigning state machine.
 ///
 /// Produces `m` key-independent presignatures in four broadcast rounds.  The
 /// round count is independent of `m`, which is where the amortization comes
@@ -74,7 +74,7 @@ where
 /// `d_i, delta_i, delta'_i` to be independent of `r` and `beta`; a rushing
 /// adversary that learned them earlier could pick `delta'_i = r * d_i` in the
 /// second `F_wmult` and drive `T` to zero with a tampered triple.
-pub struct Ku25PresignMachine<C: TecdsaCurve>
+pub struct Ku24PresignMachine<C: TecdsaCurve>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -111,10 +111,10 @@ where
     tau: Vec<C::Scalar>,
 
     round: PresignRound<C>,
-    outgoing: Vec<Outgoing<Ku25PresignMsg>>,
+    outgoing: Vec<Outgoing<Ku24PresignMsg>>,
 }
 
-impl<C: TecdsaCurve> Ku25PresignMachine<C>
+impl<C: TecdsaCurve> Ku24PresignMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
@@ -132,7 +132,7 @@ where
         all_parties: Vec<PartyId>,
         prss: &PrssKeys<C>,
         m: usize,
-    ) -> Ku25Result<Self> {
+    ) -> Ku24Result<Self> {
         let mut session = [0u8; 32];
         OsRng.fill_bytes(&mut session);
         Self::new_with_session(my_id, all_parties, prss, m, &session)
@@ -153,13 +153,13 @@ where
         prss: &PrssKeys<C>,
         m: usize,
         session: &[u8; 32],
-    ) -> Ku25Result<Self> {
+    ) -> Ku24Result<Self> {
         if m == 0 {
-            return Err(Ku25Error::Other("batch size must be at least 1".into()));
+            return Err(Ku24Error::Other("batch size must be at least 1".into()));
         }
         let committee = Committee::new(my_id, all_parties, prss.threshold())?;
         if committee.n() != prss.n() || committee.my_index() != prss.my_index() {
-            return Err(Ku25Error::InvalidPartySet(
+            return Err(Ku24Error::InvalidPartySet(
                 "participant set does not match the PRSS setup".into(),
             ));
         }
@@ -193,7 +193,7 @@ where
 
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
-            msg: Ku25PresignMsg::Round1(wire::encode_scalars::<C>(&e1)),
+            msg: Ku24PresignMsg::Round1(wire::encode_scalars::<C>(&e1)),
         }];
 
         let mut received = BTreeMap::new();
@@ -231,7 +231,7 @@ where
     }
 
     /// Round 1 -> 2: open the first `F_wmult`, then run the second one.
-    fn transition_r1_to_r2(&mut self, received: &BTreeMap<u16, Vec<C::Scalar>>) -> Ku25Result<()> {
+    fn transition_r1_to_r2(&mut self, received: &BTreeMap<u16, Vec<C::Scalar>>) -> Ku24Result<()> {
         let n = self.n();
         let m = self.m;
 
@@ -256,14 +256,14 @@ where
         next.insert(self.committee.my_index(), e2.clone());
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
-            msg: Ku25PresignMsg::Round2(wire::encode_scalars::<C>(&e2)),
+            msg: Ku24PresignMsg::Round2(wire::encode_scalars::<C>(&e2)),
         });
         self.round = PresignRound::Round2(next);
         Ok(())
     }
 
     /// Round 2 -> 3: recover `tau`, then open the challenge `r`, `beta`.
-    fn transition_r2_to_r3(&mut self, received: &BTreeMap<u16, Vec<C::Scalar>>) -> Ku25Result<()> {
+    fn transition_r2_to_r3(&mut self, received: &BTreeMap<u16, Vec<C::Scalar>>) -> Ku24Result<()> {
         let n = self.n();
         let m = self.m;
         let opened = open_scalars::<C>(&self.interp_2t, n, m, received, "F_wmult (2)")?;
@@ -285,7 +285,7 @@ where
         );
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
-            msg: Ku25PresignMsg::Round3(PresignRound3 {
+            msg: Ku24PresignMsg::Round3(PresignRound3 {
                 r_share: wire::encode_scalar::<C>(&self.r_share),
                 beta_share: wire::encode_scalar::<C>(&self.beta_share),
             }),
@@ -296,7 +296,7 @@ where
 
     /// Round 3 -> 4: evaluate the batch check and open it together with
     /// `w_i` and `R_i = g^{k_i}`.
-    fn transition_r3_to_r4(&mut self, received: &BTreeMap<u16, R3<C>>) -> Ku25Result<()> {
+    fn transition_r3_to_r4(&mut self, received: &BTreeMap<u16, R3<C>>) -> Ku24Result<()> {
         let n = self.n();
         let r_shares: BTreeMap<u16, C::Scalar> =
             received.iter().map(|(index, p)| (*index, p.r)).collect();
@@ -310,7 +310,7 @@ where
         let beta = open_scalar::<C>(&self.interp_t, n, &beta_shares, "beta")?;
         if beta == C::Scalar::ZERO {
             // T(beta) would be identically zero, voiding the check.
-            return Err(Ku25Error::Degenerate {
+            return Err(Ku24Error::Degenerate {
                 index: 0,
                 what: "beta is zero",
             });
@@ -340,14 +340,14 @@ where
         );
         self.outgoing.push(Outgoing {
             to: Recipient::Broadcast,
-            msg: Ku25PresignMsg::Round4(payload),
+            msg: Ku24PresignMsg::Round4(payload),
         });
         self.round = PresignRound::Round4(next);
         Ok(())
     }
 
     /// Round 4 -> done: verify `T = 0` and assemble the presignatures.
-    fn finalize(&mut self, received: &BTreeMap<u16, R4<C>>) -> Ku25Result<()> {
+    fn finalize(&mut self, received: &BTreeMap<u16, R4<C>>) -> Ku24Result<()> {
         let n = self.n();
         let m = self.m;
 
@@ -357,7 +357,7 @@ where
         if t != C::Scalar::ZERO {
             // Lemma 1: an honest run always yields T = 0, and any additive shift
             // survives with probability at most (m + 1)/q.
-            return Err(Ku25Error::TripleCheckFailed);
+            return Err(Ku24Error::TripleCheckFailed);
         }
 
         let w_shares: BTreeMap<u16, Vec<C::Scalar>> = received
@@ -378,24 +378,24 @@ where
         for i in 0..m {
             // w_i = a_i k_i must be invertible, else k'_{i,j} is undefined.
             let w_inv =
-                Option::<C::Scalar>::from(w_open[i].invert()).ok_or(Ku25Error::Degenerate {
+                Option::<C::Scalar>::from(w_open[i].invert()).ok_or(Ku24Error::Degenerate {
                     index: i,
                     what: "w_i is zero",
                 })?;
             if bool::from(r_open[i].is_identity()) {
-                return Err(Ku25Error::Degenerate {
+                return Err(Ku24Error::Degenerate {
                     index: i,
                     what: "R_i is the identity",
                 });
             }
             let r = C::xcoord_mod_q(&r_open[i].to_affine());
             if r == C::Scalar::ZERO {
-                return Err(Ku25Error::Degenerate {
+                return Err(Ku24Error::Degenerate {
                     index: i,
                     what: "r_i is zero",
                 });
             }
-            presignatures.push(Ku25Presignature {
+            presignatures.push(Ku24Presignature {
                 party_index: self.committee.my_index(),
                 total: n,
                 threshold: self.committee.threshold(),
@@ -407,19 +407,19 @@ where
                 zero_share: self.sign_zero[i],
             });
         }
-        self.round = PresignRound::Done(Ku25PresignBatch { presignatures });
+        self.round = PresignRound::Done(Ku24PresignBatch { presignatures });
         Ok(())
     }
 
-    fn handle_inner(&mut self, from: PartyId, msg: Ku25PresignMsg) -> Ku25Result<()> {
+    fn handle_inner(&mut self, from: PartyId, msg: Ku24PresignMsg) -> Ku24Result<()> {
         let index = self.committee.sender_index(from)?;
         let expected = usize::from(self.n());
         let m = self.m;
 
         match (&mut self.round, msg) {
-            (PresignRound::Round1(received), Ku25PresignMsg::Round1(bytes)) => {
+            (PresignRound::Round1(received), Ku24PresignMsg::Round1(bytes)) => {
                 if received.contains_key(&index) {
-                    return Err(Ku25Error::DuplicateMessage {
+                    return Err(Ku24Error::DuplicateMessage {
                         round: 1,
                         party: from,
                     });
@@ -435,9 +435,9 @@ where
                 }
                 Ok(())
             }
-            (PresignRound::Round2(received), Ku25PresignMsg::Round2(bytes)) => {
+            (PresignRound::Round2(received), Ku24PresignMsg::Round2(bytes)) => {
                 if received.contains_key(&index) {
-                    return Err(Ku25Error::DuplicateMessage {
+                    return Err(Ku24Error::DuplicateMessage {
                         round: 2,
                         party: from,
                     });
@@ -453,9 +453,9 @@ where
                 }
                 Ok(())
             }
-            (PresignRound::Round3(received), Ku25PresignMsg::Round3(payload)) => {
+            (PresignRound::Round3(received), Ku24PresignMsg::Round3(payload)) => {
                 if received.contains_key(&index) {
-                    return Err(Ku25Error::DuplicateMessage {
+                    return Err(Ku24Error::DuplicateMessage {
                         round: 3,
                         party: from,
                     });
@@ -477,9 +477,9 @@ where
                 }
                 Ok(())
             }
-            (PresignRound::Round4(received), Ku25PresignMsg::Round4(payload)) => {
+            (PresignRound::Round4(received), Ku24PresignMsg::Round4(payload)) => {
                 if received.contains_key(&index) {
-                    return Err(Ku25Error::DuplicateMessage {
+                    return Err(Ku24Error::DuplicateMessage {
                         round: 4,
                         party: from,
                     });
@@ -502,7 +502,7 @@ where
                 }
                 Ok(())
             }
-            (round, msg) => Err(Ku25Error::RoundMismatch {
+            (round, msg) => Err(Ku24Error::RoundMismatch {
                 expected: round_number(round),
                 got: msg_round(&msg),
             }),
@@ -524,27 +524,27 @@ where
     }
 }
 
-fn msg_round(msg: &Ku25PresignMsg) -> u16 {
+fn msg_round(msg: &Ku24PresignMsg) -> u16 {
     match msg {
-        Ku25PresignMsg::Round1(_) => 1,
-        Ku25PresignMsg::Round2(_) => 2,
-        Ku25PresignMsg::Round3(_) => 3,
-        Ku25PresignMsg::Round4(_) => 4,
+        Ku24PresignMsg::Round1(_) => 1,
+        Ku24PresignMsg::Round2(_) => 2,
+        Ku24PresignMsg::Round3(_) => 3,
+        Ku24PresignMsg::Round4(_) => 4,
     }
 }
 
-impl<C: TecdsaCurve> StateMachine for Ku25PresignMachine<C>
+impl<C: TecdsaCurve> StateMachine for Ku24PresignMachine<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    type Output = Ku25PresignBatch<C>;
-    type Inbound = Ku25PresignMsg;
-    type Outbound = Ku25PresignMsg;
+    type Output = Ku24PresignBatch<C>;
+    type Inbound = Ku24PresignMsg;
+    type Outbound = Ku24PresignMsg;
 
     fn handle(&mut self, from: PartyId, msg: Self::Inbound) -> tecdsa_core::Result<()> {
         if matches!(self.round, PresignRound::Poisoned) {
-            return Err(Ku25Error::Poisoned.into());
+            return Err(Ku24Error::Poisoned.into());
         }
         self.handle_inner(from, msg).map_err(|e| {
             self.round = PresignRound::Poisoned;
@@ -563,7 +563,7 @@ where
     fn finish(self) -> tecdsa_core::Result<Self::Output> {
         match self.round {
             PresignRound::Done(batch) => Ok(batch),
-            _ => Err(Ku25Error::NotComplete("presigning").into()),
+            _ => Err(Ku24Error::NotComplete("presigning").into()),
         }
     }
 

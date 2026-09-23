@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Participant bookkeeping shared by all KU25 phases.
+//! Participant bookkeeping shared by all KU24 phases.
 //!
-//! KU25 is stated over the evaluation points `[n] = {1, ..., n}`.  To stay
+//! KU24 is stated over the evaluation points `[n] = {1, ..., n}`.  To stay
 //! agnostic of how callers number their [`PartyId`]s, we sort the participant
 //! set once and use each party's **1-based position** as its Shamir evaluation
 //! point.  When callers use `PartyId(1) ..= PartyId(n)` -- as the rest of the
@@ -10,11 +10,11 @@
 use tecdsa_protocol::PartyId;
 
 use crate::{
-    error::{Ku25Error, Ku25Result},
+    error::{Ku24Error, Ku24Result},
     prss::check_params,
 };
 
-/// The participant set of a KU25 execution, from the point of view of one party.
+/// The participant set of a KU24 execution, from the point of view of one party.
 #[derive(Debug, Clone)]
 pub struct Committee {
     parties: Vec<PartyId>,
@@ -33,27 +33,27 @@ impl Committee {
     /// Fails if the party set is malformed, if `my_id` is absent, if the
     /// configuration does not admit an honest majority (`n >= 2t + 1`), or if
     /// `n` exceeds [`crate::prss::MAX_PARTIES`].
-    pub fn new(my_id: PartyId, all_parties: Vec<PartyId>, threshold: u16) -> Ku25Result<Self> {
+    pub fn new(my_id: PartyId, all_parties: Vec<PartyId>, threshold: u16) -> Ku24Result<Self> {
         let mut parties = all_parties;
         parties.sort_unstable();
         let len = parties.len();
         parties.dedup();
         if parties.len() != len {
-            return Err(Ku25Error::InvalidPartySet(
+            return Err(Ku24Error::InvalidPartySet(
                 "duplicate party identifiers".into(),
             ));
         }
         let n = u16::try_from(parties.len())
-            .map_err(|_| Ku25Error::InvalidPartySet("too many parties".into()))?;
+            .map_err(|_| Ku24Error::InvalidPartySet("too many parties".into()))?;
         if n == 0 {
-            return Err(Ku25Error::InvalidPartySet("empty party set".into()));
+            return Err(Ku24Error::InvalidPartySet("empty party set".into()));
         }
         let degree = check_params(n, threshold)?;
 
         let position = parties
             .iter()
             .position(|p| *p == my_id)
-            .ok_or(Ku25Error::NotAParticipant(my_id))?;
+            .ok_or(Ku24Error::NotAParticipant(my_id))?;
         let my_index = u16::try_from(position + 1).expect("n fits in u16");
 
         Ok(Self {
@@ -134,10 +134,10 @@ impl Committee {
     ///
     /// # Errors
     /// Fails if `from` is not a participant or is the local party.
-    pub fn sender_index(&self, from: PartyId) -> Ku25Result<u16> {
+    pub fn sender_index(&self, from: PartyId) -> Ku24Result<u16> {
         if from == self.my_id {
-            return Err(Ku25Error::UnknownSender(from));
+            return Err(Ku24Error::UnknownSender(from));
         }
-        self.index_of(from).ok_or(Ku25Error::UnknownSender(from))
+        self.index_of(from).ok_or(Ku24Error::UnknownSender(from))
     }
 }

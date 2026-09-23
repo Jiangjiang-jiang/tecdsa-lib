@@ -33,7 +33,7 @@
 //!
 //! The paper's functionality routes the `s_j` to a semi-honest coordinator.  The
 //! workspace's [`tecdsa_protocol::StateMachine`] abstraction has no coordinator,
-//! so [`Ku25SignMachine`] broadcasts `(r, s_j)` and every party performs the
+//! so [`Ku24SignMachine`] broadcasts `(r, s_j)` and every party performs the
 //! coordinator's reconstruction and verification locally.  This is equivalent:
 //! the reconstruction only uses public data, and correctness is checked against
 //! the public key.
@@ -42,16 +42,16 @@ pub mod machine;
 pub mod msg;
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
-pub use machine::Ku25SignMachine;
-pub use msg::Ku25SignMsg;
+pub use machine::Ku24SignMachine;
+pub use msg::Ku24SignMsg;
 use tecdsa_curve::TecdsaCurve;
 
-use crate::presign::Ku25Presignature;
+use crate::presign::Ku24Presignature;
 
 /// Compute this party's partial signature `s_j = k'_j (h + r x_j) + o_j`.
 #[must_use]
 pub fn partial_signature<C>(
-    presignature: &Ku25Presignature<C>,
+    presignature: &Ku24Presignature<C>,
     key_share: &C::Scalar,
     digest: &C::Scalar,
 ) -> C::Scalar

@@ -543,12 +543,12 @@ fn wire_abc24_keygen() {
 }
 
 // ===========================================================================
-// 17. KU25 -- honest majority, PRSS, key-independent batch presignatures
+// 17. KU24 -- honest majority, PRSS, key-independent batch presignatures
 // ===========================================================================
 
 #[test]
-fn wire_ku25_setup_and_keygen() {
-    use tecdsa_ku25::{keygen::Ku25KeygenMachine, setup::Ku25SetupMachine};
+fn wire_ku24_setup_and_keygen() {
+    use tecdsa_ku24::{keygen::Ku24KeygenMachine, setup::Ku24SetupMachine};
 
     // n = 2t + 1 with t = 2, i.e. reconstruction threshold 3-of-5.
     let n = 5u16;
@@ -556,18 +556,18 @@ fn wire_ku25_setup_and_keygen() {
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     // Phase 1: the one-time, key-independent PRSS setup (point-to-point only).
-    let setup_machines: Vec<(PartyId, Ku25SetupMachine<k256::Secp256k1>)> = all_parties
+    let setup_machines: Vec<(PartyId, Ku24SetupMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .map(|&pid| {
             (
                 pid,
-                Ku25SetupMachine::new(pid, all_parties.clone(), t)
-                    .expect("KU25 PRSS setup construction"),
+                Ku24SetupMachine::new(pid, all_parties.clone(), t)
+                    .expect("KU24 PRSS setup construction"),
             )
         })
         .collect();
     let setup_results = WireOrchestrator::new(setup_machines, 10).run();
-    assert_all_ok(&setup_results, "KU25 setup");
+    assert_all_ok(&setup_results, "KU24 setup");
 
     let prss: Vec<_> = setup_results
         .outputs
@@ -576,41 +576,41 @@ fn wire_ku25_setup_and_keygen() {
         .collect();
 
     // Phase 2: one-round DKG on top of the PRSS material.
-    let keygen_machines: Vec<(PartyId, Ku25KeygenMachine<k256::Secp256k1>)> = all_parties
+    let keygen_machines: Vec<(PartyId, Ku24KeygenMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .zip(&prss)
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
-                    .expect("KU25 keygen construction"),
+                Ku24KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
+                    .expect("KU24 keygen construction"),
             )
         })
         .collect();
     let results = WireOrchestrator::new(keygen_machines, 10).run();
-    assert_all_ok(&results, "KU25 keygen");
+    assert_all_ok(&results, "KU24 keygen");
 }
 
 #[test]
-fn wire_ku25_presign() {
-    use tecdsa_ku25::{presign::Ku25PresignMachine, setup::Ku25SetupMachine};
+fn wire_ku24_presign() {
+    use tecdsa_ku24::{presign::Ku24PresignMachine, setup::Ku24SetupMachine};
 
     let n = 5u16;
     let t = 3u16;
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-    let setup_machines: Vec<(PartyId, Ku25SetupMachine<k256::Secp256k1>)> = all_parties
+    let setup_machines: Vec<(PartyId, Ku24SetupMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .map(|&pid| {
             (
                 pid,
-                Ku25SetupMachine::new(pid, all_parties.clone(), t)
-                    .expect("KU25 PRSS setup construction"),
+                Ku24SetupMachine::new(pid, all_parties.clone(), t)
+                    .expect("KU24 PRSS setup construction"),
             )
         })
         .collect();
     let setup_results = WireOrchestrator::new(setup_machines, 10).run();
-    assert_all_ok(&setup_results, "KU25 setup");
+    assert_all_ok(&setup_results, "KU24 setup");
     let prss: Vec<_> = setup_results
         .outputs
         .into_iter()
@@ -619,17 +619,17 @@ fn wire_ku25_presign() {
 
     // A batch of four presignatures, generated with no key in sight.
     let session = [1u8; 32];
-    let machines: Vec<(PartyId, Ku25PresignMachine<k256::Secp256k1>)> = all_parties
+    let machines: Vec<(PartyId, Ku24PresignMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .zip(&prss)
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25PresignMachine::new_with_session(pid, all_parties.clone(), keys, 4, &session)
-                    .expect("KU25 presign construction"),
+                Ku24PresignMachine::new_with_session(pid, all_parties.clone(), keys, 4, &session)
+                    .expect("KU24 presign construction"),
             )
         })
         .collect();
     let results = WireOrchestrator::new(machines, 10).run();
-    assert_all_ok(&results, "KU25 presign");
+    assert_all_ok(&results, "KU24 presign");
 }

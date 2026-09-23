@@ -9,7 +9,7 @@
 //!   ([`PrssKeys::rand`]), and
 //! * a `(2t + 1)`-out-of-`n` Shamir share of `0` ([`PrssKeys::zero`]),
 //!
-//! **with no interaction at all**.  This is what makes KU25's presignatures
+//! **with no interaction at all**.  This is what makes KU24's presignatures
 //! cheap: the only communication left in the preprocessing is the degree
 //! reduction inside `F_wmult` and the two verification openings.
 //!
@@ -53,7 +53,7 @@ use sha2::Sha256;
 use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
 
-use crate::error::{Ku25Error, Ku25Result};
+use crate::error::{Ku24Error, Ku24Result};
 
 /// Byte length of a PRSS key.
 pub const KEY_LEN: usize = 32;
@@ -66,7 +66,7 @@ pub const KEY_LEN: usize = 32;
 pub const MAX_PARTIES: u16 = 16;
 
 /// Domain-separation tag for the PRF.
-const PRF_DST: &[u8] = b"tecdsa/ku25/prss/v1";
+const PRF_DST: &[u8] = b"tecdsa/ku24/prss/v1";
 
 /// PRF label tag for [`PrssKeys::rand`] (the paper's `0 || i`).
 const TAG_RAND: u8 = 0;
@@ -160,7 +160,7 @@ where
 
 /// The local PRSS state of one party: all keys `k_A` for subsets `A` containing it.
 ///
-/// Produced by [`crate::setup::Ku25SetupMachine`] and consumed by keygen and
+/// Produced by [`crate::setup::Ku24SetupMachine`] and consumed by keygen and
 /// presigning.  This is key-independent, long-lived material: a single setup
 /// serves an unbounded number of ECDSA keys and presignature batches, provided
 /// callers use distinct `session` domain separators (see [`PrssKeys::rand`]).
@@ -231,16 +231,16 @@ where
 /// # Errors
 /// Fails if `threshold == 0`, if `n < 2t + 1` (no honest majority), or if `n`
 /// exceeds [`MAX_PARTIES`].
-pub fn check_params(n: u16, threshold: u16) -> Ku25Result<u16> {
+pub fn check_params(n: u16, threshold: u16) -> Ku24Result<u16> {
     if threshold == 0 || threshold > n {
-        return Err(Ku25Error::InvalidThreshold { n, threshold });
+        return Err(Ku24Error::InvalidThreshold { n, threshold });
     }
     let degree = threshold - 1;
     if n < 2 * degree + 1 {
-        return Err(Ku25Error::InvalidThreshold { n, threshold });
+        return Err(Ku24Error::InvalidThreshold { n, threshold });
     }
     if n > MAX_PARTIES {
-        return Err(Ku25Error::TooManyParties {
+        return Err(Ku24Error::TooManyParties {
             n,
             max: MAX_PARTIES,
         });
@@ -265,7 +265,7 @@ where
         n: u16,
         threshold: u16,
         keys: &std::collections::BTreeMap<SubsetMask, [u8; KEY_LEN]>,
-    ) -> Ku25Result<Self> {
+    ) -> Ku24Result<Self> {
         let degree = check_params(n, threshold)?;
         let mut entries = Vec::new();
         for mask in subsets(n, n - degree) {
@@ -273,7 +273,7 @@ where
                 continue;
             }
             let key = *keys.get(&mask).ok_or_else(|| {
-                Ku25Error::Other(format!("missing PRSS key for subset mask {mask:#x}"))
+                Ku24Error::Other(format!("missing PRSS key for subset mask {mask:#x}"))
             })?;
             entries.push(PrssEntry {
                 key,
@@ -325,7 +325,7 @@ where
     ///
     /// `session` and `stream` provide domain separation.  **Callers must never
     /// reuse a `(session, stream, index)` triple**: doing so re-derives the same
-    /// secret.  KU25 uses a fresh random `session` per presignature batch and a
+    /// secret.  KU24 uses a fresh random `session` per presignature batch and a
     /// distinct `stream` per logical invocation (see [`crate::presign::streams`]).
     #[must_use]
     pub fn rand(&self, session: &[u8; 32], stream: u32, count: usize) -> Vec<C::Scalar> {

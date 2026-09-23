@@ -47,7 +47,7 @@ tecdsa-lin17 = { workspace = true }
 tecdsa-kgg24 = { workspace = true }
 tecdsa-xal21 = { workspace = true }
 tecdsa-abc24 = { workspace = true }
-tecdsa-ku25 = { workspace = true }
+tecdsa-ku24 = { workspace = true }
 
 [lints]
 workspace = true

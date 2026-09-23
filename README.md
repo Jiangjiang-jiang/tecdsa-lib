@@ -2,7 +2,7 @@
 
 tecdsa-lib implements threshold ECDSA protocols in Rust, with examples for key generation and signing and benchmarks for computation and communication costs.
 
-- **Multi-party:** GGN16, GG18, LN18, CGGMP20, DKLs23, XAL23, WMY23, TX25, JTX25, WMC24, LLZ25, and KU25.
+- **Multi-party:** GGN16, GG18, LN18, CGGMP20, DKLs23, XAL23, WMY23, TX25, JTX25, WMC24, LLZ25, and KU24.
 - **Two-party:** Lin17, KGG24, XAL21, and ABC24.
 
 ## Layout

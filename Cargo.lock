@@ -1644,7 +1644,7 @@ dependencies = [
  "tecdsa-joye-libert",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
- "tecdsa-ku25",
+ "tecdsa-ku24",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",
@@ -1713,7 +1713,7 @@ dependencies = [
  "tecdsa-joye-libert",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
- "tecdsa-ku25",
+ "tecdsa-ku24",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",
@@ -2022,7 +2022,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tecdsa-ku25"
+name = "tecdsa-ku24"
 version = "0.1.0"
 dependencies = [
  "elliptic-curve 0.14.0-rc.32",
@@ -2221,7 +2221,7 @@ dependencies = [
  "tecdsa-ggn16",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
- "tecdsa-ku25",
+ "tecdsa-ku24",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",

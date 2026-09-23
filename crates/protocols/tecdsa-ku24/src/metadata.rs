@@ -2,7 +2,7 @@
 use tecdsa_protocol::{PhaseEligibility, PhaseMode, PhaseModes, ProtocolMetadata};
 
 pub const METADATA: ProtocolMetadata = ProtocolMetadata {
-    name: "KU25",
+    name: "KU24",
     version: "1.0",
     primitive: "Threshold ECDSA",
     signing_rounds_paper: 5,

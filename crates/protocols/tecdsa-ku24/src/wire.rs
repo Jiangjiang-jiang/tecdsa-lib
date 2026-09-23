@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Fixed-width encoding of scalars and group elements for KU25 wire messages.
+//! Fixed-width encoding of scalars and group elements for KU24 wire messages.
 //!
-//! KU25 messages are dominated by long vectors of scalars (one per element of
+//! KU24 messages are dominated by long vectors of scalars (one per element of
 //! the presignature batch), so they are packed into flat, fixed-width blobs
 //! rather than `Vec<Vec<u8>>`: with bincode's fixed-int encoding the latter
 //! would add eight length bytes per element, which for a batch of `m = 10 000`
@@ -14,7 +14,7 @@ use elliptic_curve::{
 };
 use tecdsa_curve::TecdsaCurve;
 
-use crate::error::{Ku25Error, Ku25Result};
+use crate::error::{Ku24Error, Ku24Result};
 
 /// Encoded length of one group element (SEC1 compressed).
 fn point_len<C: TecdsaCurve>() -> usize
@@ -52,13 +52,13 @@ where
 ///
 /// # Errors
 /// Fails on a wrong length or a value that is not a canonical field element.
-pub fn decode_scalar<C: TecdsaCurve>(bytes: &[u8]) -> Ku25Result<C::Scalar>
+pub fn decode_scalar<C: TecdsaCurve>(bytes: &[u8]) -> Ku24Result<C::Scalar>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     if bytes.len() != C::SCALAR_BYTES {
-        return Err(Ku25Error::Malformed(format!(
+        return Err(Ku24Error::Malformed(format!(
             "expected {} scalar bytes, got {}",
             C::SCALAR_BYTES,
             bytes.len()
@@ -67,21 +67,21 @@ where
     let mut repr = FieldBytes::<C>::default();
     repr.copy_from_slice(bytes);
     Option::from(<C::Scalar as PrimeField>::from_repr(repr))
-        .ok_or_else(|| Ku25Error::Malformed("scalar is not canonically reduced".into()))
+        .ok_or_else(|| Ku24Error::Malformed("scalar is not canonically reduced".into()))
 }
 
 /// Unpack exactly `expected` scalars from a flat blob.
 ///
 /// # Errors
 /// Fails on a wrong length or a non-canonical element.
-pub fn decode_scalars<C: TecdsaCurve>(bytes: &[u8], expected: usize) -> Ku25Result<Vec<C::Scalar>>
+pub fn decode_scalars<C: TecdsaCurve>(bytes: &[u8], expected: usize) -> Ku24Result<Vec<C::Scalar>>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     let width = C::SCALAR_BYTES;
     if bytes.len() != expected * width {
-        return Err(Ku25Error::Malformed(format!(
+        return Err(Ku24Error::Malformed(format!(
             "expected {} scalars ({} bytes), got {} bytes",
             expected,
             expected * width,
@@ -95,8 +95,8 @@ where
 ///
 /// # Errors
 /// Fails if any element is the identity, which has a variable-width SEC1
-/// encoding and never occurs in an honest KU25 execution.
-pub fn encode_points<C: TecdsaCurve>(values: &[C::ProjectivePoint]) -> Ku25Result<Vec<u8>>
+/// encoding and never occurs in an honest KU24 execution.
+pub fn encode_points<C: TecdsaCurve>(values: &[C::ProjectivePoint]) -> Ku24Result<Vec<u8>>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -104,7 +104,7 @@ where
     let mut out = Vec::with_capacity(values.len() * width);
     for v in values {
         if bool::from(v.is_identity()) {
-            return Err(Ku25Error::Malformed(
+            return Err(Ku24Error::Malformed(
                 "refusing to encode the identity element".into(),
             ));
         }
@@ -117,20 +117,20 @@ where
 
 /// Unpack exactly `expected` group elements from a flat blob.
 ///
-/// The identity element is rejected: KU25 aborts on a degenerate `R_i` anyway.
+/// The identity element is rejected: KU24 aborts on a degenerate `R_i` anyway.
 ///
 /// # Errors
 /// Fails on a wrong length, an invalid encoding, or the identity element.
 pub fn decode_points<C: TecdsaCurve>(
     bytes: &[u8],
     expected: usize,
-) -> Ku25Result<Vec<C::ProjectivePoint>>
+) -> Ku24Result<Vec<C::ProjectivePoint>>
 where
     FieldBytesSize<C>: ModulusSize,
 {
     let width = point_len::<C>();
     if bytes.len() != expected * width {
-        return Err(Ku25Error::Malformed(format!(
+        return Err(Ku24Error::Malformed(format!(
             "expected {} points ({} bytes), got {} bytes",
             expected,
             expected * width,
@@ -141,10 +141,10 @@ where
         .chunks_exact(width)
         .map(|chunk| {
             let affine =
-                C::point_from_bytes(chunk).map_err(|e| Ku25Error::Malformed(e.to_string()))?;
+                C::point_from_bytes(chunk).map_err(|e| Ku24Error::Malformed(e.to_string()))?;
             let point = C::ProjectivePoint::from(affine);
             if bool::from(point.is_identity()) {
-                return Err(Ku25Error::Malformed("point is the identity".into()));
+                return Err(Ku24Error::Malformed("point is the identity".into()));
             }
             Ok(point)
         })
@@ -155,7 +155,7 @@ where
 ///
 /// # Errors
 /// Fails if the element is the identity.
-pub fn encode_point<C: TecdsaCurve>(value: &C::ProjectivePoint) -> Ku25Result<Vec<u8>>
+pub fn encode_point<C: TecdsaCurve>(value: &C::ProjectivePoint) -> Ku24Result<Vec<u8>>
 where
     FieldBytesSize<C>: ModulusSize,
 {
@@ -166,7 +166,7 @@ where
 ///
 /// # Errors
 /// Fails on an invalid encoding or the identity element.
-pub fn decode_point<C: TecdsaCurve>(bytes: &[u8]) -> Ku25Result<C::ProjectivePoint>
+pub fn decode_point<C: TecdsaCurve>(bytes: &[u8]) -> Ku24Result<C::ProjectivePoint>
 where
     FieldBytesSize<C>: ModulusSize,
 {
