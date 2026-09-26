@@ -126,9 +126,18 @@ pub mod interactive {
         let r = Integer::sample_in_mult_group_of(rng, data.key.n());
         let gamma = Integer::from_rng_half_pm(rng, &hat_n_at_two_to_l_plus_e);
 
-        let s = aux.combine(pdata.plaintext, &mu)?;
-        let a = data.key.encrypt_with(&alpha, &r)?;
-        let c = aux.combine(&alpha, &gamma)?;
+        // Two Ring-Pedersen commitments and one Paillier encryption, all
+        // independent. `a` (an exponentiation mod N^2) is the critical path.
+        let ((s, c), a) = tecdsa_bigint::par::join(
+            || {
+                tecdsa_bigint::par::join(
+                    || aux.combine(pdata.plaintext, &mu),
+                    || aux.combine(&alpha, &gamma),
+                )
+            },
+            || data.key.encrypt_with(&alpha, &r),
+        );
+        let (s, c, a) = (s?, c?, a?);
 
         Ok((
             Commitment { s, a, c },
@@ -198,29 +207,33 @@ pub mod interactive {
             ),
         )?;
 
-        {
-            let lhs = data
-                .key
-                .encrypt_with(&proof.z1, &proof.z2)
-                .map_err(|_| InvalidProofReason::PaillierEnc)?;
-            let rhs = {
-                let e_at_k = data
+        // The mod-N^2 check and the Ring-Pedersen check are independent.
+        let (check_paillier, check_pedersen) = tecdsa_bigint::par::join(
+            || -> Result<(), InvalidProof> {
+                let lhs = data
                     .key
-                    .omul(challenge, data.ciphertext)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?;
-                data.key
-                    .oadd(&commitment.a, &e_at_k)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?
-            };
-            fail_if_ne(InvalidProofReason::EqualityCheck(2), lhs, rhs)?;
-        }
-
-        {
-            let lhs = aux.combine(&proof.z1, &proof.z3)?;
-            let s_to_e = aux.pow_mod(&commitment.s, challenge)?;
-            let rhs = (&commitment.c * s_to_e).modulo(&aux.rsa_modulo);
-            fail_if_ne(InvalidProofReason::EqualityCheck(3), lhs, rhs)?;
-        }
+                    .encrypt_with(&proof.z1, &proof.z2)
+                    .map_err(|_| InvalidProofReason::PaillierEnc)?;
+                let rhs = {
+                    let e_at_k = data
+                        .key
+                        .omul(challenge, data.ciphertext)
+                        .map_err(|_| InvalidProofReason::PaillierOp)?;
+                    data.key
+                        .oadd(&commitment.a, &e_at_k)
+                        .map_err(|_| InvalidProofReason::PaillierOp)?
+                };
+                fail_if_ne(InvalidProofReason::EqualityCheck(2).into(), lhs, rhs)
+            },
+            || -> Result<(), InvalidProof> {
+                let lhs = aux.combine(&proof.z1, &proof.z3)?;
+                let s_to_e = aux.pow_mod(&commitment.s, challenge)?;
+                let rhs = (&commitment.c * s_to_e).modulo(&aux.rsa_modulo);
+                fail_if_ne(InvalidProofReason::EqualityCheck(3).into(), lhs, rhs)
+            },
+        );
+        check_paillier?;
+        check_pedersen?;
 
         Ok(())
     }

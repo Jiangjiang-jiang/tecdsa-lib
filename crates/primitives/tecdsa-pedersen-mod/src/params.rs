@@ -54,8 +54,10 @@ impl PedersenModParams {
         // p and q are safe primes (p = 2p' + 1), which are automatically Blum primes
         // (p = 3 mod 4) because p' is an odd prime.
         let bits = u32::try_from(bits).expect("modulus size fits in u32");
-        let p = Integer::generate_blum_prime(&mut *rng, bits);
-        let q = Integer::generate_blum_prime(&mut *rng, bits);
+        // The two searches are independent. Splitting the caller's RNG into two
+        // seeded streams keeps the result a deterministic function of `rng`
+        // (as in the sequential build) while allowing the searches to overlap.
+        let (p, q) = tecdsa_bigint::par::gen_two_primes(rng, bits);
 
         let n = Integer::from(&p * &q);
 

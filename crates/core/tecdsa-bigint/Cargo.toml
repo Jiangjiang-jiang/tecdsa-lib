@@ -16,6 +16,12 @@ serde = { workspace = true }
 serde_bytes = { workspace = true }
 subtle = { workspace = true }
 rug = { workspace = true }
+rayon = { workspace = true, optional = true }
+
+[features]
+default = []
+# Prototype: use rayon to parallelise the safe-prime search.
+parallel = ["dep:rayon"]
 
 [dev-dependencies]
 rand = { workspace = true }

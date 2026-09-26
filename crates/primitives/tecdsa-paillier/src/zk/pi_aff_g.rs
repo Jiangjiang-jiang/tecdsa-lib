@@ -182,18 +182,45 @@ pub mod interactive {
         let m = Integer::from_rng_half_pm(&mut rng, &hat_n_at_two_to_l);
         let mu = Integer::from_rng_half_pm(&mut rng, &hat_n_at_two_to_l);
 
-        let commitment = Commitment {
-            a: {
-                let beta_enc_key0 = data.key_j.encrypt_with(&beta, &r)?;
-                let alpha_at_c = data.key_j.omul(&alpha, data.c)?;
-                data.key_j.oadd(&alpha_at_c, &beta_enc_key0)?
+        // The seven commitment components are independent: two Paillier
+        // operations mod N^2 (the expensive pair) and four Ring-Pedersen
+        // commitments mod N-hat. Evaluate them concurrently.
+        let ((a, b_y), ((e, s), (f, t))) = tecdsa_bigint::par::join(
+            || {
+                tecdsa_bigint::par::join(
+                    || -> Result<_, Error> {
+                        let beta_enc_key0 = data.key_j.encrypt_with(&beta, &r)?;
+                        let alpha_at_c = data.key_j.omul(&alpha, data.c)?;
+                        Ok(data.key_j.oadd(&alpha_at_c, &beta_enc_key0)?)
+                    },
+                    || -> Result<_, Error> { Ok(data.key_i.encrypt_with(&beta, &r_y)?) },
+                )
             },
+            || {
+                tecdsa_bigint::par::join(
+                    || {
+                        tecdsa_bigint::par::join(
+                            || aux.combine(&alpha, &gamma),
+                            || aux.combine(pdata.x, &m),
+                        )
+                    },
+                    || {
+                        tecdsa_bigint::par::join(
+                            || aux.combine(&beta, &delta),
+                            || aux.combine(pdata.y, &mu),
+                        )
+                    },
+                )
+            },
+        );
+        let commitment = Commitment {
+            a: a?,
             b_x: C::generator() * C::scalar_from_integer(&alpha),
-            b_y: data.key_i.encrypt_with(&beta, &r_y)?,
-            e: aux.combine(&alpha, &gamma)?,
-            s: aux.combine(pdata.x, &m)?,
-            f: aux.combine(&beta, &delta)?,
-            t: aux.combine(pdata.y, &mu)?,
+            b_y: b_y?,
+            e: e?,
+            s: s?,
+            f: f?,
+            t: t?,
         };
         let private_commitment = PrivateCommitment {
             alpha,
@@ -288,65 +315,86 @@ pub mod interactive {
             aux.is_in_mult_group(&commitment.t),
         )?;
 
-        // Verify statement
-        {
-            let lhs = {
-                let z1_at_c = data
-                    .key_j
-                    .omul(&proof.z1, data.c)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?;
-                let enc = data
-                    .key_j
-                    .encrypt_with(&proof.z2, &proof.w)
-                    .map_err(|_| InvalidProofReason::PaillierEnc)?;
-                data.key_j
-                    .oadd(&z1_at_c, &enc)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?
-            };
-            let rhs = {
-                let e_at_d = data
-                    .key_j
-                    .omul(challenge, data.d)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?;
-                data.key_j
-                    .oadd(&commitment.a, &e_at_d)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?
-            };
-            fail_if_ne(InvalidProofReason::EqualityCheck(10), lhs, rhs)?;
-        }
-        {
-            let lhs = C::generator() * C::scalar_from_integer(&proof.z1);
-            let rhs = commitment.b_x + *data.x * C::scalar_from_integer(challenge);
-            fail_if_ne(InvalidProofReason::EqualityCheck(11), lhs, rhs)?;
-        }
-        {
-            let lhs = data
-                .key_i
-                .encrypt_with(&proof.z2, &proof.w_y)
-                .map_err(|_| InvalidProofReason::PaillierEnc)?;
-            let rhs = {
-                let e_at_y = data
-                    .key_i
-                    .omul(challenge, data.y)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?;
-                data.key_i
-                    .oadd(&commitment.b_y, &e_at_y)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?
-            };
-            fail_if_ne(InvalidProofReason::EqualityCheck(12), lhs, rhs)?;
-        }
-        {
-            let lhs = aux.combine(&proof.z1, &proof.z3)?;
-            let s_to_e = aux.pow_mod(&commitment.s, challenge)?;
-            let rhs = (&commitment.e * s_to_e).modulo(&aux.rsa_modulo);
-            fail_if_ne(InvalidProofReason::EqualityCheck(13), lhs, rhs)?;
-        }
-        {
-            let lhs = aux.combine(&proof.z2, &proof.z4)?;
-            let t_to_e = aux.pow_mod(&commitment.t, challenge)?;
-            let rhs = (&commitment.f * t_to_e).modulo(&aux.rsa_modulo);
-            fail_if_ne(InvalidProofReason::EqualityCheck(14), lhs, rhs)?;
-        }
+        // Verify statement. The five equality checks are independent, so they
+        // run concurrently; the two mod-N^2 ones dominate.
+        let ((check_a, check_by), ((check_bx, check_e), check_f)) = tecdsa_bigint::par::join(
+            || {
+                tecdsa_bigint::par::join(
+                    || -> Result<(), InvalidProof> {
+                        let lhs = {
+                            let z1_at_c = data
+                                .key_j
+                                .omul(&proof.z1, data.c)
+                                .map_err(|_| InvalidProofReason::PaillierOp)?;
+                            let enc = data
+                                .key_j
+                                .encrypt_with(&proof.z2, &proof.w)
+                                .map_err(|_| InvalidProofReason::PaillierEnc)?;
+                            data.key_j
+                                .oadd(&z1_at_c, &enc)
+                                .map_err(|_| InvalidProofReason::PaillierOp)?
+                        };
+                        let rhs = {
+                            let e_at_d = data
+                                .key_j
+                                .omul(challenge, data.d)
+                                .map_err(|_| InvalidProofReason::PaillierOp)?;
+                            data.key_j
+                                .oadd(&commitment.a, &e_at_d)
+                                .map_err(|_| InvalidProofReason::PaillierOp)?
+                        };
+                        fail_if_ne(InvalidProofReason::EqualityCheck(10).into(), lhs, rhs)
+                    },
+                    || -> Result<(), InvalidProof> {
+                        let lhs = data
+                            .key_i
+                            .encrypt_with(&proof.z2, &proof.w_y)
+                            .map_err(|_| InvalidProofReason::PaillierEnc)?;
+                        let rhs = {
+                            let e_at_y = data
+                                .key_i
+                                .omul(challenge, data.y)
+                                .map_err(|_| InvalidProofReason::PaillierOp)?;
+                            data.key_i
+                                .oadd(&commitment.b_y, &e_at_y)
+                                .map_err(|_| InvalidProofReason::PaillierOp)?
+                        };
+                        fail_if_ne(InvalidProofReason::EqualityCheck(12).into(), lhs, rhs)
+                    },
+                )
+            },
+            || {
+                tecdsa_bigint::par::join(
+                    || {
+                        tecdsa_bigint::par::join(
+                            || -> Result<(), InvalidProof> {
+                                let lhs = C::generator() * C::scalar_from_integer(&proof.z1);
+                                let rhs =
+                                    commitment.b_x + *data.x * C::scalar_from_integer(challenge);
+                                fail_if_ne(InvalidProofReason::EqualityCheck(11).into(), lhs, rhs)
+                            },
+                            || -> Result<(), InvalidProof> {
+                                let lhs = aux.combine(&proof.z1, &proof.z3)?;
+                                let s_to_e = aux.pow_mod(&commitment.s, challenge)?;
+                                let rhs = (&commitment.e * s_to_e).modulo(&aux.rsa_modulo);
+                                fail_if_ne(InvalidProofReason::EqualityCheck(13).into(), lhs, rhs)
+                            },
+                        )
+                    },
+                    || -> Result<(), InvalidProof> {
+                        let lhs = aux.combine(&proof.z2, &proof.z4)?;
+                        let t_to_e = aux.pow_mod(&commitment.t, challenge)?;
+                        let rhs = (&commitment.f * t_to_e).modulo(&aux.rsa_modulo);
+                        fail_if_ne(InvalidProofReason::EqualityCheck(14).into(), lhs, rhs)
+                    },
+                )
+            },
+        );
+        check_a?;
+        check_by?;
+        check_bx?;
+        check_e?;
+        check_f?;
         fail_if(
             InvalidProofReason::RangeCheck(15),
             proof

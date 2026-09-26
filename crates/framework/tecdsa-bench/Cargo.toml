@@ -6,6 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+parallel = [
+    "tecdsa-bigint/parallel",
+    "tecdsa-pedersen-mod/parallel",
+    "tecdsa-paillier/parallel",
+    "tecdsa-cggmp20/parallel",
+]
+
 [dependencies]
 tecdsa = { path = "../../tecdsa" }
 tecdsa-testkit = { workspace = true }
@@ -28,6 +37,7 @@ tecdsa-kgg24 = { workspace = true }
 tecdsa-xal21 = { workspace = true }
 tecdsa-abc24 = { workspace = true }
 tecdsa-cggmp20 = { workspace = true }
+rayon = { workspace = true }
 tecdsa-dkls23 = { workspace = true }
 tecdsa-gg18 = { workspace = true }
 tecdsa-ggn16 = { workspace = true }

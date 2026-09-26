@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Paillier encryption, ZK proofs and MtA for tecdsa"
 
+[features]
+default = []
+parallel = ["tecdsa-bigint/parallel", "tecdsa-pedersen-mod/parallel"]
+
 [dependencies]
 rug = { workspace = true }
 tecdsa-core = { workspace = true }

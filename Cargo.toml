@@ -39,6 +39,9 @@ hmac = "0.12"
 rand_core = { version = "0.6", default-features = false }
 rand = "0.8"
 
+# Parallelism (prototype: multithreading evaluation)
+rayon = "1"
+
 # Security
 zeroize = { version = "1", features = ["derive"] }
 subtle = "2.6"
@@ -57,10 +60,6 @@ udigest = { version = "0.2", default-features = false }
 
 # Errors
 thiserror = { version = "2", default-features = false }
-
-# Async (transport only)
-tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
 
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -81,14 +80,12 @@ tecdsa-joye-libert = { path = "crates/primitives/tecdsa-joye-libert" }
 tecdsa-ot = { path = "crates/primitives/tecdsa-ot" }
 tecdsa-elgamal = { path = "crates/primitives/tecdsa-elgamal" }
 tecdsa-evrf = { path = "crates/primitives/tecdsa-evrf" }
-tecdsa-hd = { path = "crates/primitives/tecdsa-hd" }
 # Workspace crates — framework
 tecdsa-protocol = { path = "crates/framework/tecdsa-protocol", default-features = false }
 tecdsa-wire = { path = "crates/framework/tecdsa-wire" }
 tecdsa-transport = { path = "crates/framework/tecdsa-transport" }
 tecdsa-session = { path = "crates/framework/tecdsa-session" }
 tecdsa-testkit = { path = "crates/framework/tecdsa-testkit" }
-tecdsa-bench = { path = "crates/framework/tecdsa-bench" }
 # Workspace crates — protocols
 tecdsa-cggmp20 = { path = "crates/protocols/tecdsa-cggmp20" }
 tecdsa-dkls23 = { path = "crates/protocols/tecdsa-dkls23" }

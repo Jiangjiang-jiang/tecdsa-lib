@@ -168,9 +168,18 @@ pub mod interactive {
         let beta = C::random_scalar(rng);
         let gamma = Integer::from_rng_half_pm(rng, &n_j_at_two_to_l_plus_e);
 
-        let s = aux.combine(pdata.plaintext, &mu)?;
-        let t = aux.combine(&alpha, &gamma)?;
-        let d = data.key.encrypt_with(&alpha, &r)?;
+        // Two Ring-Pedersen commitments and one Paillier encryption, all
+        // independent. `d` (an exponentiation mod N^2) is the critical path.
+        let ((s, t), d) = tecdsa_bigint::par::join(
+            || {
+                tecdsa_bigint::par::join(
+                    || aux.combine(pdata.plaintext, &mu),
+                    || aux.combine(&alpha, &gamma),
+                )
+            },
+            || data.key.encrypt_with(&alpha, &r),
+        );
+        let (s, t, d) = (s?, t?, d?);
         let y = *data.a * beta + C::generator() * C::scalar_from_integer(&alpha);
         let z = C::generator() * beta;
 
@@ -240,23 +249,36 @@ pub mod interactive {
             commitment.d.in_mult_group_of(data.key.nn()),
         )?;
 
-        // Verify statement
-        {
-            let lhs = data
-                .key
-                .encrypt_with(&proof.z1, &proof.z2)
-                .map_err(|_| InvalidProofReason::PaillierEnc)?;
-            let rhs = {
-                let e_at_c = data
+        // Verify statement. The mod-N^2 check and the Ring-Pedersen check are
+        // the two expensive ones and are independent; run them concurrently
+        // (the EC checks in between are negligible and stay inline).
+        let (check_paillier, check_pedersen) = tecdsa_bigint::par::join(
+            || -> Result<(), InvalidProof> {
+                let lhs = data
                     .key
-                    .omul(challenge, data.ciphertext)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?;
-                data.key
-                    .oadd(&commitment.d, &e_at_c)
-                    .map_err(|_| InvalidProofReason::PaillierOp)?
-            };
-            fail_if_ne(InvalidProofReason::EqualityCheck(5), lhs, rhs)?;
-        }
+                    .encrypt_with(&proof.z1, &proof.z2)
+                    .map_err(|_| InvalidProofReason::PaillierEnc)?;
+                let rhs = {
+                    let e_at_c = data
+                        .key
+                        .omul(challenge, data.ciphertext)
+                        .map_err(|_| InvalidProofReason::PaillierOp)?;
+                    data.key
+                        .oadd(&commitment.d, &e_at_c)
+                        .map_err(|_| InvalidProofReason::PaillierOp)?
+                };
+                fail_if_ne(InvalidProofReason::EqualityCheck(5).into(), lhs, rhs)
+            },
+            || -> Result<(), InvalidProof> {
+                let lhs = aux.combine(&proof.z1, &proof.z3)?;
+                let rhs = {
+                    let s_to_e = aux.pow_mod(&commitment.s, challenge)?;
+                    (&commitment.t * s_to_e).modulo(&aux.rsa_modulo)
+                };
+                fail_if_ne(InvalidProofReason::EqualityCheck(8).into(), lhs, rhs)
+            },
+        );
+        check_paillier?;
         {
             let lhs = *data.a * proof.w + C::generator() * C::scalar_from_integer(&proof.z1);
             let rhs = commitment.y + *data.x * C::scalar_from_integer(challenge);
@@ -267,14 +289,7 @@ pub mod interactive {
             let rhs = commitment.z + *data.b * C::scalar_from_integer(challenge);
             fail_if_ne(InvalidProofReason::EqualityCheck(7), lhs, rhs)?;
         }
-        {
-            let lhs = aux.combine(&proof.z1, &proof.z3)?;
-            let rhs = {
-                let s_to_e = aux.pow_mod(&commitment.s, challenge)?;
-                (&commitment.t * s_to_e).modulo(&aux.rsa_modulo)
-            };
-            fail_if_ne(InvalidProofReason::EqualityCheck(8), lhs, rhs)?;
-        }
+        check_pedersen?;
 
         fail_if(
             InvalidProofReason::RangeCheck(9),
