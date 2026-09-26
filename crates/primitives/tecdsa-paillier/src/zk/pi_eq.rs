@@ -208,11 +208,7 @@ where
         // gamma_2 + sigma * X1 == z1 * G (mod q in the exponent)
         let rhs_ec = scalar_mul_generator::<C>(&self.z1);
         let lhs_ec = self.gamma_2 + *x1_point * sigma_scalar;
-        if lhs_ec != rhs_ec {
-            return false;
-        }
-
-        true
+        lhs_ec == rhs_ec
     }
 }
 

@@ -94,22 +94,21 @@ pub mod interactive {
         let phi = Integer::from(p - 1) * Integer::from(q - 1);
         let n_inverse = Integer::from(n.invert_ref(&phi).ok_or(ErrorReason::Invert)?);
 
+        // The M challenge points are independent: each needs one N^-1-th root
+        // and two Blum square roots, all on the same fixed modulus.
         // We do an extra allocation as workaround while `array::try_map` is not stable
-        let points = challenge
-            .ys
-            .iter()
-            .map(|y| {
-                let z = Integer::from(
-                    y.pow_mod_ref(&n_inverse, n)
-                        .ok_or(BadExponent::undefined())?,
-                );
-                let (a, b, y_) = y.find_residue(w, p, q, n).ok_or(ErrorReason::FindResidue)?;
-                let x = blum_sqrt(blum_sqrt(y_));
-                Ok(ProofPoint { x, a, b, z })
-            })
-            .collect::<Result<Vec<_>, ErrorReason>>()?
+        let points: Vec<ProofPoint> = tecdsa_bigint::par::try_map(&challenge.ys, |y| {
+            let z = Integer::from(
+                y.pow_mod_ref(&n_inverse, n)
+                    .ok_or(BadExponent::undefined())?,
+            );
+            let (a, b, y_) = y.find_residue(w, p, q, n).ok_or(ErrorReason::FindResidue)?;
+            let x = blum_sqrt(blum_sqrt(y_));
+            Ok::<_, ErrorReason>(ProofPoint { x, a, b, z })
+        })?;
+        let points = points
             .try_into()
-            .map_err(|_| ErrorReason::Length)?;
+            .map_err(|_: Vec<ProofPoint>| ErrorReason::Length)?;
         Ok(Proof { points })
     }
 
@@ -137,7 +136,11 @@ pub mod interactive {
             commitment.w.in_mult_group_of(data.n),
         )?;
 
-        for (point, y) in proof.points.iter().zip(challenge.ys.iter()) {
+        // The M point checks are independent; each is dominated by one
+        // `z^N mod N` exponentiation.
+        let pairs: Vec<(&ProofPoint, &Integer)> =
+            proof.points.iter().zip(challenge.ys.iter()).collect();
+        tecdsa_bigint::par::try_for_each(&pairs, |&(point, y)| {
             fail_if(
                 InvalidProofReason::RangeCheck(2),
                 point.x.in_mult_group_of(data.n),
@@ -174,8 +177,8 @@ pub mod interactive {
             {
                 return Err(InvalidProofReason::IncorrectFourthRoot.into());
             }
-        }
-        Ok(())
+            Ok::<(), InvalidProof>(())
+        })
     }
 
     /// Generate random challenge

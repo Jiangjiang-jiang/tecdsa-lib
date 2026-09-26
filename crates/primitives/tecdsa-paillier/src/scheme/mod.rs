@@ -63,7 +63,7 @@ mod sealed {
 ///
 /// Both encryption and decryption keys can be used to carry out encryption. Moreover, encryption
 /// using decryption key is faster.
-pub trait AnyEncryptionKey: sealed::Sealed {
+pub trait AnyEncryptionKey: sealed::Sealed + Send + Sync {
     /// Returns `N`
     fn n(&self) -> &Integer;
     /// Returns `N^2`

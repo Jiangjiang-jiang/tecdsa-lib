@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "RSA-modulus Pedersen parameters and proofs for tecdsa"
 
+[features]
+default = []
+parallel = ["tecdsa-bigint/parallel"]
+
 [dependencies]
 tecdsa-core = { workspace = true }
 tecdsa-bigint = { workspace = true }

@@ -163,16 +163,24 @@ where
         let k_i = C::random_scalar(rng);
         let gamma_i = C::random_scalar(rng);
 
+        // K_i = Enc(k_i) and G_i = Enc(gamma_i) are two independent mod-N^2
+        // exponentiations and account for essentially all of the constructor
+        // cost, so they run concurrently.
         let own_ek = &aux.paillier_eks[aux.party_index as usize];
         let plaintext_k = k_i.to_integer();
-        let (big_k_i, rho_i) = own_ek
-            .encrypt_with_random(rng, &plaintext_k)
-            .expect("encryption of k_i must succeed");
-
         let plaintext_gamma = gamma_i.to_integer();
-        let (big_g_i, gamma_nonce) = own_ek
-            .encrypt_with_random(rng, &plaintext_gamma)
-            .expect("encryption of gamma_i must succeed");
+        let ((big_k_i, rho_i), (big_g_i, gamma_nonce)) = tecdsa_bigint::par::join(
+            || {
+                own_ek
+                    .encrypt_with_random(&mut tecdsa_core::Csprng::new(), &plaintext_k)
+                    .expect("encryption of k_i must succeed")
+            },
+            || {
+                own_ek
+                    .encrypt_with_random(&mut tecdsa_core::Csprng::new(), &plaintext_gamma)
+                    .expect("encryption of gamma_i must succeed")
+            },
+        );
 
         let y_i = C::random_scalar(rng);
         let a_i = C::random_scalar(rng);
@@ -255,15 +263,11 @@ where
     /// Transition to Round2: compute MtA, generate ZK proofs, queue P2P messages.
     pub fn advance(mut self) -> Round2State<C> {
         let mut rng = tecdsa_core::Csprng::new();
-        let mut outgoing: Vec<Outgoing<PresignMsg<C>>> = Vec::new();
 
         let big_gamma_i = C::generator() * self.gamma_i;
 
         let gamma_i_int = self.gamma_i.to_integer();
         let x_i_int = self.x_i_additive.to_integer();
-
-        let mut beta_map: BTreeMap<PartyId, C::Scalar> = BTreeMap::new();
-        let mut hat_beta_map: BTreeMap<PartyId, C::Scalar> = BTreeMap::new();
 
         let security_enc = pi_enc_elg::SecurityParams {
             l: self.ell,
@@ -301,20 +305,32 @@ where
         let x_i_public = C::generator() * self.x_i_additive;
 
         let k_i_int = self.k_i.to_integer();
+        let gamma_i_int_ref = &gamma_i_int;
+        let x_i_int_ref = &x_i_int;
+        let tilde_psi_ref = &tilde_psi;
+        let this = &self;
 
-        for &peer_pid in &self.signers_pids {
-            if peer_pid == self.my_id {
-                continue;
-            }
+        // Everything below is independent per peer: the two MtA conversions and
+        // the four ZK proofs only read shared immutable state and this party's
+        // own secrets. Each task draws its own randomness from the OS CSPRNG.
+        let peers: Vec<PartyId> = self
+            .signers_pids
+            .iter()
+            .copied()
+            .filter(|&p| p != self.my_id)
+            .collect();
 
-            let peer_round1 = self
+        let per_peer = tecdsa_bigint::par::map(&peers, |&peer_pid| {
+            let mut rng = tecdsa_core::Csprng::new();
+
+            let peer_round1 = this
                 .round1_msgs
                 .get(&peer_pid)
                 .expect("round1 msg must exist for all peers");
 
-            let peer_party_idx = self.signer_party_indices[&peer_pid] as usize;
-            let peer_ek = &self.paillier_eks[peer_party_idx];
-            let peer_aux = pedersen_to_aux(&self.pedersen_params[peer_party_idx]);
+            let peer_party_idx = this.signer_party_indices[&peer_pid] as usize;
+            let peer_ek = &this.paillier_eks[peer_party_idx];
+            let peer_aux = pedersen_to_aux(&this.pedersen_params[peer_party_idx]);
 
             // --- MtA for gamma_i * k_j ---
             let beta_ij = C::random_scalar(&mut rng);
@@ -322,7 +338,7 @@ where
             let neg_beta_ij_int = -beta_ij_int;
 
             let d_step1 = peer_ek
-                .omul(&gamma_i_int, &peer_round1.big_k)
+                .omul(gamma_i_int_ref, &peer_round1.big_k)
                 .expect("omul must succeed");
             let (enc_neg_beta, s_ij) = peer_ek
                 .encrypt_with_random(&mut rng, &neg_beta_ij_int)
@@ -332,7 +348,7 @@ where
                 .expect("oadd must succeed");
 
             // F_ji = Enc(own_key, -beta_ij) — matches proof requirement
-            let (big_f, r_ij) = self
+            let (big_f, r_ij) = this
                 .ek_own
                 .encrypt_with_random(&mut rng, &neg_beta_ij_int)
                 .expect("encrypt must succeed");
@@ -343,7 +359,7 @@ where
             let neg_hat_beta_ij_int = -hat_beta_ij_int;
 
             let hat_d_step1 = peer_ek
-                .omul(&x_i_int, &peer_round1.big_k)
+                .omul(x_i_int_ref, &peer_round1.big_k)
                 .expect("omul must succeed");
             let (enc_neg_hat_beta, hat_s_ij) = peer_ek
                 .encrypt_with_random(&mut rng, &neg_hat_beta_ij_int)
@@ -353,121 +369,134 @@ where
                 .expect("oadd must succeed");
 
             // hat_F_ji = Enc(own_key, -hat_beta_ij)
-            let (hat_big_f, hat_r_ij) = self
+            let (hat_big_f, hat_r_ij) = this
                 .ek_own
                 .encrypt_with_random(&mut rng, &neg_hat_beta_ij_int)
                 .expect("encrypt must succeed");
 
-            beta_map.insert(peer_pid, beta_ij);
-            hat_beta_map.insert(peer_pid, hat_beta_ij);
-
             // --- Generate ZK proofs ---
+            // The four proofs share no state, so they run concurrently too;
+            // this keeps all cores busy even in the t = 2 case (one peer).
+            let ((psi0, psi1), (psi, hat_psi)) = tecdsa_bigint::par::join(
+                || {
+                    tecdsa_bigint::par::join(
+                        || {
+                            // psi0: π_enc_elg for K_i (proves K_i encrypts k_i in range)
+                            pi_enc_elg::non_interactive::prove::<C, Sha256>(
+                                &ProofEncTag {
+                                    session_id: this.session_id,
+                                    prover: this.my_index,
+                                    num: 0,
+                                },
+                                &peer_aux,
+                                pi_enc_elg::Data {
+                                    key: &this.ek_own,
+                                    ciphertext: &this.big_k_i,
+                                    a: &this.own_round1.big_y,
+                                    b: &this.own_round1.a1,
+                                    x: &this.own_round1.a2,
+                                },
+                                pi_enc_elg::PrivateData {
+                                    plaintext: &k_i_int,
+                                    nonce: &this.rho_i,
+                                    b: &this.a_i,
+                                },
+                                &security_enc,
+                                &mut tecdsa_core::Csprng::new(),
+                            )
+                            .expect("psi0 proof generation must succeed")
+                        },
+                        || {
+                            // psi1: π_enc_elg for G_i (proves G_i encrypts gamma_i in range)
+                            pi_enc_elg::non_interactive::prove::<C, Sha256>(
+                                &ProofEncTag {
+                                    session_id: this.session_id,
+                                    prover: this.my_index,
+                                    num: 1,
+                                },
+                                &peer_aux,
+                                pi_enc_elg::Data {
+                                    key: &this.ek_own,
+                                    ciphertext: &this.big_g_i,
+                                    a: &this.own_round1.big_y,
+                                    b: &this.own_round1.b1,
+                                    x: &this.own_round1.b2,
+                                },
+                                pi_enc_elg::PrivateData {
+                                    plaintext: &this.gamma_i.to_integer(),
+                                    nonce: &this.gamma_nonce,
+                                    b: &this.b_i,
+                                },
+                                &security_enc,
+                                &mut tecdsa_core::Csprng::new(),
+                            )
+                            .expect("psi1 proof generation must succeed")
+                        },
+                    )
+                },
+                || {
+                    tecdsa_bigint::par::join(
+                        || {
+                            // psi: π_aff_g for gamma MtA (D_ji, F_ji)
+                            pi_aff::non_interactive::prove::<C, Sha256>(
+                                &ProofPsiTag {
+                                    session_id: this.session_id,
+                                    prover: this.my_index,
+                                    hat: false,
+                                },
+                                &peer_aux,
+                                pi_aff::Data {
+                                    key_j: peer_ek,
+                                    key_i: &this.ek_own,
+                                    c: &peer_round1.big_k,
+                                    d: &big_d,
+                                    y: &big_f,
+                                    x: &big_gamma_i,
+                                },
+                                pi_aff::PrivateData {
+                                    x: gamma_i_int_ref,
+                                    y: &neg_beta_ij_int,
+                                    nonce: &s_ij,
+                                    nonce_y: &r_ij,
+                                },
+                                &security_aff,
+                                &mut tecdsa_core::Csprng::new(),
+                            )
+                            .expect("psi proof generation must succeed")
+                        },
+                        || {
+                            // hat_psi: π_aff_g for x MtA (hat_D_ji, hat_F_ji)
+                            pi_aff::non_interactive::prove::<C, Sha256>(
+                                &ProofPsiTag {
+                                    session_id: this.session_id,
+                                    prover: this.my_index,
+                                    hat: true,
+                                },
+                                &peer_aux,
+                                pi_aff::Data {
+                                    key_j: peer_ek,
+                                    key_i: &this.ek_own,
+                                    c: &peer_round1.big_k,
+                                    d: &hat_big_d,
+                                    y: &hat_big_f,
+                                    x: &x_i_public,
+                                },
+                                pi_aff::PrivateData {
+                                    x: x_i_int_ref,
+                                    y: &neg_hat_beta_ij_int,
+                                    nonce: &hat_s_ij,
+                                    nonce_y: &hat_r_ij,
+                                },
+                                &security_aff,
+                                &mut tecdsa_core::Csprng::new(),
+                            )
+                            .expect("hat_psi proof generation must succeed")
+                        },
+                    )
+                },
+            );
 
-            // psi0: π_enc_elg for K_i (proves K_i encrypts k_i in range)
-            let psi0 = pi_enc_elg::non_interactive::prove::<C, Sha256>(
-                &ProofEncTag {
-                    session_id: self.session_id,
-                    prover: self.my_index,
-                    num: 0,
-                },
-                &peer_aux,
-                pi_enc_elg::Data {
-                    key: &self.ek_own,
-                    ciphertext: &self.big_k_i,
-                    a: &self.own_round1.big_y,
-                    b: &self.own_round1.a1,
-                    x: &self.own_round1.a2,
-                },
-                pi_enc_elg::PrivateData {
-                    plaintext: &k_i_int,
-                    nonce: &self.rho_i,
-                    b: &self.a_i,
-                },
-                &security_enc,
-                &mut rng,
-            )
-            .expect("psi0 proof generation must succeed");
-
-            // psi1: π_enc_elg for G_i (proves G_i encrypts gamma_i in range)
-            let psi1 = pi_enc_elg::non_interactive::prove::<C, Sha256>(
-                &ProofEncTag {
-                    session_id: self.session_id,
-                    prover: self.my_index,
-                    num: 1,
-                },
-                &peer_aux,
-                pi_enc_elg::Data {
-                    key: &self.ek_own,
-                    ciphertext: &self.big_g_i,
-                    a: &self.own_round1.big_y,
-                    b: &self.own_round1.b1,
-                    x: &self.own_round1.b2,
-                },
-                pi_enc_elg::PrivateData {
-                    plaintext: &self.gamma_i.to_integer(),
-                    nonce: &self.gamma_nonce,
-                    b: &self.b_i,
-                },
-                &security_enc,
-                &mut rng,
-            )
-            .expect("psi1 proof generation must succeed");
-
-            // psi: π_aff_g for gamma MtA (D_ji, F_ji)
-            let psi = pi_aff::non_interactive::prove::<C, Sha256>(
-                &ProofPsiTag {
-                    session_id: self.session_id,
-                    prover: self.my_index,
-                    hat: false,
-                },
-                &peer_aux,
-                pi_aff::Data {
-                    key_j: peer_ek,
-                    key_i: &self.ek_own,
-                    c: &peer_round1.big_k,
-                    d: &big_d,
-                    y: &big_f,
-                    x: &big_gamma_i,
-                },
-                pi_aff::PrivateData {
-                    x: &gamma_i_int,
-                    y: &neg_beta_ij_int,
-                    nonce: &s_ij,
-                    nonce_y: &r_ij,
-                },
-                &security_aff,
-                &mut rng,
-            )
-            .expect("psi proof generation must succeed");
-
-            // hat_psi: π_aff_g for x MtA (hat_D_ji, hat_F_ji)
-            let hat_psi = pi_aff::non_interactive::prove::<C, Sha256>(
-                &ProofPsiTag {
-                    session_id: self.session_id,
-                    prover: self.my_index,
-                    hat: true,
-                },
-                &peer_aux,
-                pi_aff::Data {
-                    key_j: peer_ek,
-                    key_i: &self.ek_own,
-                    c: &peer_round1.big_k,
-                    d: &hat_big_d,
-                    y: &hat_big_f,
-                    x: &x_i_public,
-                },
-                pi_aff::PrivateData {
-                    x: &x_i_int,
-                    y: &neg_hat_beta_ij_int,
-                    nonce: &hat_s_ij,
-                    nonce_y: &hat_r_ij,
-                },
-                &security_aff,
-                &mut rng,
-            )
-            .expect("hat_psi proof generation must succeed");
-
-            outgoing.push(Outgoing {
+            let msg = Outgoing {
                 to: Recipient::Party(peer_pid),
                 msg: PresignMsg::Round2(MsgRound2 {
                     big_gamma: big_gamma_i,
@@ -477,11 +506,21 @@ where
                     hat_big_f,
                     psi0,
                     psi1,
-                    tilde_psi: tilde_psi.clone(),
+                    tilde_psi: tilde_psi_ref.clone(),
                     psi,
                     hat_psi,
                 }),
-            });
+            };
+            (peer_pid, beta_ij, hat_beta_ij, msg)
+        });
+
+        let mut beta_map: BTreeMap<PartyId, C::Scalar> = BTreeMap::new();
+        let mut hat_beta_map: BTreeMap<PartyId, C::Scalar> = BTreeMap::new();
+        let mut outgoing: Vec<Outgoing<PresignMsg<C>>> = Vec::with_capacity(per_peer.len());
+        for (peer_pid, beta_ij, hat_beta_ij, msg) in per_peer {
+            beta_map.insert(peer_pid, beta_ij);
+            hat_beta_map.insert(peer_pid, hat_beta_ij);
+            outgoing.push(msg);
         }
 
         // Zeroize secrets not carried to the next round
@@ -609,158 +648,199 @@ where
         let signers_1based: Vec<u16> = self.signers_pids.iter().map(|p| p.0).collect();
         let lagrange_coeffs = lagrange::coefficients::<C>(&signers_1based);
 
-        // Verify all proofs from each peer, then decrypt MtA results
+        // Verify all proofs from each peer, then decrypt MtA results.
+        //
+        // The five proof checks and the two Paillier decryptions for a given
+        // peer are mutually independent, and so is the work for different
+        // peers. The whole block is therefore one parallel map over peers with
+        // a second level of `join` inside, which keeps every core busy even at
+        // t = 2 (a single peer, seven independent tasks).
+        let this = &self;
+        let peers: Vec<PartyId> = self.round2_msgs.keys().copied().collect();
+
+        let per_peer: Vec<(C::Scalar, C::Scalar)> =
+            tecdsa_bigint::par::try_map(&peers, |&peer_pid| {
+                let round2 = &this.round2_msgs[&peer_pid];
+                let peer_party_idx = this.signer_party_indices[&peer_pid] as usize;
+                let peer_ek = &this.paillier_eks[peer_party_idx];
+                let peer_round1 = &this.round1_msgs[&peer_pid];
+                let peer_index = peer_pid.0;
+
+                // Peer's additive public share: X_j = lambda_j * public_shares[j]
+                let peer_signer_pos = signers_1based
+                    .iter()
+                    .position(|&s| s == peer_pid.0)
+                    .expect("peer must be in signers list");
+                let peer_lambda = lagrange_coeffs[peer_signer_pos];
+                let peer_additive_public = this.public_shares[peer_party_idx] * peer_lambda;
+
+                let verify_psi0 = || {
+                    // psi0: peer's K encrypts k in range
+                    pi_enc_elg::non_interactive::verify::<C, Sha256>(
+                        &ProofEncTag {
+                            session_id: this.session_id,
+                            prover: peer_index,
+                            num: 0,
+                        },
+                        &own_aux,
+                        pi_enc_elg::Data {
+                            key: peer_ek,
+                            ciphertext: &peer_round1.big_k,
+                            a: &peer_round1.big_y,
+                            b: &peer_round1.a1,
+                            x: &peer_round1.a2,
+                        },
+                        &round2.psi0,
+                        &security_enc,
+                    )
+                    .map_err(|e| {
+                        TecdsaError::Other(format!(
+                            "psi0 verification failed for party {peer_index}: {e}"
+                        ))
+                    })
+                };
+
+                let verify_psi1 = || {
+                    // psi1: peer's G encrypts gamma in range
+                    pi_enc_elg::non_interactive::verify::<C, Sha256>(
+                        &ProofEncTag {
+                            session_id: this.session_id,
+                            prover: peer_index,
+                            num: 1,
+                        },
+                        &own_aux,
+                        pi_enc_elg::Data {
+                            key: peer_ek,
+                            ciphertext: &peer_round1.big_g,
+                            a: &peer_round1.big_y,
+                            b: &peer_round1.b1,
+                            x: &peer_round1.b2,
+                        },
+                        &round2.psi1,
+                        &security_enc,
+                    )
+                    .map_err(|e| {
+                        TecdsaError::Other(format!(
+                            "psi1 verification failed for party {peer_index}: {e}"
+                        ))
+                    })
+                };
+
+                let verify_tilde_psi = || {
+                    // tilde_psi: peer's Gamma ties to El-Gamal
+                    pi_elog::non_interactive::verify::<C, Sha256>(
+                        &ProofElogTag {
+                            session_id: this.session_id,
+                            prover: peer_index,
+                            prime: false,
+                        },
+                        pi_elog::Data {
+                            l: &peer_round1.b1,
+                            m: &peer_round1.b2,
+                            x: &peer_round1.big_y,
+                            y: &round2.big_gamma,
+                            h: &C::generator(),
+                        },
+                        &round2.tilde_psi,
+                    )
+                    .map_err(|e| {
+                        TecdsaError::Other(format!(
+                            "tilde_psi verification failed for party {peer_index}: {e}"
+                        ))
+                    })
+                };
+
+                let verify_psi = || {
+                    // psi: π_aff_g for gamma MtA
+                    // Verifier's perspective: C = own K_i, D = received D, F = received F
+                    pi_aff::non_interactive::verify::<C, Sha256>(
+                        &ProofPsiTag {
+                            session_id: this.session_id,
+                            prover: peer_index,
+                            hat: false,
+                        },
+                        &own_aux,
+                        pi_aff::Data {
+                            key_j: &this.dk,
+                            key_i: peer_ek,
+                            c: &this.own_round1.big_k,
+                            d: &round2.big_d,
+                            y: &round2.big_f,
+                            x: &round2.big_gamma,
+                        },
+                        &security_aff,
+                        &round2.psi,
+                    )
+                    .map_err(|e| {
+                        TecdsaError::Other(format!(
+                            "psi verification failed for party {peer_index}: {e}"
+                        ))
+                    })
+                };
+
+                let verify_hat_psi = || {
+                    // hat_psi: π_aff_g for x MtA
+                    pi_aff::non_interactive::verify::<C, Sha256>(
+                        &ProofPsiTag {
+                            session_id: this.session_id,
+                            prover: peer_index,
+                            hat: true,
+                        },
+                        &own_aux,
+                        pi_aff::Data {
+                            key_j: &this.dk,
+                            key_i: peer_ek,
+                            c: &this.own_round1.big_k,
+                            d: &round2.hat_big_d,
+                            y: &round2.hat_big_f,
+                            x: &peer_additive_public,
+                        },
+                        &security_aff,
+                        &round2.hat_psi,
+                    )
+                    .map_err(|e| {
+                        TecdsaError::Other(format!(
+                            "hat_psi verification failed for party {peer_index}: {e}"
+                        ))
+                    })
+                };
+
+                let decrypt_alphas = || {
+                    // Decrypt D to get alpha_ij
+                    let alpha_int = this.dk.decrypt(&round2.big_d).map_err(|e| {
+                        TecdsaError::Other(format!("decrypt alpha from {peer_index}: {e}"))
+                    })?;
+                    // Decrypt hat_D to get hat_alpha_ij
+                    let hat_alpha_int = this.dk.decrypt(&round2.hat_big_d).map_err(|e| {
+                        TecdsaError::Other(format!("decrypt hat_alpha from {peer_index}: {e}"))
+                    })?;
+                    Ok((
+                        C::scalar_from_integer(&alpha_int),
+                        C::scalar_from_integer(&hat_alpha_int),
+                    ))
+                };
+
+                let ((r0, r1), ((r2, r3), (r4, alphas))) = tecdsa_bigint::par::join(
+                    || tecdsa_bigint::par::join(verify_psi0, verify_psi1),
+                    || {
+                        tecdsa_bigint::par::join(
+                            || tecdsa_bigint::par::join(verify_tilde_psi, verify_psi),
+                            || tecdsa_bigint::par::join(verify_hat_psi, decrypt_alphas),
+                        )
+                    },
+                );
+                r0?;
+                r1?;
+                r2?;
+                r3?;
+                r4?;
+                alphas
+            })?;
+
         let mut alpha_sum = C::Scalar::ZERO;
         let mut hat_alpha_sum = C::Scalar::ZERO;
-
-        for (&peer_pid, round2) in &self.round2_msgs {
-            let peer_party_idx = self.signer_party_indices[&peer_pid] as usize;
-            let peer_ek = &self.paillier_eks[peer_party_idx];
-            let peer_round1 = &self.round1_msgs[&peer_pid];
-            let peer_index = peer_pid.0;
-
-            // Verify psi0: peer's K encrypts k in range
-            pi_enc_elg::non_interactive::verify::<C, Sha256>(
-                &ProofEncTag {
-                    session_id: self.session_id,
-                    prover: peer_index,
-                    num: 0,
-                },
-                &own_aux,
-                pi_enc_elg::Data {
-                    key: peer_ek,
-                    ciphertext: &peer_round1.big_k,
-                    a: &peer_round1.big_y,
-                    b: &peer_round1.a1,
-                    x: &peer_round1.a2,
-                },
-                &round2.psi0,
-                &security_enc,
-            )
-            .map_err(|e| {
-                TecdsaError::Other(format!(
-                    "psi0 verification failed for party {peer_index}: {e}"
-                ))
-            })?;
-
-            // Verify psi1: peer's G encrypts gamma in range
-            pi_enc_elg::non_interactive::verify::<C, Sha256>(
-                &ProofEncTag {
-                    session_id: self.session_id,
-                    prover: peer_index,
-                    num: 1,
-                },
-                &own_aux,
-                pi_enc_elg::Data {
-                    key: peer_ek,
-                    ciphertext: &peer_round1.big_g,
-                    a: &peer_round1.big_y,
-                    b: &peer_round1.b1,
-                    x: &peer_round1.b2,
-                },
-                &round2.psi1,
-                &security_enc,
-            )
-            .map_err(|e| {
-                TecdsaError::Other(format!(
-                    "psi1 verification failed for party {peer_index}: {e}"
-                ))
-            })?;
-
-            // Verify tilde_psi: peer's Gamma ties to El-Gamal
-            pi_elog::non_interactive::verify::<C, Sha256>(
-                &ProofElogTag {
-                    session_id: self.session_id,
-                    prover: peer_index,
-                    prime: false,
-                },
-                pi_elog::Data {
-                    l: &peer_round1.b1,
-                    m: &peer_round1.b2,
-                    x: &peer_round1.big_y,
-                    y: &round2.big_gamma,
-                    h: &C::generator(),
-                },
-                &round2.tilde_psi,
-            )
-            .map_err(|e| {
-                TecdsaError::Other(format!(
-                    "tilde_psi verification failed for party {peer_index}: {e}"
-                ))
-            })?;
-
-            // Verify psi: π_aff_g for gamma MtA
-            // Verifier's perspective: C = own K_i, D = received D, F = received F
-            pi_aff::non_interactive::verify::<C, Sha256>(
-                &ProofPsiTag {
-                    session_id: self.session_id,
-                    prover: peer_index,
-                    hat: false,
-                },
-                &own_aux,
-                pi_aff::Data {
-                    key_j: &self.dk,
-                    key_i: peer_ek,
-                    c: &self.own_round1.big_k,
-                    d: &round2.big_d,
-                    y: &round2.big_f,
-                    x: &round2.big_gamma,
-                },
-                &security_aff,
-                &round2.psi,
-            )
-            .map_err(|e| {
-                TecdsaError::Other(format!(
-                    "psi verification failed for party {peer_index}: {e}"
-                ))
-            })?;
-
-            // Verify hat_psi: π_aff_g for x MtA
-            // Compute peer's additive public share: X_j = lambda_j * public_shares[j]
-            let peer_signer_pos = signers_1based
-                .iter()
-                .position(|&s| s == peer_pid.0)
-                .expect("peer must be in signers list");
-            let peer_lambda = lagrange_coeffs[peer_signer_pos];
-            let peer_additive_public = self.public_shares[peer_party_idx] * peer_lambda;
-
-            pi_aff::non_interactive::verify::<C, Sha256>(
-                &ProofPsiTag {
-                    session_id: self.session_id,
-                    prover: peer_index,
-                    hat: true,
-                },
-                &own_aux,
-                pi_aff::Data {
-                    key_j: &self.dk,
-                    key_i: peer_ek,
-                    c: &self.own_round1.big_k,
-                    d: &round2.hat_big_d,
-                    y: &round2.hat_big_f,
-                    x: &peer_additive_public,
-                },
-                &security_aff,
-                &round2.hat_psi,
-            )
-            .map_err(|e| {
-                TecdsaError::Other(format!(
-                    "hat_psi verification failed for party {peer_index}: {e}"
-                ))
-            })?;
-
-            // Decrypt D to get alpha_ij
-            let alpha_int = self
-                .dk
-                .decrypt(&round2.big_d)
-                .map_err(|e| TecdsaError::Other(format!("decrypt alpha from {peer_index}: {e}")))?;
-            let alpha_ij = C::scalar_from_integer(&alpha_int);
+        for (alpha_ij, hat_alpha_ij) in per_peer {
             alpha_sum += alpha_ij;
-
-            // Decrypt hat_D to get hat_alpha_ij
-            let hat_alpha_int = self.dk.decrypt(&round2.hat_big_d).map_err(|e| {
-                TecdsaError::Other(format!("decrypt hat_alpha from {peer_index}: {e}"))
-            })?;
-            let hat_alpha_ij = C::scalar_from_integer(&hat_alpha_int);
             hat_alpha_sum += hat_alpha_ij;
         }
 

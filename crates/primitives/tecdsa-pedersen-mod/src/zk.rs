@@ -52,10 +52,10 @@ impl PiPrm {
         let private_commitment: Vec<Integer> = (0..SECURITY_PARAM)
             .map(|_| phi_n.clone().random_below(rug_rng))
             .collect();
-        let commitment: Vec<Integer> = private_commitment
-            .iter()
-            .map(|a_i| params.t.clone().pow_mod(a_i, &params.n).unwrap())
-            .collect();
+        // The m = 80 commitments t^{a_i} mod N are independent exponentiations.
+        let commitment: Vec<Integer> = tecdsa_bigint::par::map(&private_commitment, |a_i| {
+            params.t.clone().pow_mod(a_i, &params.n).unwrap()
+        });
 
         let challenges = Self::derive_challenges(params, &commitment);
 
@@ -100,24 +100,23 @@ impl PiPrm {
 
         let challenges = Self::derive_challenges(params, &self.commitment);
 
-        for ((z_i, a_i), &e_i) in self
+        // The m = 80 checks t^{z_i} =? a_i * s^{e_i} are independent.
+        let checks: Vec<(&Integer, &Integer, bool)> = self
             .zs
             .iter()
             .zip(self.commitment.iter())
             .zip(challenges.iter())
-        {
+            .map(|((z_i, a_i), &e_i)| (z_i, a_i, e_i))
+            .collect();
+        tecdsa_bigint::par::all(&checks, |&(z_i, a_i, e_i)| {
             let lhs = params.t.clone().pow_mod(z_i, &params.n).unwrap();
             let rhs = if e_i {
                 Integer::from(a_i * &params.s) % &params.n
             } else {
                 a_i.clone()
             };
-            if lhs != rhs {
-                return false;
-            }
-        }
-
-        true
+            lhs == rhs
+        })
     }
 
     fn derive_challenges(params: &PedersenModParams, commitment: &[Integer]) -> Vec<bool> {

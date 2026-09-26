@@ -375,9 +375,14 @@ impl BigIntExt for rug::Integer {
     }
 
     fn combine(&self, l: &Self, le: &Self, r: &Self, re: &Self) -> Option<Self> {
-        let l_to_le = l.pow_mod_ref(le, self)?.complete();
-        let r_to_re = r.pow_mod_ref(re, self)?.complete();
-        Some((l_to_le * r_to_re).modulo(self))
+        // The two exponentiations are independent. This is the innermost hot
+        // spot of every Ring-Pedersen commitment (pi_enc, pi_aff_g, pi_fac,
+        // ...), so parallelising it here speeds up the whole ZK stack at once.
+        let (l_to_le, r_to_re) = crate::par::join(
+            || l.pow_mod_ref(le, self).map(Self::from),
+            || r.pow_mod_ref(re, self).map(Self::from),
+        );
+        Some((l_to_le? * r_to_re?).modulo(self))
     }
 
     fn multi_exp(&self, bases: &[&Self], exps: &[&Self]) -> Self {
@@ -576,7 +581,11 @@ impl BigIntExt for rug::Integer {
         let sieve_limit = crate::prime::default_sieve_limit(u64::from(bits));
         let primes = crate::prime::small_odd_primes(sieve_limit);
         // a = 2 makes the chain prime `2q + 1`, i.e. the safe prime.
-        let (_, p) = crate::prime::gen_pair(
+        #[cfg(not(feature = "parallel"))]
+        let gen_pair = crate::prime::gen_pair;
+        #[cfg(feature = "parallel")]
+        let gen_pair = crate::prime::gen_pair_par;
+        let (_, p) = gen_pair(
             bits - 1,
             &rug::Integer::from(2),
             crate::prime::MR_ROUNDS,

@@ -105,15 +105,29 @@ impl<L: Cggmp20SecurityParams> Round1State<L> {
         let parties = config.parties.clone();
         let party_index = config.local_party.index;
 
-        // 1. Generate Paillier key pair with primes of the configured size
-        let p = Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
-        let q = Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
+        // 1+2. Generate the Paillier key pair and the ring-Pedersen parameters.
+        // These are four independent safe-prime searches, by far the dominant
+        // cost of the whole protocol, so they are all started concurrently.
+        // Each branch gets its own seeded stream so the result stays a
+        // deterministic function of `rng`.
+        let mut paillier_seed = [0u8; 32];
+        let mut pedersen_seed = [0u8; 32];
+        rng.fill_bytes(&mut paillier_seed);
+        rng.fill_bytes(&mut pedersen_seed);
+        let ((p, q), (pedersen_params, pedersen_secret)) = tecdsa_bigint::par::join(
+            || {
+                use rand::SeedableRng;
+                let mut r = rand::rngs::StdRng::from_seed(paillier_seed);
+                tecdsa_bigint::par::gen_two_primes(&mut r, L::RSA_PRIME_BITS)
+            },
+            || {
+                use rand::SeedableRng;
+                let mut r = rand::rngs::StdRng::from_seed(pedersen_seed);
+                PedersenModParams::generate(u64::from(L::RSA_PRIME_BITS), &mut r)
+            },
+        );
         let dk = DecryptionKey::from_primes(p, q).expect("valid paillier key");
         let ek = dk.encryption_key().clone();
-
-        // 2. Generate ring-Pedersen parameters
-        let (pedersen_params, pedersen_secret) =
-            PedersenModParams::generate(L::RSA_PRIME_BITS as u64, rng);
 
         // 3. Generate PiPrm proof
         let pi_prm = PiPrm::prove(&pedersen_params, &pedersen_secret, rng);
@@ -282,14 +296,20 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
             }
         }
 
-        // 2. Verify all PiPrm proofs.
-        for (&pid, round2) in &self.round2_msgs {
-            if !round2.pi_prm.verify(&round2.pedersen_params) {
-                return Err(TecdsaError::InvalidProof(format!(
+        // 2. Verify all PiPrm proofs. One peer's proof does not depend on any
+        //    other's, and each is m = 80 independent exponentiations, so this
+        //    parallelises both across peers and (inside `verify`) within a peer.
+        let peers: Vec<PartyId> = self.round2_msgs.keys().copied().collect();
+        tecdsa_bigint::par::try_for_each(&peers, |&pid| {
+            let round2 = &self.round2_msgs[&pid];
+            if round2.pi_prm.verify(&round2.pedersen_params) {
+                Ok(())
+            } else {
+                Err(TecdsaError::InvalidProof(format!(
                     "party {pid} PiPrm proof verification failed"
-                )));
+                )))
             }
-        }
+        })?;
 
         // 3. Compute combined rho = XOR(all rhos).
         let mut combined_rho = self.rho;
@@ -300,7 +320,6 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
         }
 
         // 4. Generate π_mod proof (same for all peers — only depends on own N).
-        let mut rng = tecdsa_core::Csprng::new();
         let pi_mod_tag = AuxInfoProofTag {
             context: "pi_mod",
             prover: self.my_id.0,
@@ -312,7 +331,7 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
                 p: self.dk.p(),
                 q: self.dk.q(),
             },
-            &mut rng,
+            &mut tecdsa_core::Csprng::new(),
         )
         .map_err(|e| TecdsaError::Other(format!("pi_mod proof generation failed: {e}")))?;
 
@@ -339,11 +358,9 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
             epsilon: L::EPSILON,
         };
 
-        let mut outgoing = Vec::new();
-        for &peer_pid in &self.parties {
-            if peer_pid == self.my_id {
-                continue;
-            }
+        // One π_fac proof per peer, each bound to that peer's Ring-Pedersen
+        // parameters, so they are independent of one another.
+        let outgoing = tecdsa_bigint::par::try_map(&peers, |&peer_pid| {
             let peer_round2 = self
                 .round2_msgs
                 .get(&peer_pid)
@@ -362,18 +379,18 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
                     q: self.dk.q(),
                 },
                 &security_params,
-                &mut rng,
+                &mut tecdsa_core::Csprng::new(),
             )
             .map_err(|e| TecdsaError::Other(format!("pi_fac proof generation failed: {e}")))?;
 
-            outgoing.push(Outgoing {
+            Ok(Outgoing {
                 to: Recipient::Party(peer_pid),
                 msg: AuxInfoMsg::Round3(MsgRound3 {
                     pi_mod: pi_mod_proof.clone(),
                     pi_fac: pi_fac_proof,
                 }),
-            });
-        }
+            })
+        })?;
 
         Ok(Round3State {
             my_id: self.my_id,
@@ -448,8 +465,6 @@ impl Round3State {
 
     /// Verify all π_mod and π_fac proofs, then produce the final `AuxInfo`.
     pub fn finish(self) -> tecdsa_core::Result<AuxInfo> {
-        let mut rng = tecdsa_core::Csprng::new();
-
         // Use own ring-Pedersen params as verifier for π_fac.
         let own_aux = pedersen_to_aux(&self.pedersen_params);
         let security_params = pi_fac::SecurityParams {
@@ -457,8 +472,11 @@ impl Round3State {
             epsilon: self.epsilon,
         };
 
-        // 1. Verify all π_mod and π_fac proofs.
-        for (&pid, round3) in &self.round3_msgs {
+        // 1. Verify all π_mod and π_fac proofs. Independent across peers, and
+        //    π_mod is itself 80 independent point checks.
+        let peers: Vec<PartyId> = self.round3_msgs.keys().copied().collect();
+        tecdsa_bigint::par::try_for_each(&peers, |&pid| {
+            let round3 = &self.round3_msgs[&pid];
             let round2 = self
                 .round2_msgs
                 .get(&pid)
@@ -477,7 +495,7 @@ impl Round3State {
                     n: round2.paillier_ek.n(),
                 },
                 &round3.pi_mod,
-                &mut rng,
+                &mut tecdsa_core::Csprng::new(),
             )
             .map_err(|e| {
                 TecdsaError::InvalidProof(format!("party {pid} pi_mod verification failed: {e}"))
@@ -516,7 +534,8 @@ impl Round3State {
                 &round3.pi_fac,
             )
             .map_err(|e| TecdsaError::InvalidProof(format!("party {pid} pi_fac: {e}")))?;
-        }
+            Ok(())
+        })?;
 
         // 2. Collect all parties' EncryptionKeys and PedersenModParams, ordered by party id.
         let n = self.parties.len();
