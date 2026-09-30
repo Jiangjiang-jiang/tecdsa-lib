@@ -154,6 +154,7 @@ fn all_groups() -> Vec<(&'static str, GroupFn)> {
         ("gg18", gg18_once),
         ("ggn16", ggn16_once),
         ("ln18", ln18_once),
+        ("ku24", ku24_once),
         ("tx25", tx25_once),
         ("jtx25", jtx25_once),
         ("jtx25_robust", jtx25_robust_once),
@@ -1808,6 +1809,198 @@ fn cl_presign_sign_sweep<KM, PM, SM>(
                 pid,
                 timing.total_active(),
             );
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// KU24
+// ═══════════════════════════════════════════════════════════════════════
+
+/// KU24 presign batch sizes, from `TECDSA_BENCH_KU24_BATCHES` (default `1,128`).
+///
+/// Comm is recorded per batch size so the per-presignature figure can be
+/// amortized the same way the Offline *time* column is.
+fn ku24_batches() -> Vec<usize> {
+    std::env::var("TECDSA_BENCH_KU24_BATCHES")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .filter_map(|p| p.trim().parse::<usize>().ok())
+                .filter(|&m| m > 0)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v: &Vec<usize>| !v.is_empty())
+        .unwrap_or_else(|| vec![1, 128])
+}
+
+/// KU24 one-shot sweep: PRSS setup, DKG, batch presign and online sign.
+///
+/// Two things differ from [`cl_presign_sign_sweep`] and are why KU24 cannot
+/// reuse it:
+///
+/// * **No quorum.** Reconstructing the degree-`2(t-1)` partial signatures needs
+///   `2t-1` shares, and this implementation checks consistency across all `n`
+///   points, so every phase runs all `n` parties rather than `first_signers(t)`.
+/// * **Init is the work.** All `F_rss` material is derived in the machine
+///   constructor, so the `*_with_init` timing helpers are required; the
+///   `without_init` variants the CL protocols use would report near-zero.
+///
+/// Honest-majority configurations only (`n >= 2t-1`); others are skipped.
+fn ku24_once() {
+    use tecdsa_ku24::{
+        keygen::Ku24KeygenMachine, presign::Ku24PresignMachine, prss::PrssKeys,
+        setup::Ku24SetupMachine, sign::Ku24SignMachine,
+    };
+
+    let msg = make_data_to_sign(b"benchmark message");
+
+    // --- DKG sweep: one-time PRSS setup, then the 1-round DKG. ---
+    for (n, t) in config::dkg_configs() {
+        if tecdsa_ku24::prss::check_params(n, t).is_err() {
+            continue;
+        }
+        let all: Vec<PartyId> = (1..=n).map(PartyId).collect();
+
+        let prss: Vec<PrssKeys<C>> = time_once(&format!("ku24/setup/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = all
+                .iter()
+                .map(|&pid| {
+                    let all = all.clone();
+                    (pid, move || {
+                        Ku24SetupMachine::<C>::new(pid, all, t).expect("ku24 setup")
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 4)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        });
+
+        let dkg_out = time_once(&format!("ku24/dkg/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = all
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    let all = all.clone();
+                    let keys = keys.clone();
+                    (pid, move || {
+                        Ku24KeygenMachine::new(pid, all, &keys, &[0u8; 32]).expect("ku24 keygen")
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 4)
+        });
+        for (&pid, timing) in dkg_out.1.iter().take(1) {
+            print_timing(&format!("ku24/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
+    }
+
+    // --- Presign / online-sign sweep at TECDSA_BENCH_SIGN_N. ---
+    let n = config::sign_n();
+    let all: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        if tecdsa_ku24::prss::check_params(n, t).is_err() {
+            continue;
+        }
+
+        // Untimed: PRSS material and key shares.
+        let prss: Vec<PrssKeys<C>> = {
+            let machines: Vec<_> = all
+                .iter()
+                .map(|&pid| {
+                    (
+                        pid,
+                        Ku24SetupMachine::<C>::new(pid, all.clone(), t).expect("ku24 setup"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 4)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let key_shares: Vec<_> = {
+            let machines: Vec<_> = all
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    (
+                        pid,
+                        Ku24KeygenMachine::new(pid, all.clone(), keys, &[0u8; 32])
+                            .expect("ku24 keygen"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 4)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        for (bi, m) in ku24_batches().into_iter().enumerate() {
+            // `time_once` derives the offline comm key from this name:
+            // "ku24/presign/<cfg>/wall" -> "ku24/<cfg>/presign".
+            let cfg = if m == 1 {
+                format!("n{n}_t{t}")
+            } else {
+                format!("n{n}_t{t}_m{m}")
+            };
+            let mut session = [0u8; 32];
+            session[0] = u8::try_from(bi & 0xFF).expect("masked to a byte");
+
+            let presign_out = time_once(&format!("ku24/presign/{cfg}/wall"), || {
+                let builders: Vec<_> = all
+                    .iter()
+                    .zip(&prss)
+                    .map(|(&pid, keys)| {
+                        let all = all.clone();
+                        let keys = keys.clone();
+                        (pid, move || {
+                            Ku24PresignMachine::new_with_session(pid, all, &keys, m, &session)
+                                .expect("ku24 presign")
+                        })
+                    })
+                    .collect();
+                per_party::run_timed_with_init(builders, 8)
+            });
+            let batches: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+            for (&pid, timing) in presign_out.1.iter().take(1) {
+                print_timing(&format!("ku24/presign/{cfg}"), pid, timing.total_active());
+            }
+
+            // Online sign is measured once, against the m = 1 batch.
+            if m != 1 {
+                continue;
+            }
+            let public_key = key_shares[0].public_key;
+            let _ = public_key;
+            let sign_out = time_once(&format!("ku24/online_sign/n{n}_t{t}/wall"), || {
+                let builders: Vec<_> = all
+                    .iter()
+                    .zip(key_shares.iter().zip(batches))
+                    .map(|(&pid, (share, batch))| {
+                        let all = all.clone();
+                        let share = share.clone();
+                        let presig = batch.into_vec().remove(0);
+                        (pid, move || {
+                            Ku24SignMachine::new(pid, all, &share, presig, msg).expect("ku24 sign")
+                        })
+                    })
+                    .collect();
+                per_party::run_online_comm_with_init(format!("ku24/n{n}_t{t}"), builders, 4)
+            });
+            for (&pid, timing) in sign_out.1.iter().take(1) {
+                print_timing(
+                    &format!("ku24/online_sign/n{n}_t{t}"),
+                    pid,
+                    timing.total_active(),
+                );
+            }
         }
     }
 }
