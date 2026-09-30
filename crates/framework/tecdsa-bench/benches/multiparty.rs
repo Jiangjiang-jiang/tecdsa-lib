@@ -400,6 +400,9 @@ mod ggn16_helpers {
 // ===========================================================================
 
 fn cggmp20_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("cggmp20") {
+        return;
+    }
     use tecdsa_cggmp20::{
         aux_info::AuxInfoMachine, keygen::Cggmp20KeygenMachine, presign::Cggmp20PresignMachine,
         security_level::SecurityLevel128, sign::types::PartialSignature,
@@ -593,6 +596,9 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 }
 
 fn dkls23_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("dkls23") {
+        return;
+    }
     use tecdsa_dkls23::{
         keygen::Dkls23KeygenMachine,
         presign::{Dkls23PresignMachine, PresignConfig},
@@ -765,6 +771,9 @@ fn dkls23_benchmarks(c: &mut Criterion) {
 }
 
 fn gg18_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("gg18") {
+        return;
+    }
     use tecdsa_gg18::{
         keygen::{Gg18KeygenMachine, PaillierPrecomputed},
         presign::{Gg18PresignMachine, PresignConfig},
@@ -954,6 +963,9 @@ fn gg18_benchmarks(c: &mut Criterion) {
 }
 
 fn ggn16_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ggn16") {
+        return;
+    }
     use tecdsa_ggn16::{
         keygen::Ggn16KeygenMachine, presign::Ggn16PresignMachine, sign::Ggn16OnlineSignMachine,
     };
@@ -1092,6 +1104,9 @@ fn ggn16_benchmarks(c: &mut Criterion) {
 }
 
 fn ln18_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ln18") {
+        return;
+    }
     use tecdsa_ln18::{
         key_share::Ln18KeyShare,
         keygen::Ln18KeygenMachine,
@@ -1260,6 +1275,9 @@ fn ln18_benchmarks(c: &mut Criterion) {
 }
 
 fn tx25_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("tx25") {
+        return;
+    }
     use tecdsa_tx25::{
         keygen::Tx25KeygenMachine, presign::Tx25PresignMachine, sign::Tx25OnlineSignMachine,
     };
@@ -1421,6 +1439,9 @@ fn tx25_benchmarks(c: &mut Criterion) {
 }
 
 fn jtx25_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("jtx25") {
+        return;
+    }
     use tecdsa_jtx25::{
         keygen::Jtx25KeygenMachine, presign::Jtx25PresignMachine, sign::Jtx25OnlineSignMachine,
     };
@@ -1590,6 +1611,9 @@ fn jtx25_benchmarks(c: &mut Criterion) {
 }
 
 fn jtx25_robust_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("jtx25_robust") {
+        return;
+    }
     use tecdsa_jtx25::{
         keygen::Jtx25KeygenMachine, presign::robust::Jtx25RobustPresignMachine,
         sign::robust::Jtx25RobustOnlineSignMachine,
@@ -1761,6 +1785,9 @@ fn jtx25_robust_benchmarks(c: &mut Criterion) {
 }
 
 fn wmy23_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("wmy23") {
+        return;
+    }
     use tecdsa_wmy23::{
         keygen::Wmy23KeygenMachine,
         presign::{PresignConfig, Wmy23PresignMachine},
@@ -1942,6 +1969,9 @@ fn wmy23_benchmarks(c: &mut Criterion) {
 }
 
 fn wmc24_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("wmc24") {
+        return;
+    }
     use tecdsa_wmc24::{
         keygen::Wmc24KeygenMachine, presign::Wmc24PresignMachine, sign::Wmc24OnlineSignMachine,
     };
@@ -2112,6 +2142,9 @@ fn wmc24_benchmarks(c: &mut Criterion) {
 }
 
 fn llz25_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("llz25") {
+        return;
+    }
     use tecdsa_llz25::{
         keygen::Llz25KeygenMachine, presign::machine::Llz25PresignMachine,
         sign::machine::Llz25SignMachine,
@@ -2301,6 +2334,9 @@ fn llz25_benchmarks(c: &mut Criterion) {
 }
 
 fn trout_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("trout") {
+        return;
+    }
     use tecdsa_trout::{
         keygen::TroutKeygenMachine, presign::machine::TroutPresignMachine,
         sign::machine::TroutSignMachine,
@@ -2502,6 +2538,9 @@ fn trout_benchmarks(c: &mut Criterion) {
 }
 
 fn xal23_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("xal23") {
+        return;
+    }
     use tecdsa_xal23::{
         keygen::Xal23KeygenMachine, presign::Xal23PresignMachine, sign::Xal23SignMachine,
     };
@@ -2727,6 +2766,9 @@ fn ku24_batch_sizes() -> Vec<usize> {
 }
 
 fn ku24_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ku24") {
+        return;
+    }
     use tecdsa_ku24::{
         keygen::Ku24KeygenMachine, presign::Ku24PresignMachine, prss::PrssKeys,
         setup::Ku24SetupMachine, sign::Ku24SignMachine,
@@ -2948,6 +2990,9 @@ fn ku24_benchmarks(c: &mut Criterion) {
 /// defaults to `collect_stats = false`), so no bincode serialization is charged
 /// to these numbers beyond the protocol's own wire encoding.
 fn ku24_e2e_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ku24_e2e") {
+        return;
+    }
     use std::time::{Duration, Instant};
 
     use tecdsa_ku24::{
