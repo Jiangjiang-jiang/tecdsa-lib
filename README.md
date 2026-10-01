@@ -28,6 +28,7 @@ tecdsa-lib/
    ```bash
    git clone https://github.com/Jiangjiang-jiang/tecdsa-lib.git
    cd tecdsa-lib
+   git checkout ae-v1
    ```
 
    Run the following commands from the repository root unless stated otherwise.
