@@ -13,6 +13,7 @@ parallel = [
     "tecdsa-pedersen-mod/parallel",
     "tecdsa-paillier/parallel",
     "tecdsa-cggmp20/parallel",
+    "tecdsa-ku24/parallel",
 ]
 
 [dependencies]

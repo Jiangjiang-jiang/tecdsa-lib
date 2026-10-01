@@ -79,6 +79,7 @@ use std::collections::BTreeMap;
 use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
 pub use machine::Ku24PresignMachine;
 pub use msg::Ku24PresignMsg;
+use tecdsa_bigint::par;
 use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
 
@@ -275,22 +276,18 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let mut column = vec![C::Scalar::ZERO; usize::from(n)];
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        for j in 1..=n {
-            column[usize::from(j) - 1] = shares[&j][i];
-        }
-        out.push(
-            interp
-                .scalar(&column)
-                .ok_or(Ku24Error::InconsistentShares {
-                    what,
-                    degree: interp.degree(),
-                })?,
-        );
-    }
-    Ok(out)
+    let rows: Vec<&[C::Scalar]> = (1..=n).map(|j| shares[&j].as_slice()).collect();
+    // Columns are independent: one interpolation per opened value.
+    par::map_indexed(count, |i| {
+        let column: Vec<C::Scalar> = rows.iter().map(|row| row[i]).collect();
+        interp.scalar(&column)
+    })
+    .into_iter()
+    .collect::<Option<Vec<_>>>()
+    .ok_or(Ku24Error::InconsistentShares {
+        what,
+        degree: interp.degree(),
+    })
 }
 
 /// Group-element analogue of [`open_scalars`] (interpolation "in the exponent").
@@ -306,19 +303,20 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let mut column = Vec::with_capacity(usize::from(n));
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        column.clear();
-        for j in 1..=n {
-            column.push(shares[&j][i]);
-        }
-        out.push(interp.point(&column).ok_or(Ku24Error::InconsistentShares {
-            what,
-            degree: interp.degree(),
-        })?);
-    }
-    Ok(out)
+    let rows: Vec<&[C::ProjectivePoint]> = (1..=n).map(|j| shares[&j].as_slice()).collect();
+    // The dominant cost of batch presigning at small n: every column carries a
+    // degree-t consistency check made of variable-base scalar multiplications,
+    // and columns are independent.
+    par::map_indexed(count, |i| {
+        let column: Vec<C::ProjectivePoint> = rows.iter().map(|row| row[i]).collect();
+        interp.point(&column)
+    })
+    .into_iter()
+    .collect::<Option<Vec<_>>>()
+    .ok_or(Ku24Error::InconsistentShares {
+        what,
+        degree: interp.degree(),
+    })
 }
 
 /// Open a single value shared by all `n` parties.

@@ -492,3 +492,37 @@ fn protocol_metadata_is_consistent() {
         meta.presign_rounds + meta.online_sign_rounds
     );
 }
+
+/// Parallelism must be an evaluation-order change only: the same session run
+/// with one worker thread and with many must yield identical presignatures.
+///
+/// Every parallelised step (PRSS derivation, the per-column openings, point
+/// (de)compression, presignature assembly) is a pure function mapped in order,
+/// so this holds bit for bit.
+#[cfg(feature = "parallel")]
+#[test]
+fn presignatures_do_not_depend_on_the_thread_count() {
+    let (n, threshold, m) = (5u16, 3u16, 32usize);
+    let prss = run_setup(n, threshold);
+    let session = [0x51; 32];
+
+    let in_pool = |threads: usize| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .expect("rayon pool")
+            .install(|| run_presign(n, &prss, m, &session))
+    };
+    let single = in_pool(1);
+    let multi = in_pool(8);
+
+    for (s, p) in single.iter().zip(&multi) {
+        for i in 0..m {
+            let (a, b) = (s.get(i).unwrap(), p.get(i).unwrap());
+            assert_eq!(a.r, b.r, "r differs at presignature {i}");
+            assert_eq!(a.big_r, b.big_r, "R differs at presignature {i}");
+            assert_eq!(a.k_inv_share, b.k_inv_share, "k^-1 share differs at {i}");
+            assert_eq!(a.zero_share, b.zero_share, "zero share differs at {i}");
+        }
+    }
+}

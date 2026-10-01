@@ -50,6 +50,7 @@
 use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use tecdsa_bigint::par;
 use tecdsa_curve::TecdsaCurve;
 use zeroize::Zeroize;
 
@@ -330,18 +331,19 @@ where
     #[must_use]
     pub fn rand(&self, session: &[u8; 32], stream: u32, count: usize) -> Vec<C::Scalar> {
         let macs = self.keyed_macs();
-        let mut label = Label::new(session, stream, TAG_RAND);
-        (0..count)
-            .map(|idx| {
-                label.set_index(idx as u64, 0);
-                self.entries
-                    .iter()
-                    .zip(&macs)
-                    .fold(C::Scalar::ZERO, |acc, (entry, mac)| {
-                        acc + prf::<C>(mac, &label) * entry.f_at_me
-                    })
-            })
-            .collect()
+        let base = Label::new(session, stream, TAG_RAND);
+        // Each output index is an independent sum of PRF evaluations, so the
+        // batch splits across threads with no change to any output value.
+        par::map_indexed(count, |idx| {
+            let mut label = base;
+            label.set_index(idx as u64, 0);
+            self.entries
+                .iter()
+                .zip(&macs)
+                .fold(C::Scalar::ZERO, |acc, (entry, mac)| {
+                    acc + prf::<C>(mac, &label) * entry.f_at_me
+                })
+        })
     }
 
     /// Derive `count` shares of `0` under degree-`2t` polynomials (`F_rss.Zero`).
@@ -362,23 +364,22 @@ where
         }
 
         let macs = self.keyed_macs();
-        let mut label = Label::new(session, stream, TAG_ZERO);
-        (0..count)
-            .map(|idx| {
-                self.entries
-                    .iter()
-                    .zip(&macs)
-                    .fold(C::Scalar::ZERO, |acc, (entry, mac)| {
-                        let mut inner = C::Scalar::ZERO;
-                        for (l, power) in powers.iter().enumerate() {
-                            let sub = u16::try_from(l + 1).expect("t fits in u16");
-                            label.set_index(idx as u64, sub);
-                            inner += prf::<C>(mac, &label) * *power;
-                        }
-                        acc + inner * entry.f_at_me
-                    })
-            })
-            .collect()
+        let base = Label::new(session, stream, TAG_ZERO);
+        par::map_indexed(count, |idx| {
+            let mut label = base;
+            self.entries
+                .iter()
+                .zip(&macs)
+                .fold(C::Scalar::ZERO, |acc, (entry, mac)| {
+                    let mut inner = C::Scalar::ZERO;
+                    for (l, power) in powers.iter().enumerate() {
+                        let sub = u16::try_from(l + 1).expect("t fits in u16");
+                        label.set_index(idx as u64, sub);
+                        inner += prf::<C>(mac, &label) * *power;
+                    }
+                    acc + inner * entry.f_at_me
+                })
+        })
     }
 
     /// One HMAC instance per held key, with the key schedule already absorbed.
@@ -402,12 +403,13 @@ where
     }
 }
 
-/// A PRF input, laid out once and mutated in place across a batch.
+/// A PRF input, laid out once per call and copied per output index.
 ///
 /// Layout: `DST || session (32) || stream (4) || tag (1) || index (8) || sub (2)
 /// || counter (1)`, which reproduces the paper's `0 || i` and `1 || i || l` plus
 /// the session/stream fields that let a single `F_rss` initialisation serve an
 /// unbounded number of invocations.
+#[derive(Clone, Copy)]
 struct Label {
     bytes: [u8; LABEL_LEN],
 }

@@ -9,6 +9,7 @@ use elliptic_curve::{
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand::{rngs::OsRng, RngCore};
+use tecdsa_bigint::par;
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 
@@ -322,7 +323,7 @@ where
         // R_i alongside T_j is sound: if the check fails everyone aborts, and
         // Section 4 notes that the leaked (a_i, k_i) are just random values that
         // do not need to stay private once cheating has been detected.
-        let big_r: Vec<C::ProjectivePoint> = self.k.iter().map(|k| C::generator() * *k).collect();
+        let big_r: Vec<C::ProjectivePoint> = par::map(&self.k, |k| C::generator() * *k);
         let payload = PresignRound4 {
             t_share: t_share.to_bytes_vec(),
             w: wire::encode_scalars::<C>(&self.w),
@@ -374,8 +375,14 @@ where
         let w_open = open_scalars::<C>(&self.interp_t, n, m, &w_shares, "w_i")?;
         let r_open = open_points::<C>(&self.interp_t, n, m, &r_shares, "R_i")?;
 
-        let mut presignatures = Vec::with_capacity(m);
-        for i in 0..m {
+        let party_index = self.committee.my_index();
+        let threshold = self.committee.threshold();
+        let (a, sign_zero) = (&self.a, &self.sign_zero);
+        // Presignatures are assembled independently. Collecting in order keeps
+        // the reported error that of the lowest failing index, exactly as the
+        // sequential loop did, so an abort names the same presignature in both
+        // builds.
+        let presignatures = par::map_indexed(m, |i| {
             // w_i = a_i k_i must be invertible, else k'_{i,j} is undefined.
             let w_inv =
                 Option::<C::Scalar>::from(w_open[i].invert()).ok_or(Ku24Error::Degenerate {
@@ -395,18 +402,20 @@ where
                     what: "r_i is zero",
                 });
             }
-            presignatures.push(Ku24Presignature {
-                party_index: self.committee.my_index(),
+            Ok(Ku24Presignature {
+                party_index,
                 total: n,
-                threshold: self.committee.threshold(),
+                threshold,
                 r,
                 big_r: r_open[i],
                 // k'_{i,j} = w_i^{-1} a_{i,j} is a degree-t sharing of k_i^{-1},
                 // because w_i = a_i k_i.
-                k_inv_share: w_inv * self.a[i],
-                zero_share: self.sign_zero[i],
-            });
-        }
+                k_inv_share: w_inv * a[i],
+                zero_share: sign_zero[i],
+            })
+        })
+        .into_iter()
+        .collect::<Ku24Result<Vec<_>>>()?;
         self.round = PresignRound::Done(Ku24PresignBatch { presignatures });
         Ok(())
     }

@@ -10,11 +10,16 @@ description = "KU24 honest-majority threshold ECDSA with batch generation of key
 [features]
 default = ["secp256k1"]
 secp256k1 = ["tecdsa-curve/secp256k1"]
+# Parallelise batch presigning across the presignatures of a batch (rayon, via
+# the tecdsa_bigint::par facade). Off by default: a default build runs the
+# sequential bodies of the same code.
+parallel = ["tecdsa-bigint/parallel"]
 
 [dependencies]
 tecdsa-core = { workspace = true, features = ["std"] }
 tecdsa-curve = { workspace = true, features = ["std"] }
 tecdsa-protocol = { workspace = true, features = ["std"] }
+tecdsa-bigint.workspace = true
 tecdsa-vss.workspace = true
 elliptic-curve.workspace = true
 k256.workspace = true
@@ -29,6 +34,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tecdsa-testkit.workspace = true
+rayon.workspace = true
 tecdsa-vss.workspace = true
 elliptic-curve.workspace = true
 k256.workspace = true

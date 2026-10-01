@@ -12,6 +12,7 @@ use elliptic_curve::{
     sec1::ModulusSize,
     FieldBytes, FieldBytesSize, PrimeField,
 };
+use tecdsa_bigint::par;
 use tecdsa_curve::{ScalarExt, TecdsaCurve};
 
 use crate::error::{Ku24Error, Ku24Result};
@@ -90,8 +91,9 @@ where
     FieldBytesSize<C>: ModulusSize,
 {
     let width = point_len::<C>();
-    let mut out = Vec::with_capacity(values.len() * width);
-    for v in values {
+    // Each encoding needs its own projective-to-affine inversion; they are
+    // independent, so a batch of `m` nonces encodes in parallel.
+    let encoded = par::try_map(values, |v| {
         if bool::from(v.is_identity()) {
             return Err(Ku24Error::Malformed(
                 "refusing to encode the identity element".into(),
@@ -99,9 +101,9 @@ where
         }
         let bytes = C::point_to_bytes(&v.to_affine());
         debug_assert_eq!(bytes.len(), width);
-        out.extend_from_slice(&bytes);
-    }
-    Ok(out)
+        Ok(bytes)
+    })?;
+    Ok(encoded.concat())
 }
 
 /// Unpack exactly `expected` group elements from a flat blob.
@@ -126,18 +128,17 @@ where
             bytes.len()
         )));
     }
-    bytes
-        .chunks_exact(width)
-        .map(|chunk| {
-            let affine =
-                C::point_from_bytes(chunk).map_err(|e| Ku24Error::Malformed(e.to_string()))?;
-            let point = C::ProjectivePoint::from(affine);
-            if bool::from(point.is_identity()) {
-                return Err(Ku24Error::Malformed("point is the identity".into()));
-            }
-            Ok(point)
-        })
-        .collect()
+    // Decompression costs a field square root per point, and there are `m` of
+    // them per message; they are independent.
+    let chunks: Vec<&[u8]> = bytes.chunks_exact(width).collect();
+    par::try_map(&chunks, |chunk| {
+        let affine = C::point_from_bytes(chunk).map_err(|e| Ku24Error::Malformed(e.to_string()))?;
+        let point = C::ProjectivePoint::from(affine);
+        if bool::from(point.is_identity()) {
+            return Err(Ku24Error::Malformed("point is the identity".into()));
+        }
+        Ok(point)
+    })
 }
 
 /// Pack a single group element.
