@@ -10,10 +10,10 @@
 //! C_aff = C^a * y^alpha * h^r is a vector commitment with bases (C, y)
 //! and messages (a, alpha).
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -69,17 +69,17 @@ impl ZkJlAffProof {
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
         // Upper bounds for the blinding values
-        let v1_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b1_bits);
-        let v2_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b2_bits);
+        let v1_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b1_bits);
+        let v2_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b2_bits);
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
 
-        let v1 = random_below(&v1_bound, rng);
-        let v2 = random_below(&v2_bound, rng);
-        let w = random_below(&w_bound, rng);
+        let v1 = v1_bound.sample_below_ref(rng);
+        let v2 = v2_bound.sample_below_ref(rng);
+        let w = w_bound.sample_below_ref(rng);
 
         // Commitment: d = C^v1 * y^v2 * h^w mod N, via one shared-squaring
         // multi-exponentiation instead of three modexps + two muls.
-        let d = multi_exp(&[c_base, &pk.y, &pk.h], &[&v1, &v2, &w], &pk.n);
+        let d = pk.n.multi_exp(&[c_base, &pk.y, &pk.h], &[&v1, &v2, &w]);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, c_base, c_aff, &d);
@@ -106,14 +106,16 @@ impl ZkJlAffProof {
 
         // Check: C^z_a * y^z_alpha * h^z_r == c_aff^e * d mod N. Reconstruct the
         // left side with one shared-squaring multi-exponentiation.
-        let lhs = multi_exp(
+        let lhs = pk.n.multi_exp(
             &[c_base, &pk.y, &pk.h],
             &[&self.z_a, &self.z_alpha, &self.z_r],
-            &pk.n,
         );
 
-        let c_aff_e = pow_mod(c_aff, &e, &pk.n);
-        let rhs = mul_mod(&c_aff_e, &self.d, &pk.n);
+        let c_aff_e = c_aff
+            .pow_mod_ref(&e, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs = (c_aff_e * &self.d).modulo(&pk.n);
 
         lhs == rhs
     }
@@ -157,12 +159,22 @@ mod tests {
         // Affine op: C_aff = C^a * y^alpha * h^r mod N
         let a = Integer::from(5u32);
         let alpha = Integer::from(13u32);
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
-        let c_a = pow_mod(&ct_b.c, &a, &pk.n);
-        let y_alpha = pow_mod(&pk.y, &alpha, &pk.n);
-        let h_r = pow_mod(&pk.h, &r, &pk.n);
-        let c_aff = mul_mod(&mul_mod(&c_a, &y_alpha, &pk.n), &h_r, &pk.n);
+        let c_a = ct_b
+            .c
+            .pow_mod_ref(&a, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let y_alpha =
+            pk.y.pow_mod_ref(&alpha, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let h_r =
+            pk.h.pow_mod_ref(&r, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let c_aff = ((c_a * y_alpha).modulo(&pk.n) * h_r).modulo(&pk.n);
 
         let proof = ZkJlAffProof::prove(&pk, &ct_b.c, &c_aff, &a, &alpha, &r, 32, 32, &mut rng);
         assert!(proof.verify(&pk, &ct_b.c, &c_aff));
@@ -179,16 +191,26 @@ mod tests {
 
         let a = Integer::from(5u32);
         let alpha = Integer::from(13u32);
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
-        let c_a = pow_mod(&ct_b.c, &a, &pk.n);
-        let y_alpha = pow_mod(&pk.y, &alpha, &pk.n);
-        let h_r = pow_mod(&pk.h, &r, &pk.n);
-        let c_aff = mul_mod(&mul_mod(&c_a, &y_alpha, &pk.n), &h_r, &pk.n);
+        let c_a = ct_b
+            .c
+            .pow_mod_ref(&a, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let y_alpha =
+            pk.y.pow_mod_ref(&alpha, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let h_r =
+            pk.h.pow_mod_ref(&r, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        let c_aff = ((c_a * y_alpha).modulo(&pk.n) * h_r).modulo(&pk.n);
 
         // Wrong witness
         let wrong_a = Integer::from(99u32);
-        let wrong_r = random_below(&pk.n, &mut rng);
+        let wrong_r = pk.n.sample_below_ref(&mut rng);
         let proof = ZkJlAffProof::prove(
             &pk, &ct_b.c, &c_aff, &wrong_a, &alpha, &wrong_r, 32, 32, &mut rng,
         );

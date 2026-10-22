@@ -26,14 +26,15 @@
 //! where `Q = x_1 * x_2 * G`.
 
 use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
+    group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{conv::scalar_to_bytes, zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pdl, range_ni::RangeProofNi},
+    BigIntExt,
 };
 
 use crate::{
@@ -165,8 +166,10 @@ where
     /// Paillier encryption key.
     pub ek: tecdsa_paillier::EncryptionKey,
     /// `c_key = Enc_pk(x_1)`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c_key: tecdsa_paillier::Ciphertext,
     /// Paillier nonce used to encrypt `x_1` (needed for range proof).
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c_key_nonce: Integer,
     /// Proof that P1 knows the factorization of `N`.
     pub correct_key_proof: NICorrectKeyProof,
@@ -193,7 +196,7 @@ where
     }
 
     // Generate Paillier key pair
-    let dk = tecdsa_paillier::keygen(rng)
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Lin17Error::Paillier(format!("Paillier keygen failed: {e}")))?;
     let ek = dk.encryption_key().clone();
 
@@ -208,8 +211,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = C::order();
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
     Ok(KeyGenP1Round3Msg {
@@ -249,7 +251,7 @@ where
     }
 
     // Generate Paillier key pair (one-time setup; see the precomputed variant).
-    let dk = tecdsa_paillier::keygen(rng)
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Lin17Error::Paillier(format!("Paillier keygen failed: {e}")))?;
 
     party1_keygen_round3_core::<C>(state, dk, rng)
@@ -307,8 +309,7 @@ where
     let correct_key_proof = NICorrectKeyProof::prove(&dk, b"lin17-correct-key-challenge");
 
     // Create range proof
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = C::order();
     let range_proof = RangeProofNi::prove(&dk, &ek, &c_key, &x1_int, &c_key_nonce, &q_int, rng)?;
 
     let msg = KeyGenP1Round3Msg {
@@ -380,8 +381,7 @@ where
     }
 
     // Step 5: Verify range proof
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
+    let q_int = C::order();
     if !p1_round3
         .range_proof
         .verify(&p1_round3.ek, &p1_round3.c_key, &q_int)

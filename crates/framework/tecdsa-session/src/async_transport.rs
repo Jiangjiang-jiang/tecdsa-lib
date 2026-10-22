@@ -13,6 +13,11 @@ use tecdsa_protocol::PartyId;
 /// This is the async counterpart of [`Transport`](tecdsa_transport::Transport).
 /// Unlike the synchronous trait, `receive` takes an explicit `timeout` and
 /// returns `Result` to surface network errors.
+// `async_trait` rewrites each method to return `Pin<Box<dyn Future>>` and
+// propagates the trait's `#[must_use]`, which a recent clippy then flags as
+// redundant against the boxed future's own `#[must_use]`. The lint fires on
+// macro-generated code, so there is nothing to fix at this level.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait AsyncTransport: Send {
     /// Error type surfaced by the transport layer.

@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_paillier::{
-    zk::paillier_zk::{no_small_factor as pi_fac, paillier_blum_modulus as pi_mod},
+    zk::{pi_fac, pi_mod},
     EncryptionKey,
 };
 use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};

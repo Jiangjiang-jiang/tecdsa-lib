@@ -18,6 +18,7 @@
 
 use elliptic_curve::{group::GroupEncoding, ops::Reduce, CurveArithmetic, PrimeField};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_class_group::{
@@ -25,6 +26,7 @@ use tecdsa_class_group::{
     drg::{drg_comb, drg_gen, drg_gen_verify, DrgGenOutput, PedersenVssShare},
     zk::{r_enc_pc::REncPcProof, r_key::RKeyProof},
 };
+use tecdsa_curve::PointExt; // to_bytes_vec / from_bytes_slice on EC points
 
 use crate::key_share::Wmy23KeyShare;
 
@@ -60,14 +62,8 @@ fn read_qfi(data: &[u8], pos: &mut usize) -> Result<Qfi, String> {
     Ok(Qfi::from_bytes(bytes))
 }
 
-fn point_to_bytes(p: &k256::ProjectivePoint) -> Vec<u8> {
-    p.to_bytes().to_vec()
-}
-
 fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String> {
-    let repr = k256::CompressedPoint::try_from(bytes)
-        .map_err(|e| format!("invalid point bytes ({label}): {e}"))?;
-    Option::from(k256::ProjectivePoint::from_bytes(&repr))
+    k256::ProjectivePoint::from_bytes_slice(bytes)
         .ok_or_else(|| format!("invalid EC point: {label}"))
 }
 
@@ -369,7 +365,7 @@ pub struct KeygenR1State {
     pub cl_sk: Option<ClSecretKey>,
     /// This party's CL public key element, serialised via `Qfi::to_bytes`.
     pub cl_pk_bytes: Vec<u8>,
-    pub sk_bytes: Vec<u8>,
+    pub sk_int: Integer,
     pub drg_gen: DrgGenOutput,
     pub r_key_proof: RKeyProof,
     pub nonce: [u8; 32],
@@ -380,7 +376,8 @@ pub struct KeygenR1State {
 
 impl zeroize::Zeroize for KeygenR1State {
     fn zeroize(&mut self) {
-        self.sk_bytes.zeroize();
+        // `rug::Integer` doesn't implement `Zeroize`; best-effort clear.
+        self.sk_int = Integer::new();
         self.nonce.zeroize();
         self.cl_setup_seed.zeroize();
     }
@@ -439,8 +436,8 @@ pub fn keygen_round1(
     }
 
     // Phase 1: R_Key proof over the caller-provided per-party CL keypair.
-    let sk_bytes = setup.sk_to_bytes(&cl_sk)?;
-    let r_key_proof = RKeyProof::prove(setup, &cl_pk, &sk_bytes)?;
+    let sk_int = setup.sk_to_integer(&cl_sk);
+    let r_key_proof = RKeyProof::prove(setup, &cl_pk, &sk_int)?;
 
     let cl_pk_bytes = cl_pk.elt().to_bytes();
 
@@ -448,7 +445,11 @@ pub fn keygen_round1(
     let drg_gen = drg_gen(setup, &cl_pk, threshold, n, rng)?;
 
     // Serialize components for commitment
-    let pc_com_bytes: Vec<Vec<u8>> = drg_gen.commitments.iter().map(point_to_bytes).collect();
+    let pc_com_bytes: Vec<Vec<u8>> = drg_gen
+        .commitments
+        .iter()
+        .map(PointExt::to_bytes_vec)
+        .collect();
     let r_key_data = serialize_r_key_proof(&r_key_proof);
     let ct_data = serialize_ciphertext(setup, &drg_gen.ciphertext)?;
     let enc_pc_data = serialize_r_enc_pc_proof(&drg_gen.proof);
@@ -459,7 +460,7 @@ pub fn keygen_round1(
         &r_key_data,
         &ct_data,
         &enc_pc_data,
-        &drg_gen.pc_bytes,
+        &drg_gen.pc.to_bytes_vec(),
     );
 
     let mut nonce = [0u8; 32];
@@ -476,7 +477,7 @@ pub fn keygen_round1(
         threshold,
         cl_sk: Some(cl_sk),
         cl_pk_bytes,
-        sk_bytes,
+        sk_int,
         drg_gen,
         r_key_proof,
         nonce,
@@ -512,7 +513,7 @@ pub fn keygen_round2_bcast(state: &KeygenR1State, setup: &ClSetup) -> KeygenR2Bc
         .drg_gen
         .commitments
         .iter()
-        .map(point_to_bytes)
+        .map(PointExt::to_bytes_vec)
         .collect();
     let r_key_data = serialize_r_key_proof(&state.r_key_proof);
     let ct_data = serialize_ciphertext(setup, &state.drg_gen.ciphertext).expect("ct serialization");
@@ -525,7 +526,7 @@ pub fn keygen_round2_bcast(state: &KeygenR1State, setup: &ClSetup) -> KeygenR2Bc
         r_key_data,
         ct_data,
         enc_pc_data,
-        pc_bytes: state.drg_gen.pc_bytes.clone(),
+        pc_bytes: state.drg_gen.pc.to_bytes_vec(),
     }
 }
 
@@ -656,13 +657,14 @@ pub fn verify_r2(
     let ciphertext = deserialize_ciphertext(setup, &r2.ct_data, &mut ct_pos)?;
     let enc_pc_proof = deserialize_r_enc_pc_proof(&r2.enc_pc_data)?;
 
+    let pc_point = point_from_bytes(&r2.pc_bytes, "pc")?;
     let ok = drg_gen_verify(
         setup,
         &cl_pk,
         &commitments,
         &ciphertext,
         &enc_pc_proof,
-        &r2.pc_bytes,
+        &pc_point,
         my_share,
     )
     .map_err(|e| format!("GenVf error: {e}"))?;
@@ -732,10 +734,10 @@ pub fn keygen_round3_with_shares(
     let combined_enc_pc_data = serialize_r_enc_pc_proof(&comb.proof);
 
     let r3_bcast = KeygenR3Bcast {
-        combined_pc_bytes: comb.pc_bytes.clone(),
+        combined_pc_bytes: comb.pc.to_bytes_vec(),
         combined_ct_data,
         combined_enc_pc_data,
-        x_point_bytes: point_to_bytes(&x_point),
+        x_point_bytes: x_point.to_bytes_vec(),
         r_dl_pc_data: serialize_r_dl_pc_proof(&r_dl_pc),
     };
 
@@ -805,7 +807,7 @@ pub fn verify_r3(
     let combined_ct = deserialize_ciphertext(setup, &r3.combined_ct_data, &mut ct_pos)?;
     let combined_proof = deserialize_r_enc_pc_proof(&r3.combined_enc_pc_data)?;
     let enc_ok = combined_proof
-        .verify(setup, &cl_pk, &combined_ct, &r3.combined_pc_bytes)
+        .verify(setup, &cl_pk, &combined_ct, &broadcast_pc)
         .map_err(|e| format!("R_Enc-PC verify error: {e}"))?;
     if !enc_ok {
         return Err("CombVf: R_Enc-PC proof verification failed".into());

@@ -21,13 +21,14 @@ use std::collections::BTreeMap;
 use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_class_group::{
     cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup, Qfi},
     nim::{Nim, NimEncodeBOutput},
     zk::r_cl_dl_ec::RClDlEcProof,
 };
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::zk::dlog::DlogProof;
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt};
 use tecdsa_protocol::PartyId;
 use zeroize::Zeroize;
 
@@ -40,12 +41,6 @@ use crate::key_share::Llz25KeyShare;
 pub(crate) fn proj_to_bytes(p: &k256::ProjectivePoint) -> Vec<u8> {
     let encoded = p.to_bytes();
     let slice: &[u8] = encoded.as_ref();
-    slice.to_vec()
-}
-
-pub(crate) fn scalar_to_bytes(s: &k256::Scalar) -> Vec<u8> {
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
     slice.to_vec()
 }
 
@@ -118,7 +113,7 @@ impl SerDlogProof {
     pub fn from_proof(proof: &DlogProof<k256::Secp256k1>) -> Self {
         Self {
             commitment_bytes: proj_to_bytes(&proof.commitment),
-            response_bytes: scalar_to_bytes(&proof.response),
+            response_bytes: proof.response.to_bytes_vec(),
         }
     }
 
@@ -215,7 +210,7 @@ pub(crate) fn compute_commitment(
         hasher.update(proj_to_bytes(com));
     }
     hasher.update(proj_to_bytes(&dlog_proof.commitment));
-    hasher.update(scalar_to_bytes(&dlog_proof.response));
+    hasher.update(dlog_proof.response.to_bytes_vec());
     hasher.finalize().into()
 }
 
@@ -322,11 +317,11 @@ pub(crate) fn transition_to_r3(
     let my_x_i_bytes = proj_to_bytes(&my_x_i_point);
 
     // 7. NIM.Encode_B(crs, x_i) -> (pe_{x,i}, st_{x,i})
-    let x_i_bytes = tecdsa_curve::conv::scalar_to_bytes::<k256::Secp256k1>(&combined_share);
+    let x_i_int = combined_share.to_integer();
 
     let mut nim = Nim::new(setup);
     let NimEncodeBOutput { pe_b, state: st_b } = nim
-        .encode_b(&x_i_bytes, pk_crs)
+        .encode_b(&x_i_int, pk_crs)
         .map_err(|e| TecdsaError::Other(format!("NIM.Encode_B failed: {e}")))?;
 
     // Get pe_x ciphertext components for serialization
@@ -337,15 +332,8 @@ pub(crate) fn transition_to_r3(
     let pe_x_c2_bytes = c2.to_bytes();
 
     // 8. R_CL_DL_EC proof: proves pe_{x,i} encrypts dlog of X_i
-    let proof = RClDlEcProof::prove(
-        setup,
-        pk_crs,
-        &pe_b,
-        &my_x_i_bytes,
-        &x_i_bytes,
-        &st_b.s_bytes,
-    )
-    .map_err(|e| TecdsaError::Other(format!("RClDlEcProof::prove: {e}")))?;
+    let proof = RClDlEcProof::prove(setup, pk_crs, &pe_b, &my_x_i_point, &x_i_int, &st_b.s)
+        .map_err(|e| TecdsaError::Other(format!("RClDlEcProof::prove: {e}")))?;
 
     let ser_proof = SerRClDlEcProof::from_proof(&proof)
         .map_err(|e| TecdsaError::Other(format!("serialize proof: {e}")))?;
@@ -373,7 +361,7 @@ pub(crate) fn transition_to_r3(
 
     Ok((
         combined_share,
-        st_b.s_bytes,
+        st_b.s.to_bytes_msf(),
         public_key,
         public_shares,
         r3_bytes,
@@ -417,10 +405,9 @@ pub(crate) fn finalize(
         let ct = setup
             .ct_from_components(&c1, &c2)
             .map_err(|e| TecdsaError::Other(format!("ct: {e}")))?;
-        let x_i_bytes = proj_to_bytes(&r3.x_i_point);
         let ok = r3
             .proof
-            .verify(setup, pk_crs, &ct, &x_i_bytes)
+            .verify(setup, pk_crs, &ct, &r3.x_i_point)
             .map_err(|e| TecdsaError::Other(format!("R_CL_DL_EC verify: {e}")))?;
         if !ok {
             return Err(TecdsaError::Other(format!(

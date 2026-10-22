@@ -6,6 +6,16 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+parallel = [
+    "tecdsa-bigint/parallel",
+    "tecdsa-pedersen-mod/parallel",
+    "tecdsa-paillier/parallel",
+    "tecdsa-cggmp20/parallel",
+    "tecdsa-ku24/parallel",
+]
+
 [dependencies]
 tecdsa = { path = "../../tecdsa" }
 tecdsa-testkit = { workspace = true }
@@ -13,8 +23,7 @@ tecdsa-transport = { workspace = true }
 tecdsa-protocol = { workspace = true }
 tecdsa-curve = { workspace = true }
 tecdsa-paillier = { workspace = true }
-paillier-zk = { workspace = true }
-generic-ec = { workspace = true }
+tecdsa-bigint = { workspace = true }
 tecdsa-pedersen-mod = { workspace = true }
 tecdsa-class-group = { workspace = true }
 tecdsa-joye-libert = { workspace = true }
@@ -29,6 +38,7 @@ tecdsa-kgg24 = { workspace = true }
 tecdsa-xal21 = { workspace = true }
 tecdsa-abc24 = { workspace = true }
 tecdsa-cggmp20 = { workspace = true }
+rayon = { workspace = true }
 tecdsa-dkls23 = { workspace = true }
 tecdsa-gg18 = { workspace = true }
 tecdsa-ggn16 = { workspace = true }
@@ -40,6 +50,7 @@ tecdsa-wmc24 = { workspace = true }
 tecdsa-llz25 = { workspace = true }
 tecdsa-trout = { workspace = true }
 tecdsa-xal23 = { workspace = true }
+tecdsa-ku24 = { workspace = true }
 tecdsa-core = { workspace = true }
 criterion = { workspace = true }
 serde = { workspace = true }

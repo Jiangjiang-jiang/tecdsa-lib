@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::{FieldBytes, PrimeField};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use sha2::{Digest, Sha256};
 use tecdsa_core::Csprng;
 use tecdsa_ln18::{
@@ -24,9 +25,7 @@ use tecdsa_ln18::{
         Ln18LegacyOnlineSignParams, Ln18PresignParams,
     },
 };
-use tecdsa_paillier::{
-    backend::Integer, zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey,
-};
+use tecdsa_paillier::{zk::mta_range::NTildeParams, BigIntExt, DecryptionKey, EncryptionKey};
 use tecdsa_protocol::{
     ecdsa::{verify_ecdsa, DataToSign},
     PartyId, PartyInfo, Recipient, SessionConfig, SessionId, StateMachine,
@@ -162,15 +161,8 @@ fn run_init_direct(parties: &[PartyId], rng: &mut impl CryptoRngCore) -> Vec<Ini
 
 /// Generate Ring-Pedersen auxiliary parameters $(N', h_1, h_2)$ for testing.
 fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
-    let p = Integer::generate_safe_prime(rng, 256);
-    let q = Integer::generate_safe_prime(rng, 256);
-    let n_tilde = &p * &q;
-
-    let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-    let lambda = phi_n.random_below_ref(rng);
-    let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
-
+    let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+    let (n_tilde, h1, h2) = (params.n, params.t, params.s);
     NTildeParams {
         N_tilde: n_tilde,
         h1,

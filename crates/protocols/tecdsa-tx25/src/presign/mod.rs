@@ -132,8 +132,8 @@ impl std::fmt::Debug for Tx25Presignature {
 /// Avoids needing to clone the full key share (which contains non-Clone
 /// CL secret key types) by extracting owned values.
 pub(crate) struct KeyMaterial {
-    /// This party's CL secret key as decimal string.
-    pub(crate) sk_decimal: Vec<u8>,
+    /// This party's CL secret key.
+    pub(crate) sk_int: rug::Integer,
     /// All parties' raw CL public keys (same order as all_parties).
     pub(crate) raw_pks: Vec<ClPublicKey>,
     /// This party's signing key share x_i.
@@ -149,7 +149,8 @@ pub(crate) struct KeyMaterial {
 
 impl Zeroize for KeyMaterial {
     fn zeroize(&mut self) {
-        self.sk_decimal.zeroize();
+        // `rug::Integer` doesn't implement `Zeroize`; best-effort clear.
+        self.sk_int = rug::Integer::new();
         self.x_i.zeroize();
     }
 }

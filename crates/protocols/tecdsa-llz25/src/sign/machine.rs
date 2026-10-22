@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use tecdsa_core::TecdsaError;
+use tecdsa_curve::ScalarExt;
 use tecdsa_protocol::{
     ecdsa::Signature, state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine,
 };
@@ -130,8 +131,8 @@ impl Llz25SignMachine {
 
         // Serialize partial signature for broadcast.
         let payload = PartialSigPayload {
-            w_i_bytes: scalar_to_bytes(&partial.w_i),
-            u_i_bytes: scalar_to_bytes(&partial.u_i),
+            w_i_bytes: partial.w_i.to_bytes_vec(),
+            u_i_bytes: partial.u_i.to_bytes_vec(),
         };
         let payload_bytes = bincode::serde::encode_to_vec(&payload, bincode::config::standard())
             .map_err(|e| Llz25Error::Protocol(format!("serialize partial sig: {e}")))?;
@@ -190,14 +191,6 @@ impl Llz25SignMachine {
         combine_signatures(&partials, &self.r_value, &self.public_key, &self.message)
             .map_err(|e| TecdsaError::Other(format!("combine_signatures: {e}")))
     }
-}
-
-/// Serialize a scalar to big-endian 32-byte representation.
-fn scalar_to_bytes(s: &k256::Scalar) -> Vec<u8> {
-    use elliptic_curve::PrimeField;
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
-    slice.to_vec()
 }
 
 /// Deserialize a scalar from big-endian 32-byte representation.

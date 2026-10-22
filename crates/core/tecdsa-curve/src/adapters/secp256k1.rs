@@ -53,7 +53,7 @@ impl TecdsaCurve for K256Curve {
         x_bytes[0] = 0x02; // compressed-even prefix
         x_bytes[1..].copy_from_slice(&hash);
         loop {
-            if let Ok(ep) = Sec1Point::<K256Curve>::from_bytes(&x_bytes) {
+            if let Ok(ep) = Sec1Point::<K256Curve>::from_bytes(x_bytes) {
                 let ct: CtOption<AffinePoint> = AffinePoint::from_sec1_point(&ep);
                 if let Some(pt) = Option::<AffinePoint>::from(ct) {
                     return ProjectivePoint::from(pt);

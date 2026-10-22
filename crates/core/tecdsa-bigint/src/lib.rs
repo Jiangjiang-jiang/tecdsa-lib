@@ -3,12 +3,12 @@
 //!
 //! Provides a set of number-theoretic utilities used across Paillier, CL, and JL primitives.
 
-mod arith;
+mod ext;
 pub mod int_wire;
+pub mod par;
 mod prime;
 
-pub use arith::{gcd, jacobi, mul_mod, multi_exp, pow_mod, tonelli_shanks};
-pub use prime::{
-    default_sieve_limit, gen_pair, generate_blum_prime, generate_safe_prime, is_safe_prime,
-    random_below, small_odd_primes, SyncRng,
-};
+pub use ext::{BigIntExt, Sign};
+#[cfg(feature = "parallel")]
+pub use prime::gen_pair_par;
+pub use prime::{default_sieve_limit, gen_pair, small_odd_primes, SyncRng};

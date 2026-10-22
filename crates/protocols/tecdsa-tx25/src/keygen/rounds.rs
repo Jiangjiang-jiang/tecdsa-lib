@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+use rug::Integer;
 use tecdsa_class_group::{
     cl::{ClPublicKey, ClSecretKey, ClSetup, Qfi},
     zk::r_dec_dl::RDecDlProof,
@@ -28,7 +29,7 @@ pub(crate) struct Round1State {
     pub(crate) threshold: u16,
     pub(crate) cl_sk_raw: ClSecretKey,
     pub(crate) cl_pk_raw: ClPublicKey,
-    pub(crate) cl_sk_decimal: Vec<u8>,
+    pub(crate) cl_sk_int: Integer,
     pub(crate) cl_pk_qfi: Qfi,
     pub(crate) received: BTreeMap<PartyId, Round1Msg>,
     pub(crate) outgoing: Vec<Outgoing<Tx25KeygenMsg>>,
@@ -48,7 +49,7 @@ pub(crate) struct Round2State {
     pub(crate) threshold: u16,
     pub(crate) cl_sk_raw: ClSecretKey,
     pub(crate) cl_pk_raw: ClPublicKey,
-    pub(crate) cl_sk_decimal: Vec<u8>,
+    pub(crate) cl_sk_int: Integer,
     /// All parties' PK elements in party order (including self).
     pub(crate) cl_pk_qfis: BTreeMap<PartyId, Qfi>,
     pub(crate) my_pvss: PvssOutput,
@@ -183,7 +184,7 @@ pub(crate) fn transition_r1_to_r2(
         threshold: state.threshold,
         cl_sk_raw: state.cl_sk_raw,
         cl_pk_raw: my_pk_clone,
-        cl_sk_decimal: state.cl_sk_decimal,
+        cl_sk_int: state.cl_sk_int,
         cl_pk_qfis,
         my_pvss: pvss_output,
         received: BTreeMap::new(),
@@ -246,11 +247,11 @@ pub(crate) fn transition_r2_to_r3(
 
     // Partial decryption: pd = c1^{sk}.
     let pd = setup
-        .exp_bytes(c1_ref, &state.cl_sk_decimal)
+        .exp(c1_ref, &state.cl_sk_int)
         .map_err(|e| TecdsaError::Other(format!("exp for pd: {e}")))?;
 
     let r_dec_dl_proof =
-        RDecDlProof::prove(setup, &state.cl_pk_raw, &ct_ref, &pd, &state.cl_sk_decimal)
+        RDecDlProof::prove(setup, &state.cl_pk_raw, &ct_ref, &pd, &state.cl_sk_int)
             .map_err(|e| TecdsaError::Other(format!("R_Dec_DL prove failed: {e}")))?;
 
     // Serialize Round 3 message (includes pd for R_Dec_DL verification).
@@ -270,8 +271,8 @@ pub(crate) fn transition_r2_to_r3(
 
     // Build CL key types for the key share output.
     let cl_sk = setup
-        .sk_from_bytes(&state.cl_sk_decimal)
-        .map_err(|e| TecdsaError::Other(format!("sk_from_decimal: {e}")))?;
+        .sk_from_integer(&state.cl_sk_int)
+        .map_err(|e| TecdsaError::Other(format!("sk_from_integer: {e}")))?;
 
     // Reconstruct all CL public keys from stored elements.
     let mut cl_pks: Vec<ClPublicKey> = Vec::with_capacity(n);

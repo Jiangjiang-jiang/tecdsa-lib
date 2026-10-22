@@ -26,10 +26,13 @@
 
 use std::marker::PhantomData;
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
+use rug::{Complete, Integer};
 use sha2::Sha256;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_protocol::MtA;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 // ---------------------------------------------------------------------------
 // PaillierMtaProofs trait: abstracts over the ZK proof system
@@ -284,11 +287,9 @@ impl PaillierMtaProofs for Gg18Proofs {
 // Cggmp20Proofs: CGGMP20-specific proof system with pi_enc + pi_aff-g
 // ---------------------------------------------------------------------------
 
-use generic_ec::curves::Secp256k1 as GE;
-use paillier_zk::{
-    paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
-    IntegerExt,
-};
+use tecdsa_curve::TecdsaCurve;
+
+use crate::zk::{pi_aff_g as pi_aff, pi_enc};
 
 /// CGGMP20 proof setup: Ring-Pedersen auxiliary parameters, security
 /// parameters, and the prover's own Paillier key.
@@ -367,11 +368,13 @@ pub type Cggmp20SenderProof = pi_enc::NiProof;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Cggmp20ReceiverProof {
     /// The `pi_aff-g` non-interactive proof.
-    pub proof: pi_aff::NiProof<GE>,
+    pub proof: pi_aff::NiProof<k256::Secp256k1>,
     /// EC commitment `X = a * G` (public input to `pi_aff-g`).
-    pub x: generic_ec::Point<GE>,
+    #[serde(with = "tecdsa_curve::serde_projective")]
+    pub x: k256::ProjectivePoint,
     /// Ciphertext `Y = Enc(key_i, alpha')` under the prover's own key.
-    pub y: fast_paillier::Ciphertext,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    pub y: crate::scheme::Ciphertext,
 }
 
 /// Fiat-Shamir domain separator for CGGMP20 MtA proofs generated through the
@@ -469,7 +472,7 @@ impl PaillierMtaProofs for Cggmp20Proofs {
         rng: &mut impl CryptoRngCore,
     ) -> Self::ReceiverProof {
         // Compute EC commitment: X = a * G
-        let x_point = generic_ec::Point::<GE>::generator() * a.to_scalar::<GE>();
+        let x_point = k256::Secp256k1::generator() * k256::Secp256k1::scalar_from_integer(a);
 
         // Encrypt alpha_prime under the prover's own key to get Y
         let (y_ciphertext, nonce_y) = proof_setup
@@ -477,7 +480,7 @@ impl PaillierMtaProofs for Cggmp20Proofs {
             .encrypt_with_random(rng, alpha_prime)
             .expect("encryption of alpha_prime under prover key must succeed");
 
-        let proof = pi_aff::non_interactive::prove::<GE, Sha256>(
+        let proof = pi_aff::non_interactive::prove::<k256::Secp256k1, Sha256>(
             &Cggmp20MtaFsTag,
             &proof_setup.aux,
             pi_aff::Data {
@@ -519,7 +522,7 @@ impl PaillierMtaProofs for Cggmp20Proofs {
         // `Cggmp20ReceiverProof`, so the full pi_aff-g statement can be
         // reconstructed and verified here: `c_a = c_B` (the input), `c_b = c_A`
         // (the affine result), `Y = proof.y`, `X = proof.x`.
-        pi_aff::non_interactive::verify::<GE, Sha256>(
+        pi_aff::non_interactive::verify::<k256::Secp256k1, Sha256>(
             &Cggmp20MtaFsTag,
             &proof_setup.aux,
             pi_aff::Data {
@@ -591,7 +594,8 @@ pub struct PaillierSenderState<P: PaillierMtaProofs = SimpleProofs> {
 ))]
 pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_B = Enc(pk, b; r)`: Paillier ciphertext of the sender's input.
-    pub ciphertext: fast_paillier::Ciphertext,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    pub ciphertext: crate::scheme::Ciphertext,
     /// Proof accompanying the sender's ciphertext.
     pub proof: P::SenderProof,
 }
@@ -604,7 +608,8 @@ pub struct PaillierSenderMsg<P: PaillierMtaProofs = SimpleProofs> {
 ))]
 pub struct PaillierReceiverMsg<P: PaillierMtaProofs = SimpleProofs> {
     /// `c_A = c_B^a * Enc(pk, alpha'; r')`: the affine ciphertext.
-    pub ciphertext: fast_paillier::Ciphertext,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    pub ciphertext: crate::scheme::Ciphertext,
     /// Proof accompanying the receiver's affine computation.
     pub proof: P::ReceiverProof,
 }
@@ -708,8 +713,8 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
         }
 
         // 2. Sample alpha' from Z_{q^2} for masking
-        let q_squared = &q * &q;
-        let alpha_prime = q_squared.random_below_ref(rng);
+        let q_squared = (&q * &q).complete();
+        let alpha_prime = q_squared.sample_below_ref(rng);
 
         // 3. Homomorphic computation:
         //    c_scaled = c_B^a = Enc(pk, a * b)
@@ -743,7 +748,7 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
         );
 
         // 5. alpha = -alpha' mod q
-        let alpha = (&q - &alpha_prime.modulo(&q)).modulo(&q);
+        let alpha = (&q - alpha_prime.modulo(&q)).modulo(&q);
         let alpha_bytes = alpha.to_bytes_msf();
 
         let msg = PaillierReceiverMsg {
@@ -801,23 +806,20 @@ impl<P: PaillierMtaProofs> MtA for PaillierMtA<P> {
 #[cfg(test)]
 mod tests {
     use rand_core::OsRng;
+    use tecdsa_curve::TecdsaCurve;
 
     use super::*;
 
     /// Helper: generate a Paillier key pair and return (ek, dk).
     fn gen_paillier_keys(rng: &mut impl CryptoRngCore) -> (EncryptionKey, DecryptionKey) {
-        let dk = crate::keygen(rng).expect("Paillier keygen failed");
+        let dk = crate::DecryptionKey::generate(rng).expect("Paillier keygen failed");
         let ek = dk.encryption_key().clone();
         (ek, dk)
     }
 
     /// Helper: compute curve order q as a big integer.
     fn curve_order_int() -> Integer {
-        use elliptic_curve::PrimeField;
-        let neg_one = -k256::Scalar::ONE;
-        let neg_one_bytes = neg_one.to_repr();
-        let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-        &q_minus_1 + 1u8
+        k256::Secp256k1::order()
     }
 
     #[test]
@@ -827,7 +829,7 @@ mod tests {
         let (ek, _dk) = gen_paillier_keys(&mut rng);
         let q = curve_order_int();
 
-        let b = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
         let (c_B, nonce) = ek
             .encrypt_with_random(&mut rng, &b)
             .expect("encryption should succeed");
@@ -843,14 +845,14 @@ mod tests {
         let (ek, _dk) = gen_paillier_keys(&mut rng);
         let q = curve_order_int();
 
-        let b = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
         let (c_B, nonce) = ek
             .encrypt_with_random(&mut rng, &b)
             .expect("encryption should succeed");
 
         let proof = PiBProof::prove(&ek, &c_B, &b, &nonce, &q, &mut rng);
 
-        let b2 = q.random_below_ref(&mut rng);
+        let b2 = q.sample_below_ref(&mut rng);
         let (c_B2, _) = ek
             .encrypt_with_random(&mut rng, &b2)
             .expect("encryption should succeed");
@@ -867,15 +869,15 @@ mod tests {
         let (ek, _dk) = gen_paillier_keys(&mut rng);
         let q = curve_order_int();
         // K = q^2 * 2^{tau + 2*kappa} = q^2 * 2^{256 + 2*80} = q^2 * 2^{416}
-        let K = &q * &q * &Integer::u_pow_u(2, 416);
+        let K = Integer::two_pow(416) * &q * &q;
 
-        let k2 = q.random_below_ref(&mut rng);
+        let k2 = q.sample_below_ref(&mut rng);
         let (c_B, _) = ek
             .encrypt_with_random(&mut rng, &k2)
             .expect("encryption should succeed");
 
-        let a = q.random_below_ref(&mut rng);
-        let alpha_prime = K.random_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
+        let alpha_prime = K.sample_below_ref(&mut rng);
 
         let c_B_a = ek.omul(&a, &c_B).expect("omul");
         let (c_alpha, r_prime) = ek.encrypt_with_random(&mut rng, &alpha_prime).expect("enc");
@@ -902,11 +904,11 @@ mod tests {
         };
 
         // Sender's input b
-        let b = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
         let b_bytes = b.to_bytes_msf();
 
         // Receiver's input a
-        let a = q.random_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
         let a_bytes = a.to_bytes_msf();
 
         // Step 1: Sender encrypts
@@ -927,8 +929,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).modulo(&q);
-        let expected = (&a * &b).modulo(&q);
+        let sum = (alpha + beta).modulo(&q);
+        let expected = (a * b).modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -948,8 +950,8 @@ mod tests {
         };
 
         for _ in 0..3 {
-            let b = q.random_below_ref(&mut rng);
-            let a = q.random_below_ref(&mut rng);
+            let b = q.sample_below_ref(&mut rng);
+            let a = q.sample_below_ref(&mut rng);
 
             let (sender_msg, sender_state) =
                 PaillierMtA::sender_encrypt(&setup, &b.to_bytes_msf(), &q_bytes, &mut rng)
@@ -970,8 +972,8 @@ mod tests {
 
             let alpha = Integer::from_bytes_msf(&alpha_bytes);
             let beta = Integer::from_bytes_msf(&beta_bytes);
-            let sum = (&alpha + &beta).modulo(&q);
-            let expected = (&a * &b).modulo(&q);
+            let sum = (alpha + beta).modulo(&q);
+            let expected = (a * b).modulo(&q);
 
             assert_eq!(sum, expected, "MtA correctness must hold in all runs");
         }
@@ -980,7 +982,7 @@ mod tests {
     #[test]
     #[ignore = "slow: redundant MtA/proof variant test"]
     fn mta_gg18_proofs_correctness() {
-        use crate::zk::{mta_range::NTildeParams, pdl_slack::sample_below};
+        use crate::zk::mta_range::NTildeParams;
 
         let mut rng = OsRng;
 
@@ -991,11 +993,14 @@ mod tests {
         // are only commitment parameters, not encryption keys)
         let p2 = Integer::generate_safe_prime(&mut rng, 256);
         let q2 = Integer::generate_safe_prime(&mut rng, 256);
-        let n_tilde = &p2 * &q2;
+        let n_tilde = (&p2 * &q2).complete();
         let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-        let phi_n = (&p2 - Integer::one()) * (&q2 - Integer::one());
-        let lambda = sample_below(&phi_n, &mut rng);
-        let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let phi_n = (p2 - Integer::one()) * (q2 - Integer::one());
+        let lambda = phi_n.sample_below_ref(&mut rng);
+        let h2 = h1
+            .pow_mod_ref(&lambda, &n_tilde)
+            .expect("pow_mod defined")
+            .complete();
         let ntilde = NTildeParams {
             N_tilde: n_tilde,
             h1,
@@ -1013,8 +1018,8 @@ mod tests {
             proof_setup,
         };
 
-        let b = q.random_below_ref(&mut rng);
-        let a = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
 
         let (sender_msg, sender_state) = PaillierMtA::<Gg18Proofs>::sender_encrypt(
             &setup,
@@ -1043,8 +1048,8 @@ mod tests {
 
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).modulo(&q);
-        let expected = (&a * &b).modulo(&q);
+        let sum = (alpha + beta).modulo(&q);
+        let expected = (a * b).modulo(&q);
 
         assert_eq!(
             sum, expected,
@@ -1069,18 +1074,19 @@ mod tests {
         let aux = {
             let p = generate_blum_prime(&mut rng, 1024);
             let q_rp = generate_blum_prime(&mut rng, 1024);
-            let n = &p * &q_rp;
             let phi_n = (&p - Integer::one()) * (&q_rp - Integer::one());
+            let n = p * q_rp;
             let r = Integer::sample_in_mult_group_of(&mut rng, &n);
-            let lambda = phi_n.random_below(&mut rng);
+            let lambda = phi_n.sample_below(&mut rng);
             let t = r.square().modulo(&n);
-            let s = t.pow_mod_ref(&lambda, &n).expect("pow_mod must succeed");
+            let s = t
+                .pow_mod_ref(&lambda, &n)
+                .expect("pow_mod must succeed")
+                .complete();
             pi_enc::Aux {
                 s,
                 t,
                 rsa_modulo: n,
-                multiexp: None,
-                crt: None,
             }
         };
 
@@ -1108,8 +1114,8 @@ mod tests {
             proof_setup,
         };
 
-        let b = q.random_below_ref(&mut rng);
-        let a = q.random_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
+        let a = q.sample_below_ref(&mut rng);
 
         // Step 1: Sender encrypts
         let (sender_msg, sender_state) = PaillierMtA::<Cggmp20Proofs>::sender_encrypt(
@@ -1142,8 +1148,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_bytes_msf(&alpha_bytes);
         let beta = Integer::from_bytes_msf(&beta_bytes);
-        let sum = (&alpha + &beta).modulo(&q);
-        let expected = (&a * &b).modulo(&q);
+        let sum = (alpha + beta).modulo(&q);
+        let expected = (a * b).modulo(&q);
 
         assert_eq!(
             sum, expected,

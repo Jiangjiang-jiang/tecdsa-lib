@@ -6,26 +6,18 @@
 //!   Soundness error: 2^{-80}.
 //!
 //! The Paillier-Blum modulus proof (Pi_mod, CGGMP20 Figure 12) used to live here
-//! as a second implementation. It is now
-//! `tecdsa_paillier::zk::paillier_zk::paillier_blum_modulus`, which is generic
-//! over the repetition count and the digest, exposes the interactive form, and
-//! binds its Fiat-Shamir challenge to a caller-supplied session tag.
+//! as a second implementation. It is now `tecdsa_paillier::zk::pi_mod`, which is
+//! generic over the repetition count and the digest, exposes the interactive
+//! form, and binds its Fiat-Shamir challenge to a caller-supplied session tag.
 
 use rand_core::CryptoRngCore;
 use rug::Integer;
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::SyncRng;
+use tecdsa_bigint::{BigIntExt, SyncRng};
 
 use crate::params::{PedersenModParams, PedersenModSecret};
 
 const SECURITY_PARAM: usize = 80;
-
-fn integer_to_bytes(val: &Integer) -> Vec<u8> {
-    let n = val.significant_digits::<u8>();
-    let mut bytes = vec![0u8; n];
-    val.write_digits(&mut bytes, rug::integer::Order::Msf);
-    bytes
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Pi_prm — ring-Pedersen parameter proof (CGGMP20 Figure 13)
@@ -60,10 +52,10 @@ impl PiPrm {
         let private_commitment: Vec<Integer> = (0..SECURITY_PARAM)
             .map(|_| phi_n.clone().random_below(rug_rng))
             .collect();
-        let commitment: Vec<Integer> = private_commitment
-            .iter()
-            .map(|a_i| params.t.clone().pow_mod(a_i, &params.n).unwrap())
-            .collect();
+        // The m = 80 commitments t^{a_i} mod N are independent exponentiations.
+        let commitment: Vec<Integer> = tecdsa_bigint::par::map(&private_commitment, |a_i| {
+            params.t.clone().pow_mod(a_i, &params.n).unwrap()
+        });
 
         let challenges = Self::derive_challenges(params, &commitment);
 
@@ -108,35 +100,34 @@ impl PiPrm {
 
         let challenges = Self::derive_challenges(params, &self.commitment);
 
-        for ((z_i, a_i), &e_i) in self
+        // The m = 80 checks t^{z_i} =? a_i * s^{e_i} are independent.
+        let checks: Vec<(&Integer, &Integer, bool)> = self
             .zs
             .iter()
             .zip(self.commitment.iter())
             .zip(challenges.iter())
-        {
+            .map(|((z_i, a_i), &e_i)| (z_i, a_i, e_i))
+            .collect();
+        tecdsa_bigint::par::all(&checks, |&(z_i, a_i, e_i)| {
             let lhs = params.t.clone().pow_mod(z_i, &params.n).unwrap();
             let rhs = if e_i {
                 Integer::from(a_i * &params.s) % &params.n
             } else {
                 a_i.clone()
             };
-            if lhs != rhs {
-                return false;
-            }
-        }
-
-        true
+            lhs == rhs
+        })
     }
 
     fn derive_challenges(params: &PedersenModParams, commitment: &[Integer]) -> Vec<bool> {
         use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
-        hasher.update(integer_to_bytes(&params.n));
-        hasher.update(integer_to_bytes(&params.s));
-        hasher.update(integer_to_bytes(&params.t));
+        hasher.update(params.n.to_bytes_msf());
+        hasher.update(params.s.to_bytes_msf());
+        hasher.update(params.t.to_bytes_msf());
         for a_i in commitment {
-            hasher.update(integer_to_bytes(a_i));
+            hasher.update(a_i.to_bytes_msf());
         }
         let hash = hasher.finalize();
 

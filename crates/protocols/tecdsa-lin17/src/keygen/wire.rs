@@ -9,17 +9,18 @@
 use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
     zk::{
         correct_key_ni::NICorrectKeyProof,
         pdl::{PdlProverMsg1, PdlProverMsg2, PdlVerifierMsg1, PdlVerifierMsg2},
         range_ni::RangeProofNi,
     },
+    BigIntExt,
 };
 
 use crate::keygen::interactive::{KeyGenP1Round1Msg, KeyGenP1Round3Msg, KeyGenP2Round2Msg};
@@ -48,6 +49,7 @@ pub(crate) struct WireR3Msg {
     pub(crate) dlog_proof_json: Vec<u8>,
     pub(crate) nonce: [u8; 32],
     pub(crate) ek: tecdsa_paillier::EncryptionKey,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub(crate) c_key: tecdsa_paillier::Ciphertext,
     pub(crate) c_key_nonce_bytes: Vec<u8>,
     pub(crate) correct_key_proof: NICorrectKeyProof,
@@ -57,6 +59,7 @@ pub(crate) struct WireR3Msg {
 /// Wire-safe Round 4 message (P2 -> P1): PDL verifier msg1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WireR4Msg {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub(crate) c_tag: tecdsa_paillier::Ciphertext,
     pub(crate) c_tag_tag: HashCommitment,
 }

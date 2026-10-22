@@ -432,6 +432,7 @@ pub(crate) fn partial_reduce_hgcd(
 #[cfg(test)]
 mod tests {
     use rug::rand::RandState;
+    use tecdsa_bigint::BigIntExt;
 
     use super::*;
 
@@ -463,7 +464,7 @@ mod tests {
             let reps = (8_000_000 / bits).clamp(5, 400) as usize;
             let pairs: Vec<(Integer, Integer)> =
                 (0..reps).map(|_| rand_pair(&mut rng, bits)).collect();
-            let l = Integer::from(1) << (bits / 2);
+            let l = Integer::two_pow(bits / 2);
 
             let t = Instant::now();
             for (a, b) in &pairs {
@@ -519,13 +520,13 @@ mod tests {
         let mut rng = RandState::new();
         rng.seed(&Integer::from(54321));
         for &bits in &[256u32, 900, 1796, 4096] {
-            let l = Integer::from(1) << (bits / 2);
+            let l = Integer::two_pow(bits / 2);
             for _ in 0..40 {
                 let (by0, bx0) = rand_pair(&mut rng, bits); // by0 > bx0 > 0
                 let (mut bx, mut by) = (bx0.clone(), by0.clone());
                 let (y, x, parity) = partial_reduce_lehmer(&mut bx, &mut by, &l);
                 // det relation: |x·byr − y·bx| == by0
-                let det_rel = Integer::from(&x * &by) - Integer::from(&y * &bx);
+                let det_rel = Integer::from(&x * &by) - y * &bx;
                 assert_eq!(det_rel.clone().abs(), by0, "det invariant ({bits} bits)");
                 assert_eq!(
                     (det_rel.cmp0() == Ordering::Less),
@@ -533,7 +534,7 @@ mod tests {
                     "parity sign ({bits} bits)"
                 );
                 // bx ≡ x·bx0 (mod by0)
-                let r = (Integer::from(&bx) - Integer::from(&x * &bx0)) % &by0;
+                let r = (Integer::from(&bx) - x * bx0) % &by0;
                 assert_eq!(r, 0, "bx ≡ x·bx0 (mod by0) ({bits} bits)");
                 // reduced: bx ≤ l (unless it bottomed out)
                 assert!(

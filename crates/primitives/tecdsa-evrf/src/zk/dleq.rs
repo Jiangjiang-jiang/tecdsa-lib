@@ -10,7 +10,7 @@ use elliptic_curve::{
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_curve::{conv, TecdsaCurve};
+use tecdsa_curve::TecdsaCurve;
 
 use crate::{hash_to_curve, EvrfCurve, EvrfOutput, EvrfPublicKey, EvrfSecretKey};
 
@@ -127,5 +127,5 @@ where
     }
     let hash = hasher.finalize();
 
-    conv::bytes_to_scalar::<C>(&hash)
+    C::scalar_from_bytes(&hash)
 }

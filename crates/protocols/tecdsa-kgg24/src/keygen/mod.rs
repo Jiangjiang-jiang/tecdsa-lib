@@ -16,7 +16,7 @@ pub(crate) mod wire;
 // ---------------------------------------------------------------------------
 // Trusted dealer key generation (formerly keygen.rs content)
 // ---------------------------------------------------------------------------
-use elliptic_curve::{sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField};
+use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 pub use interactive::{
     interactive_keygen, party1_finalize_keygen, party1_keygen_round2, party1_keygen_round2_with_dk,
     party1_verify_round3, party2_finalize_keygen, party2_keygen_round1, party2_keygen_round3,
@@ -24,7 +24,9 @@ pub use interactive::{
 };
 pub use machine::{Kgg24KeyShare, Kgg24KeygenMachine, Kgg24KeygenMsg, TwoPartyRole};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_curve::TecdsaCurve;
+use tecdsa_paillier::BigIntExt;
 
 use crate::key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare};
 
@@ -61,20 +63,20 @@ where
     let public_key = C::generator() * x;
 
     // Generate Paillier key pair for P_1
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
     // Get the curve order q
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
 
     // Sample noise t from [0, 2^{tau + 2*kappa})
-    let noise_bound = tecdsa_paillier::backend::Integer::from(1u8) << (TAU + 2 * KAPPA);
-    let t = noise_bound.random_below_ref(rng);
+    let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
+    let t = noise_bound.sample_below_ref(rng);
 
     // Compute x_hat_1 = x_1 + t * q (the noised share)
     let x1_bytes = x1.to_repr();
-    let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
-    let x_hat_1 = &x1_int + &t * &q_int;
+    let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
+    let x_hat_1 = x1_int + t * q_int;
 
     // Encrypt x_hat_1: C = Enc_pk(x_1 + t*q)
     let (c_key, _nonce) = dk
@@ -95,19 +97,6 @@ where
     };
 
     (p1_share, p2_share)
-}
-
-/// Compute the curve order q as a big integer.
-pub(crate) fn curve_order<C: TecdsaCurve>() -> tecdsa_paillier::backend::Integer
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    // q - 1 is the repr of -1 in the scalar field
-    let neg_one = -C::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    &q_minus_1 + 1u8
 }
 
 #[cfg(test)]
@@ -138,11 +127,11 @@ mod tests {
         // Decrypt c_key and verify it equals x_1 mod q
         let decrypted = p1.dk.decrypt(&p2.c_key).expect("decryption failed");
         let x1_bytes = p1.secret_share.to_repr();
-        let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
+        let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
 
         // The decrypted value is x_1 + t*q, so (decrypted mod q) should equal x_1
-        let q_int = curve_order::<Secp256k1>();
-        let decrypted_mod_q = decrypted.modulo_ref(&q_int);
+        let q_int = Secp256k1::order();
+        let decrypted_mod_q = decrypted.modulo(&q_int);
         assert_eq!(decrypted_mod_q, x1_int);
     }
 }

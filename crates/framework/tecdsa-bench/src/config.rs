@@ -34,10 +34,28 @@ const DKG_CONFIGS_VAR: &str = "TECDSA_BENCH_DKG_CONFIGS";
 const SIGN_N_VAR: &str = "TECDSA_BENCH_SIGN_N";
 const SIGN_THRESHOLDS_VAR: &str = "TECDSA_BENCH_SIGN_THRESHOLDS";
 const RUNS_VAR: &str = "TECDSA_BENCH_RUNS";
+const PROTOCOLS_VAR: &str = "TECDSA_BENCH_PROTOCOLS";
 
 const DEFAULT_DKG_CONFIGS: &[(u16, u16)] = &[(2, 2), (3, 3), (7, 7), (11, 11), (20, 20)];
 const DEFAULT_SIGN_N: u16 = 20;
 const DEFAULT_SIGN_THRESHOLDS: &[u16] = &[2, 3, 7, 11, 20];
+
+/// Whether the benchmark group `name` should run, per `TECDSA_BENCH_PROTOCOLS`
+/// (comma-separated group names). Every group runs when the variable is unset.
+///
+/// Criterion's positional filter only skips the `bench_function` calls
+/// themselves; the untimed setup around them (DKG runs, class-group CRS
+/// generation, key-share material) executes regardless, which for the CL-based
+/// protocols dominates the run. Gating each `*_benchmarks` entry point on this
+/// makes a subset run actually cheap. Mirrors the filter `protocol_once`
+/// already applies to its own group list, and uses the same variable.
+#[must_use]
+pub fn protocol_enabled(name: &str) -> bool {
+    match env::var(PROTOCOLS_VAR) {
+        Ok(raw) => raw.split(',').map(str::trim).any(|p| p == name),
+        Err(_) => true,
+    }
+}
 
 /// Parse a single `u16` field (trimmed), panicking with context on failure.
 fn parse_u16(var: &str, field: &str) -> u16 {

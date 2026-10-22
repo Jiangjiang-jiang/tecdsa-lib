@@ -16,12 +16,13 @@ use elliptic_curve::{
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
-    zk::{mta_range::NTildeParams, paillier_zk::paillier_blum_modulus},
+    zk::{mta_range::NTildeParams, pi_mod},
+    BigIntExt,
 };
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 use tecdsa_vss::feldman;
@@ -113,14 +114,15 @@ pub fn generate_n_tilde(
     let n_tilde = dk_tilde.n().clone();
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
     // xhi is a random value in [0, 2^256)
-    let xhi_bound = Integer::one() << 256u32;
-    let xhi = xhi_bound.random_below_ref(rng);
+    let xhi_bound = Integer::two_pow(256);
+    let xhi = xhi_bound.sample_below_ref(rng);
     // h2 = h1^(-xhi) mod N'
-    let h1_xhi = h1
-        .pow_mod_ref(&xhi, &n_tilde)
-        .expect("pow_mod must succeed");
+    let h1_xhi = Integer::from(
+        h1.pow_mod_ref(&xhi, &n_tilde)
+            .expect("pow_mod must succeed"),
+    );
     let h2 = h1_xhi
-        .invert_ref(&n_tilde)
+        .invert(&n_tilde)
         .expect("h1^xhi must be invertible mod N_tilde");
 
     NTildeParams {
@@ -136,9 +138,10 @@ impl PaillierPrecomputed {
     /// out so benchmarks can time this (n,t)-independent setup separately from the
     /// interactive DKG (which should consume it via `new_with_precomputed`).
     pub fn generate(rng: &mut impl CryptoRngCore) -> Self {
-        let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen must succeed");
-        let dk_tilde =
-            tecdsa_paillier::keygen(rng).expect("Paillier keygen for N_tilde must succeed");
+        let dk =
+            tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen must succeed");
+        let dk_tilde = tecdsa_paillier::DecryptionKey::generate(rng)
+            .expect("Paillier keygen for N_tilde must succeed");
         let n_tilde_params = generate_n_tilde(&dk_tilde, rng);
         PaillierPrecomputed { dk, n_tilde_params }
     }
@@ -485,20 +488,21 @@ where
         // Generate Pi_mod proof: prove that our Paillier modulus N is a
         // Paillier-Blum modulus (paper §4.1 Phase 3).
         let paillier_n = self.dk.n().clone();
-        let pi_mod_data = paillier_blum_modulus::Data { n: &paillier_n };
-        let pi_mod_pdata = paillier_blum_modulus::PrivateData {
+        let pi_mod_data = pi_mod::Data { n: &paillier_n };
+        let pi_mod_pdata = pi_mod::PrivateData {
             p: self.dk.p(),
             q: self.dk.q(),
         };
         let shared_state = "gg18-keygen-pi-mod";
         let mut pi_mod_rng = tecdsa_core::Csprng::new();
-        let paillier_mod_proof = paillier_blum_modulus::non_interactive::prove::<
-            { PI_MOD_SECURITY },
-            sha2::Sha256,
-        >(
-            &shared_state, pi_mod_data, pi_mod_pdata, &mut pi_mod_rng
-        )
-        .expect("Pi_mod proof generation must succeed for valid Paillier primes");
+        let paillier_mod_proof =
+            pi_mod::non_interactive::prove::<{ PI_MOD_SECURITY }, sha2::Sha256>(
+                &shared_state,
+                pi_mod_data,
+                pi_mod_pdata,
+                &mut pi_mod_rng,
+            )
+            .expect("Pi_mod proof generation must succeed for valid Paillier primes");
 
         let outgoing = vec![Outgoing {
             to: Recipient::Broadcast,
@@ -630,10 +634,10 @@ where
 
             // Verify Pi_mod proof: the party's Paillier modulus N is a Blum modulus
             let party_paillier_n = self.paillier_eks[(pid.0 - 1) as usize].n();
-            let pi_mod_data = paillier_blum_modulus::Data {
+            let pi_mod_data = pi_mod::Data {
                 n: party_paillier_n,
             };
-            paillier_blum_modulus::non_interactive::verify::<{ PI_MOD_SECURITY }, sha2::Sha256>(
+            pi_mod::non_interactive::verify::<{ PI_MOD_SECURITY }, sha2::Sha256>(
                 &shared_state,
                 pi_mod_data,
                 &msg.paillier_mod_proof,

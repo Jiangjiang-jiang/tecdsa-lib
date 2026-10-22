@@ -29,17 +29,17 @@ use elliptic_curve::{
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
-    conv::{group_order_integer, integer_to_scalar, scalar_to_integer},
     threshold::{combine_partials, partial_decrypt, PartialDecryption},
     zk::{
         homo_mult::{HomoMultProof, HomoMultStatement, HomoMultWitness},
         nonce_consist::{NonceConsistProof, NonceConsistStatement, NonceConsistWitness},
     },
+    BigIntExt,
 };
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 use zeroize::Zeroize;
@@ -117,8 +117,8 @@ where
         let alpha = &config.key_share.alpha;
 
         // 1. Sample rho_i in Z_q
-        let q = group_order_integer::<C>();
-        let rho_i = q.random_below_ref(rng);
+        let q = C::order();
+        let rho_i = q.sample_below_ref(rng);
 
         // 2. u_i = E(rho_i; r_u) -- encrypt under shared Paillier key
         let (u_i, r_u) = ek
@@ -133,10 +133,11 @@ where
             .omul(&rho_i, alpha)
             .expect("homomorphic scalar-mul must succeed");
         let r_v = Integer::sample_in_mult_group_of(rng, ek.n());
-        let r_v_n = r_v
-            .pow_mod_ref(ek.n(), ek.nn())
-            .expect("r_v^N mod N^2 must succeed");
-        let v_i = (&v_i_raw * &r_v_n).modulo(ek.nn());
+        let r_v_n = Integer::from(
+            r_v.pow_mod_ref(ek.n(), ek.nn())
+                .expect("r_v^N mod N^2 must succeed"),
+        );
+        let v_i = (v_i_raw * r_v_n).modulo(ek.nn());
 
         // 4. Hash commitment: C_{1,i} = Com(u_i || v_i)
         let commit_data = serialize_for_commit_r1(&u_i, &v_i);
@@ -341,11 +342,11 @@ where
         // Now u = E(rho) and v = E(rho * x) where rho = sum(rho_i)
 
         // Round 3: sample k_i, c_i, compute r_i = k_i*G and w_i
-        let q = group_order_integer::<C>();
+        let q = C::order();
 
         // k_i in Z_q (nonzero)
         let k_i_scalar = C::random_scalar(rng);
-        let k_i = scalar_to_integer::<C>(&k_i_scalar);
+        let k_i = k_i_scalar.to_integer();
 
         // r_i = k_i * G
         let r_i = C::generator() * k_i_scalar;
@@ -354,14 +355,14 @@ where
         // c_i in Z: sample small range. For testing, use q^2 range.
         // In production, c_i should be from a range like q^6, but for
         // correctness testing we use q^2 (statistical security can be relaxed).
-        let c_i_bound = &q * &q;
-        let c_i = c_i_bound.random_below_ref(rng);
+        let c_i_bound = Integer::from(&q * &q);
+        let c_i = c_i_bound.sample_below_ref(rng);
 
         // w_i = k_i ×_E u +_E E(c_i * q)
         let ki_times_u = ek
             .omul(&k_i, &u)
             .map_err(|e| TecdsaError::Other(format!("omul k_i*u failed: {e}")))?;
-        let c_i_q = &c_i * &q;
+        let c_i_q = &c_i * q;
         let (enc_ciq, enc_nonce) = ek
             .encrypt_with_random(rng, &c_i_q)
             .map_err(|e| TecdsaError::Other(format!("encrypt c_i*q failed: {e}")))?;
@@ -731,11 +732,11 @@ where
             .map_err(|e| TecdsaError::Other(format!("threshold decryption of w failed: {e}")))?;
 
         // Reduce eta mod q to get k*rho mod q
-        let q = group_order_integer::<C>();
-        let eta_mod_q = eta.modulo_ref(&q);
+        let q = C::order();
+        let eta_mod_q = eta.modulo(&q);
 
         // Compute psi = (k*rho)^{-1} mod q
-        let eta_scalar = integer_to_scalar::<C>(&eta_mod_q);
+        let eta_scalar = C::scalar_from_integer(&eta_mod_q);
         let psi = eta_scalar
             .invert()
             .into_option()

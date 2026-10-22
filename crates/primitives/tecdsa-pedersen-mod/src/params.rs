@@ -11,6 +11,7 @@
 use rand_core::CryptoRngCore;
 use rug::Integer;
 use serde::{Deserialize, Serialize};
+use tecdsa_bigint::BigIntExt;
 
 /// Ring-Pedersen parameters over an RSA modulus.
 ///
@@ -50,38 +51,27 @@ impl PedersenModParams {
     /// Use `bits = 256` for fast tests and `bits >= 1536` for production security.
     #[allow(clippy::similar_names, clippy::many_single_char_names)]
     pub fn generate(bits: u64, rng: &mut impl CryptoRngCore) -> (Self, PedersenModSecret) {
-        use rug::rand::ThreadRandState;
-        use tecdsa_bigint::{default_sieve_limit, gen_pair, small_odd_primes, SyncRng};
-
-        let p;
-        let q;
-        {
-            let mut sync_rng = SyncRng(&mut *rng);
-            let rug_rng = &mut ThreadRandState::new_custom(&mut sync_rng);
-            let primes = small_odd_primes(default_sieve_limit(bits));
-
-            // p and q are safe primes (p = 2p' + 1), which are automatically Blum primes
-            // (p = 3 mod 4) because p' is an odd prime.
-            let (_, p_rug) = gen_pair(bits as u32 - 1, &Integer::from(2), 25, 15, &primes, rug_rng);
-            let (_, q_rug) = gen_pair(bits as u32 - 1, &Integer::from(2), 25, 15, &primes, rug_rng);
-
-            p = p_rug;
-            q = q_rug;
-        }
+        // p and q are safe primes (p = 2p' + 1), which are automatically Blum primes
+        // (p = 3 mod 4) because p' is an odd prime.
+        let bits = u32::try_from(bits).expect("modulus size fits in u32");
+        // The two searches are independent. Splitting the caller's RNG into two
+        // seeded streams keeps the result a deterministic function of `rng`
+        // (as in the sequential build) while allowing the searches to overlap.
+        let (p, q) = tecdsa_bigint::par::gen_two_primes(rng, bits);
 
         let n = Integer::from(&p * &q);
 
         // phi(N) = (p-1)(q-1)
         let p_minus_1 = Integer::from(&p - 1);
         let q_minus_1 = Integer::from(&q - 1);
-        let phi_n = Integer::from(&p_minus_1 * &q_minus_1);
+        let phi_n = p_minus_1 * q_minus_1;
 
         // Sample r in Z*_N, compute t = r^2 mod N (quadratic residue)
         let r = sample_coprime(rng, &n);
-        let t = r.pow_mod(&Integer::from(2), &n).unwrap();
+        let t = r.square().modulo(&n);
 
         // Sample lambda in [1, phi(N))
-        let lambda = sample_in_range(rng, &phi_n);
+        let lambda = phi_n.sample_positive_below(rng);
 
         // s = t^lambda mod N
         let s = t.clone().pow_mod(&lambda, &n).unwrap();
@@ -107,43 +97,19 @@ impl PedersenModParams {
         }
 
         // s, t must be in [1, N) and coprime to N
-        is_in_mult_group(&self.s, &self.n)
-            && is_in_mult_group(&self.t, &self.n)
+        self.s.in_mult_group_of(&self.n)
+            && self.t.in_mult_group_of(&self.n)
             && self.s != 1
             && self.t != 1
     }
 }
 
-/// Check that `x` is in `Z*_N`: `0 < x < N` and `gcd(x, N) = 1`.
-fn is_in_mult_group(x: &Integer, n: &Integer) -> bool {
-    let zero = Integer::from(0);
-    if *x <= zero || *x >= *n {
-        return false;
-    }
-    tecdsa_bigint::gcd(x, n) == 1
-}
-
 /// Sample a random element in `Z*_N`.
 fn sample_coprime(rng: &mut impl CryptoRngCore, n: &Integer) -> Integer {
-    use tecdsa_bigint::SyncRng;
-    let mut sync_rng = SyncRng(rng);
-    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
     loop {
-        let x = n.clone().random_below(rug_rng);
-        if x > 1 && x.clone().gcd(n) == 1 {
-            return x;
-        }
-    }
-}
-
-/// Sample a random value in `[1, upper)`.
-fn sample_in_range(rng: &mut impl CryptoRngCore, upper: &Integer) -> Integer {
-    use tecdsa_bigint::SyncRng;
-    let mut sync_rng = SyncRng(rng);
-    let rug_rng = &mut rug::rand::ThreadRandState::new_custom(&mut sync_rng);
-    loop {
-        let x = upper.clone().random_below(rug_rng);
-        if x > 0 {
+        let x = Integer::sample_in_mult_group_of(rng, n);
+        // 1 is excluded: it is a degenerate Ring-Pedersen generator.
+        if x > 1 {
             return x;
         }
     }

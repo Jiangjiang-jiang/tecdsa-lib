@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use rand_core::CryptoRngCore;
 use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{mul_mod, multi_exp, random_below};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::{JlPublicKey, JlSecretKey};
 
@@ -40,10 +40,10 @@ pub fn encrypt(
     m: &Integer,
     rng: &mut impl CryptoRngCore,
 ) -> (JlCiphertext, Integer) {
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
     assert!(m < &two_pow_k, "plaintext must be in Z_{{2^k}}");
 
-    let r = random_below(&pk.n, rng);
+    let r = pk.n.sample_below_ref(rng);
     let ct = encrypt_with_randomness(pk, m, &r);
     (ct, r)
 }
@@ -57,11 +57,11 @@ pub fn encrypt(
 /// Panics if `m >= 2^k`.
 #[must_use]
 pub fn encrypt_with_randomness(pk: &JlPublicKey, m: &Integer, r: &Integer) -> JlCiphertext {
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
     assert!(m < &two_pow_k, "plaintext must be in Z_{{2^k}}");
 
     // c = y^m * h^r mod N, via one shared-squaring multi-exponentiation.
-    let c = multi_exp(&[&pk.y, &pk.h], &[m, r], &pk.n);
+    let c = pk.n.multi_exp(&[&pk.y, &pk.h], &[m, r]);
 
     JlCiphertext { c }
 }
@@ -105,17 +105,14 @@ pub fn decrypt(sk: &JlSecretKey, pk: &JlPublicKey, ct: &JlCiphertext) -> Integer
         .clone()
         .invert(p)
         .expect("generator invertible mod p");
-    let g_w = g
-        .pow_mod_ref(&(Integer::ONE << (k - w)).complete(), p)
-        .unwrap()
-        .complete();
+    let g_w = g.pow_mod(&Integer::two_pow(k - w), p).unwrap();
 
     // Baby-step table: g_w^j -> j for j in [0, 2^w).
     let mut table: BTreeMap<Integer, u64> = BTreeMap::new();
     let mut cur = Integer::from(1);
     for j in 0..(1u64 << w) {
         table.insert(cur.clone(), j);
-        cur = mul_mod(&cur, &g_w, p);
+        cur = (cur * &g_w).modulo(p);
     }
 
     let mut m = Integer::new();
@@ -143,7 +140,7 @@ pub fn decrypt(sk: &JlSecretKey, pk: &JlPublicKey, ct: &JlCiphertext) -> Integer
                 .pow_mod_ref(&Integer::from(x_block), p)
                 .unwrap()
                 .complete();
-            d = mul_mod(&d, &factor, p);
+            d = (d * factor).modulo(p);
         }
         // Advance g_inv_block by `width` squarings for the next block.
         for _ in 0..width {
@@ -181,7 +178,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         for k in [32u32, 13u32] {
             let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
-            let max = (Integer::from(1) << k) - Integer::from(1);
+            let max = Integer::two_pow(k) - Integer::from(1);
             let mut cases = vec![
                 Integer::new(),
                 Integer::from(1u32),
@@ -189,7 +186,7 @@ mod tests {
                 &max - Integer::from(1),
             ];
             for _ in 0..8 {
-                cases.push(random_below(&(Integer::from(1) << k), &mut rng));
+                cases.push(Integer::two_pow(k).sample_below_ref(&mut rng));
             }
             for m in cases {
                 let (ct, _r) = encrypt(&pk, &m, &mut rng);

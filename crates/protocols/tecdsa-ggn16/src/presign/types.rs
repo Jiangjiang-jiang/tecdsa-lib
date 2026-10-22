@@ -2,8 +2,8 @@
 #![allow(non_snake_case)]
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
+use rug::Integer;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
 use tecdsa_protocol::PartyId;
 use zeroize::Zeroize;
 

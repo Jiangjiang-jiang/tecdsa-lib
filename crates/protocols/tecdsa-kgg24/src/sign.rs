@@ -44,14 +44,15 @@ use elliptic_curve::{
     FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
     error::Kgg24Error,
     key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
-    keygen::curve_order,
 };
 
 /// Security parameter tau (bit-length of the noise exponent base).
@@ -103,6 +104,7 @@ where
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Party2PartialSigMsg {
     /// `c_3 = Enc(rho*q + k_tilde_2_inv*m' + r*k_tilde_2_inv*x_2) (+) (C ^ (r*k_tilde_2_inv))`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c3: tecdsa_paillier::Ciphertext,
 }
 
@@ -240,27 +242,26 @@ where
         .map_err(|e| Kgg24Error::Paillier(format!("decryption failed: {e}")))?;
 
     // Compute s_1 = [s_0]_q (reduce mod q)
-    let q_int = curve_order::<C>();
-    let s1_int = s0_int.modulo_ref(&q_int);
+    let q_int = C::order();
+    let s1_int = Integer::from(s0_int.modulo_ref(&q_int));
 
     // --- Divisibility check (Section 4) ---
     // s_2 = s_0 - s_1 + ell * q where ell is random in [0, q^2 * 2^{tau+kappa})
-    let ell_bound =
-        &q_int * &q_int * tecdsa_paillier::backend::Integer::from(1u8).shl_ref(TAU + KAPPA);
-    let ell = ell_bound.random_below_ref(rng);
-    let s2_int = &s0_int - &s1_int + &ell * &q_int;
+    let ell_bound = Integer::from(&q_int * &q_int) * Integer::two_pow(TAU + KAPPA);
+    let ell = ell_bound.sample_below_ref(rng);
+    let s2_int = (s0_int - &s1_int) + (ell * &q_int);
 
     // Check: s_2 < N / 2^{tau + 2*kappa}
     let n = key_share.dk.encryption_key().n().clone();
-    let divisor = tecdsa_paillier::backend::Integer::from(1u8).shl_ref(TAU + 2 * KAPPA);
-    let threshold = &n / &divisor;
+    let divisor = Integer::two_pow(TAU + 2 * KAPPA);
+    let threshold = n / divisor;
 
     let needs_refresh = if s2_int.cmp_abs(&threshold) == std::cmp::Ordering::Greater {
         true
     } else {
         // Check: s_2 == 0 (mod q)
-        let s2_mod_q = s2_int.modulo_ref(&q_int);
-        s2_mod_q != tecdsa_paillier::backend::Integer::zero()
+        let s2_mod_q = s2_int.modulo(&q_int);
+        s2_mod_q != Integer::zero()
     };
 
     // --- Compute the actual signature regardless of the divisibility check ---
@@ -384,39 +385,38 @@ where
         .into_option()
         .ok_or_else(|| Kgg24Error::ProtocolState("k_2 is zero, cannot invert".into()))?;
 
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
 
     // Blinded inverse: k_tilde_2_inv = [k_2^{-1}]_q + rho_bar * q
     // where rho_bar is sampled from [0, q)
-    let rho_bar = q_int.random_below_ref(rng);
-    let k2_inv_bytes = scalar_to_bytes::<C>(&k2_inv);
-    let k2_inv_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&k2_inv_bytes);
-    let k_tilde_2_inv = &k2_inv_int + &rho_bar * &q_int;
+    let rho_bar = q_int.sample_below_ref(rng);
+    let k2_inv_bytes = k2_inv.to_bytes_vec();
+    let k2_inv_int = Integer::from_bytes_msf(&k2_inv_bytes);
+    let k_tilde_2_inv = k2_inv_int + rho_bar * &q_int;
 
     // Step 5: Compute the message digest as integer
     let m_prime = *message.digest();
-    let m_prime_bytes = scalar_to_bytes::<C>(&m_prime);
-    let m_prime_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&m_prime_bytes);
+    let m_prime_bytes = m_prime.to_bytes_vec();
+    let m_prime_int = Integer::from_bytes_msf(&m_prime_bytes);
 
     // Get r as integer
-    let r_bytes = scalar_to_bytes::<C>(&r);
-    let r_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&r_bytes);
+    let r_bytes = r.to_bytes_vec();
+    let r_int = Integer::from_bytes_msf(&r_bytes);
 
     // Get x_2 as integer
-    let x2_bytes = scalar_to_bytes::<C>(&key_share.secret_share);
-    let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&x2_bytes);
+    let x2_bytes = key_share.secret_share.to_bytes_vec();
+    let x2_int = Integer::from_bytes_msf(&x2_bytes);
 
     // Sample rho from [0, 3*q^3 * 2^{4*tau + 2*kappa}) for masking
-    let q_cubed = &q_int * &q_int * &q_int;
-    let rho_bound =
-        &q_cubed * 3u8 * tecdsa_paillier::backend::Integer::from(1u8).shl_ref(4 * TAU + 2 * KAPPA);
-    let rho = rho_bound.random_below_ref(rng);
+    let q_cubed = Integer::from(&q_int * &q_int) * &q_int;
+    let rho_bound = (q_cubed * 3u8) * Integer::two_pow(4 * TAU + 2 * KAPPA);
+    let rho = rho_bound.sample_below_ref(rng);
 
     // Compute: partial_plaintext = rho * q + k_tilde_2_inv * m' + k_tilde_2_inv * r * x_2
     // This is the "message + P_2's share contribution" part
-    let k_tilde_m = &k_tilde_2_inv * &m_prime_int;
-    let k_tilde_r_x2 = &k_tilde_2_inv * &r_int * &x2_int;
-    let partial_plaintext = &rho * &q_int + &k_tilde_m + &k_tilde_r_x2;
+    let k_tilde_m = Integer::from(&k_tilde_2_inv * &m_prime_int);
+    let k_tilde_r_x2 = Integer::from(&k_tilde_2_inv * &r_int) * &x2_int;
+    let partial_plaintext = rho * q_int + &k_tilde_m + &k_tilde_r_x2;
 
     // Step 6: Encrypt partial_plaintext: c_1 = Enc(partial_plaintext)
     let (c1, _nonce) = key_share
@@ -426,7 +426,7 @@ where
 
     // Step 7: Compute c_2 = C ^ (r * k_tilde_2_inv) (homomorphic scalar mult on c_key)
     // This extracts r * k_tilde_2_inv * (x_1 + t*q) from C = Enc(x_1 + t*q)
-    let scalar_for_c = &r_int * &k_tilde_2_inv;
+    let scalar_for_c = r_int * k_tilde_2_inv;
     let c2 = key_share
         .ek
         .omul(&scalar_for_c, &key_share.c_key)
@@ -445,14 +445,12 @@ where
 // Utility functions
 // ---------------------------------------------------------------------------
 
-use tecdsa_curve::conv::scalar_to_bytes;
-
-fn int_to_scalar<C: TecdsaCurve>(value: &tecdsa_paillier::backend::Integer) -> C::Scalar
+fn int_to_scalar<C: TecdsaCurve>(value: &Integer) -> C::Scalar
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    tecdsa_curve::conv::bytes_to_scalar::<C>(&value.to_bytes_msf())
+    C::scalar_from_bytes(&value.to_bytes_msf())
 }
 
 // ---------------------------------------------------------------------------
@@ -519,18 +517,4 @@ where
     C::ProjectivePoint: LinearCombination<[(C::ProjectivePoint, C::Scalar); 2]>,
 {
     sign(p1_key, p2_key, message, rng).map(|r| r.signature)
-}
-
-/// Trait extension providing `shl_ref` for `Integer`.
-trait IntegerShlRef {
-    fn shl_ref(&self, bits: u32) -> Self;
-}
-
-impl IntegerShlRef for tecdsa_paillier::backend::Integer {
-    fn shl_ref(&self, bits: u32) -> Self {
-        let two = tecdsa_paillier::backend::Integer::from(2u8);
-        let shift = tecdsa_paillier::backend::Integer::u_pow_u(2, bits);
-        let _ = two; // suppress unused warning
-        self * &shift
-    }
 }

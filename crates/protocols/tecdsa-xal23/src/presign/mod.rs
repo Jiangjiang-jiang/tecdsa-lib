@@ -27,10 +27,7 @@ use elliptic_curve::{
 pub use machine::Xal23PresignMachine;
 pub use msg::Xal23PresignMsg;
 use rug::{integer::Order, Integer};
-use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar, scalar_to_integer},
-    TecdsaCurve,
-};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSetup};
 use tecdsa_protocol::{MtA, PartyId};
 pub use types::Xal23Presignature;
@@ -130,7 +127,7 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     let n = signer_indices.len();
-    let q = curve_order::<C>();
+    let q = C::order();
     let q_bytes = q.to_digits::<u8>(Order::Msf);
 
     // -----------------------------------------------------------------------
@@ -192,9 +189,8 @@ where
             //   Trait "receiver" (P1) does affine with k_i, gets alpha (step 2)
             //   Trait "sender" (P2) decrypts, gets beta (step 3)
             {
-                let k_i_bytes = scalar_to_integer::<C>(&k_vec[i]).to_digits::<u8>(Order::Msf);
-                let gamma_j_bytes =
-                    scalar_to_integer::<C>(&gamma_vec[j]).to_digits::<u8>(Order::Msf);
+                let k_i_bytes = k_vec[i].to_integer().to_digits::<u8>(Order::Msf);
+                let gamma_j_bytes = gamma_vec[j].to_integer().to_digits::<u8>(Order::Msf);
 
                 // Step 1: encrypt gamma_j
                 let (sender_msg, sender_state) =
@@ -216,8 +212,8 @@ where
 
             // MtA for k_i * w_j:
             {
-                let k_i_bytes = scalar_to_integer::<C>(&k_vec[i]).to_digits::<u8>(Order::Msf);
-                let w_j_bytes = scalar_to_integer::<C>(&w_vec[j]).to_digits::<u8>(Order::Msf);
+                let k_i_bytes = k_vec[i].to_integer().to_digits::<u8>(Order::Msf);
+                let w_j_bytes = w_vec[j].to_integer().to_digits::<u8>(Order::Msf);
 
                 let (sender_msg, sender_state) =
                     M::sender_encrypt(setup_j, &w_j_bytes, &q_bytes, rng)
@@ -251,9 +247,9 @@ where
                 continue;
             }
             // i's alpha from MtA(k_i, gamma_j) — i was sender
-            delta_i += integer_to_scalar::<C>(&alpha_kg[i][j]);
+            delta_i += C::scalar_from_integer(&alpha_kg[i][j]);
             // i's beta from MtA(k_j, gamma_i) — i was receiver
-            delta_i += integer_to_scalar::<C>(&beta_kg[j][i]);
+            delta_i += C::scalar_from_integer(&beta_kg[j][i]);
         }
         delta_vec.push(delta_i);
     }
@@ -289,9 +285,9 @@ where
                 continue;
             }
             // i's mu from MtA(k_i, w_j) — i was sender
-            sigma_i += integer_to_scalar::<C>(&mu_kw[i][j]);
+            sigma_i += C::scalar_from_integer(&mu_kw[i][j]);
             // i's nu from MtA(k_j, w_i) — i was receiver
-            sigma_i += integer_to_scalar::<C>(&nu_kw[j][i]);
+            sigma_i += C::scalar_from_integer(&nu_kw[j][i]);
         }
         sigma_vec.push(sigma_i);
     }

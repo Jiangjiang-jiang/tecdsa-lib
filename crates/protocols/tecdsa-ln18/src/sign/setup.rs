@@ -120,7 +120,7 @@ where
     let mut eks = BTreeMap::new();
     let mut ntilde_map = BTreeMap::new();
     for &pid in signers {
-        let dk = tecdsa_paillier::keygen(rng).expect("paillier keygen");
+        let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("paillier keygen");
         eks.insert(pid, dk.encryption_key().clone());
         dks.push(dk);
         let nt = generate_ntilde(rng, ntilde_prime_bits);
@@ -253,17 +253,11 @@ where
 }
 
 fn generate_ntilde(rng: &mut impl CryptoRngCore, prime_bits: u32) -> NTildeParams {
-    use tecdsa_paillier::backend::Integer;
-    let p = Integer::generate_safe_prime(rng, prime_bits);
-    let q = Integer::generate_safe_prime(rng, prime_bits);
-    let n_tilde = &p * &q;
-    let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-    let lambda = phi_n.random_below_ref(rng);
-    let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod");
+    let (params, _secret) =
+        tecdsa_pedersen_mod::PedersenModParams::generate(u64::from(prime_bits), rng);
     NTildeParams {
-        N_tilde: n_tilde,
-        h1,
-        h2,
+        N_tilde: params.n,
+        h1: params.t,
+        h2: params.s,
     }
 }

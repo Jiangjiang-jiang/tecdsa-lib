@@ -13,6 +13,11 @@ serde = ["dep:serde"]
 secp256k1 = ["tecdsa-curve/secp256k1"]
 identifiable-abort = []
 key-import = ["tecdsa-protocol/key-import"]
+parallel = [
+    "tecdsa-bigint/parallel",
+    "tecdsa-paillier/parallel",
+    "tecdsa-pedersen-mod/parallel",
+]
 
 [dependencies]
 rug = { workspace = true }
@@ -20,7 +25,6 @@ tecdsa-core.workspace = true
 tecdsa-bigint.workspace = true
 tecdsa-curve.workspace = true
 elliptic-curve.workspace = true
-generic-ec.workspace = true
 tecdsa-protocol.workspace = true
 tecdsa-vss.workspace = true
 tecdsa-paillier.workspace = true
@@ -39,6 +43,7 @@ udigest.workspace = true
 
 [dev-dependencies]
 tecdsa-testkit.workspace = true
+tecdsa-bigint.workspace = true
 sha2.workspace = true
 
 [lints]

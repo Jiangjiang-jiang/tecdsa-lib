@@ -936,9 +936,8 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use tecdsa_paillier::{
-        backend::Integer, zk::mta_range::NTildeParams, DecryptionKey, EncryptionKey,
-    };
+    use rug::Integer;
+    use tecdsa_paillier::{zk::mta_range::NTildeParams, BigIntExt, DecryptionKey, EncryptionKey};
 
     use super::*;
     use crate::{
@@ -960,13 +959,8 @@ mod tests {
     /// Generate Ring-Pedersen auxiliary parameters for testing.
     #[cfg(feature = "secp256k1")]
     fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
-        let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-        let lambda = phi_n.random_below_ref(rng);
-        let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        let (n_tilde, h1, h2) = (params.n, params.t, params.s);
         NTildeParams {
             N_tilde: n_tilde,
             h1,

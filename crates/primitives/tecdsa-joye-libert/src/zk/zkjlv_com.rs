@@ -9,10 +9,10 @@
 //!
 //! This is essentially the range proof with slack from the reference.
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -64,21 +64,24 @@ impl ZkJlvComProof {
         assert_eq!(y_vec.len(), b_bits_vec.len());
 
         let ell = y_vec.len();
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
 
         // Sample blinding values
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
-        let w = random_below(&w_bound, rng);
+        let w = w_bound.sample_below_ref(rng);
 
         let mut v_vec = Vec::with_capacity(ell);
         let mut y_items = Vec::with_capacity(ell);
 
         for i in 0..ell {
-            let v_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
-            let v = random_below(&v_bound, rng);
+            let v_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
+            let v = v_bound.sample_below_ref(rng);
 
             let exp_y = Integer::from(&two_pow_k * &v);
-            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
+            let y_item = y_vec[i]
+                .pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
 
             v_vec.push(v);
             y_items.push(y_item);
@@ -87,11 +90,14 @@ impl ZkJlvComProof {
         // Commitment: d = prod y_i^{2^k * v_i} * h^{2^k * w} mod N
         let mut d = Integer::from(1);
         for y_item in &y_items {
-            d = mul_mod(&d, y_item, &pk.n);
+            d = (d * y_item).modulo(&pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &w);
-        let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
-        d = mul_mod(&d, &h_w, &pk.n);
+        let exp_h = two_pow_k * &w;
+        let h_w =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        d = (d * h_w).modulo(&pk.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, y_vec, c, &d);
@@ -100,7 +106,7 @@ impl ZkJlvComProof {
         let z_vec: Vec<Integer> = (0..ell)
             .map(|i| Integer::from(&e * &m_vec[i]) + &v_vec[i])
             .collect();
-        let z_r = Integer::from(&e * r) + &w;
+        let z_r = e * r + &w;
 
         Self { d, z_r, z_vec }
     }
@@ -111,7 +117,7 @@ impl ZkJlvComProof {
         assert_eq!(y_vec.len(), self.z_vec.len());
 
         let ell = y_vec.len();
-        let two_pow_k = Integer::from(1) << pk.k;
+        let two_pow_k = Integer::two_pow(pk.k);
 
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, y_vec, c, &self.d);
@@ -120,16 +126,25 @@ impl ZkJlvComProof {
         let mut lhs = Integer::from(1);
         for i in 0..ell {
             let exp_y = Integer::from(&two_pow_k * &self.z_vec[i]);
-            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
-            lhs = mul_mod(&lhs, &y_item, &pk.n);
+            let y_item = y_vec[i]
+                .pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+            lhs = (lhs * y_item).modulo(&pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &self.z_r);
-        let h_item = pow_mod(&pk.h, &exp_h, &pk.n);
-        lhs = mul_mod(&lhs, &h_item, &pk.n);
+        let exp_h = two_pow_k * &self.z_r;
+        let h_item =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        lhs = (lhs * h_item).modulo(&pk.n);
 
         // RHS: c^e * d mod N
-        let c_e = pow_mod(c, &e, &pk.n);
-        let rhs = mul_mod(&c_e, &self.d, &pk.n);
+        let c_e = c
+            .pow_mod_ref(&e, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs = (c_e * &self.d).modulo(&pk.n);
 
         lhs == rhs
     }
@@ -162,16 +177,22 @@ pub fn jl_vec_commit(
     r: &Integer,
 ) -> Integer {
     assert_eq!(y_vec.len(), m_vec.len());
-    let two_pow_k = Integer::from(1) << pk.k;
+    let two_pow_k = Integer::two_pow(pk.k);
     let mut c = Integer::from(1);
     for i in 0..y_vec.len() {
         let exp = Integer::from(&two_pow_k * &m_vec[i]);
-        let item = pow_mod(&y_vec[i], &exp, &pk.n);
-        c = mul_mod(&c, &item, &pk.n);
+        let item = y_vec[i]
+            .pow_mod_ref(&exp, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        c = (c * item).modulo(&pk.n);
     }
-    let exp_h = Integer::from(&two_pow_k * r);
-    let h_r = pow_mod(&pk.h, &exp_h, &pk.n);
-    mul_mod(&c, &h_r, &pk.n)
+    let exp_h = two_pow_k * r;
+    let h_r =
+        pk.h.pow_mod_ref(&exp_h, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+    (c * h_r).modulo(&pk.n)
 }
 
 #[cfg(test)]
@@ -188,8 +209,11 @@ mod tests {
         let ell = 3;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&pk.n, &mut rng);
-            let y_i = pow_mod(&x, &alpha_i, &pk.n);
+            let alpha_i = pk.n.sample_below_ref(&mut rng);
+            let y_i = x
+                .pow_mod_ref(&alpha_i, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
             y_vec.push(y_i);
         }
 
@@ -199,7 +223,7 @@ mod tests {
             Integer::from(99u32),
         ];
         let b_bits_vec: Vec<u32> = vec![32, 32, 32];
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         let c = jl_vec_commit(&pk, &y_vec, &m_vec, &r);
         let proof = ZkJlvComProof::prove(&pk, &y_vec, &c, &m_vec, &r, &b_bits_vec, &mut rng);
@@ -215,20 +239,23 @@ mod tests {
         let ell = 2;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&pk.n, &mut rng);
-            let y_i = pow_mod(&x, &alpha_i, &pk.n);
+            let alpha_i = pk.n.sample_below_ref(&mut rng);
+            let y_i = x
+                .pow_mod_ref(&alpha_i, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
             y_vec.push(y_i);
         }
 
         let m_vec = vec![Integer::from(42u32), Integer::from(17u32)];
         let b_bits_vec = vec![32, 32];
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         let c = jl_vec_commit(&pk, &y_vec, &m_vec, &r);
 
         // Wrong witness
         let wrong_m = vec![Integer::from(99u32), Integer::from(17u32)];
-        let wrong_r = random_below(&pk.n, &mut rng);
+        let wrong_r = pk.n.sample_below_ref(&mut rng);
         let proof =
             ZkJlvComProof::prove(&pk, &y_vec, &c, &wrong_m, &wrong_r, &b_bits_vec, &mut rng);
         assert!(!proof.verify(&pk, &y_vec, &c));

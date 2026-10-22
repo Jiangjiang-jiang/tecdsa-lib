@@ -23,12 +23,13 @@
 
 #![allow(non_snake_case)]
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
+use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
+use tecdsa_bigint::BigIntExt;
 use zeroize::Zeroize;
 
-use crate::zk::pdl_slack::sample_below;
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ThresholdError {
@@ -64,6 +65,7 @@ pub struct DecryptionShare {
     /// This party's index (1-based, matching Shamir evaluation points).
     pub index: u16,
     /// The secret share d_i of d = lambda(N) * beta.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub d_i: Integer,
 }
 
@@ -85,6 +87,7 @@ pub struct PartialDecryption {
     /// The party's index (1-based).
     pub index: u16,
     /// c_i = c^{2 * delta * d_i} mod N^2
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub value: Integer,
 }
 
@@ -99,7 +102,7 @@ fn factorial(n: u16) -> Integer {
 /// L(u) = (u - 1) / N for u in {u in Z_{N^2} : u = 1 mod N}.
 fn l_function(u: &Integer, n: &Integer) -> Integer {
     let u_minus_1 = u - Integer::one();
-    &u_minus_1 / n
+    u_minus_1 / n
 }
 
 /// Generate threshold Paillier keys using a trusted dealer.
@@ -123,22 +126,17 @@ pub fn trusted_dealer_setup(
     let q = dk.q();
     let p_minus_1 = p - Integer::one();
     let q_minus_1 = q - Integer::one();
-    let lambda = lcm(&p_minus_1, &q_minus_1);
+    let lambda = p_minus_1.lcm(&q_minus_1);
 
-    let beta = loop {
-        let candidate = sample_below(&n, rng);
-        if candidate > Integer::zero() && candidate.gcd_ref(&n) == Integer::one() {
-            break candidate;
-        }
-    };
+    let beta = Integer::sample_in_mult_group_of(rng, &n);
 
-    let d = &lambda * &beta;
-    let theta = d.modulo_ref(&n);
+    let d = lambda * beta;
+    let theta = d.modulo_ref(&n).complete();
     let delta = factorial(total);
 
     // Shamir share d over Z with coefficient modulus M = N * delta.
-    let m = &n * &delta;
-    let shares = shamir_split_integer(&d, corruption_threshold, total, &m, rng);
+    let m = n * &delta;
+    let shares = shamir_split_integer(d, corruption_threshold, total, &m, rng);
 
     let setup = ThresholdSetup {
         ek,
@@ -161,7 +159,10 @@ pub fn partial_decrypt(
 ) -> PartialDecryption {
     let nn = setup.ek.nn();
     let exp = Integer::from(2u32) * &setup.delta * &share.d_i;
-    let value = ciphertext.pow_mod_ref(&exp, nn).expect("pow_mod defined");
+    let value = ciphertext
+        .pow_mod_ref(&exp, nn)
+        .expect("pow_mod defined")
+        .complete();
     PartialDecryption {
         index: share.index,
         value,
@@ -209,25 +210,26 @@ pub fn combine_partials(
             }
             mu *= Integer::from(-j);
             let denom = Integer::from(i - j);
-            mu = &mu / &denom;
+            mu /= denom;
         }
 
         let exp = Integer::from(2i32) * &mu;
         let contrib = partial
             .value
             .pow_mod_ref(&exp, nn)
-            .expect("pow_mod defined");
-        c_prime = (&c_prime * &contrib).modulo(nn);
+            .expect("pow_mod defined")
+            .complete();
+        c_prime = (c_prime * contrib).modulo(nn);
     }
 
     // m = L(c') * (4 * delta^2 * theta)^{-1} mod N
     let l_val = l_function(&c_prime, n);
     let denom = (Integer::from(4i32) * &setup.delta * &setup.delta * &setup.theta).modulo(n);
     let denom_inv = denom
-        .invert_ref(n)
-        .ok_or(ThresholdError::ThetaNotInvertible)?;
+        .invert(n)
+        .map_err(|_| ThresholdError::ThetaNotInvertible)?;
 
-    let mut m = (&l_val * &denom_inv).modulo(n);
+    let mut m = (l_val * denom_inv).modulo(n);
 
     // Normalize to {-N/2, ..., N/2}
     let half_n = n / Integer::from(2u32);
@@ -241,15 +243,15 @@ pub fn combine_partials(
 // ---- Integer Shamir secret sharing ----
 
 fn shamir_split_integer(
-    secret: &Integer,
+    secret: Integer,
     corruption_threshold: u16,
     total: u16,
     modulus: &Integer,
     rng: &mut impl CryptoRngCore,
 ) -> Vec<DecryptionShare> {
-    let mut coeffs = vec![secret.clone()];
+    let mut coeffs = vec![secret];
     for _ in 0..corruption_threshold {
-        coeffs.push(sample_below(modulus, rng));
+        coeffs.push(modulus.sample_below_ref(rng));
     }
 
     let mut shares = Vec::with_capacity(total as usize);
@@ -265,10 +267,6 @@ fn shamir_split_integer(
     }
 
     shares
-}
-
-fn lcm(a: &Integer, b: &Integer) -> Integer {
-    a.lcm_ref(b)
 }
 
 #[cfg(test)]

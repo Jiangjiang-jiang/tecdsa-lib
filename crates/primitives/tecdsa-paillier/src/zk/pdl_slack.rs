@@ -21,11 +21,10 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, CurveArithmetic, FieldBytes, FieldBytesSize,
     PrimeField,
 };
-use fast_paillier::backend::Integer;
+use rug::{ops::Pow, Complete, Integer};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_curve::TecdsaCurve;
-
-use crate::conv::{group_order_integer, integer_to_scalar};
 
 /// Fiat-Shamir challenge error.
 #[derive(Debug, thiserror::Error)]
@@ -182,48 +181,6 @@ where
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Compute `h1^x * h2^r mod N'`.
-///
-/// Handles negative exponents by inverting the base first.
-pub(crate) fn commitment_unknown_order(
-    h1: &Integer,
-    h2: &Integer,
-    modulus: &Integer,
-    x: &Integer,
-    r: &Integer,
-) -> Integer {
-    let h1_x = pow_mod_signed(h1, x, modulus);
-    let h2_r = pow_mod_signed(h2, r, modulus);
-    (h1_x * h2_r).modulo(modulus)
-}
-
-/// Modular exponentiation that handles negative exponents.
-pub(crate) fn pow_mod_signed(base: &Integer, exp: &Integer, modulus: &Integer) -> Integer {
-    if exp.cmp0().is_lt() {
-        // base^(-|exp|) mod m = (base^-1)^|exp| mod m
-        let base_inv = base
-            .invert_ref(modulus)
-            .expect("base must be invertible mod modulus");
-        let pos_exp = -exp.clone();
-        base_inv
-            .pow_mod_ref(&pos_exp, modulus)
-            .expect("pow_mod defined")
-    } else {
-        base.pow_mod_ref(exp, modulus).expect("pow_mod defined")
-    }
-}
-
-/// Sample a random integer in `[0, bound)`.
-pub(crate) fn sample_below(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
-    bound.random_below_ref(rng)
-}
-
-/// Sample a random integer in `[1, bound)`.
-fn sample_range_one_to(bound: &Integer, rng: &mut impl rand_core::RngCore) -> Integer {
-    let bound_minus_one = bound - Integer::one();
-    bound_minus_one.random_below_ref(rng) + Integer::one()
-}
-
 /// Hash public values and commitments to produce a Fiat-Shamir challenge.
 fn compute_challenge<C>(
     stmt: &PdlSlackStatement<C>,
@@ -285,62 +242,54 @@ where
         statement: &PdlSlackStatement<C>,
         rng: &mut impl rand_core::CryptoRngCore,
     ) -> Self {
-        let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
-        let q_N_tilde = &q * &statement.N_tilde;
-        let q3_N_tilde = &q3 * &statement.N_tilde;
+        let q = C::order();
+        let q3 = (&q * &q).complete() * &q;
 
         // 1. Sample blinding values
-        let alpha = sample_below(&q3, rng);
-        let beta = sample_range_one_to(&statement.ek_n, rng);
-        let rho = sample_below(&q_N_tilde, rng);
-        let gamma = sample_below(&q3_N_tilde, rng);
+        let alpha = q3.sample_below_ref(rng);
+        let beta = statement.ek_n.sample_positive_below(rng);
+        let rho = (q * &statement.N_tilde).sample_below_ref(rng);
+        let gamma = (q3 * &statement.N_tilde).sample_below_ref(rng);
 
         // 2. z = h1^x * h2^rho mod N_tilde
-        let z = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &witness.x,
-            &rho,
-        );
+        let z = statement
+            .N_tilde
+            .combine(&statement.h1, &witness.x, &statement.h2, &rho)
+            .expect("bases are invertible modulo n");
 
         // 3. u1 = alpha * G
-        let alpha_scalar = integer_to_scalar::<C>(&alpha);
+        let alpha_scalar = C::scalar_from_integer(&alpha);
         let u1 = statement.G * alpha_scalar;
 
         // 4. u2 = (1 + N)^alpha * beta^N mod N^2  (= Enc(N, alpha; beta))
         let u2 = {
             let g_paillier = &statement.ek_n + Integer::one(); // (1 + N)
-            commitment_unknown_order(
-                &g_paillier,
-                &beta,
-                &statement.ek_nn,
-                &alpha,
-                &statement.ek_n,
-            )
+            statement
+                .ek_nn
+                .combine(&g_paillier, &alpha, &beta, &statement.ek_n)
+                .expect("bases are invertible modulo n")
         };
 
         // 5. u3 = h1^alpha * h2^gamma mod N_tilde
-        let u3 = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &alpha,
-            &gamma,
-        );
+        let u3 = statement
+            .N_tilde
+            .combine(&statement.h1, &alpha, &statement.h2, &gamma)
+            .expect("bases are invertible modulo n");
 
         // 6. e = H(N, C, Q, z, u1, u2, u3)
         let e = compute_challenge(statement, &z, &u1, &u2, &u3);
 
         // 7. s1 = alpha + e*x
-        let s1 = &alpha + &e * &witness.x;
+        let s1 = alpha + &e * &witness.x;
 
-        // 8. s2 = beta * r^e mod N  (i.e., commitment_unknown_order(r, beta, N, e, 1))
-        let s2 = commitment_unknown_order(&witness.r, &beta, &statement.ek_n, &e, &Integer::one());
+        // 8. s2 = beta * r^e mod N  (i.e., N.combine(r, e, beta, 1))
+        let s2 = statement
+            .ek_n
+            .combine(&witness.r, &e, &beta, &Integer::one())
+            .expect("bases are invertible modulo n");
 
         // 9. s3 = gamma + e*rho
-        let s3 = &gamma + &e * &rho;
+        let s3 = &gamma + e * &rho;
 
         PdlSlackProof {
             z,
@@ -358,60 +307,47 @@ where
     /// # Errors
     /// Returns `PdlSlackError::Verify` if the proof does not verify.
     pub fn verify(&self, statement: &PdlSlackStatement<C>) -> Result<(), PdlSlackError> {
-        let q = group_order_integer::<C>();
-        let q3 = &q * &q * &q;
+        let q = C::order();
 
         // Recompute challenge
         let e = compute_challenge(statement, &self.z, &self.u1, &self.u2, &self.u3);
 
         // --- EC check: s1*G == u1 + e*Q ---
-        let s1_scalar = integer_to_scalar::<C>(&self.s1);
+        let s1_scalar = C::scalar_from_integer(&self.s1);
         let g_s1 = statement.G * s1_scalar;
 
         // e_neg = q - e (mod q), for subtraction on the curve
-        let e_neg_int = &q - (&e % &q);
-        let e_neg_scalar = integer_to_scalar::<C>(&e_neg_int);
+        let e_neg_int = &q - (&e % &q).complete();
+        let e_neg_scalar = C::scalar_from_integer(&e_neg_int);
         let q_times_neg_e = statement.Q * e_neg_scalar;
         let u1_test = g_s1 + q_times_neg_e;
 
         // --- Paillier check: Enc(N, s1; s2) == u2 * C^e mod N^2 ---
         let g_paillier = &statement.ek_n + Integer::one();
-        let u2_test_tmp = commitment_unknown_order(
-            &g_paillier,
-            &self.s2,
-            &statement.ek_nn,
-            &self.s1,
-            &statement.ek_n,
-        );
+        let u2_test_tmp = statement
+            .ek_nn
+            .combine(&g_paillier, &self.s1, &self.s2, &statement.ek_n)
+            .expect("bases are invertible modulo n");
         let neg_e = -e.clone();
-        let u2_test = commitment_unknown_order(
-            &u2_test_tmp,
-            &statement.ciphertext,
-            &statement.ek_nn,
-            &Integer::one(),
-            &neg_e,
-        );
+        let u2_test = statement
+            .ek_nn
+            .combine(&u2_test_tmp, &Integer::one(), &statement.ciphertext, &neg_e)
+            .expect("bases are invertible modulo n");
 
         // --- Ring-Pedersen check: h1^s1 * h2^s3 == u3 * z^e mod N' ---
-        let u3_test_tmp = commitment_unknown_order(
-            &statement.h1,
-            &statement.h2,
-            &statement.N_tilde,
-            &self.s1,
-            &self.s3,
-        );
-        let u3_test = commitment_unknown_order(
-            &u3_test_tmp,
-            &self.z,
-            &statement.N_tilde,
-            &Integer::one(),
-            &neg_e,
-        );
+        let u3_test_tmp = statement
+            .N_tilde
+            .combine(&statement.h1, &self.s1, &statement.h2, &self.s3)
+            .expect("bases are invertible modulo n");
+        let u3_test = statement
+            .N_tilde
+            .combine(&u3_test_tmp, &Integer::one(), &self.z, &neg_e)
+            .expect("bases are invertible modulo n");
 
         // --- Range check: |s1| < q^3 ---
         // s1 should be positive (alpha >= 0, e >= 0, x >= 0 in typical usage)
         // but we check absolute value just in case.
-        let s1_in_range = self.s1 < q3;
+        let s1_in_range = self.s1 < q.pow(3);
 
         if self.u1.to_bytes().as_ref() == u1_test.to_bytes().as_ref()
             && self.u2 == u2_test
@@ -427,16 +363,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use fast_paillier::DecryptionKey;
-
     use super::*;
+    use crate::scheme::DecryptionKey;
 
     type TestCurve = k256::Secp256k1;
     type Point = <TestCurve as CurveArithmetic>::ProjectivePoint;
 
     fn setup_paillier(
         rng: &mut impl rand_core::CryptoRngCore,
-    ) -> (DecryptionKey, fast_paillier::EncryptionKey) {
+    ) -> (DecryptionKey, crate::scheme::EncryptionKey) {
         // Use small primes for fast tests.
         let p = Integer::generate_safe_prime(rng, 256);
         let q = Integer::generate_safe_prime(rng, 256);
@@ -446,21 +381,8 @@ mod tests {
     }
 
     fn setup_ntilde(rng: &mut impl rand_core::CryptoRngCore) -> (Integer, Integer, Integer) {
-        // Generate Ring-Pedersen parameters (N_tilde, h1, h2)
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
-
-        // h2 = random QR mod N_tilde
-        let r = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let h2 = (&r * &r).modulo(&n_tilde);
-
-        // h1 = h2^lambda mod N_tilde for a random lambda
-        let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-        let lambda = sample_below(&phi_n, rng);
-        let h1 = h2.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
-
-        (n_tilde, h1, h2)
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        (params.n, params.t, params.s)
     }
 
     #[test]
@@ -470,12 +392,12 @@ mod tests {
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
         // Sample a secret x (as an Integer, must fit in the Paillier plaintext range)
-        let q = group_order_integer::<TestCurve>();
+        let q = TestCurve::order();
         // x should be a small value relative to N, let's pick something in [1, q)
-        let x = sample_range_one_to(&q, &mut rng);
+        let x = q.sample_positive_below(&mut rng);
 
         // Q = x * G
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let Q = G * x_scalar;
 
@@ -508,10 +430,10 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
-        let x = sample_range_one_to(&q, &mut rng);
+        let q = TestCurve::order();
+        let x = q.sample_positive_below(&mut rng);
 
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let Q = G * x_scalar;
 
@@ -529,7 +451,7 @@ mod tests {
         };
 
         // Use a *wrong* x in the witness
-        let wrong_x = sample_range_one_to(&q, &mut rng);
+        let wrong_x = q.sample_positive_below(&mut rng);
         let witness = PdlSlackWitness { x: wrong_x, r };
 
         let proof = PdlSlackProof::prove(&witness, &statement, &mut rng);
@@ -546,17 +468,17 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
-        let x = sample_range_one_to(&q, &mut rng);
+        let q = TestCurve::order();
+        let x = q.sample_positive_below(&mut rng);
 
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let _Q = G * x_scalar; // correct Q, unused — we test with wrong_Q below
 
         let (ciphertext, r) = ek.encrypt_with_random(&mut rng, &x).expect("encrypt");
 
         // Use a *wrong* Q (random point, not matching x)
-        let wrong_scalar = integer_to_scalar::<TestCurve>(&sample_range_one_to(&q, &mut rng));
+        let wrong_scalar = TestCurve::scalar_from_integer(&q.sample_positive_below(&mut rng));
         let wrong_Q = G * wrong_scalar;
 
         let statement = PdlSlackStatement::<TestCurve> {
@@ -586,10 +508,10 @@ mod tests {
         let (_dk, ek) = setup_paillier(&mut rng);
         let (n_tilde, h1, h2) = setup_ntilde(&mut rng);
 
-        let q = group_order_integer::<TestCurve>();
-        let x = sample_range_one_to(&q, &mut rng);
+        let q = TestCurve::order();
+        let x = q.sample_positive_below(&mut rng);
 
-        let x_scalar = integer_to_scalar::<TestCurve>(&x);
+        let x_scalar = TestCurve::scalar_from_integer(&x);
         let G = Point::GENERATOR;
         let Q = G * x_scalar;
 

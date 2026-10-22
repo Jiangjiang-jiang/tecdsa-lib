@@ -17,9 +17,9 @@
 //! order bit-length.
 
 use rand_core::CryptoRngCore;
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
-use tecdsa_bigint::{mul_mod, multi_exp, pow_mod, random_below};
+use tecdsa_bigint::BigIntExt;
 use zeroize::Zeroize;
 
 use crate::{
@@ -197,38 +197,49 @@ pub fn mta_sender_step_with_sec(
     // Sample alpha' <- [0, q^2 * 2^{2s+t})
     let q_sq = Integer::from(q * q);
     let alpha_prime_bound = q_sq << (2 * s + t);
-    let alpha_prime = random_below(&alpha_prime_bound, rng);
+    let alpha_prime = alpha_prime_bound.sample_below_ref(rng);
 
     // Shift factor: 2^{s+t} * q
     let shift = Integer::from(q << (s + t));
 
     // C_shifted = C_b * y^{shift} mod N
     // This adds shift to the plaintext: Dec(C_shifted) = b + shift
-    let y_shift = pow_mod(&pk_receiver.y, &shift, &pk_receiver.n);
-    let c_shifted = mul_mod(&receiver_msg.ct.c, &y_shift, &pk_receiver.n);
+    let y_shift = pk_receiver
+        .y
+        .pow_mod_ref(&shift, &pk_receiver.n)
+        .expect("exponent is non-negative")
+        .complete();
+    let c_shifted = (y_shift * &receiver_msg.ct.c).modulo(&pk_receiver.n);
 
     // C_1 = C_shifted^a * y^{alpha'} * h^r mod N
     // Dec(C_1) = a*(b + shift) + alpha' mod 2^k
-    let c_shifted_a = pow_mod(&c_shifted, a, &pk_receiver.n);
-    let y_alpha = pow_mod(&pk_receiver.y, &alpha_prime, &pk_receiver.n);
-    let r = random_below(&pk_receiver.n, rng);
-    let h_r = pow_mod(&pk_receiver.h, &r, &pk_receiver.n);
-    let c_1 = mul_mod(
-        &mul_mod(&c_shifted_a, &y_alpha, &pk_receiver.n),
-        &h_r,
-        &pk_receiver.n,
-    );
+    let c_shifted_a = c_shifted
+        .pow_mod_ref(a, &pk_receiver.n)
+        .expect("exponent is non-negative")
+        .complete();
+    let y_alpha = pk_receiver
+        .y
+        .pow_mod_ref(&alpha_prime, &pk_receiver.n)
+        .expect("exponent is non-negative")
+        .complete();
+    let r = pk_receiver.n.sample_below_ref(rng);
+    let h_r = pk_receiver
+        .h
+        .pow_mod_ref(&r, &pk_receiver.n)
+        .expect("exponent is non-negative")
+        .complete();
+    let c_1 = ((c_shifted_a * y_alpha).modulo(&pk_receiver.n) * h_r).modulo(&pk_receiver.n);
 
     let msg = MtaSenderMsg1 {
         ct: JlCiphertext { c: c_1 },
     };
 
     // Sender's share: alpha = -alpha' mod q
-    let alpha_mod_q = Integer::from(&alpha_prime % q);
+    let alpha_mod_q = alpha_prime % q;
     let alpha = if alpha_mod_q == 0 {
         Integer::new()
     } else {
-        Integer::from(q - &alpha_mod_q)
+        q - alpha_mod_q
     };
 
     (msg, MtaSenderOutput { alpha })
@@ -244,7 +255,7 @@ pub fn mta_receiver_step2(
     q: &Integer,
 ) -> MtaReceiverOutput {
     let plaintext = decrypt(sk, pk, &sender_msg.ct);
-    let beta = Integer::from(&plaintext % q);
+    let beta = plaintext % q;
     MtaReceiverOutput { beta }
 }
 
@@ -436,22 +447,26 @@ impl MtA for JlMtA {
         // Sample alpha' <- [0, q^2 * 2^{2s+t})
         let q_sq = Integer::from(&q * &q);
         let alpha_prime_bound = q_sq << (2 * setup.s + setup.t);
-        let alpha_prime = random_below(&alpha_prime_bound, rng);
+        let alpha_prime = alpha_prime_bound.sample_below_ref(rng);
 
         // Shift factor: 2^{s+t} * q
         let shift = Integer::from(&q << (setup.s + setup.t));
 
         // C_shifted = C_b * y^{shift} mod N
-        let y_shift = pow_mod(&setup.pk.y, &shift, &setup.pk.n);
-        let c_shifted = mul_mod(&sender_msg.ciphertext.c, &y_shift, &setup.pk.n);
+        let y_shift = setup
+            .pk
+            .y
+            .pow_mod_ref(&shift, &setup.pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let c_shifted = (y_shift * &sender_msg.ciphertext.c).modulo(&setup.pk.n);
 
         // C_1 = C_shifted^a * y^{alpha'} * h^{r_aff} mod N, via one shared-
         // squaring multi-exponentiation instead of three modexps + two muls.
-        let r_aff = random_below(&setup.pk.n, rng);
-        let c_1 = multi_exp(
+        let r_aff = setup.pk.n.sample_below_ref(rng);
+        let c_1 = setup.pk.n.multi_exp(
             &[&c_shifted, &setup.pk.y, &setup.pk.h],
             &[&a, &alpha_prime, &r_aff],
-            &setup.pk.n,
         );
 
         // Sender's share: alpha = -alpha' mod q
@@ -459,7 +474,7 @@ impl MtA for JlMtA {
         let alpha = if alpha_mod_q == 0 {
             Integer::new()
         } else {
-            Integer::from(&q - &alpha_mod_q)
+            &q - alpha_mod_q
         };
 
         // ------------------------------------------------------------------
@@ -520,8 +535,13 @@ impl MtA for JlMtA {
         //   c_shifted = ct.c * y^{2^{s+t} * q} mod N
         let ct = crate::enc_dec::encrypt_with_randomness(&setup.pk, &state.plaintext, &state.nonce);
         let shift = Integer::from(&q << (setup.s + setup.t));
-        let y_shift = pow_mod(&setup.pk.y, &shift, &setup.pk.n);
-        let c_shifted = mul_mod(&ct.c, &y_shift, &setup.pk.n);
+        let y_shift = setup
+            .pk
+            .y
+            .pow_mod_ref(&shift, &setup.pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let c_shifted = (y_shift * &ct.c).modulo(&setup.pk.n);
 
         // Verify the ZkJlAffProof
         if !receiver_msg
@@ -532,7 +552,7 @@ impl MtA for JlMtA {
         }
 
         let plaintext = decrypt(&setup.sk, &setup.pk, &receiver_msg.ciphertext);
-        let beta = Integer::from(&plaintext % &q);
+        let beta = plaintext % q;
 
         Ok(beta.to_digits::<u8>(Order::Msf))
     }
@@ -540,6 +560,8 @@ impl MtA for JlMtA {
 
 #[cfg(test)]
 mod tests {
+    use tecdsa_bigint::BigIntExt;
+
     use super::*;
     use crate::kgen::generate_keypair_with_params;
 
@@ -553,12 +575,12 @@ mod tests {
         let k = 128u32; // Must be >= min_k_for_mta(q_bits) = 98
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
 
         // Small shares
         let a = Integer::from(10u32);
         let b = Integer::from(11u32);
-        let ab_mod_q = mul_mod(&a, &b, &q);
+        let ab_mod_q = Integer::from(&a * &b).modulo(&q);
 
         let sender = JlMtaSender::new(a);
         let receiver = JlMtaReceiver::new(b);
@@ -585,11 +607,11 @@ mod tests {
         let k = 160u32;
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
 
-        let a = random_below(&q, &mut rng);
-        let b = random_below(&q, &mut rng);
-        let ab_mod_q = mul_mod(&a, &b, &q);
+        let a = q.sample_below_ref(&mut rng);
+        let b = q.sample_below_ref(&mut rng);
+        let ab_mod_q = Integer::from(&a * &b).modulo(&q);
 
         let sender = JlMtaSender::new(a);
         let receiver = JlMtaReceiver::new(b);
@@ -598,7 +620,7 @@ mod tests {
         let (send_msg, sender_out) = mta_sender_step(&sender, &pk, &recv_msg, &q, &mut rng);
         let receiver_out = mta_receiver_step2(&sk, &pk, &send_msg, &q);
 
-        let sum = Integer::from(&sender_out.alpha + &receiver_out.beta) % &q;
+        let sum = (sender_out.alpha + receiver_out.beta) % &q;
         assert_eq!(sum, ab_mod_q);
     }
 
@@ -617,7 +639,7 @@ mod tests {
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
         let (pk0, _sk0) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let setup = JlMtaSetup {
@@ -653,8 +675,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
-        let expected = mul_mod(&a, &b, &q);
+        let sum = (alpha + beta) % &q;
+        let expected = Integer::from(&a * &b).modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -669,7 +691,7 @@ mod tests {
         let (pk, sk) = generate_keypair_with_params(256, k, &mut rng);
         let (pk0, _sk0) = generate_keypair_with_params(256, k, &mut rng);
 
-        let q = Integer::from(1) << q_bits;
+        let q = Integer::two_pow(q_bits);
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let setup = JlMtaSetup {
@@ -704,8 +726,8 @@ mod tests {
 
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-            let sum = Integer::from(&alpha + &beta) % &q;
-            let expected = mul_mod(&a, &b, &q);
+            let sum = (alpha + beta) % &q;
+            let expected = Integer::from(&a * &b).modulo(&q);
 
             assert_eq!(
                 sum, expected,

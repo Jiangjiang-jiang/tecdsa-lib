@@ -2,11 +2,9 @@
 #![allow(non_snake_case)]
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytesSize};
+use rug::Integer;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{
-    backend::Integer,
-    threshold::{DecryptionShare, ThresholdSetup},
-};
+use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
 use zeroize::Zeroize;
 
 /// A single party's key share produced by GGN16 key generation.

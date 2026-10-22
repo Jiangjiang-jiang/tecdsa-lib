@@ -35,12 +35,11 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
-use tecdsa_curve::TecdsaCurve;
+use rug::Integer;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
-    conv::{integer_to_scalar, scalar_to_integer},
     zk::mta_range::{AliceProof, BobProofExt, NTildeParams},
-    DecryptionKey, EncryptionKey,
+    BigIntExt, DecryptionKey, EncryptionKey,
 };
 use tecdsa_protocol::PartyId;
 
@@ -166,7 +165,7 @@ where
         );
 
         // Encrypt a_i under our own key
-        let a_i_int = scalar_to_integer::<C>(&a_i);
+        let a_i_int = a_i.to_integer();
         let my_ek = &eks[&my_id];
         let (c_a, r_a) = my_ek
             .encrypt_with_random(rng, &a_i_int)
@@ -263,10 +262,10 @@ where
                 })?;
 
             let c_a_j = &msg.c_a;
-            let b_i_int = scalar_to_integer::<C>(&self.b_i);
+            let b_i_int = self.b_i.to_integer();
 
             // Sample beta_prime uniformly from [0, N/2)
-            let beta_prime = alice_ek.half_n().random_below_ref(rng);
+            let beta_prime = alice_ek.half_n().sample_below_ref(rng);
 
             // Compute c_b = b_i * c_a_j + Enc(beta_prime)
             // This encrypts (a_j * b_i + beta_prime) under Alice's key.
@@ -305,11 +304,11 @@ where
             );
 
             // B = b_i * G (the claimed public point for BobProofExt verification)
-            let b_scalar = integer_to_scalar::<C>(&b_i_int);
+            let b_scalar = C::scalar_from_integer(&b_i_int);
             let b_point = C::generator() * b_scalar;
 
             // Bob's share: beta = -beta_prime (mod q)
-            let neg_beta = -integer_to_scalar::<C>(&beta_prime);
+            let neg_beta = -C::scalar_from_integer(&beta_prime);
             self.beta_shares.insert(msg.from, neg_beta);
 
             round2_msgs.push((
@@ -382,7 +381,7 @@ where
                 .dk
                 .decrypt(&msg.c_b)
                 .map_err(|e| format!("decrypt failed for party {}: {}", msg.from, e))?;
-            let alpha = signed_integer_to_scalar::<C>(&alpha_int);
+            let alpha = C::scalar_from_integer(&alpha_int);
             alpha_sum += alpha;
         }
 
@@ -416,24 +415,6 @@ where
     }
 }
 
-/// Convert a Paillier `Integer` (which may be negative, in the range
-/// `{-N/2, ..., N/2}`) to an EC scalar mod q.
-fn signed_integer_to_scalar<C: TecdsaCurve>(
-    i: &Integer,
-) -> <C as elliptic_curve::CurveArithmetic>::Scalar
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    if i.cmp0().is_lt() {
-        let abs_val = -i.clone();
-        let pos_scalar = integer_to_scalar::<C>(&abs_val);
-        -pos_scalar
-    } else {
-        integer_to_scalar::<C>(i)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -462,15 +443,8 @@ mod tests {
     /// Generate Ring-Pedersen auxiliary parameters $(N', h_1, h_2)$ for testing.
     #[cfg(feature = "secp256k1")]
     fn test_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
-        let p = Integer::generate_safe_prime(rng, 256);
-        let q = Integer::generate_safe_prime(rng, 256);
-        let n_tilde = &p * &q;
-
-        let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-        let phi_n = (&p - Integer::one()) * (&q - Integer::one());
-        let lambda = phi_n.random_below_ref(rng);
-        let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod defined");
-
+        let (params, _) = tecdsa_pedersen_mod::PedersenModParams::generate(256, rng);
+        let (n_tilde, h1, h2) = (params.n, params.t, params.s);
         NTildeParams {
             N_tilde: n_tilde,
             h1,

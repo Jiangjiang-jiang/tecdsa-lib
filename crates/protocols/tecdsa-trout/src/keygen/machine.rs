@@ -20,9 +20,9 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::PrimeField;
 use rand::RngCore;
-use tecdsa_class_group::cl::ClSetup;
+use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_evrf::{EvrfPublicKey, EvrfSecretKey};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
@@ -30,8 +30,8 @@ use zeroize::Zeroize;
 use super::{
     msg::TroutKeygenMsg,
     rounds::{
-        compute_commitment, proj_from_bytes, proj_to_bytes, scalar_to_bytes, R1LocalState,
-        R2BcastPayload, R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof, SerQfi,
+        compute_commitment, proj_from_bytes, proj_to_bytes, R1LocalState, R2BcastPayload,
+        R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof, SerQfi,
     },
 };
 use crate::{error::qfi_to_abc, key_share::TroutKeyShare};
@@ -64,7 +64,7 @@ pub struct TroutKeygenMachine {
 
     // Intermediate values computed during R2->R3 transition, consumed during finalize.
     stash_combined_share: Option<k256::Scalar>,
-    stash_delta_i: Option<Vec<u8>>,
+    stash_delta_i: Option<rug::Integer>,
     stash_public_key: Option<k256::ProjectivePoint>,
     stash_public_shares: Option<Vec<k256::ProjectivePoint>>,
     stash_cl_pk_abc: Option<(String, String, String)>,
@@ -84,7 +84,8 @@ impl Drop for TroutKeygenMachine {
             s.zeroize();
         }
         if let Some(ref mut s) = self.stash_delta_i {
-            s.zeroize();
+            // `rug::Integer` doesn't implement `Zeroize`; best-effort clear.
+            *s = rug::Integer::new();
         }
         for share in self.r2_shares.values_mut() {
             share.zeroize();
@@ -248,10 +249,12 @@ impl TroutKeygenMachine {
         cl_setup_seed: &str,
         use_128bit: bool,
     ) -> tecdsa_core::Result<Self> {
+        let seed = parse_int_auto(cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if use_128bit {
-            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+            ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            ClSetup::new_secp256k1(cl_setup_seed)
+            ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 
@@ -350,7 +353,7 @@ impl TroutKeygenMachine {
                 .iter()
                 .find(|s| s.index == j_1based)
                 .expect("share for party j must exist");
-            let share_bytes = scalar_to_bytes(&share_for_j.value);
+            let share_bytes = share_for_j.value.to_bytes_vec();
             self.outgoing.push(Outgoing {
                 to: Recipient::Party(party),
                 msg: TroutKeygenMsg::Round2Share(share_bytes),

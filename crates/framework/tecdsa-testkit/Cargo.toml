@@ -26,11 +26,13 @@ rand = { workspace = true }
 rand_core = { workspace = true }
 tecdsa-curve = { workspace = true }
 tecdsa-paillier = { workspace = true }
+tecdsa-bigint = { workspace = true }
+rug = { workspace = true }
 tecdsa-class-group = { workspace = true }
 tecdsa-vss = { workspace = true }
 tecdsa-evrf = { workspace = true }
 
-# All 16 protocol crates
+# All 17 protocol crates
 tecdsa-cggmp20 = { workspace = true }
 tecdsa-dkls23 = { workspace = true }
 tecdsa-gg18 = { workspace = true }
@@ -47,6 +49,7 @@ tecdsa-lin17 = { workspace = true }
 tecdsa-kgg24 = { workspace = true }
 tecdsa-xal21 = { workspace = true }
 tecdsa-abc24 = { workspace = true }
+tecdsa-ku24 = { workspace = true }
 
 [lints]
 workspace = true

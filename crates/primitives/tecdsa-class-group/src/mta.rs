@@ -28,7 +28,7 @@ use k256::Secp256k1;
 use rand_core::CryptoRngCore;
 use rug::{integer::Order, Integer};
 use subtle::ConstantTimeEq;
-use tecdsa_curve::conv;
+use tecdsa_curve::TecdsaCurve;
 use tecdsa_protocol::{MtA, MtAWithCheck};
 
 use crate::cl::{
@@ -74,8 +74,8 @@ impl Clone for ClMtaSetup {
 ///
 /// Stores the original plaintext `b` for potential verification.
 pub struct ClSenderState {
-    /// The sender's input value `b` as big-endian bytes.
-    pub b_bytes: Vec<u8>,
+    /// The sender's input value `b`.
+    pub b: Integer,
 }
 
 /// Message from sender (P2) to receiver (P1): encrypted `b`.
@@ -121,12 +121,11 @@ impl MtA for ClMtA {
         _rng: &mut impl CryptoRngCore,
     ) -> Result<(Self::SenderMsg, Self::SenderState), Self::Error> {
         let mut cl_setup = setup.setup.borrow_mut();
-        let ciphertext = cl_setup.encrypt_bytes(&setup.pk, b_bytes)?;
+        let b = Integer::from_digits(b_bytes, Order::Msf);
+        let ciphertext = cl_setup.encrypt(&setup.pk, &b)?;
 
         let msg = ClSenderMsg { ciphertext };
-        let state = ClSenderState {
-            b_bytes: b_bytes.to_vec(),
-        };
+        let state = ClSenderState { b };
 
         Ok((msg, state))
     }
@@ -147,33 +146,31 @@ impl MtA for ClMtA {
         _rng: &mut impl CryptoRngCore,
     ) -> Result<(Self::ReceiverMsg, Vec<u8>), Self::Error> {
         let q = Integer::from_digits(q_bytes, Order::Msf);
+        let a = Integer::from_digits(a_bytes, Order::Msf);
 
         let mut cl_setup = setup.setup.borrow_mut();
 
         // 1. Homomorphic scalar multiplication: c_scaled = a * c_B = Enc(a * b)
-        let c_scaled =
-            cl_setup.scal_ciphertext_bytes(&setup.pk, &sender_msg.ciphertext, a_bytes)?;
+        let c_scaled = cl_setup.scal_ciphertext(&setup.pk, &sender_msg.ciphertext, &a)?;
 
         // 2. Sample alpha' from [0, q) for masking
         // Use the CL setup's own keygen to generate randomness, then reduce
         let (sk_tmp, _pk_tmp) = cl_setup.keygen()?;
-        let r_bytes = cl_setup.sk_to_bytes(&sk_tmp)?;
-        let r_big = Integer::from_digits(&r_bytes, Order::Msf);
+        let r_big = cl_setup.sk_to_integer(&sk_tmp);
         let alpha_prime = r_big % &q;
-        let alpha_prime_bytes = alpha_prime.to_digits::<u8>(Order::Msf);
 
         // 3. Encrypt alpha': c_alpha = Enc(pk, alpha')
-        let c_alpha = cl_setup.encrypt_bytes(&setup.pk, &alpha_prime_bytes)?;
+        let c_alpha = cl_setup.encrypt(&setup.pk, &alpha_prime)?;
 
         // 4. Homomorphic addition: c_A = c_scaled + c_alpha = Enc(a*b + alpha')
         let c_a = cl_setup.add_ciphertexts(&setup.pk, &c_scaled, &c_alpha)?;
 
         // 5. Compute receiver's output: alpha = -alpha' mod q = q - (alpha' mod q)
-        let alpha_mod_q = Integer::from(&alpha_prime % &q);
+        let alpha_mod_q = alpha_prime % &q;
         let alpha = if alpha_mod_q == 0 {
             Integer::new()
         } else {
-            Integer::from(&q - &alpha_mod_q)
+            q - alpha_mod_q
         };
         let alpha_bytes = alpha.to_digits::<u8>(Order::Msf);
 
@@ -196,8 +193,7 @@ impl MtA for ClMtA {
         let cl_setup = setup.setup.borrow();
 
         // Decrypt the affine ciphertext
-        let plaintext_bytes = cl_setup.decrypt_bytes(&setup.sk, &receiver_msg.ciphertext)?;
-        let plaintext = Integer::from_digits(&plaintext_bytes, Order::Msf);
+        let plaintext = cl_setup.decrypt(&setup.sk, &receiver_msg.ciphertext)?;
 
         // Reduce mod q
         let beta = plaintext % &q;
@@ -265,7 +261,7 @@ impl MtAWithCheck for ClMtA {
         // Compute g^alpha as an EC point for the consistency check.
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let q = Integer::from_digits(q_bytes, Order::Msf);
-        let alpha_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&alpha % &q));
+        let alpha_scalar = Secp256k1::scalar_from_integer(&(alpha % q));
 
         let g_alpha = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * alpha_scalar;
         let g_alpha_bytes = g_alpha.to_bytes().to_vec();
@@ -312,12 +308,11 @@ impl MtAWithCheck for ClMtA {
 
         // Compute g^beta from beta_bytes.
         let beta = Integer::from_digits(beta_bytes, Order::Msf);
-        let beta_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&beta % &q));
+        let beta_scalar = Secp256k1::scalar_from_integer(&(beta % &q));
         let g_beta = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * beta_scalar;
 
         // Compute b as scalar.
-        let b = Integer::from_digits(&state.b_bytes, Order::Msf);
-        let b_scalar = conv::integer_to_scalar::<Secp256k1>(&Integer::from(&b % &q));
+        let b_scalar = Secp256k1::scalar_from_integer(&(state.b.clone() % q));
 
         // Check: g^alpha * g^beta == (g^a)^b
         let lhs = g_alpha + g_beta;
@@ -333,12 +328,11 @@ impl MtAWithCheck for ClMtA {
 
 #[cfg(test)]
 mod tests {
-    use tecdsa_bigint::mul_mod;
 
     use super::*;
 
     /// Helper: create a ClMtaSetup for testing with secp256k1 parameters.
-    fn test_setup(seed: &str) -> ClMtaSetup {
+    fn test_setup(seed: u64) -> ClMtaSetup {
         let mut cl_setup = ClSetup::new_secp256k1(seed).expect("CL setup should succeed");
         let (sk, pk) = cl_setup.keygen().expect("keygen should succeed");
 
@@ -349,20 +343,11 @@ mod tests {
         }
     }
 
-    /// Helper: secp256k1 curve order as an integer.
-    fn curve_order() -> Integer {
-        Integer::from_str_radix(
-            "115792089237316195423570985008687907852837564279074904382605163141518161494337",
-            10,
-        )
-        .expect("valid order")
-    }
-
     #[test]
     fn cl_mta_correctness() {
-        let setup = test_setup("2001");
+        let setup = test_setup(2001);
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Sender's input b
@@ -392,8 +377,8 @@ mod tests {
         // Verify: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
-        let expected = mul_mod(&a, &b, &q);
+        let sum = (alpha + beta) % &q;
+        let expected = Integer::from(&a * &b).modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
@@ -401,9 +386,9 @@ mod tests {
     #[test]
     #[ignore = "redundant MtA variant"]
     fn cl_mta_multiple_runs() {
-        let setup = test_setup("2002");
+        let setup = test_setup(2002);
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();
@@ -432,8 +417,8 @@ mod tests {
 
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-            let sum = Integer::from(&alpha + &beta) % &q;
-            let expected = mul_mod(&a, &b, &q);
+            let sum = (alpha + beta) % &q;
+            let expected = Integer::from(&a * &b).modulo(&q);
 
             assert_eq!(
                 sum, expected,
@@ -445,9 +430,9 @@ mod tests {
     #[test]
     #[ignore = "redundant MtA variant"]
     fn cl_mta_with_larger_values() {
-        let setup = test_setup("2003");
+        let setup = test_setup(2003);
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Use values that are close to (but less than) q
@@ -474,17 +459,17 @@ mod tests {
 
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
-        let expected = mul_mod(&a, &b, &q);
+        let sum = (alpha + beta) % &q;
+        let expected = Integer::from(&a * &b).modulo(&q);
 
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
 
     #[test]
     fn cl_mta_with_check_correctness() {
-        let setup = test_setup("3001");
+        let setup = test_setup(3001);
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         // Sender's input b
@@ -540,17 +525,17 @@ mod tests {
         // Also verify MtA correctness: alpha + beta = a * b mod q
         let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
         let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-        let sum = Integer::from(&alpha + &beta) % &q;
-        let expected = mul_mod(&a, &b, &q);
+        let sum = (alpha + beta) % &q;
+        let expected = Integer::from(&a * &b).modulo(&q);
         assert_eq!(sum, expected, "alpha + beta must equal a * b mod q");
     }
 
     #[test]
     #[ignore = "redundant MtA variant"]
     fn cl_mta_with_check_multiple_runs() {
-        let setup = test_setup("3002");
+        let setup = test_setup(3002);
 
-        let q = curve_order();
+        let q = Secp256k1::order();
         let q_bytes = q.to_digits::<u8>(Order::Msf);
 
         let mut rng = rand::thread_rng();
@@ -604,8 +589,8 @@ mod tests {
             // Correctness check.
             let alpha = Integer::from_digits(&alpha_bytes, Order::Msf);
             let beta = Integer::from_digits(&beta_bytes, Order::Msf);
-            let sum = Integer::from(&alpha + &beta) % &q;
-            let expected = mul_mod(&a, &b, &q);
+            let sum = (alpha + beta) % &q;
+            let expected = Integer::from(&a * &b).modulo(&q);
             assert_eq!(sum, expected, "MtA correctness for a={a_val}, b={b_val}");
         }
     }

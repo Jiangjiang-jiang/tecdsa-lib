@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Class-group encryption and proofs for the `tecdsa` threshold ECDSA library.
 //!
-//! This crate wraps [`bicycl_glue`] to provide:
+//! Implements CL-HSM (Castagnos-Laguillaumie homomorphic scheme with message
+//! space `Z/q^k`) directly over [`rug::Integer`], plus the zero-knowledge
+//! proofs and higher-level protocols (DKG, PVSS, NIM, threshold decryption)
+//! built on top of it:
 //!
-//! - **CL-HSM encryption** ([`cl_enc`]): key generation, encryption, decryption,
+//! - **CL-HSM encryption** ([`cl`]): key generation, encryption, decryption,
 //!   and homomorphic operations over class-group ciphertexts.
 //! - **NIM** ([`nim`]): Non-Interactive Multiplication protocol allowing two
 //!   parties to compute additive shares of a product `x * y mod q`.

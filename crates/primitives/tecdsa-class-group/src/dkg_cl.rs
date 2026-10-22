@@ -28,12 +28,12 @@
 //! - **RevealVf**: verify Reveal messages and compute aggregate public
 //!   key.
 
-use rug::{Complete, Integer};
+use rug::{ops::Pow, Complete, Integer};
 
 use crate::{
     cl::{
-        Ciphertext as ClHsmqkCiphertext, ClError, ClResult, ClSetup, Mpz,
-        PublicKey as ClHsmqkPublicKey, Qfi,
+        Ciphertext as ClHsmqkCiphertext, ClError, ClResult, ClSetup, PublicKey as ClHsmqkPublicKey,
+        Qfi,
     },
     zk::{r_blnt::RBlntProof, r_gdec_cl::RGdecClProof, sample_random},
 };
@@ -43,42 +43,42 @@ use crate::{
 /// Decomposes `value` into base-`q` digits: `value = sum q^l * chunks[l]`.
 ///
 /// Each chunk is in `[0, q)`. The returned vector has at least one element.
-fn decompose_q_ary(value: &Mpz, q: &Mpz) -> Vec<Mpz> {
+fn decompose_q_ary(value: &Integer, q: &Integer) -> Vec<Integer> {
     let mut chunks = Vec::new();
-    let mut remaining = value.inner().clone();
+    let mut remaining = value.clone();
     while remaining > Integer::ZERO {
         let chunk;
-        (remaining, chunk) = remaining.div_rem_ref(q.inner()).complete();
-        chunks.push(Mpz::from_inner(chunk));
+        (remaining, chunk) = remaining.div_rem_ref(q).complete();
+        chunks.push(chunk);
     }
     if chunks.is_empty() {
-        chunks.push(Mpz::from(0));
+        chunks.push(Integer::from(0));
     }
     chunks
 }
 
 /// Recomposes a value from base-`q` digits: `result = sum q^l * chunks[l]`.
 #[cfg(test)]
-fn recompose_q_ary(chunks: &[Mpz], q: &Mpz) -> Mpz {
-    let mut result = Mpz::from(0);
-    let mut q_pow = Mpz::from(1);
+fn recompose_q_ary(chunks: &[Integer], q: &Integer) -> Integer {
+    let mut result = Integer::from(0);
+    let mut q_pow = Integer::from(1);
     for chunk in chunks {
-        result = result + &q_pow * chunk;
-        q_pow = q_pow * q;
+        result += &q_pow * chunk;
+        q_pow *= q;
     }
     result
 }
 
 /// Number of base-`q` digits needed to represent values up to `bound`
 /// (inclusive): `ceil(log_q(bound + 1))`, but at least 1.
-fn num_chunks_for_bound(bound: &Mpz, q: &Mpz) -> usize {
+fn num_chunks_for_bound(bound: &Integer, q: &Integer) -> usize {
     if bound.is_zero() {
         return 1;
     }
     let mut count = 0usize;
-    let mut remaining = bound.inner().clone();
+    let mut remaining = bound.clone();
     while remaining > Integer::ZERO {
-        remaining /= q.inner();
+        remaining /= q;
         count += 1;
     }
     count.max(1)
@@ -87,10 +87,10 @@ fn num_chunks_for_bound(bound: &Mpz, q: &Mpz) -> usize {
 // ---- delta-scaled integer Shamir sharing -----------------------------------
 
 /// Computes `Delta = n!`.
-fn factorial(n: usize) -> Mpz {
-    let mut delta = Mpz::from(1);
+fn factorial(n: usize) -> Integer {
+    let mut delta = Integer::from(1);
     for i in 2..=n {
-        delta = delta * Mpz::from(i as u64);
+        delta *= Integer::from(i as u64);
     }
     delta
 }
@@ -108,61 +108,55 @@ fn factorial(n: usize) -> Mpz {
 /// `sk_bound` alone silently truncates the high-order chunks for larger
 /// `(n, t)` (see the `resize` in the Gen phase), corrupting the integer share
 /// and breaking delta-scaled Lagrange reconstruction.
-fn share_magnitude_bound(sk_bound: &Mpz, n: usize, t: usize) -> Mpz {
+fn share_magnitude_bound(sk_bound: &Integer, n: usize, t: usize) -> Integer {
     // poly = Delta + sum_{l=1}^{t-1} n^l, with the geometric sum in closed form
     //   sum_{l=1}^{t-1} n^l = (n^t - n) / (n - 1)   (n >= 2; the sum is 0 when
     // t <= 1). The numerator is always divisible by (n - 1) since
     // n ≡ 1 (mod n - 1), so `divexact` is exact.
     let mut poly = factorial(n); // Delta = n!
     if n >= 2 && t >= 2 {
-        let n_mpz = Mpz::from(n as u64);
-        let numer = &n_mpz.pow_u(t as u32) - &n_mpz; // n^t - n
-        let denom = &n_mpz - &Mpz::from(1u64); // n - 1
-        poly = &poly + &numer.divexact(&denom);
+        let n_mpz = Integer::from(n as u64);
+        let numer = n_mpz.clone().pow(t as u32) - &n_mpz; // n^t - n
+        let denom = &n_mpz - Integer::from(1u64); // n - 1
+        poly = &poly + numer.div_exact(&denom);
     }
-    &poly * sk_bound
+    poly * sk_bound
 }
 
-/// Share a secret `s` (big-endian unsigned bytes) using delta-scaled
-/// integer Shamir with polynomial degree `t - 1` (reconstruction
-/// threshold `t`).
+/// Share a secret `s` using delta-scaled integer Shamir with polynomial
+/// degree `t - 1` (reconstruction threshold `t`).
 ///
-/// Returns `n` shares as `(magnitude_bytes, is_negative)` pairs.
-/// Shares are computed over the integers (unbounded), NOT mod q.
+/// Returns `n` signed shares. Shares are computed over the integers
+/// (unbounded), NOT mod q.
 ///
 /// The polynomial is `F(X) = Delta * s + r_1 * X + ... + r_{t-1} * X^{t-1}`
 /// where `Delta = n!`.
 fn shamir_share_delta_signed(
     setup: &mut ClSetup,
-    s_bytes: &[u8],
+    s: &Integer,
     n: usize,
     t: usize,
-) -> ClResult<Vec<(Vec<u8>, bool)>> {
-    let s = Mpz::from_bytes_be(s_bytes);
+) -> ClResult<Vec<Integer>> {
     let delta = factorial(n);
-    let delta_s = &delta * &s;
+    let delta_s = delta * s;
 
     // Random coefficients for degree 1..t-1.
     let mut coeffs = vec![delta_s];
     for _ in 1..t {
-        let r = sample_random(setup)?;
-        let r_val = Mpz::from_bytes_be(&r);
-        coeffs.push(r_val);
+        coeffs.push(sample_random(setup)?);
     }
 
     // Evaluate at X = 1, 2, ..., n.
     let mut shares = Vec::with_capacity(n);
     for i in 1..=n {
-        let x = Mpz::from(i as i64);
-        let mut val = Mpz::from(0);
-        let mut x_pow = Mpz::from(1);
+        let x = Integer::from(i as i64);
+        let mut val = Integer::from(0);
+        let mut x_pow = Integer::from(1);
         for coeff in &coeffs {
-            val = val + coeff * &x_pow;
-            x_pow = x_pow * &x;
+            val += (coeff * &x_pow).complete();
+            x_pow *= &x;
         }
-        let is_negative = val.inner().is_negative();
-        let abs_bytes = val.abs().to_bytes_be();
-        shares.push((abs_bytes, is_negative));
+        shares.push(val);
     }
 
     Ok(shares)
@@ -187,15 +181,15 @@ pub struct DkgClGenOutput {
     /// Per-recipient data indexed by recipient (0-based, same order as
     /// `all_pks`).
     pub per_recipient: Vec<DkgClGenPerRecipient>,
-    /// The secret `chi_i` (big-endian unsigned bytes).
-    pub my_secret: Vec<u8>,
-    /// The Pedersen blinding factor `chi'_i` (big-endian unsigned bytes).
-    pub my_secret_prime: Vec<u8>,
-    /// Per-recipient Shamir shares `chi_{ij}` as `(magnitude_bytes, is_negative)`.
+    /// The secret `chi_i`.
+    pub my_secret: Integer,
+    /// The Pedersen blinding factor `chi'_i`.
+    pub my_secret_prime: Integer,
+    /// Per-recipient Shamir shares `chi_{ij}` (signed).
     /// Needed for Reveal aggregation by the protocol layer.
-    pub shares: Vec<(Vec<u8>, bool)>,
-    /// Per-recipient blinding shares `chi'_{ij}` as `(magnitude_bytes, is_negative)`.
-    pub shares_prime: Vec<(Vec<u8>, bool)>,
+    pub shares: Vec<Integer>,
+    /// Per-recipient blinding shares `chi'_{ij}` (signed).
+    pub shares_prime: Vec<Integer>,
 }
 
 /// Runs the DKG-CL Gen phase for one party.
@@ -223,10 +217,8 @@ pub fn dkg_cl_gen(
     assert!(my_index < n);
     assert!(threshold > 0 && threshold <= n);
 
-    let q_bytes = setup.q_bytes()?;
-    let q = Mpz::from_bytes_be(&q_bytes);
-    let sk_bound_bytes = setup.secretkey_bound_bytes()?;
-    let sk_bound = Mpz::from_bytes_be(&sk_bound_bytes);
+    let q = setup.cl().q().clone();
+    let sk_bound = setup.secretkey_bound().clone();
     // Size the q-ary chunk count for the SHARE magnitude, not the secret
     // bound: a delta-scaled Shamir share is far larger than `sk_bound`, so
     // sizing for `sk_bound` would silently truncate high-order chunks for
@@ -235,23 +227,22 @@ pub fn dkg_cl_gen(
     let num_chunks = num_chunks_for_bound(&share_bound, &q);
 
     // 1. Sample chi_i in [0, B] and chi'_i in [0, B].
-    let chi_i_bytes = sample_random(setup)?;
-    let chi_prime_i_bytes = sample_random(setup)?;
+    let chi_i = sample_random(setup)?;
+    let chi_prime_i = sample_random(setup)?;
 
     // 2. Shamir share chi_i and chi'_i over Z with delta scaling.
     //    Polynomial degree = threshold - 1, reconstruction needs threshold shares.
-    let shares_chi = shamir_share_delta_signed(setup, &chi_i_bytes, n, threshold)?;
-    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i_bytes, n, threshold)?;
+    let shares_chi = shamir_share_delta_signed(setup, &chi_i, n, threshold)?;
+    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i, n, threshold)?;
 
     // 3. For each recipient j, produce (PC, chunk_cts, agg_ct, proof).
     let mut per_recipient = Vec::with_capacity(n);
     for j in 0..n {
-        let (share_j_bytes, share_j_neg) = &shares_chi[j];
-        let (share_prime_j_bytes, _share_prime_j_neg) = &shares_chi_prime[j];
+        let share_j = &shares_chi[j];
+        let share_prime_j = &shares_chi_prime[j];
 
         // q-ary decomposition of |chi_ij|.
-        let share_j_uint = Mpz::from_bytes_be(share_j_bytes);
-        let raw_chunks = decompose_q_ary(&share_j_uint, &q);
+        let raw_chunks = decompose_q_ary(&share_j.clone().abs(), &q);
 
         // Pad to exactly num_chunks. `num_chunks` is sized (via
         // `share_magnitude_bound`) so the share always fits; never truncate.
@@ -263,43 +254,32 @@ pub fn dkg_cl_gen(
                 chi_chunks.len()
             )));
         }
-        chi_chunks.resize(num_chunks, Mpz::from(0));
-
-        let chi_chunk_bytes: Vec<Vec<u8>> = chi_chunks
-            .iter()
-            .map(|c| {
-                if c.is_zero() {
-                    vec![0u8]
-                } else {
-                    c.to_bytes_be()
-                }
-            })
-            .collect();
+        chi_chunks.resize(num_chunks, Integer::from(0));
 
         // Pedersen commitment matching R_Blnt relation:
         // PC = h^{chi'_ij} * prod_l h^{q^l * chi_{ij,l}}
-        let h_chi_prime = setup.power_of_h_bytes(share_prime_j_bytes)?;
-        let h_q_product = compute_h_q_pow_product(setup, &q, &chi_chunk_bytes)?;
+        let h_chi_prime = setup.power_of_h(share_prime_j)?;
+        let h_q_product = compute_h_q_pow_product(setup, &q, &chi_chunks)?;
         let pc = setup.compose(&h_chi_prime, &h_q_product)?;
 
         // Per-chunk encryption under pk_j.
         let mut chunk_cts: Vec<(Qfi, Qfi)> = Vec::with_capacity(num_chunks);
-        let mut r_chunk_bytes: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
+        let mut r_chunks: Vec<Integer> = Vec::with_capacity(num_chunks);
 
-        for chunk_b in &chi_chunk_bytes {
+        for chunk in &chi_chunks {
             // Sample randomness for this chunk encryption.
             let r_l = sample_random(setup)?;
 
             // c_{l,0} = h^{r_l}
-            let c_l_0 = setup.power_of_h_bytes(&r_l)?;
+            let c_l_0 = setup.power_of_h(&r_l)?;
 
             // c_{l,1} = f^{chi_l} * pk_j^{r_l}
-            let f_chi_l = setup.power_of_f_bytes(chunk_b)?;
-            let pk_r_l = setup.pk_pow_bytes(&all_pks[j], &r_l)?;
+            let f_chi_l = setup.power_of_f(chunk)?;
+            let pk_r_l = setup.pk_pow(&all_pks[j], &r_l)?;
             let c_l_1 = setup.compose(&f_chi_l, &pk_r_l)?;
 
             chunk_cts.push((c_l_0, c_l_1));
-            r_chunk_bytes.push(r_l);
+            r_chunks.push(r_l);
         }
 
         // Aggregated GEnc ciphertext: separate randomness r.
@@ -309,12 +289,12 @@ pub fn dkg_cl_gen(
         // The "h^{q^l * chi_l}" product here uses h (the hidden-order
         // generator), matching the R_Blnt relation.
         let r_agg = sample_random(setup)?;
-        let h_q_pow_product = compute_h_q_pow_product(setup, &q, &chi_chunk_bytes)?;
+        let h_q_pow_product = compute_h_q_pow_product(setup, &q, &chi_chunks)?;
 
-        let h_r_agg = setup.power_of_h_bytes(&r_agg)?;
+        let h_r_agg = setup.power_of_h(&r_agg)?;
         let c_0 = setup.compose(&h_r_agg, &h_q_pow_product)?;
 
-        let pk_r_agg = setup.pk_pow_bytes(&all_pks[j], &r_agg)?;
+        let pk_r_agg = setup.pk_pow(&all_pks[j], &r_agg)?;
         let c_1 = setup.compose(&pk_r_agg, &h_q_pow_product)?;
 
         let agg_ct = (c_0, c_1);
@@ -331,9 +311,9 @@ pub fn dkg_cl_gen(
             &pc,
             &chunk_cts,
             &agg_ct,
-            &chi_chunk_bytes,
-            share_prime_j_bytes,
-            &r_chunk_bytes,
+            &chi_chunks,
+            share_prime_j,
+            &r_chunks,
             &r_agg,
         )?;
 
@@ -343,14 +323,12 @@ pub fn dkg_cl_gen(
             agg_ct,
             proof,
         });
-
-        let _ = share_j_neg; // silence unused warning
     }
 
     Ok(DkgClGenOutput {
         per_recipient,
-        my_secret: chi_i_bytes,
-        my_secret_prime: chi_prime_i_bytes,
+        my_secret: chi_i,
+        my_secret_prime: chi_prime_i,
         shares: shares_chi,
         shares_prime: shares_chi_prime,
     })
@@ -365,24 +343,21 @@ pub fn dkg_cl_gen(
 /// # Arguments
 ///
 /// Same as [`dkg_cl_gen`], plus:
-/// - `secret`: the secret to share (big-endian unsigned bytes, must be
-///   within the secret key bound).
+/// - `secret`: the secret to share, must be within the secret key bound.
 pub fn dkg_cl_gen_with_secret(
     setup: &mut ClSetup,
     all_pks: &[ClHsmqkPublicKey],
     n: usize,
     threshold: usize,
     my_index: usize,
-    secret: &[u8],
+    secret: &Integer,
 ) -> ClResult<DkgClGenOutput> {
     assert_eq!(all_pks.len(), n);
     assert!(my_index < n);
     assert!(threshold > 0 && threshold <= n);
 
-    let q_bytes = setup.q_bytes()?;
-    let q = Mpz::from_bytes_be(&q_bytes);
-    let sk_bound_bytes = setup.secretkey_bound_bytes()?;
-    let sk_bound = Mpz::from_bytes_be(&sk_bound_bytes);
+    let q = setup.cl().q().clone();
+    let sk_bound = setup.secretkey_bound().clone();
     // Size the q-ary chunk count for the SHARE magnitude, not the secret
     // bound (see `share_magnitude_bound`): shares are far larger than the
     // secret, so sizing for `sk_bound` would silently truncate the share.
@@ -390,20 +365,19 @@ pub fn dkg_cl_gen_with_secret(
     let num_chunks = num_chunks_for_bound(&share_bound, &q);
 
     // Use the provided secret instead of sampling.
-    let chi_i_bytes = secret.to_vec();
-    let chi_prime_i_bytes = sample_random(setup)?;
+    let chi_i = secret.clone();
+    let chi_prime_i = sample_random(setup)?;
 
     // Shamir share chi_i and chi'_i over Z with delta scaling.
-    let shares_chi = shamir_share_delta_signed(setup, &chi_i_bytes, n, threshold)?;
-    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i_bytes, n, threshold)?;
+    let shares_chi = shamir_share_delta_signed(setup, &chi_i, n, threshold)?;
+    let shares_chi_prime = shamir_share_delta_signed(setup, &chi_prime_i, n, threshold)?;
 
     let mut per_recipient = Vec::with_capacity(n);
     for j in 0..n {
-        let (share_j_bytes, share_j_neg) = &shares_chi[j];
-        let (share_prime_j_bytes, _share_prime_j_neg) = &shares_chi_prime[j];
+        let share_j = &shares_chi[j];
+        let share_prime_j = &shares_chi_prime[j];
 
-        let share_j_uint = Mpz::from_bytes_be(share_j_bytes);
-        let raw_chunks = decompose_q_ary(&share_j_uint, &q);
+        let raw_chunks = decompose_q_ary(&share_j.clone().abs(), &q);
 
         // `num_chunks` is sized via `share_magnitude_bound` so the share
         // always fits; never truncate (that would corrupt the share).
@@ -415,41 +389,30 @@ pub fn dkg_cl_gen_with_secret(
                 chi_chunks.len()
             )));
         }
-        chi_chunks.resize(num_chunks, Mpz::from(0));
+        chi_chunks.resize(num_chunks, Integer::from(0));
 
-        let chi_chunk_bytes: Vec<Vec<u8>> = chi_chunks
-            .iter()
-            .map(|c| {
-                if c.is_zero() {
-                    vec![0u8]
-                } else {
-                    c.to_bytes_be()
-                }
-            })
-            .collect();
-
-        let h_chi_prime = setup.power_of_h_bytes(share_prime_j_bytes)?;
-        let h_q_product = compute_h_q_pow_product(setup, &q, &chi_chunk_bytes)?;
+        let h_chi_prime = setup.power_of_h(share_prime_j)?;
+        let h_q_product = compute_h_q_pow_product(setup, &q, &chi_chunks)?;
         let pc = setup.compose(&h_chi_prime, &h_q_product)?;
 
         let mut chunk_cts: Vec<(Qfi, Qfi)> = Vec::with_capacity(num_chunks);
-        let mut r_chunk_bytes: Vec<Vec<u8>> = Vec::with_capacity(num_chunks);
+        let mut r_chunks: Vec<Integer> = Vec::with_capacity(num_chunks);
 
-        for chunk_b in &chi_chunk_bytes {
+        for chunk in &chi_chunks {
             let r_l = sample_random(setup)?;
-            let c_l_0 = setup.power_of_h_bytes(&r_l)?;
-            let f_chi_l = setup.power_of_f_bytes(chunk_b)?;
-            let pk_r_l = setup.pk_pow_bytes(&all_pks[j], &r_l)?;
+            let c_l_0 = setup.power_of_h(&r_l)?;
+            let f_chi_l = setup.power_of_f(chunk)?;
+            let pk_r_l = setup.pk_pow(&all_pks[j], &r_l)?;
             let c_l_1 = setup.compose(&f_chi_l, &pk_r_l)?;
             chunk_cts.push((c_l_0, c_l_1));
-            r_chunk_bytes.push(r_l);
+            r_chunks.push(r_l);
         }
 
         let r_agg = sample_random(setup)?;
-        let h_q_pow_product = compute_h_q_pow_product(setup, &q, &chi_chunk_bytes)?;
-        let h_r_agg = setup.power_of_h_bytes(&r_agg)?;
+        let h_q_pow_product = compute_h_q_pow_product(setup, &q, &chi_chunks)?;
+        let h_r_agg = setup.power_of_h(&r_agg)?;
         let c_0 = setup.compose(&h_r_agg, &h_q_pow_product)?;
-        let pk_r_agg = setup.pk_pow_bytes(&all_pks[j], &r_agg)?;
+        let pk_r_agg = setup.pk_pow(&all_pks[j], &r_agg)?;
         let c_1 = setup.compose(&pk_r_agg, &h_q_pow_product)?;
         let agg_ct = (c_0, c_1);
 
@@ -459,9 +422,9 @@ pub fn dkg_cl_gen_with_secret(
             &pc,
             &chunk_cts,
             &agg_ct,
-            &chi_chunk_bytes,
-            share_prime_j_bytes,
-            &r_chunk_bytes,
+            &chi_chunks,
+            share_prime_j,
+            &r_chunks,
             &r_agg,
         )?;
 
@@ -471,14 +434,12 @@ pub fn dkg_cl_gen_with_secret(
             agg_ct,
             proof,
         });
-
-        let _ = share_j_neg;
     }
 
     Ok(DkgClGenOutput {
         per_recipient,
-        my_secret: chi_i_bytes,
-        my_secret_prime: chi_prime_i_bytes,
+        my_secret: chi_i,
+        my_secret_prime: chi_prime_i,
         shares: shares_chi,
         shares_prime: shares_chi_prime,
     })
@@ -517,9 +478,9 @@ pub fn dkg_cl_gen_verify(
 
 /// Output of the Reveal phase for one party.
 pub struct DkgClRevealOutput {
-    /// Combined secret share `x_i = sum_j chi_{ji}` (big-endian unsigned
-    /// bytes, unreduced over the integers).
-    pub combined_share: Vec<u8>,
+    /// Combined secret share `x_i = sum_j chi_{ji}`, unreduced over the
+    /// integers.
+    pub combined_share: Integer,
     /// Public CL share `h^{x_i}` for the combined integer share.
     pub pk_share: Qfi,
     /// `R_GDec-CL` proof attesting correct decryption.
@@ -537,7 +498,7 @@ pub struct DkgClRevealOutput {
 /// # Arguments
 ///
 /// - `setup`: mutable reference to `ClSetup`.
-/// - `my_sk_bytes`: this party's CL secret key (big-endian bytes).
+/// - `my_sk`: this party's CL secret key.
 /// - `my_pk`: this party's CL public key.
 /// - `received_chunks`: for each dealer `j`, the chunk ciphertexts
 ///   `{(c_{l,0}, c_{l,1})}_l` addressed to this party.
@@ -549,70 +510,61 @@ pub struct DkgClRevealOutput {
 /// combined ciphertext.
 pub fn dkg_cl_reveal(
     setup: &mut ClSetup,
-    my_sk_bytes: &[u8],
+    my_sk: &Integer,
     my_pk: &ClHsmqkPublicKey,
     received_chunks: &[Vec<(Qfi, Qfi)>],
     n: usize,
 ) -> ClResult<DkgClRevealOutput> {
     assert_eq!(received_chunks.len(), n);
 
-    let q_bytes = setup.q_bytes()?;
-    let q = Mpz::from_bytes_be(&q_bytes);
+    let q = setup.cl().q().clone();
 
     // Import our secret key so we can decrypt.
-    let sk = setup.sk_from_bytes(my_sk_bytes)?;
+    let sk = setup.sk_from_integer(my_sk)?;
 
     // Decrypt and recombine shares from each dealer.
-    let mut combined_share = Mpz::from(0);
+    let mut combined_share = Integer::from(0);
 
     // Also accumulate the homomorphically-combined ciphertext for the proof.
     let mut combined_c1_bases = vec![];
     let mut combined_c2_bases = vec![];
-    let mut exps = vec![];
+    let mut exps: Vec<Integer> = vec![];
 
     for dealer_chunks in received_chunks {
         // Decrypt each chunk via standard CL decryption and recombine.
-        let mut dealer_share = Mpz::from(0);
-        let mut q_pow = Mpz::from(1);
+        let mut dealer_share = Integer::from(0);
+        let mut q_pow = Integer::from(1);
 
         for (c_l_0, c_l_1) in dealer_chunks {
             // Decrypt: m_l = dlog_in_F( c_{l,1} * (c_{l,0}^{sk})^{-1} )
             let ct_l = setup.ct_from_components(c_l_0, c_l_1)?;
-            let m_l_bytes = setup.decrypt_bytes(&sk, &ct_l)?;
-            let m_l = Mpz::from_bytes_be(&m_l_bytes);
-            let q_pow_bytes = q_pow.to_bytes_be();
+            let m_l = setup.decrypt(&sk, &ct_l)?;
 
-            dealer_share = dealer_share + &q_pow * &m_l;
-            q_pow = q_pow * &q;
-
+            dealer_share += &q_pow * &m_l;
             combined_c1_bases.push(c_l_0);
             combined_c2_bases.push(c_l_1);
-            exps.push(q_pow_bytes);
+            exps.push(q_pow.clone());
+
+            q_pow *= &q;
         }
 
-        combined_share = combined_share + dealer_share;
+        combined_share += dealer_share;
     }
-    let combined_c1 = setup.multiexp_bytes(&combined_c1_bases, &exps)?;
-    let combined_c2 = setup.multiexp_bytes(&combined_c2_bases, &exps)?;
+    let combined_c1 = setup.multiexp(&combined_c1_bases, &exps)?;
+    let combined_c2 = setup.multiexp(&combined_c2_bases, &exps)?;
 
-    let combined_share_bytes = if combined_share.is_zero() {
-        vec![0u8]
-    } else {
-        combined_share.to_bytes_be()
-    };
-
-    let pk_share = setup.power_of_h_bytes(&combined_share_bytes)?;
+    let pk_share = setup.power_of_h(&combined_share)?;
 
     // Build the combined ciphertext object.
     let combined_ct = setup.ct_from_components(&combined_c1, &combined_c2)?;
 
-    let dec_result = setup.power_of_f_bytes(&combined_share_bytes)?;
+    let dec_result = setup.power_of_f(&combined_share)?;
 
     // Prove correct decryption with R_GDec-CL.
-    let proof = RGdecClProof::prove(setup, my_pk, &combined_ct, &dec_result, my_sk_bytes)?;
+    let proof = RGdecClProof::prove(setup, my_pk, &combined_ct, &dec_result, my_sk)?;
 
     Ok(DkgClRevealOutput {
-        combined_share: combined_share_bytes,
+        combined_share,
         pk_share,
         proof,
         combined_ct,
@@ -642,7 +594,7 @@ pub fn dkg_cl_reveal_verify(
     // D = c2 * (c1^sk)^{-1} = f^{combined_share}.
     // The verifier reconstructs D from the combined_share provided by the
     // prover, then checks the proof against (pk, ct, D).
-    let dec_result = setup.power_of_f_bytes(&reveal.combined_share)?;
+    let dec_result = setup.power_of_f(&reveal.combined_share)?;
 
     reveal
         .proof
@@ -679,16 +631,16 @@ pub fn dkg_cl_aggregate(
     // aggregate = product(share_i^{lambda_i}) via one shared-squaring multi-exp
     // (lambda_i are signed delta-scaled Lagrange coefficients).
     let mut bases: Vec<&Qfi> = Vec::with_capacity(coeffs.len());
-    let mut exps: Vec<(bool, Vec<u8>)> = Vec::with_capacity(coeffs.len());
+    let mut exps: Vec<Integer> = Vec::with_capacity(coeffs.len());
     for (idx, lambda) in &coeffs {
         let share_pos = party_indices
             .iter()
             .position(|&i| i == *idx)
             .expect("index mismatch");
         bases.push(&public_shares[share_pos]);
-        exps.push((lambda.inner().is_negative(), lambda.abs().to_bytes_be()));
+        exps.push(lambda.clone());
     }
-    let aggregate = setup.multiexp_signed_bytes(&bases, &exps)?;
+    let aggregate = setup.multiexp(&bases, &exps)?;
 
     Ok(aggregate)
 }
@@ -700,20 +652,17 @@ pub fn dkg_cl_aggregate(
 ///
 /// Each coefficient is `delta * prod_{j!=k} (-i_j / (i_k - i_j))`,
 /// guaranteed integer because `delta = N!`.
-fn lagrange_coefficients_delta(indices: &[usize], delta: &Mpz) -> Vec<(usize, Mpz)> {
+fn lagrange_coefficients_delta(indices: &[usize], delta: &Integer) -> Vec<(usize, Integer)> {
     let mut result = Vec::with_capacity(indices.len());
     for (k, &i_k) in indices.iter().enumerate() {
         let mut coeff = delta.clone();
-        let i_k_big = Mpz::from(i_k as i64);
 
         for (j, &i_j) in indices.iter().enumerate() {
             if j == k {
                 continue;
             }
-            let i_j_big = Mpz::from(i_j as i64);
-            let diff = &i_k_big - &i_j_big;
-            coeff = Mpz::from_inner((coeff.inner() / diff.inner()).complete());
-            coeff = coeff * -&i_j_big;
+            coeff /= i_k as i64 - i_j as i64;
+            coeff *= -(i_j as i64);
         }
 
         result.push((i_k, coeff));
@@ -721,22 +670,27 @@ fn lagrange_coefficients_delta(indices: &[usize], delta: &Mpz) -> Vec<(usize, Mp
     result
 }
 
-/// Computes `prod_l h^{q^l * x_l}` for a list of exponents `x_l` (big-endian bytes).
-fn compute_h_q_pow_product(setup: &ClSetup, q: &Mpz, exponents: &[Vec<u8>]) -> ClResult<Qfi> {
+/// Computes `prod_l h^{q^l * x_l}` for a list of exponents `x_l`.
+///
+/// Shared with [`crate::zk::r_blnt`], whose `R_Blnt` relation uses the same
+/// product over the commitment/proof randomness.
+pub(crate) fn compute_h_q_pow_product(
+    setup: &ClSetup,
+    q: &Integer,
+    exponents: &[Integer],
+) -> ClResult<Qfi> {
     let mut product = setup.identity()?;
-    let mut q_pow_l = Mpz::from(1);
+    let mut q_pow_l = Integer::from(1);
 
     for x_l in exponents {
-        let x = Mpz::from_bytes_be(x_l);
-        let exp = &q_pow_l * &x;
+        let exp = (&q_pow_l * x_l).complete();
 
         if !exp.is_zero() {
-            let exp_bytes = exp.to_bytes_be();
-            let h_exp = setup.power_of_h_bytes(&exp_bytes)?;
+            let h_exp = setup.power_of_h(&exp)?;
             product = setup.compose(&product, &h_exp)?;
         }
 
-        q_pow_l = q_pow_l * q;
+        q_pow_l *= q;
     }
 
     Ok(product)
@@ -745,7 +699,6 @@ fn compute_h_q_pow_product(setup: &ClSetup, q: &Mpz, exponents: &[Vec<u8>]) -> C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cl::Mpz;
 
     /// Basic smoke test: 3 parties, threshold t=2 (2-of-3).
     /// Runs Gen + GenVf + Reveal + RevealVf + Aggregate.
@@ -754,7 +707,7 @@ mod tests {
         let n = 3;
         let t = 2; // reconstruction threshold: 2-of-2
 
-        let mut setup = ClSetup::new_secp256k1("50001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(50001u64).expect("setup");
 
         // Generate key pairs for all parties.
         let mut sks = Vec::new();
@@ -762,7 +715,7 @@ mod tests {
         let mut sk_bytes_vec = Vec::new();
         for _ in 0..n {
             let (sk, pk) = setup.keygen().expect("keygen");
-            let sk_bytes = setup.sk_to_bytes(&sk).expect("sk_bytes");
+            let sk_bytes = setup.sk_to_integer(&sk);
             sks.push(sk);
             pks.push(pk);
             sk_bytes_vec.push(sk_bytes);
@@ -830,13 +783,13 @@ mod tests {
         let n = 3;
         let t = 2; // reconstruction threshold: 2-of-2
 
-        let mut setup = ClSetup::new_secp256k1_128bit("42042").expect("setup");
+        let mut setup = ClSetup::new_secp256k1_128bit(42042u64).expect("setup");
 
         let mut pks = Vec::new();
         let mut sk_bytes_vec = Vec::new();
         for _ in 0..n {
             let (sk, pk) = setup.keygen().expect("keygen");
-            let sk_bytes = setup.sk_to_bytes(&sk).expect("sk_bytes");
+            let sk_bytes = setup.sk_to_integer(&sk);
             pks.push(pk);
             sk_bytes_vec.push(sk_bytes);
         }
@@ -867,10 +820,10 @@ mod tests {
     /// Tests that q-ary decompose/recompose round-trips correctly.
     #[test]
     fn q_ary_roundtrip() {
-        let q = Mpz::from(997u32); // small prime for testing
+        let q = Integer::from(997u32); // small prime for testing
 
         for val in [0u64, 1, 42, 996, 997, 998, 1000000, u64::MAX] {
-            let v = Mpz::from(val);
+            let v = Integer::from(val);
             let chunks = decompose_q_ary(&v, &q);
             let recomposed = recompose_q_ary(&chunks, &q);
             assert_eq!(v, recomposed, "roundtrip failed for {val}");
@@ -880,8 +833,8 @@ mod tests {
     /// Tests that decomposition produces chunks < q.
     #[test]
     fn q_ary_chunks_in_range() {
-        let q = Mpz::from(256u32);
-        let v = Mpz::from(123456789u64);
+        let q = Integer::from(256u32);
+        let v = Integer::from(123456789u64);
         let chunks = decompose_q_ary(&v, &q);
         for chunk in &chunks {
             assert!(chunk < &q, "chunk {chunk} >= q");
@@ -891,12 +844,12 @@ mod tests {
     /// Tests that num_chunks_for_bound gives the right count.
     #[test]
     fn chunk_count_correct() {
-        let q = Mpz::from(10u32);
-        assert_eq!(num_chunks_for_bound(&Mpz::from(0), &q), 1);
-        assert_eq!(num_chunks_for_bound(&Mpz::from(9u32), &q), 1);
-        assert_eq!(num_chunks_for_bound(&Mpz::from(10u32), &q), 2);
-        assert_eq!(num_chunks_for_bound(&Mpz::from(99u32), &q), 2);
-        assert_eq!(num_chunks_for_bound(&Mpz::from(100u32), &q), 3);
+        let q = Integer::from(10u32);
+        assert_eq!(num_chunks_for_bound(&Integer::from(0), &q), 1);
+        assert_eq!(num_chunks_for_bound(&Integer::from(9u32), &q), 1);
+        assert_eq!(num_chunks_for_bound(&Integer::from(10u32), &q), 2);
+        assert_eq!(num_chunks_for_bound(&Integer::from(99u32), &q), 2);
+        assert_eq!(num_chunks_for_bound(&Integer::from(100u32), &q), 3);
     }
 
     /// Regression for the WMC24 `n = t = 20` failure ("ECDSA verification
@@ -911,26 +864,26 @@ mod tests {
     /// that the old (secret-sized) count would indeed have truncated at n=t=20.
     #[test]
     fn share_chunks_not_truncated_for_large_n() {
-        let setup = ClSetup::new_secp256k1("424242").expect("setup");
-        let q = Mpz::from_bytes_be(&setup.q_bytes().expect("q"));
-        let b = Mpz::from_bytes_be(&setup.secretkey_bound_bytes().expect("B"));
+        let setup = ClSetup::new_secp256k1(424_242u64).expect("setup");
+        let q = setup.cl().q().clone();
+        let b = setup.secretkey_bound().clone();
 
         // `poly = Delta + sum_{l=1}^{t-1} n^l`; worst-case share = (B-1)*poly.
-        let poly = |n: usize, t: usize| -> Mpz {
-            let n_mpz = Mpz::from(n as u64);
+        let poly = |n: usize, t: usize| -> Integer {
+            let n_mpz = Integer::from(n as u64);
             let mut acc = factorial(n);
-            let mut n_pow = Mpz::from(1u64);
+            let mut n_pow = Integer::from(1u64);
             for _ in 1..t {
-                n_pow = &n_pow * &n_mpz;
-                acc = &acc + &n_pow;
+                n_pow *= &n_mpz;
+                acc += &n_pow;
             }
             acc
         };
-        let max_coeff = &b - &Mpz::from(1u64);
+        let max_coeff = &b - Integer::from(1u64);
 
         for &(n, t) in &[(2usize, 2usize), (5, 5), (10, 10), (20, 20)] {
             let new_chunks = num_chunks_for_bound(&share_magnitude_bound(&b, n, t), &q);
-            let worst_share = &max_coeff * &poly(n, t);
+            let worst_share = &max_coeff * poly(n, t);
             let needed = decompose_q_ary(&worst_share, &q).len();
             assert!(
                 needed <= new_chunks,
@@ -942,7 +895,7 @@ mod tests {
         // The reported failing case must overflow the OLD secret-sized count
         // (i.e. the bug really was a truncation at n=t=20).
         let old_chunks = num_chunks_for_bound(&b, &q);
-        let worst_share_20 = &max_coeff * &poly(20, 20);
+        let worst_share_20 = max_coeff * &poly(20, 20);
         assert!(
             decompose_q_ary(&worst_share_20, &q).len() > old_chunks,
             "n=t=20 share should overflow the old secret-sized chunk count",
@@ -955,13 +908,13 @@ mod tests {
         let n = 2;
         let t = 2; // reconstruction threshold: 2-of-2
 
-        let mut setup = ClSetup::new_secp256k1("50010").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(50010u64).expect("setup");
 
         let mut pks = Vec::new();
         let mut sk_bytes_vec = Vec::new();
         for _ in 0..n {
             let (sk, pk) = setup.keygen().expect("keygen");
-            let sk_bytes = setup.sk_to_bytes(&sk).expect("sk_bytes");
+            let sk_bytes = setup.sk_to_integer(&sk);
             pks.push(pk);
             sk_bytes_vec.push(sk_bytes);
         }

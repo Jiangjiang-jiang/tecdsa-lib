@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use elliptic_curve::{
-    group::{Curve as CurveGroup, Group, GroupEncoding},
+    group::{Curve as CurveGroup, Group},
     sec1::ModulusSize,
     Field, FieldBytes, FieldBytesSize, PrimeField,
 };
@@ -21,10 +21,7 @@ use rug::{integer::Order, Integer};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::{
-    conv::{curve_order, integer_to_scalar, scalar_to_integer},
-    TecdsaCurve,
-};
+use tecdsa_curve::{PointExt, ScalarExt, TecdsaCurve};
 use tecdsa_joye_libert::mta::{JlMtA, JlMtaSenderState, JlMtaSetup};
 use tecdsa_protocol::{state_machine::Outgoing, MtA, PartyId, Recipient};
 
@@ -40,16 +37,6 @@ use crate::key_share::Xal23KeyShare;
 // ---------------------------------------------------------------------------
 // Helper: scalar (de)serialization
 // ---------------------------------------------------------------------------
-
-fn scalar_to_bytes<C: TecdsaCurve>(s: &C::Scalar) -> Vec<u8>
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let repr = s.to_repr();
-    let slice: &[u8] = repr.as_ref();
-    slice.to_vec()
-}
 
 pub(crate) fn scalar_from_bytes<C: TecdsaCurve>(bytes: &[u8]) -> tecdsa_core::Result<C::Scalar>
 where
@@ -70,7 +57,7 @@ where
         .ok_or_else(|| TecdsaError::Other("invalid scalar encoding".into()))
 }
 
-/// Decode a compressed/uncompressed SEC1-encoded EC point from bytes.
+/// Decode a compressed, length-checked, canonical SEC1 EC point from bytes.
 fn point_from_bytes<C: TecdsaCurve>(
     bytes: &[u8],
     label: &str,
@@ -79,9 +66,8 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let affine = C::point_from_bytes(bytes)
-        .map_err(|_| TecdsaError::Other(format!("invalid EC point ({label})")))?;
-    Ok(C::ProjectivePoint::from(affine))
+    C::ProjectivePoint::from_bytes_slice(bytes)
+        .ok_or_else(|| TecdsaError::Other(format!("invalid EC point ({label})")))
 }
 
 // ---------------------------------------------------------------------------
@@ -225,17 +211,17 @@ where
     let w_i = key_share.secret_share;
 
     // Commitment = SHA-256(compressed Gamma_i bytes)
-    let gamma_point_bytes = gamma_point_i.to_bytes();
+    let gamma_point_bytes = gamma_point_i.to_bytes_vec();
     let commitment: [u8; 32] = Sha256::new()
         .chain_update(gamma_point_bytes)
         .finalize()
         .into();
 
     // MtA setup and sender_encrypt for each peer
-    let q = curve_order::<C>();
+    let q = C::order();
     let q_bytes = q.to_digits::<u8>(Order::Msf);
-    let gamma_i_bytes = scalar_to_integer::<C>(&gamma_i).to_digits::<u8>(Order::Msf);
-    let w_i_bytes = scalar_to_integer::<C>(&w_i).to_digits::<u8>(Order::Msf);
+    let gamma_i_bytes = gamma_i.to_integer().to_digits::<u8>(Order::Msf);
+    let w_i_bytes = w_i.to_integer().to_digits::<u8>(Order::Msf);
 
     let mut gamma_sender_states = BTreeMap::new();
     let mut w_sender_states = BTreeMap::new();
@@ -319,16 +305,16 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let q = curve_order::<C>();
+    let q = C::order();
     let q_bytes = q.to_digits::<u8>(Order::Msf);
-    let k_i_bytes = scalar_to_integer::<C>(&state.k_i).to_digits::<u8>(Order::Msf);
+    let k_i_bytes = state.k_i.to_integer().to_digits::<u8>(Order::Msf);
 
     let mut alpha_kg = BTreeMap::new();
     let mut mu_kw = BTreeMap::new();
     let mut outgoing = Vec::new();
 
     // Broadcast decommitment: Gamma_i point bytes
-    let gamma_point_bytes = state.gamma_point_i.to_bytes().as_ref().to_vec();
+    let gamma_point_bytes = state.gamma_point_i.to_bytes_vec();
     for &peer in &state.all_parties {
         if peer == state.my_id {
             continue;
@@ -429,7 +415,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let q = curve_order::<C>();
+    let q = C::order();
     let q_bytes = q.to_digits::<u8>(Order::Msf);
     let my_idx = state.key_share.party_index as usize;
 
@@ -511,8 +497,8 @@ where
         let beta = beta_kg
             .get(&peer)
             .ok_or_else(|| TecdsaError::Other(format!("missing beta_kg for {peer}")))?;
-        delta_i += integer_to_scalar::<C>(alpha);
-        delta_i += integer_to_scalar::<C>(beta);
+        delta_i += C::scalar_from_integer(alpha);
+        delta_i += C::scalar_from_integer(beta);
     }
 
     // Compute sigma_i = k_i * w_i + sum_j(mu_kw[j] + nu_kw[j])
@@ -528,12 +514,12 @@ where
         let nu = nu_kw
             .get(&peer)
             .ok_or_else(|| TecdsaError::Other(format!("missing nu_kw for {peer}")))?;
-        sigma_i += integer_to_scalar::<C>(mu);
-        sigma_i += integer_to_scalar::<C>(nu);
+        sigma_i += C::scalar_from_integer(mu);
+        sigma_i += C::scalar_from_integer(nu);
     }
 
     // Broadcast delta_i
-    let delta_bytes = scalar_to_bytes::<C>(&delta_i);
+    let delta_bytes = delta_i.to_bytes_vec();
     let mut outgoing = Vec::new();
     for &peer in &state.all_parties {
         if peer == state.my_id {
