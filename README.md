@@ -1,5 +1,9 @@
 # tecdsa-lib
 
+<p><img src="assets/badges/ieee-sp-available.png" alt="Artifact Available" width="120" /> <img src="assets/badges/ieee-sp-functional.png" alt="Artifact Functional" width="120" /> <img src="assets/badges/ieee-sp-reproduced.png" alt="Results Reproduced" width="120" /></p>
+
+> tecdsa-lib is the artifact of *SoK: Threshold ECDSA from Theory to Practice*, published at IEEE S&P 2027. It passed artifact evaluation with the Available, Functional, and Reproduced badges.
+
 tecdsa-lib implements threshold ECDSA protocols in Rust, with examples for key generation and signing and benchmarks for computation and communication costs.
 
 - **Multi-party:** GGN16, GG18, LN18, CGGMP20, DKLs23, XAL23, WMY23, TX25, JTX25, WMC24, LLZ25, and KU24.
@@ -16,6 +20,7 @@ tecdsa-lib/
 |   |-- protocols/   protocol implementations
 |   `-- tecdsa/      public facade
 |-- scripts/        experiment runners and table generators
+|-- assets/         artifact evaluation badges
 |-- tests/vectors/  wire-format test vectors
 |-- vendor/         patched dependencies
 `-- Dockerfile      docker file
@@ -28,7 +33,6 @@ tecdsa-lib/
    ```bash
    git clone https://github.com/Jiangjiang-jiang/tecdsa-lib.git
    cd tecdsa-lib
-   git checkout ae-v1
    ```
 
    Run the following commands from the repository root unless stated otherwise.
@@ -162,7 +166,7 @@ To reproduce the paper's results with the default settings, you need to:
    ```bash
    TECDSA_BENCH_RUNS=1 bash scripts/run_artifact.sh times multiparty
    ```
-   
+
    On the other hand, Setup, MtA, and ZK benchmarks are reasonably fast. For this reason, we directly use Criterion sampling for them, which cannot be controlled by `TECDSA_BENCH_RUNS`.
 
 3. Generate LaTeX tables from the saved measurements:
