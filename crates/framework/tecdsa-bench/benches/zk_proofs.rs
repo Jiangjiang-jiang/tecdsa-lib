@@ -165,7 +165,7 @@ fn pedersen_mod_zk(c: &mut Criterion) {
     g.sample_size(10);
     let rng = &mut thread_rng();
 
-    use tecdsa_pedersen_mod::zk::{PiMod, PiPrm};
+    use tecdsa_pedersen_mod::zk::PiPrm;
 
     let ped = &*PEDERSEN;
     let params = &ped.params;
@@ -177,15 +177,6 @@ fn pedersen_mod_zk(c: &mut Criterion) {
         b.iter(|| PiPrm::prove(params, secret, rng))
     });
     g.bench_function("pi_prm/verify", |b| b.iter(|| piprm_proof.verify(params)));
-
-    let pimod_proof = PiMod::prove(params, secret, rng).expect("pimod prove");
-    assert!(pimod_proof.verify(params, rng), "PiMod fixture invalid");
-    g.bench_function("pi_mod/prove", |b| {
-        b.iter(|| PiMod::prove(params, secret, rng))
-    });
-    g.bench_function("pi_mod/verify", |b| {
-        b.iter(|| pimod_proof.verify(params, rng))
-    });
 
     g.finish();
 }

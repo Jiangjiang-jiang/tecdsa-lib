@@ -40,6 +40,14 @@ use crate::{
     sign::rounds::Ln18PresignParams,
 };
 
+/// Safe-prime size, in bits, for the Ring-Pedersen modulus `N~`.
+///
+/// Two primes of this size give a 3072-bit `N~`, matching the 128-bit
+/// security profile the rest of the workspace targets. The MtA range proofs
+/// exponentiate modulo `N~`, so this also determines their cost -- a smaller
+/// modulus makes signing measurably but unrepresentatively faster.
+pub const NTILDE_PRIME_BITS: u32 = 1536;
+
 /// Build signing parameters for a signer subset from keygen output.
 ///
 /// This is the canonical setup path for LN18 t-of-n signing. It:
@@ -50,9 +58,32 @@ use crate::{
 ///
 /// On success, the returned `Ln18PresignParams` can be passed directly to
 /// `Ln18OfflineSignMachine`.
+///
+/// The Ring-Pedersen modulus uses [`NTILDE_PRIME_BITS`]. Tests that do not
+/// need production security can call
+/// [`build_signing_setup_with_ntilde_bits`] with a smaller size.
 pub fn build_signing_setup<C: TecdsaCurve>(
     key_shares: &[Ln18KeyShare<C>],
     signers: &[PartyId],
+    rng: &mut impl CryptoRngCore,
+) -> tecdsa_core::Result<Vec<Ln18PresignParams<C>>>
+where
+    FieldBytesSize<C>: ModulusSize,
+    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
+{
+    build_signing_setup_with_ntilde_bits(key_shares, signers, NTILDE_PRIME_BITS, rng)
+}
+
+/// As [`build_signing_setup`], but with an explicit Ring-Pedersen prime size.
+///
+/// Exists so tests can trade security for speed; generating two 1536-bit safe
+/// primes per signer dominates setup otherwise. Anything other than
+/// [`NTILDE_PRIME_BITS`] is for testing only -- the range proofs' soundness
+/// rests on `N~` being hard to factor.
+pub fn build_signing_setup_with_ntilde_bits<C: TecdsaCurve>(
+    key_shares: &[Ln18KeyShare<C>],
+    signers: &[PartyId],
+    ntilde_prime_bits: u32,
     rng: &mut impl CryptoRngCore,
 ) -> tecdsa_core::Result<Vec<Ln18PresignParams<C>>>
 where
@@ -92,7 +123,7 @@ where
         let dk = tecdsa_paillier::keygen(rng).expect("paillier keygen");
         eks.insert(pid, dk.encryption_key().clone());
         dks.push(dk);
-        let nt = generate_ntilde(rng);
+        let nt = generate_ntilde(rng, ntilde_prime_bits);
         ntilde_map.insert(pid, nt);
     }
 
@@ -221,10 +252,10 @@ where
     outputs
 }
 
-fn generate_ntilde(rng: &mut impl CryptoRngCore) -> NTildeParams {
+fn generate_ntilde(rng: &mut impl CryptoRngCore, prime_bits: u32) -> NTildeParams {
     use tecdsa_paillier::backend::Integer;
-    let p = Integer::generate_safe_prime(rng, 256);
-    let q = Integer::generate_safe_prime(rng, 256);
+    let p = Integer::generate_safe_prime(rng, prime_bits);
+    let q = Integer::generate_safe_prime(rng, prime_bits);
     let n_tilde = &p * &q;
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
     let phi_n = (&p - Integer::one()) * (&q - Integer::one());

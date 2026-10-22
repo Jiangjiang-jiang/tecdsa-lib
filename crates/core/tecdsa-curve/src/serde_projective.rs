@@ -28,6 +28,19 @@ fn repr_from_slice<T: GroupEncoding>(bytes: &[u8]) -> Option<T::Repr> {
     Some(repr)
 }
 
+/// Decode a point, rejecting wrong-length, invalid, and non-canonical input.
+///
+/// Canonicity is enforced by re-encoding: `k256` 0.14 accepts a compressed
+/// point whose SEC1 prefix is `0x05` and decodes it as `0x02`, so without this
+/// check two distinct byte strings decode to the same point. Anything that
+/// hashes the received bytes and separately hashes a re-encoding of the decoded
+/// point would then disagree.
+fn point_from_canonical_bytes<T: GroupEncoding>(bytes: &[u8]) -> Option<T> {
+    let repr = repr_from_slice::<T>(bytes)?;
+    let point: T = Option::from(T::from_bytes(&repr))?;
+    (point.to_bytes().as_ref() == bytes).then_some(point)
+}
+
 /// Serialize a `GroupEncoding` type as its canonical byte representation.
 ///
 /// # Errors
@@ -46,17 +59,15 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if the byte length is wrong or the encoding is invalid.
+/// Returns an error if the byte length is wrong, the encoding is invalid, or the
+/// encoding is valid but not canonical.
 pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: GroupEncoding,
     D: Deserializer<'de>,
 {
     let bytes = Vec::<u8>::deserialize(deserializer)?;
-    let repr = repr_from_slice::<T>(&bytes)
-        .ok_or_else(|| serde::de::Error::custom("invalid byte length for projective point"))?;
-    let ct_opt = T::from_bytes(&repr);
-    Option::from(ct_opt)
+    point_from_canonical_bytes::<T>(&bytes)
         .ok_or_else(|| serde::de::Error::custom("invalid projective point encoding"))
 }
 
@@ -86,7 +97,8 @@ pub mod vec {
     ///
     /// # Errors
     ///
-    /// Returns an error if any element has wrong byte length or invalid encoding.
+    /// Returns an error if any element has wrong byte length, an invalid
+    /// encoding, or a valid but non-canonical encoding.
     pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
     where
         T: GroupEncoding,
@@ -96,13 +108,54 @@ pub mod vec {
         byte_vecs
             .into_iter()
             .map(|bytes| {
-                let repr = super::repr_from_slice::<T>(&bytes).ok_or_else(|| {
-                    serde::de::Error::custom("invalid byte length for projective point")
-                })?;
-                let ct_opt = T::from_bytes(&repr);
-                Option::from(ct_opt)
+                super::point_from_canonical_bytes::<T>(&bytes)
                     .ok_or_else(|| serde::de::Error::custom("invalid projective point encoding"))
             })
             .collect()
+    }
+}
+
+#[cfg(all(test, feature = "secp256k1"))]
+mod tests {
+    use elliptic_curve::group::GroupEncoding;
+
+    use super::point_from_canonical_bytes;
+    use crate::TecdsaCurve;
+
+    type P = k256::ProjectivePoint;
+
+    #[test]
+    fn point_decoding_rejects_bad_input() {
+        let g = <k256::Secp256k1 as TecdsaCurve>::generator();
+        let mut bytes = AsRef::<[u8]>::as_ref(&g.to_bytes()).to_vec();
+        assert_eq!(point_from_canonical_bytes::<P>(&bytes), Some(g));
+        // Wrong length.
+        assert!(point_from_canonical_bytes::<P>(&bytes[..bytes.len() - 1]).is_none());
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(point_from_canonical_bytes::<P>(&longer).is_none());
+        // Right length, but a non-canonical SEC1 prefix. k256 itself decodes 0x05
+        // as 0x02; `point_from_canonical_bytes` rejects it because it does not
+        // re-encode to the input.
+        bytes[0] = 0x05;
+        assert!(point_from_canonical_bytes::<P>(&bytes).is_none());
+        let mut repr = <P as GroupEncoding>::Repr::default();
+        repr.copy_from_slice(&bytes);
+        assert_eq!(
+            Option::<P>::from(P::from_bytes(&repr)),
+            Some(g),
+            "this test is only meaningful while k256 itself accepts the 0x05 prefix"
+        );
+
+        // Right length and prefix, but an x that is not on the curve. Roughly half
+        // of all x values have no square root, so a short scan is enough to prove
+        // curve membership is actually checked.
+        let rejected = (1u8..64).any(|i| {
+            let mut b = AsRef::<[u8]>::as_ref(&g.to_bytes()).to_vec();
+            b[0] = 0x02;
+            b[1] = i;
+            point_from_canonical_bytes::<P>(&b).is_none()
+        });
+        assert!(rejected, "no off-curve x was rejected");
     }
 }

@@ -34,7 +34,8 @@ fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
     let q = Integer::generate_safe_prime(rng, 1536);
     let n_tilde = &p * &q;
     let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    let lambda = (&p - Integer::one()) * (&q - Integer::one());
+    let phi_n = (&p - Integer::one()) * (&q - Integer::one());
+    let lambda = phi_n.random_below_ref(rng);
     let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2");
     NTildeParams {
         N_tilde: n_tilde,
@@ -181,5 +182,27 @@ mod tests {
 
         // P_2 also has Q_1
         assert_eq!(p2.public_share_p1, expected_q1);
+    }
+
+    /// The Ring-Pedersen parameters must be non-degenerate.
+    ///
+    /// `generate_ntilde_params` previously used `lambda = (p-1)(q-1) = phi(N~)`,
+    /// and by Euler that makes `h2 = h1^phi = 1`. The MtA range proofs commit as
+    /// `h1^x * h2^r`, so a unit `h2` silently drops the blinding factor `r` and
+    /// the commitment becomes a deterministic function of the secret witness.
+    #[test]
+    fn ntilde_params_are_hiding() {
+        let rng = &mut rand::thread_rng();
+        let ntilde = super::generate_ntilde_params(rng);
+
+        assert_ne!(
+            ntilde.h2,
+            Integer::one(),
+            "h2 must not be the identity: h1^x * h2^r would ignore r"
+        );
+        assert_ne!(ntilde.h1, Integer::one(), "h1 must not be the identity");
+        assert_ne!(ntilde.h1, ntilde.h2, "h1 and h2 must differ");
+        assert!(ntilde.h1.in_mult_group_of(&ntilde.N_tilde));
+        assert!(ntilde.h2.in_mult_group_of(&ntilde.N_tilde));
     }
 }

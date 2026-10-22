@@ -13,10 +13,16 @@ use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 
-/// Security parameter for the Paillier-Blum modulus proof (Pi_mod).
-/// The paper requires M = 80 rounds of N-th roots for soundness 2^{-80}.
-/// For test performance, a smaller value can be used.
-pub const PI_MOD_SECURITY: usize = 16;
+/// Number of repetitions in the Paillier-Blum modulus proof (Pi_mod).
+///
+/// Pi_mod's soundness error is `2^-PI_MOD_SECURITY`: a prover who does not know
+/// the factorisation passes a single repetition with probability 1/2. GG18 §4.1
+/// Phase 3 inherits CGGMP20 Figure 12's requirement of 80.
+///
+/// Do not lower this to speed up tests. It is the soundness parameter of a proof
+/// that the Paillier modulus is well formed; at 16 an adversary can grind a
+/// malformed modulus past verification with probability 2^-16.
+pub const PI_MOD_SECURITY: usize = 80;
 
 // ---------------------------------------------------------------------------
 // Serializable wrapper for Integer (which lacks serde)

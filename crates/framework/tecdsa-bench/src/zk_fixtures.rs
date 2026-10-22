@@ -70,7 +70,8 @@ pub fn ntilde_params() -> (Integer, Integer, Integer) {
     let q = Integer::generate_safe_prime(&mut OsRng, 1536);
     let n_tilde = &p * &q;
     let h1 = Integer::sample_in_mult_group_of(&mut OsRng, &n_tilde);
-    let lambda = (&p - Integer::one()) * (&q - Integer::one());
+    let phi_n = (&p - Integer::one()) * (&q - Integer::one());
+    let lambda = phi_n.random_below_ref(&mut OsRng);
     let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2");
     (n_tilde, h1, h2)
 }
