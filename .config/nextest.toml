@@ -9,8 +9,8 @@ failure-output = "immediate-final"
 slow-timeout = "60s"
 
 # The Paillier and class-group tests are memory- and CPU-heavy (big-int math
-# and the bicycl C++ class-group). Cap how many run at once so they don't
-# exhaust a small CI runner (GitHub-hosted runners have ~2 cores / 7 GB).
+# over rug/GMP). Cap how many run at once so they don't exhaust a small CI
+# runner (GitHub-hosted runners have ~2 cores / 7 GB).
 [test-groups]
 heavy-crypto = { max-threads = 2 }
 
