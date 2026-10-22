@@ -5,9 +5,9 @@
 
 use elliptic_curve::{group::GroupEncoding, PrimeField};
 use serde::{Deserialize, Serialize};
+use tecdsa_curve::ScalarExt;
 
-use crate::nizk::RDl2PcProof;
-use crate::sign::rounds::SignContribution;
+use crate::{nizk::RDl2PcProof, sign::rounds::SignContribution};
 
 /// Messages exchanged during WMY23 identifiable online signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,10 +54,6 @@ fn point_from(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String
         .ok_or_else(|| format!("invalid EC point: {label}"))
 }
 
-fn scalar_bytes(s: &k256::Scalar) -> Vec<u8> {
-    s.to_repr().to_vec()
-}
-
 fn scalar_from(bytes: &[u8], label: &str) -> Result<k256::Scalar, String> {
     if bytes.len() != 32 {
         return Err(format!("invalid scalar length for {label}"));
@@ -72,9 +68,9 @@ fn proof_to_wire(p: &RDl2PcProof) -> WireProof {
         t1: point_bytes(&p.t1),
         t2: point_bytes(&p.t2),
         t3: point_bytes(&p.t3),
-        u1: scalar_bytes(&p.u1),
-        u2: scalar_bytes(&p.u2),
-        u3: scalar_bytes(&p.u3),
+        u1: p.u1.to_bytes_vec(),
+        u2: p.u2.to_bytes_vec(),
+        u3: p.u3.to_bytes_vec(),
     }
 }
 
@@ -113,7 +109,7 @@ pub fn serialize_contribution(c: &SignContribution) -> Result<Vec<u8>, String> {
     }
     let wire = WireContribution {
         index: c.index as u16,
-        s_i: scalar_bytes(&c.s_i),
+        s_i: c.s_i.to_bytes_vec(),
         entries,
     };
     bincode::serde::encode_to_vec(&wire, bincode::config::standard())

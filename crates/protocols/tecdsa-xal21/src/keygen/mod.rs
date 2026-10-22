@@ -24,22 +24,20 @@ pub use interactive::{
 };
 pub use machine::{TwoPartyRole, Xal21KeyShare, Xal21KeygenMachine, Xal21KeygenMsg};
 use rand_core::CryptoRngCore;
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::{backend::Integer, zk::mta_range::NTildeParams};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_paillier::{zk::mta_range::NTildeParams, BigIntExt};
 
 use crate::key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare};
 
 fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
-    let p = Integer::generate_safe_prime(rng, 1536);
-    let q = Integer::generate_safe_prime(rng, 1536);
-    let n_tilde = &p * &q;
-    let h1 = Integer::sample_in_mult_group_of(rng, &n_tilde);
-    let lambda = (&p - Integer::one()) * (&q - Integer::one());
-    let h2 = h1.pow_mod_ref(&lambda, &n_tilde).expect("pow_mod for h2");
+    // `t` is the quadratic-residue base and `s = t^lambda` for a secret lambda,
+    // so the discrete log relating them is unknown -- which is what makes the
+    // range proofs' Ring-Pedersen commitments hiding.
+    let (params, _secret) = tecdsa_pedersen_mod::PedersenModParams::generate(1536, rng);
     NTildeParams {
-        N_tilde: n_tilde,
-        h1,
-        h2,
+        N_tilde: params.n,
+        h1: params.t,
+        h2: params.s,
     }
 }
 
@@ -58,7 +56,7 @@ fn generate_ntilde_params(rng: &mut impl CryptoRngCore) -> NTildeParams {
 pub fn generate_setup(
     rng: &mut impl CryptoRngCore,
 ) -> (tecdsa_paillier::DecryptionKey, NTildeParams) {
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ntilde = generate_ntilde_params(rng);
     (dk, ntilde)
 }
@@ -91,7 +89,7 @@ where
     let q1 = C::generator() * x1;
 
     // Generate Paillier key pair for P_2 (P_2 owns the decryption key)
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     let ek = dk.encryption_key().clone();
 
     // Generate Ring-Pedersen auxiliary parameters for MtA range proofs
@@ -117,37 +115,21 @@ where
     (p1_share, p2_share)
 }
 
-/// Compute the curve order q as a big integer.
-pub(crate) fn curve_order<C: TecdsaCurve>() -> tecdsa_paillier::backend::Integer
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    use elliptic_curve::Field;
-    // q - 1 is the repr of -1 in the scalar field
-    let neg_one = -C::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_minus_1 = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    &q_minus_1 + 1u8
-}
-
-pub(crate) use tecdsa_curve::conv::scalar_to_bytes;
-
 #[allow(dead_code)]
-pub(crate) fn scalar_to_int<C: TecdsaCurve>(s: &C::Scalar) -> tecdsa_paillier::backend::Integer
+pub(crate) fn scalar_to_int<C: TecdsaCurve>(s: &C::Scalar) -> rug::Integer
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    tecdsa_paillier::backend::Integer::from_bytes_msf(&scalar_to_bytes::<C>(s))
+    rug::Integer::from_bytes_msf(&s.to_bytes_vec())
 }
 
-pub(crate) fn int_to_scalar<C: TecdsaCurve>(value: &tecdsa_paillier::backend::Integer) -> C::Scalar
+pub(crate) fn int_to_scalar<C: TecdsaCurve>(value: &rug::Integer) -> C::Scalar
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    tecdsa_curve::conv::bytes_to_scalar::<C>(&value.to_bytes_msf())
+    C::scalar_from_bytes(&value.to_bytes_msf())
 }
 
 #[cfg(test)]
@@ -181,5 +163,28 @@ mod tests {
 
         // P_2 also has Q_1
         assert_eq!(p2.public_share_p1, expected_q1);
+    }
+
+    /// The Ring-Pedersen parameters must be non-degenerate.
+    ///
+    /// `generate_ntilde_params` previously used `lambda = (p-1)(q-1) = phi(N~)`,
+    /// and by Euler that makes `h2 = h1^phi = 1`. The MtA range proofs commit as
+    /// `h1^x * h2^r`, so a unit `h2` silently drops the blinding factor `r` and
+    /// the commitment becomes a deterministic function of the secret witness.
+    #[test]
+    fn ntilde_params_are_hiding() {
+        use tecdsa_paillier::BigIntExt;
+
+        let rng = &mut rand::thread_rng();
+        let ntilde = super::generate_ntilde_params(rng);
+
+        assert_ne!(
+            ntilde.h2, 1,
+            "h2 must not be the identity: h1^x * h2^r would ignore r"
+        );
+        assert_ne!(ntilde.h1, 1, "h1 must not be the identity");
+        assert_ne!(ntilde.h1, ntilde.h2, "h1 and h2 must differ");
+        assert!(ntilde.h1.in_mult_group_of(&ntilde.N_tilde));
+        assert!(ntilde.h2.in_mult_group_of(&ntilde.N_tilde));
     }
 }

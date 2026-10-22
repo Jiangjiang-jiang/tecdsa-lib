@@ -22,9 +22,12 @@
 //! Security parameter: `SECURITY_PARAM` repetitions for `2^{-SECURITY_PARAM}`
 //! soundness.
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
+use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 /// Number of repetitions for the range proof.
 const SECURITY_PARAM: usize = 80;
@@ -40,8 +43,8 @@ pub enum RangeProofNiError {
     NonceExtraction,
 }
 
-impl From<fast_paillier::Error> for RangeProofNiError {
-    fn from(e: fast_paillier::Error) -> Self {
+impl From<crate::scheme::Error> for RangeProofNiError {
+    fn from(e: crate::scheme::Error) -> Self {
         RangeProofNiError::Paillier(e.to_string())
     }
 }
@@ -61,9 +64,11 @@ pub struct RangeProofNi {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EncryptedPair {
     /// `c_masked_i = c (+) c_mask_i`.
-    pub c_masked: fast_paillier::Ciphertext,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    pub c_masked: crate::scheme::Ciphertext,
     /// `c_mask_i = Enc(rho_i; t_i)`.
-    pub c_mask: fast_paillier::Ciphertext,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    pub c_mask: crate::scheme::Ciphertext,
 }
 
 /// Response for one repetition of the range proof.
@@ -73,15 +78,19 @@ pub enum RangeResponse {
     /// and `s_i` is the nonce of `c_masked_i`.
     Open {
         /// `w_i = x + rho_i`, the masked plaintext.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         w: Integer,
         /// `s_i`, the Paillier nonce of `c_masked_i`.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         s: Integer,
     },
     /// Challenge bit = 1: reveal `(rho_i, t_i)` to prove the mask structure.
     Verify {
         /// `rho_i`, the random mask.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         rho: Integer,
         /// `t_i`, the Paillier nonce for `c_mask_i`.
+        #[serde(with = "tecdsa_bigint::int_wire")]
         t: Integer,
     },
 }
@@ -96,7 +105,7 @@ pub enum RangeResponse {
 /// 3. Compute `r = (r^N)^{d} mod N` where `d = N^{-1} mod lambda(N)`.
 fn extract_nonce(
     dk: &DecryptionKey,
-    ciphertext: &fast_paillier::Ciphertext,
+    ciphertext: &crate::scheme::Ciphertext,
     plaintext: &Integer,
 ) -> Option<Integer> {
     let n = dk.n();
@@ -104,24 +113,24 @@ fn extract_nonce(
 
     // Handle negative plaintext (Paillier convention: x + N for negatives)
     let x = if plaintext.cmp0().is_lt() {
-        plaintext + n
+        (plaintext + n).complete()
     } else {
         plaintext.clone()
     };
 
     // (1 + x*N) mod N^2
-    let one_plus_xn = (Integer::one() + &x * n).modulo_ref(nn);
+    let one_plus_xn = (Integer::one() + x * n).modulo(nn);
 
     // r^N = c * (1 + x*N)^{-1} mod N^2
-    let one_plus_xn_inv = one_plus_xn.invert_ref(nn)?;
-    let r_to_n = (ciphertext * &one_plus_xn_inv).modulo_ref(nn);
+    let one_plus_xn_inv = one_plus_xn.invert(nn).ok()?;
+    let r_to_n = (ciphertext * one_plus_xn_inv).modulo(nn);
 
     // Compute d = N^{-1} mod lambda(N)
     let lambda = dk.lambda();
-    let d = n.invert_ref(lambda)?;
+    let d = n.invert_ref(lambda)?.complete();
 
     // r = (r^N)^d mod N
-    let r = r_to_n.pow_mod_ref(&d, n)?;
+    let r = r_to_n.pow_mod(&d, n).ok()?;
 
     Some(r)
 }
@@ -140,14 +149,14 @@ impl RangeProofNi {
     pub fn prove(
         dk: &DecryptionKey,
         ek: &EncryptionKey,
-        c: &fast_paillier::Ciphertext,
+        c: &crate::scheme::Ciphertext,
         x: &Integer,
         _r: &Integer,
         q: &Integer,
         rng: &mut impl CryptoRngCore,
     ) -> Result<Self, RangeProofNiError> {
         // Range bound: masks sampled from [0, q * 2^{128}).
-        let range_bound = q * &Integer::u_pow_u(2, 128);
+        let range_bound = q * Integer::two_pow(128);
 
         let mut encrypted_pairs = Vec::with_capacity(SECURITY_PARAM);
         let mut masks = Vec::with_capacity(SECURITY_PARAM);
@@ -155,7 +164,7 @@ impl RangeProofNi {
 
         for _ in 0..SECURITY_PARAM {
             // Sample rho_i from [0, range_bound)
-            let rho_i = range_bound.random_below_ref(rng);
+            let rho_i = range_bound.sample_below_ref(rng);
 
             // Encrypt rho_i: c_mask_i = Enc(rho_i; t_i)
             let (c_mask, t_i) = dk.encrypt_with_random(rng, &rho_i)?;
@@ -175,7 +184,7 @@ impl RangeProofNi {
         for (i, bit) in challenges.iter().enumerate() {
             if *bit == 0 {
                 // Reveal (w_i, s_i) where w_i = x + rho_i
-                let w_i = x + &masks[i];
+                let w_i = (x + &masks[i]).complete();
                 // Extract nonce s_i of c_masked_i using the secret key
                 let s_i = extract_nonce(dk, &encrypted_pairs[i].c_masked, &w_i)
                     .ok_or(RangeProofNiError::NonceExtraction)?;
@@ -204,13 +213,13 @@ impl RangeProofNi {
     /// * `c` - The ciphertext whose range is being proved
     /// * `q` - The upper bound (curve group order)
     #[must_use]
-    pub fn verify(&self, ek: &EncryptionKey, c: &fast_paillier::Ciphertext, q: &Integer) -> bool {
+    pub fn verify(&self, ek: &EncryptionKey, c: &crate::scheme::Ciphertext, q: &Integer) -> bool {
         if self.encrypted_pairs.len() != SECURITY_PARAM || self.responses.len() != SECURITY_PARAM {
             return false;
         }
 
-        let range_bound = q * &Integer::u_pow_u(2, 128);
-        let upper_bound = q + &range_bound;
+        let range_bound = q * Integer::two_pow(128);
+        let upper_bound = (q + &range_bound).complete();
 
         // Re-derive challenge bits
         let challenges = derive_challenges(ek, c, &self.encrypted_pairs);
@@ -266,7 +275,7 @@ impl RangeProofNi {
 /// Derive SECURITY_PARAM challenge bits via Fiat-Shamir.
 fn derive_challenges(
     ek: &EncryptionKey,
-    c: &fast_paillier::Ciphertext,
+    c: &crate::scheme::Ciphertext,
     pairs: &[EncryptedPair],
 ) -> Vec<u8> {
     let mut hasher = Sha256::new();
@@ -308,13 +317,15 @@ fn derive_challenges(
 
 #[cfg(test)]
 mod tests {
+    use tecdsa_curve::ScalarExt;
+
     use super::*;
 
     #[test]
     #[ignore = "redundant boundary test"]
     fn nonce_extraction_roundtrip() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
 
         let x = Integer::from(12345u32);
         let (c, r) = dk.encrypt_with_random(&mut rng, &x).expect("encrypt");
@@ -326,7 +337,7 @@ mod tests {
     #[test]
     fn range_proof_valid() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         // Small value for speed
@@ -342,21 +353,18 @@ mod tests {
     #[test]
     #[ignore = "redundant boundary test"]
     fn range_proof_with_real_curve_order() {
-        use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+        use tecdsa_curve::TecdsaCurve;
 
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         // Use actual secp256k1 group order
-        let q_bytes = scalar_to_bytes::<k256::Secp256k1>(
-            &(-<k256::Secp256k1 as elliptic_curve::CurveArithmetic>::Scalar::ONE),
-        );
-        let q = Integer::from_bytes_msf(&q_bytes) + 1u8;
+        let q = k256::Secp256k1::order();
 
         // Random x < q
         let x1 = k256::Secp256k1::random_scalar(&mut rng);
-        let x1_bytes = scalar_to_bytes::<k256::Secp256k1>(&x1);
+        let x1_bytes = x1.to_bytes_vec();
         let x = Integer::from_bytes_msf(&x1_bytes);
 
         let (c, r) = dk.encrypt_with_random(&mut rng, &x).expect("encrypt");

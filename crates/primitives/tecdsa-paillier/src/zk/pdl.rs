@@ -20,15 +20,16 @@
 //! same PDL verification).
 
 use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
+    group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
+use rug::Integer;
+use tecdsa_bigint::BigIntExt;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{conv::scalar_to_bytes, TecdsaCurve};
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use thiserror::Error;
 
-use crate::conv::integer_to_scalar;
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -60,7 +61,8 @@ pub enum PdlError {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct PdlVerifierMsg1 {
     /// `c' = (a (*) c_key) (+) Enc(b)` -- Paillier ciphertext encoding `a*x_1 + b`.
-    pub c_tag: fast_paillier::Ciphertext,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    pub c_tag: crate::scheme::Ciphertext,
     /// Commitment to `(a, b)`.
     pub c_tag_tag: HashCommitment,
 }
@@ -79,8 +81,10 @@ pub struct PdlProverMsg1 {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct PdlVerifierMsg2 {
     /// The scalar `a` sampled by the verifier.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub a: Integer,
     /// The scalar `b` sampled by the verifier.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub b: Integer,
     /// Opening nonce for `c_tag_tag`.
     pub nonce: [u8; 32],
@@ -148,7 +152,7 @@ where
 /// 5. Committing to `(a, b)`.
 pub fn verifier_step1<C: TecdsaCurve>(
     ek: &EncryptionKey,
-    c_key: &fast_paillier::Ciphertext,
+    c_key: &crate::scheme::Ciphertext,
     q1: &C::ProjectivePoint,
     rng: &mut impl CryptoRngCore,
 ) -> Result<(PdlVerifierMsg1, PdlVerifierState<C>), PdlError>
@@ -157,14 +161,12 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     // Compute q (group order)
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
-    let q_int = Integer::from_bytes_msf(&q_bytes) + 1u8;
-    let q_squared = &q_int * &q_int;
+    let q_int = C::order();
 
     // Sample a from Z_q
-    let a = q_int.random_below_ref(rng);
+    let a = q_int.sample_below_ref(rng);
     // Sample b from Z_{q^2}
-    let b = q_squared.random_below_ref(rng);
+    let b = q_int.square().sample_below_ref(rng);
 
     // Compute c_tag = (a (*) c_key) (+) Enc(b)
     let c_a = ek
@@ -178,8 +180,8 @@ where
         .map_err(|e| PdlError::Paillier(format!("PDL oadd failed: {e}")))?;
 
     // Compute Q' = a * Q_1 + b * G
-    let a_scalar = tecdsa_curve::conv::bytes_to_scalar::<C>(&a.to_bytes_msf());
-    let b_scalar = tecdsa_curve::conv::bytes_to_scalar::<C>(&b.to_bytes_msf());
+    let a_scalar = C::scalar_from_bytes(&a.to_bytes_msf());
+    let b_scalar = C::scalar_from_bytes(&b.to_bytes_msf());
     let q_tag = *q1 * a_scalar + C::generator() * b_scalar;
 
     // Commit to (a, b)
@@ -257,7 +259,7 @@ where
     // Compute Q_hat = alpha * G
     // alpha might be negative (Paillier returns values in {-N/2, .., N/2})
     // We need to handle this by reducing mod q
-    let alpha_scalar = integer_to_scalar::<C>(&alpha);
+    let alpha_scalar = C::scalar_from_integer(&alpha);
     let q_hat = C::generator() * alpha_scalar;
 
     // Commit to Q_hat
@@ -301,10 +303,10 @@ where
 
     // Check that a * x_1 + b = alpha (over the integers).
     // First we need x_1 as an Integer.
-    let x1_bytes = scalar_to_bytes::<C>(x1);
+    let x1_bytes = x1.to_bytes_vec();
     let x1_int = Integer::from_bytes_msf(&x1_bytes);
 
-    let expected = &verifier_msg2.a * &x1_int + &verifier_msg2.b;
+    let expected = Integer::from(&verifier_msg2.a * &x1_int + &verifier_msg2.b);
 
     // The alpha from Paillier decryption might be in {-N/2, ..., N/2}.
     // If Paillier gave back a negative, the original plaintext was
@@ -353,7 +355,7 @@ pub fn pdl_verify<C: TecdsaCurve>(
     dk: &DecryptionKey,
     ek: &EncryptionKey,
     x1: &C::Scalar,
-    c_key: &fast_paillier::Ciphertext,
+    c_key: &crate::scheme::Ciphertext,
     q1: &C::ProjectivePoint,
     rng: &mut impl CryptoRngCore,
 ) -> Result<(), PdlError>
@@ -390,7 +392,7 @@ mod tests {
         let mut rng = rand_core::OsRng;
 
         // Generate Paillier keys
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         // Generate EC key
@@ -398,7 +400,7 @@ mod tests {
         let q1 = Secp256k1::generator() * x1;
 
         // Encrypt x1
-        let x1_bytes = scalar_to_bytes::<Secp256k1>(&x1);
+        let x1_bytes = x1.to_bytes_vec();
         let x1_int = Integer::from_bytes_msf(&x1_bytes);
         let (c_key, _) = dk.encrypt_with_random(&mut rng, &x1_int).expect("encrypt");
 
@@ -412,7 +414,7 @@ mod tests {
     fn pdl_proof_wrong_ckey() {
         let mut rng = rand_core::OsRng;
 
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let x1 = Secp256k1::random_scalar(&mut rng);
@@ -420,7 +422,7 @@ mod tests {
 
         // Encrypt a DIFFERENT value
         let wrong_x = Secp256k1::random_scalar(&mut rng);
-        let wrong_bytes = scalar_to_bytes::<Secp256k1>(&wrong_x);
+        let wrong_bytes = wrong_x.to_bytes_vec();
         let wrong_int = Integer::from_bytes_msf(&wrong_bytes);
         let (wrong_c_key, _) = dk
             .encrypt_with_random(&mut rng, &wrong_int)
@@ -436,7 +438,7 @@ mod tests {
     fn pdl_proof_wrong_q1() {
         let mut rng = rand_core::OsRng;
 
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let x1 = Secp256k1::random_scalar(&mut rng);
@@ -445,7 +447,7 @@ mod tests {
         let wrong_x = Secp256k1::random_scalar(&mut rng);
         let wrong_q1 = Secp256k1::generator() * wrong_x;
 
-        let x1_bytes = scalar_to_bytes::<Secp256k1>(&x1);
+        let x1_bytes = x1.to_bytes_vec();
         let x1_int = Integer::from_bytes_msf(&x1_bytes);
         let (c_key, _) = dk.encrypt_with_random(&mut rng, &x1_int).expect("encrypt");
 

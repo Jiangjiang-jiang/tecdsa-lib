@@ -19,11 +19,15 @@ repository = "https://github.com/Jiangjiang-jiang/tecdsa-lib"
 k256 = { version = "0.14.0-rc", default-features = false, features = ["arithmetic", "serde", "expose-field"] }
 p256 = { version = "0.14.0-rc", default-features = false, features = ["arithmetic", "serde"] }
 elliptic-curve = { version = "0.14.0-rc", default-features = false, features = ["sec1"] }
-generic-ec = { version = "0.5", features = ["curve-secp256k1", "serde"] }
 
 # Big integers
 gmp-mpfr-sys = "1.7"
-rug = { version = "1", features = ["serde"] }
+# No "serde" feature: rug's native serde encodes integers as radix-16 strings
+# ({radix, value}), which doubles wire size under bincode. `Integer` fields
+# use the compact `tecdsa_bigint::int_wire` adapter instead. Re-enabling this
+# feature would silently regress that (nothing in the workspace legitimately
+# needs rug's own serde impl).
+rug = { version = "1" }
 
 # Hashing
 sha2 = "0.10"
@@ -34,6 +38,9 @@ hmac = "0.12"
 # Randomness
 rand_core = { version = "0.6", default-features = false }
 rand = "0.8"
+
+# Parallelism (prototype: multithreading evaluation)
+rayon = "1"
 
 # Security
 zeroize = { version = "1", features = ["derive"] }
@@ -49,14 +56,10 @@ bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 merlin = "3"
 
 # Digest
-udigest = "0.2"
+udigest = { version = "0.2", default-features = false }
 
 # Errors
 thiserror = { version = "2", default-features = false }
-
-# Async (transport only)
-tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
 
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -77,14 +80,12 @@ tecdsa-joye-libert = { path = "crates/primitives/tecdsa-joye-libert" }
 tecdsa-ot = { path = "crates/primitives/tecdsa-ot" }
 tecdsa-elgamal = { path = "crates/primitives/tecdsa-elgamal" }
 tecdsa-evrf = { path = "crates/primitives/tecdsa-evrf" }
-tecdsa-hd = { path = "crates/primitives/tecdsa-hd" }
 # Workspace crates — framework
 tecdsa-protocol = { path = "crates/framework/tecdsa-protocol", default-features = false }
 tecdsa-wire = { path = "crates/framework/tecdsa-wire" }
 tecdsa-transport = { path = "crates/framework/tecdsa-transport" }
 tecdsa-session = { path = "crates/framework/tecdsa-session" }
 tecdsa-testkit = { path = "crates/framework/tecdsa-testkit" }
-tecdsa-bench = { path = "crates/framework/tecdsa-bench" }
 # Workspace crates — protocols
 tecdsa-cggmp20 = { path = "crates/protocols/tecdsa-cggmp20" }
 tecdsa-dkls23 = { path = "crates/protocols/tecdsa-dkls23" }
@@ -102,15 +103,7 @@ tecdsa-lin17 = { path = "crates/protocols/tecdsa-lin17" }
 tecdsa-kgg24 = { path = "crates/protocols/tecdsa-kgg24" }
 tecdsa-xal21 = { path = "crates/protocols/tecdsa-xal21" }
 tecdsa-abc24 = { path = "crates/protocols/tecdsa-abc24" }
-tecdsa-ku25 = { path = "crates/protocols/tecdsa-ku25" }
-
-# External Paillier ecosystem (LFDT-Lockness, MIT/Apache-2.0)
-# Vendored: crates.io 0.3.2 broken (glass_pumpkin 1.10 rand_core 0.10 mismatch, upstream issue #23)
-fast-paillier = { version = "0.3", default-features = true }
-# Force the rug/GMP backend (the rest of the workspace already uses rug). paillier-zk's
-# default pulls fast-paillier/backend-num-bigint; with both backend features on, fast-paillier
-# selects num-bigint (glass_pumpkin) which is far slower than GMP for big-int/primality work.
-paillier-zk = { version = "0.7.0-alpha", default-features = false, features = ["std", "serde", "backend-rug"] }
+tecdsa-ku24 = { path = "crates/protocols/tecdsa-ku24" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -138,10 +131,6 @@ needless_range_loop = "allow"
 too_many_arguments = "allow"
 large_enum_variant = "allow"
 
-# Vendor patch: fast-paillier 0.3.2 bridges glass_pumpkin 1.10 (rand_core 0.10) with our rand_core 0.6.
-# Remove when upstream merges fix (https://github.com/LFDT-Lockness/fast-paillier/issues/23).
-[patch.crates-io]
-fast-paillier = { path = "vendor/fast-paillier" }
 
 # Build profiles. Overflow checks were previously forced on for every profile via
 # `.cargo/config.toml` RUSTFLAGS; they are now scoped here so benchmarks run

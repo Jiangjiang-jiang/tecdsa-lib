@@ -12,9 +12,10 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use elliptic_curve::PrimeField;
 use k256::Secp256k1;
 use rand_core::OsRng;
+use rug::Integer;
 use tecdsa_bench::zk_fixtures::{NTildeFixture, PaillierFixture, PedersenFixture};
-use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::backend::Integer;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::MtA;
 
 static PAILLIER: LazyLock<PaillierFixture> = LazyLock::new(PaillierFixture::generate);
@@ -22,10 +23,7 @@ static NTILDE: LazyLock<NTildeFixture> = LazyLock::new(NTildeFixture::generate);
 static PEDERSEN: LazyLock<PedersenFixture> = LazyLock::new(PedersenFixture::generate);
 
 fn q_bytes() -> Vec<u8> {
-    let neg_one = -k256::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_int = Integer::from_bytes_msf(neg_one_bytes.as_ref()) + 1u8;
-    q_int.to_bytes_msf()
+    Secp256k1::order().to_bytes_msf()
 }
 
 // ---------------------------------------------------------------------------
@@ -82,12 +80,9 @@ fn paillier_mta(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn cggmp20_mta(c: &mut Criterion) {
-    use paillier_zk::{
-        paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
-    };
     use tecdsa_paillier::{
         mta::{Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup},
-        zk::bridge::pedersen_to_aux,
+        zk::{bridge::pedersen_to_aux, pi_aff_g as pi_aff, pi_enc},
     };
     type M = PaillierMtA<Cggmp20Proofs>;
 
@@ -153,18 +148,18 @@ fn cl_mta(c: &mut Criterion) {
     use tecdsa_protocol::MtAWithCheck;
     type M = ClMtA;
 
-    let seed = "42042";
+    let seed = rug::Integer::from(42042u64);
     let setup = ClMtaSetup {
         setup: RefCell::new(
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl"),
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed).expect("cl"),
         ),
         pk: {
-            let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+            let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed).expect("cl");
             let (_, pk) = tmp.keygen().expect("kg");
             pk
         },
         sk: {
-            let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+            let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed).expect("cl");
             let (sk, _) = tmp.keygen().expect("kg");
             sk
         },
@@ -305,19 +300,17 @@ fn rvole_mta(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn nim_mta(c: &mut Criterion) {
-    use elliptic_curve::{group::GroupEncoding, CurveArithmetic};
+    use elliptic_curve::CurveArithmetic;
     use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
 
-    let seed = "42042";
-    let mut nim_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl");
+    let seed = rug::Integer::from(42042u64);
+    let mut nim_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed).expect("cl");
     let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
     let x_scalar = Secp256k1::random_scalar(&mut OsRng);
-    let x = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&x_scalar);
-    let y = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&Secp256k1::random_scalar(&mut OsRng));
+    let x = x_scalar.to_integer();
+    let y = (Secp256k1::random_scalar(&mut OsRng)).to_integer();
     // V = x * G is the EC commitment that R_Ped binds the Encode_A output to.
-    let big_v = (<Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar)
-        .to_bytes()
-        .to_vec();
+    let big_v = <Secp256k1 as CurveArithmetic>::ProjectivePoint::GENERATOR * x_scalar;
 
     let mut g = c.benchmark_group("mta/nim");
 
@@ -343,19 +336,19 @@ fn nim_mta(c: &mut Criterion) {
         let mut nim = Nim::new(&mut nim_setup);
         nim.encode_b(&y, &nim_pk).expect("encode_b")
     };
-    let r_bytes = ea.state.r_bytes.clone();
+    let r_nim = ea.state.r.clone();
 
     // R_Ped (R_Ped_EC, LLZ25 §4.3): proves the Encode_A output
     // pe_A = h^r * pk^x is consistent with V = x*G. Party A proves; the
     // counterparty verifies. This is what makes NIM maliciously secure.
     g.bench_function("r_ped/prove", |bench| {
         bench.iter(|| {
-            RPedEcProof::prove(&mut nim_setup, &nim_pk, &ea.pe_a, &big_v, &x, &r_bytes)
+            RPedEcProof::prove(&mut nim_setup, &nim_pk, &ea.pe_a, &big_v, &x, &r_nim)
                 .expect("r_ped prove")
         })
     });
 
-    let ped_proof = RPedEcProof::prove(&mut nim_setup, &nim_pk, &ea.pe_a, &big_v, &x, &r_bytes)
+    let ped_proof = RPedEcProof::prove(&mut nim_setup, &nim_pk, &ea.pe_a, &big_v, &x, &r_nim)
         .expect("r_ped prove");
     g.bench_function("r_ped/verify", |bench| {
         bench.iter(|| {

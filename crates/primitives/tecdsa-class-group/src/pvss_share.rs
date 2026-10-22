@@ -24,7 +24,7 @@
 //! This module is distinct from the Cascudo-David PVSS in `pvss.rs`, which
 //! uses per-share independent randomness and individual `R_Enc` proofs.
 
-use rug::{integer::Order, Integer};
+use rug::Integer;
 
 use crate::{
     cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi},
@@ -39,8 +39,8 @@ pub struct PvssShareOutput {
     pub c2s: Vec<Qfi>,
     /// `R_Sh` proof (PolyVerify) of correct polynomial sharing.
     pub proof: RShProof,
-    /// The distributor's own plaintext share as big-endian bytes.
-    pub secret_share_bytes: Vec<u8>,
+    /// The distributor's own plaintext share.
+    pub secret_share: Integer,
 }
 
 /// Output of shared-randomness PVSS distribution with polynomial coefficients.
@@ -53,10 +53,10 @@ pub struct PvssShareWithCoeffsOutput {
     pub c2s: Vec<Qfi>,
     /// `R_Sh` proof (PolyVerify) of correct polynomial sharing.
     pub proof: RShProof,
-    /// The distributor's own plaintext share as big-endian bytes.
-    pub secret_share_bytes: Vec<u8>,
-    /// Polynomial coefficients as big-endian bytes (a_0, a_1, ..., a_{t-1}).
-    pub polynomial_coeffs_bytes: Vec<Vec<u8>>,
+    /// The distributor's own plaintext share.
+    pub secret_share: Integer,
+    /// Polynomial coefficients (a_0, a_1, ..., a_{t-1}).
+    pub polynomial_coeffs: Vec<Integer>,
 }
 
 /// Evaluates a polynomial at a point modulo `q` using Horner's method.
@@ -91,37 +91,36 @@ pub fn pvss_share_distribute(
     my_index_in_list: usize,
 ) -> ClResult<PvssShareOutput> {
     let n = party_ids.len();
-    let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
+    let q = setup.cl().q().clone();
     let t = reconstruct_threshold as usize;
 
     // Generate random polynomial coefficients in [0, q).
     let mut coeffs = Vec::with_capacity(t);
     for _ in 0..t {
-        let r = sample_random_mod_q(setup)?;
-        coeffs.push(Integer::from_digits(&r, Order::Msf));
+        coeffs.push(sample_random_mod_q(setup)?);
     }
 
     // Evaluate polynomial at each party's id.
-    let shares: Vec<Vec<u8>> = party_ids
+    let shares: Vec<Integer> = party_ids
         .iter()
         .map(|&id| {
             let x = Integer::from(id);
-            eval_poly_mod_q(&coeffs, &x, &q).to_digits::<u8>(Order::Msf)
+            eval_poly_mod_q(&coeffs, &x, &q)
         })
         .collect();
 
     // Sample shared randomness rho.
     let (rho_sk, _) = setup.keygen()?;
-    let rho_bytes = setup.sk_to_bytes(&rho_sk)?;
+    let rho = setup.sk_to_integer(&rho_sk);
 
     // c1 = h^rho.
-    let c1 = setup.power_of_h_bytes(&rho_bytes)?;
+    let c1 = setup.power_of_h(&rho)?;
 
     // c2_j = pk_j^rho * f^{v_j} for each party j.
     let mut c2s: Vec<Qfi> = Vec::with_capacity(n);
     for (idx, share) in shares.iter().enumerate() {
-        let pk_rho = setup.pk_pow_bytes(&pks[idx], &rho_bytes)?;
-        let f_v = setup.power_of_f_bytes(share)?;
+        let pk_rho = setup.pk_pow(&pks[idx], &rho)?;
+        let f_v = setup.power_of_f(share)?;
         let c2 = setup.compose(&pk_rho, &f_v)?;
         c2s.push(c2);
     }
@@ -136,21 +135,21 @@ pub fn pvss_share_distribute(
         &pk_refs,
         &c1,
         &c2_refs,
-        &rho_bytes,
+        &rho,
     )?;
 
     Ok(PvssShareOutput {
         c1,
         c2s,
         proof,
-        secret_share_bytes: shares[my_index_in_list].clone(),
+        secret_share: shares[my_index_in_list].clone(),
     })
 }
 
 /// Distributes a shared-randomness PVSS with a pre-determined secret.
 ///
 /// The polynomial `f(x) = a_0 + a_1*x + ... + a_{t-1}*x^{t-1}` uses the
-/// given `secret_bytes` as `a_0` and random higher-order coefficients.
+/// given `secret` as `a_0` and random higher-order coefficients.
 ///
 /// Returns the full output including polynomial coefficients.
 pub fn pvss_share_distribute_with_secret(
@@ -159,41 +158,40 @@ pub fn pvss_share_distribute_with_secret(
     pks: &[ClHsmqkPublicKey],
     reconstruct_threshold: u16,
     my_index_in_list: usize,
-    secret_bytes: &[u8],
+    secret: &Integer,
 ) -> ClResult<PvssShareWithCoeffsOutput> {
     let n = party_ids.len();
-    let q = Integer::from_digits(&setup.q_bytes()?, Order::Msf);
+    let q = setup.cl().q().clone();
     let t = reconstruct_threshold as usize;
 
     // Build polynomial: a_0 = secret, a_1..a_{t-1} random.
     let mut coeffs = Vec::with_capacity(t);
-    coeffs.push(Integer::from_digits(secret_bytes, Order::Msf) % &q);
+    coeffs.push(Integer::from(secret % &q));
     for _ in 1..t {
-        let r = sample_random_mod_q(setup)?;
-        coeffs.push(Integer::from_digits(&r, Order::Msf));
+        coeffs.push(sample_random_mod_q(setup)?);
     }
 
     // Evaluate polynomial at each party's id.
-    let shares: Vec<Vec<u8>> = party_ids
+    let shares: Vec<Integer> = party_ids
         .iter()
         .map(|&id| {
             let x = Integer::from(id);
-            eval_poly_mod_q(&coeffs, &x, &q).to_digits::<u8>(Order::Msf)
+            eval_poly_mod_q(&coeffs, &x, &q)
         })
         .collect();
 
     // Sample shared randomness rho.
     let (rho_sk, _) = setup.keygen()?;
-    let rho_bytes = setup.sk_to_bytes(&rho_sk)?;
+    let rho = setup.sk_to_integer(&rho_sk);
 
     // c1 = h^rho.
-    let c1 = setup.power_of_h_bytes(&rho_bytes)?;
+    let c1 = setup.power_of_h(&rho)?;
 
     // c2_j = pk_j^rho * f^{v_j} for each party j.
     let mut c2s: Vec<Qfi> = Vec::with_capacity(n);
     for (idx, share) in shares.iter().enumerate() {
-        let pk_rho = setup.pk_pow_bytes(&pks[idx], &rho_bytes)?;
-        let f_v = setup.power_of_f_bytes(share)?;
+        let pk_rho = setup.pk_pow(&pks[idx], &rho)?;
+        let f_v = setup.power_of_f(share)?;
         let c2 = setup.compose(&pk_rho, &f_v)?;
         c2s.push(c2);
     }
@@ -208,20 +206,15 @@ pub fn pvss_share_distribute_with_secret(
         &pk_refs,
         &c1,
         &c2_refs,
-        &rho_bytes,
+        &rho,
     )?;
-
-    let polynomial_coeffs_bytes: Vec<Vec<u8>> = coeffs
-        .iter()
-        .map(|c| c.to_digits::<u8>(Order::Msf))
-        .collect();
 
     Ok(PvssShareWithCoeffsOutput {
         c1,
         c2s,
         proof,
-        secret_share_bytes: shares[my_index_in_list].clone(),
-        polynomial_coeffs_bytes,
+        secret_share: shares[my_index_in_list].clone(),
+        polynomial_coeffs: coeffs,
     })
 }
 
@@ -254,23 +247,21 @@ pub fn pvss_share_verify(
     )
 }
 
-/// Decrypts a party's encrypted PVSS share and returns the share as bytes.
+/// Decrypts a party's encrypted PVSS share and returns the share.
 ///
 /// Given `c1 = h^rho` and `c2_my = pk^rho * f^{share}`, the party
 /// computes:
 ///   1. `M = c1^sk` (where `pk = h^sk`)
 ///   2. `f_share = c2_my * M^{-1}` (class-group composition with inverse)
 ///   3. `share = dlog_in_F(f_share)` (discrete log in the F subgroup)
-///
-/// Returns the decrypted share as big-endian bytes.
 pub fn pvss_share_decrypt(
     setup: &ClSetup,
-    sk_bytes: &[u8],
+    sk: &Integer,
     c1: &Qfi,
     c2_my: &Qfi,
-) -> ClResult<Vec<u8>> {
-    let mut m = setup.exp_bytes(c1, sk_bytes)?;
+) -> ClResult<Integer> {
+    let mut m = setup.exp(c1, sk)?;
     m.neg();
     let f_share = setup.compose(c2_my, &m)?;
-    setup.dlog_in_F_bytes(&f_share)
+    setup.dlog_in_F(&f_share)
 }

@@ -13,9 +13,9 @@
 //!
 //! The swept `(n, t)` configurations are read from the environment (see
 //! [`tecdsa_bench::config`]): DKG uses `TECDSA_BENCH_DKG_CONFIGS`
-//! (default `3:3,7:7,11:11,15:15,20:20`); presign/sign use `TECDSA_BENCH_SIGN_N`
+//! (default `2:2,3:3,7:7,11:11,20:20`); presign/sign use `TECDSA_BENCH_SIGN_N`
 //! (default `20`) parties with thresholds `TECDSA_BENCH_SIGN_THRESHOLDS`
-//! (default `2,3,7,11,15,20`), signing quorum parties `1..=t`.
+//! (default `2,3,7,11,20`), signing quorum parties `1..=t`.
 //!
 //! LN18 and GGN16 have external setup (Shamir re-sharing / threshold Paillier)
 //! timed separately.
@@ -29,9 +29,12 @@ use std::{
 
 use elliptic_curve::{ops::Reduce, PrimeField};
 use k256::Secp256k1;
+use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
 use tecdsa_bench::{config, per_party};
+use tecdsa_curve::ScalarExt;
 use tecdsa_ln18::sign::Ln18MtaBackend;
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{DataToSign, PartyId, PartyInfo, SessionConfig, SessionId};
 
 type C = Secp256k1;
@@ -135,6 +138,21 @@ fn point_wire_len(p: &k256::ProjectivePoint) -> usize {
     AsRef::<[u8]>::as_ref(&p.to_bytes()).len()
 }
 
+/// Wire size (bytes) of a bare big integer.
+///
+/// `Integer` is `rug::Integer`, a foreign type, so it has no `Serialize` impl
+/// of its own; message structs carry it through
+/// `#[serde(with = "tecdsa_bigint::int_wire")]`. This measures it the same way,
+/// so the figure matches what the protocol actually puts on the wire.
+fn integer_wire_len(x: &Integer) -> usize {
+    #[derive(serde::Serialize)]
+    struct IntWire<'a> {
+        #[serde(with = "tecdsa_bigint::int_wire")]
+        n: &'a Integer,
+    }
+    tecdsa_testkit::wire_size(&IntWire { n: x })
+}
+
 /// Wire size (bytes) of a CL-HSM class-group ciphertext: the two `QFI`
 /// components in their native `to_bytes` encoding. CL/NIM types are not
 /// `serde::Serialize`, so they are sized through the class group's own
@@ -154,6 +172,7 @@ fn all_groups() -> Vec<(&'static str, GroupFn)> {
         ("gg18", gg18_once),
         ("ggn16", ggn16_once),
         ("ln18", ln18_once),
+        ("ku24", ku24_once),
         ("tx25", tx25_once),
         ("jtx25", jtx25_once),
         ("jtx25_robust", jtx25_robust_once),
@@ -250,21 +269,18 @@ fn mta_once() {
     let b = Secp256k1::random_scalar(&mut OsRng);
     let a_bytes = a.to_repr();
     let b_bytes = b.to_repr();
-    let neg_one = -k256::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(neg_one_bytes.as_ref()) + 1u8;
-    let q_bytes = q_int.to_bytes_msf();
+    let q_bytes = Secp256k1::order().to_bytes_msf();
 
     // ── Setup (timed separately) ──
     let paillier_dk = time_once("mta/setup/paillier_keygen", || {
-        tecdsa_paillier::keygen(&mut OsRng).expect("keygen")
+        tecdsa_paillier::DecryptionKey::generate(&mut OsRng).expect("keygen")
     });
     let paillier_ek = paillier_dk.encryption_key().clone();
 
-    let cl_setup_seed = "42042";
+    let cl_setup_seed = Integer::from(42042u64);
     let (_cl_sk, _cl_pk, _cl_setup) = time_once("mta/setup/cl_keygen", || {
-        let mut s =
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed).expect("cl setup");
+        let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
+            .expect("cl setup");
         let (sk, pk) = s.keygen().expect("cl keygen");
         (sk, pk, s)
     });
@@ -307,11 +323,9 @@ fn mta_once() {
 
     // ── 2. Paillier MtA with CGGMP20 proofs (pi_enc + pi_aff-g) ──
     {
-        use paillier_zk::{
-            paillier_affine_operation_in_range as pi_aff, paillier_encryption_in_range as pi_enc,
-        };
-        use tecdsa_paillier::mta::{
-            Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup,
+        use tecdsa_paillier::{
+            mta::{Cggmp20ProofSetup, Cggmp20Proofs, PaillierMtA, PaillierMtaSetup},
+            zk::{pi_aff_g as pi_aff, pi_enc},
         };
         type M = PaillierMtA<Cggmp20Proofs>;
         // Ring-Pedersen Aux (s, t, N^) reuses the N-tilde fixture: s<-h1,
@@ -320,10 +334,8 @@ fn mta_once() {
             s: ntilde.h1.clone(),
             t: ntilde.h2.clone(),
             rsa_modulo: ntilde.n_tilde.clone(),
-            multiexp: None,
-            crt: None,
         };
-        let q_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes);
+        let q_int = Integer::from_bytes_msf(&q_bytes);
         let setup = PaillierMtaSetup::<Cggmp20Proofs> {
             ek: paillier_ek.clone(),
             dk: paillier_dk.clone(),
@@ -364,17 +376,17 @@ fn mta_once() {
         type M = ClMtA;
         let setup = ClMtaSetup {
             setup: RefCell::new(
-                tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+                tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
                     .expect("cl setup"),
             ),
             pk: {
-                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
                     .expect("cl");
                 let (_, pk) = tmp.keygen().expect("keygen");
                 pk
             },
             sk: {
-                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed)
+                let mut tmp = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed)
                     .expect("cl");
                 let (sk, _) = tmp.keygen().expect("keygen");
                 sk
@@ -462,32 +474,29 @@ fn mta_once() {
     {
         use tecdsa_class_group::{nim::Nim, zk::r_ped_ec::RPedEcProof};
         let mut nim_setup =
-            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(cl_setup_seed).expect("cl");
+            tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&cl_setup_seed).expect("cl");
         let (_, nim_pk) = nim_setup.keygen().expect("nim keygen");
-        let x_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&a);
-        let y_bytes = tecdsa_curve::conv::scalar_to_bytes::<Secp256k1>(&b);
+        let x_int = a.to_integer();
+        let y_int = b.to_integer();
         // V = x * G is the EC commitment bound by R_Ped to the Encode_A output.
-        let big_v = {
-            use elliptic_curve::group::GroupEncoding;
-            AsRef::<[u8]>::as_ref(&(Secp256k1::generator() * a).to_bytes()).to_vec()
-        };
+        let big_v = Secp256k1::generator() * a;
         let encode_a_out = time_once("mta/nim/encode_a", || {
             let mut nim = Nim::new(&mut nim_setup);
-            nim.encode_a(&x_bytes, &nim_pk).expect("encode_a")
+            nim.encode_a(&x_int, &nim_pk).expect("encode_a")
         });
         let encode_b_out = time_once("mta/nim/encode_b", || {
             let mut nim = Nim::new(&mut nim_setup);
-            nim.encode_b(&y_bytes, &nim_pk).expect("encode_b")
+            nim.encode_b(&y_int, &nim_pk).expect("encode_b")
         });
-        let r_bytes = encode_a_out.state.r_bytes.clone();
+        let r_nim = encode_a_out.state.r.clone();
         let ped_proof = time_once("mta/nim/r_ped_prove", || {
             RPedEcProof::prove(
                 &mut nim_setup,
                 &nim_pk,
                 &encode_a_out.pe_a,
                 &big_v,
-                &x_bytes,
-                &r_bytes,
+                &x_int,
+                &r_nim,
             )
             .expect("r_ped prove")
         });
@@ -946,14 +955,11 @@ fn ggn16_dealer_setup(
 ) -> (
     tecdsa_paillier::threshold::ThresholdSetup,
     Vec<tecdsa_paillier::threshold::DecryptionShare>,
-    tecdsa_paillier::backend::Integer,
-    tecdsa_paillier::backend::Integer,
-    tecdsa_paillier::backend::Integer,
+    Integer,
+    Integer,
+    Integer,
 ) {
-    use tecdsa_paillier::{
-        backend::Integer,
-        threshold::{DecryptionShare, ThresholdSetup},
-    };
+    use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
 
     let mut rng = rand_core::OsRng;
     let p = Integer::generate_safe_prime(&mut rng, 1536);
@@ -962,25 +968,20 @@ fn ggn16_dealer_setup(
         tecdsa_paillier::DecryptionKey::from_primes(p.clone(), q.clone()).expect("valid primes");
     let ek = dk.encryption_key().clone();
     let n_int = ek.n().clone();
-    let p_minus_1 = &p - Integer::one();
-    let q_minus_1 = &q - Integer::one();
-    let lambda = p_minus_1.lcm_ref(&q_minus_1);
-    let beta = loop {
-        let candidate = n_int.random_below_ref(&mut rng);
-        if candidate > Integer::zero() && candidate.gcd_ref(&n_int) == Integer::one() {
-            break candidate;
-        }
-    };
-    let d = &lambda * &beta;
-    let theta = d.modulo_ref(&n_int);
+    let p_minus_1 = p - Integer::one();
+    let q_minus_1 = q - Integer::one();
+    let lambda = p_minus_1.lcm(&q_minus_1);
+    let beta = Integer::sample_in_mult_group_of(&mut rng, &n_int);
+    let d = lambda * beta;
+    let theta = d.modulo_ref(&n_int).complete();
     let mut delta = Integer::one();
     for i in 2..=n as u32 {
         delta *= Integer::from(i);
     }
-    let m = &n_int * &delta;
+    let m = n_int * &delta;
     let mut coeffs = vec![d];
     for _ in 0..corruption_t {
-        coeffs.push(m.random_below_ref(&mut rng));
+        coeffs.push(m.sample_below_ref(&mut rng));
     }
     let mut shares = Vec::with_capacity(n as usize);
     for i in 1..=n {
@@ -1004,10 +1005,13 @@ fn ggn16_dealer_setup(
     // Ring-Pedersen
     let rp = Integer::generate_safe_prime(&mut rng, 1536);
     let rq = Integer::generate_safe_prime(&mut rng, 1536);
-    let n_tilde = &rp * &rq;
+    let n_tilde = (&rp * &rq).complete();
     let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-    let rlambda = (&rp - Integer::one()) * (&rq - Integer::one());
-    let h2 = h1.pow_mod_ref(&rlambda, &n_tilde).expect("pow_mod");
+    let rlambda = (rp - Integer::one()) * (rq - Integer::one());
+    let h2 = h1
+        .pow_mod_ref(&rlambda, &n_tilde)
+        .expect("pow_mod")
+        .complete();
 
     (setup, shares, n_tilde, h1, h2)
 }
@@ -1676,7 +1680,7 @@ fn abc24_once() {
         "abc24/n2_t2/party2",
         point_wire_len(&client_msg.r1)
             + point_wire_len(&client_msg.r_point)
-            + tecdsa_testkit::wire_size(&client_msg.s_ct),
+            + integer_wire_len(&client_msg.s_ct),
     );
 }
 
@@ -1813,6 +1817,198 @@ fn cl_presign_sign_sweep<KM, PM, SM>(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// KU24
+// ═══════════════════════════════════════════════════════════════════════
+
+/// KU24 presign batch sizes, from `TECDSA_BENCH_KU24_BATCHES` (default `1,128`).
+///
+/// Comm is recorded per batch size so the per-presignature figure can be
+/// amortized the same way the Offline *time* column is.
+fn ku24_batches() -> Vec<usize> {
+    std::env::var("TECDSA_BENCH_KU24_BATCHES")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .filter_map(|p| p.trim().parse::<usize>().ok())
+                .filter(|&m| m > 0)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v: &Vec<usize>| !v.is_empty())
+        .unwrap_or_else(|| vec![1, 128])
+}
+
+/// KU24 one-shot sweep: PRSS setup, DKG, batch presign and online sign.
+///
+/// Two things differ from [`cl_presign_sign_sweep`] and are why KU24 cannot
+/// reuse it:
+///
+/// * **No quorum.** Reconstructing the degree-`2(t-1)` partial signatures needs
+///   `2t-1` shares, and this implementation checks consistency across all `n`
+///   points, so every phase runs all `n` parties rather than `first_signers(t)`.
+/// * **Init is the work.** All `F_rss` material is derived in the machine
+///   constructor, so the `*_with_init` timing helpers are required; the
+///   `without_init` variants the CL protocols use would report near-zero.
+///
+/// Honest-majority configurations only (`n >= 2t-1`); others are skipped.
+fn ku24_once() {
+    use tecdsa_ku24::{
+        keygen::Ku24KeygenMachine, presign::Ku24PresignMachine, prss::PrssKeys,
+        setup::Ku24SetupMachine, sign::Ku24SignMachine,
+    };
+
+    let msg = make_data_to_sign(b"benchmark message");
+
+    // --- DKG sweep: one-time PRSS setup, then the 1-round DKG. ---
+    for (n, t) in config::dkg_configs() {
+        if tecdsa_ku24::prss::check_params(n, t).is_err() {
+            continue;
+        }
+        let all: Vec<PartyId> = (1..=n).map(PartyId).collect();
+
+        let prss: Vec<PrssKeys<C>> = time_once(&format!("ku24/setup/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = all
+                .iter()
+                .map(|&pid| {
+                    let all = all.clone();
+                    (pid, move || {
+                        Ku24SetupMachine::<C>::new(pid, all, t).expect("ku24 setup")
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 4)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        });
+
+        let dkg_out = time_once(&format!("ku24/dkg/n{n}_t{t}/wall"), || {
+            let builders: Vec<_> = all
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    let all = all.clone();
+                    let keys = keys.clone();
+                    (pid, move || {
+                        Ku24KeygenMachine::new(pid, all, &keys, &[0u8; 32]).expect("ku24 keygen")
+                    })
+                })
+                .collect();
+            per_party::run_timed_with_init(builders, 4)
+        });
+        for (&pid, timing) in dkg_out.1.iter().take(1) {
+            print_timing(&format!("ku24/dkg/n{n}_t{t}"), pid, timing.total_active());
+        }
+    }
+
+    // --- Presign / online-sign sweep at TECDSA_BENCH_SIGN_N. ---
+    let n = config::sign_n();
+    let all: Vec<PartyId> = (1..=n).map(PartyId).collect();
+    for t in config::sign_thresholds() {
+        if tecdsa_ku24::prss::check_params(n, t).is_err() {
+            continue;
+        }
+
+        // Untimed: PRSS material and key shares.
+        let prss: Vec<PrssKeys<C>> = {
+            let machines: Vec<_> = all
+                .iter()
+                .map(|&pid| {
+                    (
+                        pid,
+                        Ku24SetupMachine::<C>::new(pid, all.clone(), t).expect("ku24 setup"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 4)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let key_shares: Vec<_> = {
+            let machines: Vec<_> = all
+                .iter()
+                .zip(&prss)
+                .map(|(&pid, keys)| {
+                    (
+                        pid,
+                        Ku24KeygenMachine::new(pid, all.clone(), keys, &[0u8; 32])
+                            .expect("ku24 keygen"),
+                    )
+                })
+                .collect();
+            per_party::run_timed_without_init(machines, 4)
+                .0
+                .into_iter()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        for (bi, m) in ku24_batches().into_iter().enumerate() {
+            // `time_once` derives the offline comm key from this name:
+            // "ku24/presign/<cfg>/wall" -> "ku24/<cfg>/presign".
+            let cfg = if m == 1 {
+                format!("n{n}_t{t}")
+            } else {
+                format!("n{n}_t{t}_m{m}")
+            };
+            let mut session = [0u8; 32];
+            session[0] = u8::try_from(bi & 0xFF).expect("masked to a byte");
+
+            let presign_out = time_once(&format!("ku24/presign/{cfg}/wall"), || {
+                let builders: Vec<_> = all
+                    .iter()
+                    .zip(&prss)
+                    .map(|(&pid, keys)| {
+                        let all = all.clone();
+                        let keys = keys.clone();
+                        (pid, move || {
+                            Ku24PresignMachine::new_with_session(pid, all, &keys, m, &session)
+                                .expect("ku24 presign")
+                        })
+                    })
+                    .collect();
+                per_party::run_timed_with_init(builders, 8)
+            });
+            let batches: Vec<_> = presign_out.0.into_iter().map(|r| r.unwrap()).collect();
+            for (&pid, timing) in presign_out.1.iter().take(1) {
+                print_timing(&format!("ku24/presign/{cfg}"), pid, timing.total_active());
+            }
+
+            // Online sign is measured once, against the m = 1 batch.
+            if m != 1 {
+                continue;
+            }
+            let public_key = key_shares[0].public_key;
+            let _ = public_key;
+            let sign_out = time_once(&format!("ku24/online_sign/n{n}_t{t}/wall"), || {
+                let builders: Vec<_> = all
+                    .iter()
+                    .zip(key_shares.iter().zip(batches))
+                    .map(|(&pid, (share, batch))| {
+                        let all = all.clone();
+                        let share = share.clone();
+                        let presig = batch.into_vec().remove(0);
+                        (pid, move || {
+                            Ku24SignMachine::new(pid, all, &share, presig, msg).expect("ku24 sign")
+                        })
+                    })
+                    .collect();
+                per_party::run_online_comm_with_init(format!("ku24/n{n}_t{t}"), builders, 4)
+            });
+            for (&pid, timing) in sign_out.1.iter().take(1) {
+                print_timing(
+                    &format!("ku24/online_sign/n{n}_t{t}"),
+                    pid,
+                    timing.total_active(),
+                );
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // TX25
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1822,10 +2018,11 @@ fn tx25_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("tx25/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     cl_dkg_sweep("tx25", |pid, all, threshold| {
@@ -1860,10 +2057,11 @@ fn jtx25_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("jtx25/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     cl_dkg_sweep("jtx25", |pid, all, threshold| {
@@ -1895,8 +2093,10 @@ fn jtx25_robust_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // Keygen is shared with the normal variant; only presign/online differ, so we
     // run just the sign sweep to record the robust online communication.
@@ -1932,10 +2132,11 @@ fn wmy23_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg_data = make_data_to_sign(b"benchmark message");
 
     let cl_setup = time_once("wmy23/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     // DKG: sweep (n, t).
@@ -2071,10 +2272,11 @@ fn wmc24_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("wmc24/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     cl_dkg_sweep("wmc24", |pid, all, threshold| {
@@ -2110,10 +2312,11 @@ fn llz25_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let msg = sha2::Sha256::digest(b"benchmark message");
 
     let cl_setup = time_once("llz25/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     // Setup: CL CRS key (shared out-of-band, independent of n/t).
@@ -2262,10 +2465,11 @@ fn trout_once() {
     };
 
     let seed = "42042";
+    let seed_int = Integer::from(42042u64);
     let message = make_data_to_sign(b"benchmark message");
 
     let cl_setup = time_once("trout/setup/cl", || {
-        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup")
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup")
     });
 
     // DKG: sweep (n, t).

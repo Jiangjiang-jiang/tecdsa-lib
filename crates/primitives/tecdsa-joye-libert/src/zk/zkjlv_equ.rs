@@ -12,10 +12,10 @@
 //!   c'_i = y0^{2^k * m_i} * h0^{2^k * r0_i} mod N0  for all i
 //!   m_i in [0, B_i]}
 
-use rug::{integer::Order, Integer};
+use rug::{integer::Order, Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tecdsa_bigint::{mul_mod, pow_mod, random_below};
+use tecdsa_bigint::BigIntExt;
 
 use crate::kgen::JlPublicKey;
 
@@ -77,12 +77,12 @@ impl ZkJlvEquProof {
         assert_eq!(r0_vec.len(), ell);
         assert_eq!(b_bits_vec.len(), ell);
 
-        let two_pow_k = Integer::from(1) << pk.k;
-        let two_pow_k0 = Integer::from(1) << pk0.k;
+        let two_pow_k = Integer::two_pow(pk.k);
+        let two_pow_k0 = Integer::two_pow(pk0.k);
 
         // Sample blinding values
         let w_bound = Integer::from(&pk.n << (STAT_SEC + CHALLENGE_BITS));
-        let w = random_below(&w_bound, rng);
+        let w = w_bound.sample_below_ref(rng);
 
         let mut v_vec = Vec::with_capacity(ell);
         let mut w0_vec = Vec::with_capacity(ell);
@@ -90,22 +90,33 @@ impl ZkJlvEquProof {
         let mut y_items = Vec::with_capacity(ell);
 
         for i in 0..ell {
-            let v_bound = Integer::from(1) << (STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
+            let v_bound = Integer::two_pow(STAT_SEC + CHALLENGE_BITS + b_bits_vec[i]);
             let w0_bound = Integer::from(&pk0.n << (STAT_SEC + CHALLENGE_BITS));
 
-            let v = random_below(&v_bound, rng);
-            let w0 = random_below(&w0_bound, rng);
+            let v = v_bound.sample_below_ref(rng);
+            let w0 = w0_bound.sample_below_ref(rng);
 
             // d'_i = y0^{2^k0 * v} * h0^{2^k0 * w0} mod N0
             let exp_y0 = Integer::from(&two_pow_k0 * &v);
             let exp_h0 = Integer::from(&two_pow_k0 * &w0);
-            let y0_v = pow_mod(&pk0.y, &exp_y0, &pk0.n);
-            let h0_w = pow_mod(&pk0.h, &exp_h0, &pk0.n);
-            let d_prime = mul_mod(&y0_v, &h0_w, &pk0.n);
+            let y0_v = pk0
+                .y
+                .pow_mod_ref(&exp_y0, &pk0.n)
+                .expect("exponent is non-negative")
+                .complete();
+            let h0_w = pk0
+                .h
+                .pow_mod_ref(&exp_h0, &pk0.n)
+                .expect("exponent is non-negative")
+                .complete();
+            let d_prime = (y0_v * h0_w).modulo(&pk0.n);
 
             // y_i item for commitment d
             let exp_y = Integer::from(&two_pow_k * &v);
-            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
+            let y_item = y_vec[i]
+                .pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
 
             v_vec.push(v);
             w0_vec.push(w0);
@@ -116,11 +127,14 @@ impl ZkJlvEquProof {
         // d = prod y_i^{2^k * v_i} * h^{2^k * w} mod N
         let mut d = Integer::from(1);
         for y_item in &y_items {
-            d = mul_mod(&d, y_item, &pk.n);
+            d = (d * y_item).modulo(&pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &w);
-        let h_w = pow_mod(&pk.h, &exp_h, &pk.n);
-        d = mul_mod(&d, &h_w, &pk.n);
+        let exp_h = two_pow_k * &w;
+        let h_w =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        d = (d * h_w).modulo(&pk.n);
 
         // Fiat-Shamir challenge
         let e = fiat_shamir_challenge(pk, pk0, y_vec, c, c_prime_vec, &d, &d_prime_vec);
@@ -160,8 +174,8 @@ impl ZkJlvEquProof {
         assert_eq!(self.d_prime_vec.len(), ell);
         assert_eq!(self.z_r0_vec.len(), ell);
 
-        let two_pow_k = Integer::from(1) << pk.k;
-        let two_pow_k0 = Integer::from(1) << pk0.k;
+        let two_pow_k = Integer::two_pow(pk.k);
+        let two_pow_k0 = Integer::two_pow(pk0.k);
 
         // Recompute challenge
         let e = fiat_shamir_challenge(pk, pk0, y_vec, c, c_prime_vec, &self.d, &self.d_prime_vec);
@@ -170,15 +184,24 @@ impl ZkJlvEquProof {
         let mut lhs1 = Integer::from(1);
         for i in 0..ell {
             let exp_y = Integer::from(&two_pow_k * &self.z_m_vec[i]);
-            let y_item = pow_mod(&y_vec[i], &exp_y, &pk.n);
-            lhs1 = mul_mod(&lhs1, &y_item, &pk.n);
+            let y_item = y_vec[i]
+                .pow_mod_ref(&exp_y, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+            lhs1 = (lhs1 * y_item).modulo(&pk.n);
         }
-        let exp_h = Integer::from(&two_pow_k * &self.z_r);
-        let h_item = pow_mod(&pk.h, &exp_h, &pk.n);
-        lhs1 = mul_mod(&lhs1, &h_item, &pk.n);
+        let exp_h = two_pow_k * &self.z_r;
+        let h_item =
+            pk.h.pow_mod_ref(&exp_h, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
+        lhs1 = (lhs1 * h_item).modulo(&pk.n);
 
-        let c_e = pow_mod(c, &e, &pk.n);
-        let rhs1 = mul_mod(&c_e, &self.d, &pk.n);
+        let c_e = c
+            .pow_mod_ref(&e, &pk.n)
+            .expect("exponent is non-negative")
+            .complete();
+        let rhs1 = (c_e * &self.d).modulo(&pk.n);
 
         if lhs1 != rhs1 {
             return false;
@@ -188,12 +211,23 @@ impl ZkJlvEquProof {
         for i in 0..ell {
             let exp_y0 = Integer::from(&two_pow_k0 * &self.z_m_vec[i]);
             let exp_h0 = Integer::from(&two_pow_k0 * &self.z_r0_vec[i]);
-            let y0_z = pow_mod(&pk0.y, &exp_y0, &pk0.n);
-            let h0_z = pow_mod(&pk0.h, &exp_h0, &pk0.n);
-            let lhs2 = mul_mod(&y0_z, &h0_z, &pk0.n);
+            let y0_z = pk0
+                .y
+                .pow_mod_ref(&exp_y0, &pk0.n)
+                .expect("exponent is non-negative")
+                .complete();
+            let h0_z = pk0
+                .h
+                .pow_mod_ref(&exp_h0, &pk0.n)
+                .expect("exponent is non-negative")
+                .complete();
+            let lhs2 = (y0_z * h0_z).modulo(&pk0.n);
 
-            let c_prime_e = pow_mod(&c_prime_vec[i], &e, &pk0.n);
-            let rhs2 = mul_mod(&c_prime_e, &self.d_prime_vec[i], &pk0.n);
+            let c_prime_e = c_prime_vec[i]
+                .pow_mod_ref(&e, &pk0.n)
+                .expect("exponent is non-negative")
+                .complete();
+            let rhs2 = (c_prime_e * &self.d_prime_vec[i]).modulo(&pk0.n);
 
             if lhs2 != rhs2 {
                 return false;
@@ -258,14 +292,17 @@ mod tests {
         let ell = 2;
         let mut y_vec = Vec::with_capacity(ell);
         for _ in 0..ell {
-            let alpha_i = random_below(&pk.n, &mut rng);
-            let y_i = pow_mod(&x, &alpha_i, &pk.n);
+            let alpha_i = pk.n.sample_below_ref(&mut rng);
+            let y_i = x
+                .pow_mod_ref(&alpha_i, &pk.n)
+                .expect("exponent is non-negative")
+                .complete();
             y_vec.push(y_i);
         }
 
         let m_vec = vec![Integer::from(42u32), Integer::from(17u32)];
         let b_bits_vec = vec![32u32, 32];
-        let r = random_below(&pk.n, &mut rng);
+        let r = pk.n.sample_below_ref(&mut rng);
 
         // Vector commitment under pk
         let c = jl_vec_commit(&pk, &y_vec, &m_vec, &r);
@@ -274,7 +311,7 @@ mod tests {
         let mut c_prime_vec = Vec::with_capacity(ell);
         let mut r0_vec = Vec::with_capacity(ell);
         for i in 0..ell {
-            let r0 = random_below(&pk0.n, &mut rng);
+            let r0 = pk0.n.sample_below_ref(&mut rng);
             let cp = jl_commit(&pk0, &m_vec[i], &r0);
             c_prime_vec.push(cp);
             r0_vec.push(r0);

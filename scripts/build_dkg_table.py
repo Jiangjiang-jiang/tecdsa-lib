@@ -8,7 +8,7 @@ build_sign_table.py / summarize_multiparty_benches.py) and reports:
 
   Setup (s)         = multiparty/<g>/setup/<g>                      (seconds)
   Time (ms) at t=n  = multiparty/<g>/dkg/<g>/n{n}_t{n}/party1       (ms), per
-                      party at t=n for n in {2,3,7,11,15,20}.
+                      party at t=n for n in {2,3,7,11,20}.
 
 Mapping notes:
   * Setup (s) is the protocol's one-time local key material (Paillier+RP /
@@ -42,8 +42,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 CRITERION_DIR = Path("target/criterion")
-N_VALUES = [2, 3, 7, 11, 15, 20]
-SCAFFOLD = "--"  # cell with no criterion measurement (DKLs23 setup / LN18)
+N_VALUES = [2, 3, 7, 11, 20]
+SCAFFOLD = "--"  # cell with no criterion measurement
+# Protocols whose setup material is not timed at DKG time (LN18 generates it per
+# signing session; DKLs23 produces base OT inside DKG). The .tex shows their
+# Material parenthesised and the Time (s) cell as "/".
+NO_SETUP_TIME = "/"
 
 # Protocols with an extra interactive aux-info phase shown INSIDE the DKG cell as
 # "<core dkg> (+<aux>)" for every n (Rounds shown as "3 (+3)"), not in Setup. The
@@ -56,30 +60,28 @@ AUX_IN_DKG = {"cggmp20"}
 #  DKG Type, Settings, Rounds)  -- the last three are copied verbatim from the
 #  .tex (the script does NOT derive them; it only fills Setup(s) + the 6 times).
 META = [
-    ("CGGMP20", "CGGMP20/canetti2020uc",       "cggmp20",      True,
-     r"Feldman VSS $+$ Schnorr",              r"Paillier $+$ Ring-Pedersen",          "3 (+3)"),
-    ("GG18",    "GG18/gennaro2018fast",         "gg18",         True,
-     r"Feldman VSS $+$ Paillier $+$ Schnorr", r"Paillier $+$ Ring-Pedersen",          "4"),
     ("GGN16",   "GGN16/gennaro2016threshold",   "ggn16",        True,
      r"Commit $+$ shared threshold Paillier", r"Threshold Paillier $+$ Ring-Pedersen", "2"),
+    ("GG18",    "GG18/gennaro2018fast",         "gg18",         True,
+     r"Feldman VSS $+$ Paillier $+$ Schnorr", r"Paillier $+$ Ring-Pedersen",          "4"),
     ("LN18",    "LN18/lindell2018fast",         "ln18",         False,
-     r"Additive $+$ ElGamal-in-exponent",     r"Paillier $+$ Ring-Pedersen",          "5"),
-    ("XAL23",   "XAL+23/xue2023efficient",      "xal23",        True,
+     r"Additive $+$ ElGamal-in-exponent",     r"(Paillier $+$ Ring-Pedersen)",        "5"),
+    ("CGGMP20", "CGGMP20/canetti2020uc",        "cggmp20",      True,
+     r"Feldman VSS $+$ Schnorr",              r"Paillier $+$ Ring-Pedersen",          "3 (+3)"),
+    ("XAL+23",  "XAL+23/xue2023efficient",      "xal23",        True,
      r"Feldman VSS $+$ JL",                   r"JL modulus",                          "2"),
     ("DKLs23",  "DKLs23/doerner2024threshold",  "dkls23",       False,
-     r"Commit-release Shamir VSS",            r"Base OT",                             "3"),
+     r"Commit-release Shamir VSS",            r"(Base OT)",                           "3"),
+    ("WMYC23",  "WMY23/wong2023real",           "wmy23",        True,
+     r"Pedersen VSS $+$ CL",                  r"Transparent CL group",                "4"),
+    ("WMC24",   "WMC24/wong2024secure",         "wmc24",        True,
+     r"Dual-code PVSS $+$ threshold CL",      r"Transparent CL group",                "3"),
     ("TX25",    "TX25/tang2025robust",          "tx25",         True,
      r"PVSS $+$ CL",                          r"Transparent CL group",                "3"),
-    ("WMY23",   "WMY23/wong2023real",           "wmy23",        True,
-     r"Pedersen VSS $+$ CL",                  r"Transparent CL group",                "4"),
     ("JTX25",   "JTX25/jiang2025three",         "jtx25_robust", True,
      r"PVSS $+$ threshold CL",                r"Transparent CL group",                "3"),
     ("LLZ+25",  "LLZ+25/lyu2025threshold",      "llz25",        True,
      r"Feldman VSS $+$ NIM",                  r"Transparent CL group",                "3"),
-    ("DNP25",   "DNP25/dahari2025trout",        "trout",        True,
-     r"Feldman VSS $+$ threshold CL $+$ eVRF", r"Transparent CL group $+$ eVRF",      "3"),
-    ("WMC24",   "WMC24/wong2024secure",         "wmc24",        True,
-     r"Dual-code PVSS $+$ threshold CL",      r"Transparent CL group",                "3"),
 ]
 
 
@@ -126,7 +128,7 @@ def main():
 
     def setup_s(slug, has_setup):
         if slug is None or not has_setup:
-            return SCAFFOLD
+            return NO_SETUP_TIME
         return fmt(get(f"multiparty/{slug}/setup/{slug}", 1e-9))  # ns -> s
 
     def aux_ms(slug, n):
@@ -146,10 +148,9 @@ def main():
         core, aux = dkg_parts(slug, n)
         return core if aux is None else f"{core} (+{aux})"
 
-    def dkg_cell(slug, n):  # LaTeX: split AUX_IN_DKG cells over two lines
+    def dkg_cell(slug, n):  # LaTeX: AUX_IN_DKG cells read "core (+aux)"
         core, aux = dkg_parts(slug, n)
-        # upper line = core DKG time, lower line = aux time "(+aux)"
-        return core if aux is None else rf"\shortstack{{{core} \\ (+{aux})}}"
+        return core if aux is None else f"{core} (+{aux})"
 
     namecites = [f"{name}~\\cite{{{cite}}}" for name, cite, *_ in META]
     w = max(len(s) for s in namecites)
@@ -168,7 +169,7 @@ def main():
     for slug in AUX_IN_DKG:
         setup_val = fmt(get(f"multiparty/{slug}/setup/{slug}", 1e-9))
         print(f"% [{slug}] Setup (local keygen) = {setup_val} s; DKG = core_dkg "
-              f"(+aux_info_rounds), ms per n=2,3,7,11,15,20:")
+              f"(+aux_info_rounds), ms per n=2,3,7,11,20:")
         core = [fmt(get(f"multiparty/{slug}/dkg/{slug}/n{n}_t{n}/party1", 1e-6))
                 for n in N_VALUES]
         aux = [fmt(aux_ms(slug, n)) for n in N_VALUES]
@@ -179,13 +180,15 @@ def main():
         print(f"%   full aux_info   : {' | '.join(full)}   (ref; incl. constructor)")
 
     print()
-    # --- complete drop-in LaTeX rows for sub-table (a) ---
+    # --- drop-in LaTeX rows for sub-table (a) ---
+    # Column order matches the .tex:
+    #   Protocol | Rounds | DKG Type | Material | Time (s) | times at n=2,3,7,11,20
     print(r"% ---- (a) Key generation rows ----")
-    for (name, cite, slug, has_setup, dkg_type, settings, rounds), nc in zip(META, namecites):
-        s = setup_s(slug, has_setup)
+    for (name, cite, slug, has_setup, dkg_type, material, rounds), nc in zip(META, namecites):
+        s_col = setup_s(slug, has_setup)
         times = " & ".join(dkg_cell(slug, n) for n in N_VALUES)
-        print(f"{nc:<{w}} & {dkg_type:<{wt}} & {settings:<{ws}} & {s} & {rounds} & {times} \\\\")
-
+        print(f"{nc:<{w}} & {rounds:<7} & {dkg_type:<{wt}} & {material:<{ws}} & "
+              f"{s_col:<7} & {times} \\\\")
 
 if __name__ == "__main__":
     if not CRITERION_DIR.is_dir():

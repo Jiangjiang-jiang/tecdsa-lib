@@ -74,7 +74,7 @@ fn lin17_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/lin17", |b| {
             b.iter(|| {
-                tecdsa_paillier::keygen(&mut tecdsa_core::Csprng::new())
+                tecdsa_paillier::DecryptionKey::generate(&mut tecdsa_core::Csprng::new())
                     .expect("Paillier keygen failed")
             });
         });
@@ -89,7 +89,7 @@ fn lin17_benchmarks(c: &mut Criterion) {
         // Untimed one-time setup: P1's Paillier key, generated outside the timed
         // builder so the DKG rounds exclude it (measured by `setup/lin17`).
         let mut p1_dk = Some(
-            tecdsa_paillier::keygen(&mut tecdsa_core::Csprng::new())
+            tecdsa_paillier::DecryptionKey::generate(&mut tecdsa_core::Csprng::new())
                 .expect("Paillier keygen failed"),
         );
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
@@ -216,7 +216,7 @@ fn kgg24_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/kgg24", |b| {
             b.iter(|| {
-                tecdsa_paillier::keygen(&mut tecdsa_core::Csprng::new())
+                tecdsa_paillier::DecryptionKey::generate(&mut tecdsa_core::Csprng::new())
                     .expect("Paillier keygen failed")
             });
         });
@@ -231,7 +231,7 @@ fn kgg24_benchmarks(c: &mut Criterion) {
         // Untimed one-time setup: P1's Paillier key, generated outside the timed
         // builder so the DKG rounds exclude it (measured by `setup/kgg24`).
         let mut p1_dk = Some(
-            tecdsa_paillier::keygen(&mut tecdsa_core::Csprng::new())
+            tecdsa_paillier::DecryptionKey::generate(&mut tecdsa_core::Csprng::new())
                 .expect("Paillier keygen failed"),
         );
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];
@@ -556,7 +556,7 @@ fn abc24_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/abc24", |b| {
             b.iter(|| {
-                tecdsa_paillier::keygen(&mut tecdsa_core::Csprng::new())
+                tecdsa_paillier::DecryptionKey::generate(&mut tecdsa_core::Csprng::new())
                     .expect("Paillier keygen failed")
             });
         });
@@ -572,7 +572,7 @@ fn abc24_benchmarks(c: &mut Criterion) {
         // outside the timed builder so the DKG steps exclude it (measured by
         // `setup/abc24`).
         let mut server_dk = Some(
-            tecdsa_paillier::keygen(&mut tecdsa_core::Csprng::new())
+            tecdsa_paillier::DecryptionKey::generate(&mut tecdsa_core::Csprng::new())
                 .expect("Paillier keygen failed"),
         );
         let roles = [TwoPartyRole::Party1, TwoPartyRole::Party2];

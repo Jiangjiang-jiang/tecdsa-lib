@@ -1,0 +1,8 @@
+target/
+results/
+.git/
+.github/
+.idea/
+fuzz/target/
+**/*.profraw
+docs/benchmarks/

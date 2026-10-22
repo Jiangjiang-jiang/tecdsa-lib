@@ -9,14 +9,22 @@
 //! - Round 4: (verification only, no new messages)
 
 use elliptic_curve::{sec1::ModulusSize, CurveArithmetic, FieldBytesSize};
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_paillier::BigIntExt;
 
-/// Security parameter for the Paillier-Blum modulus proof (Pi_mod).
-/// The paper requires M = 80 rounds of N-th roots for soundness 2^{-80}.
-/// For test performance, a smaller value can be used.
-pub const PI_MOD_SECURITY: usize = 16;
+/// Number of repetitions in the Paillier-Blum modulus proof (Pi_mod).
+///
+/// Pi_mod's soundness error is `2^-PI_MOD_SECURITY`: a prover who does not know
+/// the factorisation passes a single repetition with probability 1/2. GG18 §4.1
+/// Phase 3 inherits CGGMP20 Figure 12's requirement of 80.
+///
+/// Do not lower this to speed up tests. It is the soundness parameter of a proof
+/// that the Paillier modulus is well formed; at 16 an adversary can grind a
+/// malformed modulus past verification with probability 2^-16.
+pub const PI_MOD_SECURITY: usize = 80;
 
 // ---------------------------------------------------------------------------
 // Serializable wrapper for Integer (which lacks serde)
@@ -24,10 +32,10 @@ pub const PI_MOD_SECURITY: usize = 16;
 
 /// A big integer serialized as MSF (most-significant-first) bytes.
 ///
-/// Wraps `tecdsa_paillier::backend::Integer` with serde support via
+/// Wraps `rug::Integer` with serde support via
 /// its `to_bytes_msf` / `from_bytes_msf` conversions.
 #[derive(Clone, Debug)]
-pub struct SerInteger(pub tecdsa_paillier::backend::Integer);
+pub struct SerInteger(pub Integer);
 
 impl Serialize for SerInteger {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -39,9 +47,7 @@ impl Serialize for SerInteger {
 impl<'de> Deserialize<'de> for SerInteger {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
-        Ok(SerInteger(
-            tecdsa_paillier::backend::Integer::from_bytes_msf(&bytes),
-        ))
+        Ok(SerInteger(Integer::from_bytes_msf(&bytes)))
     }
 }
 
@@ -120,8 +126,7 @@ where
     pub schnorr_proof: DlogProof<C>,
     /// Proof that the sender's Paillier modulus N is a Paillier-Blum modulus
     /// (product of two safe primes, both ≡ 3 mod 4).
-    pub paillier_mod_proof:
-        tecdsa_paillier::zk::paillier_zk::paillier_blum_modulus::NiProof<PI_MOD_SECURITY>,
+    pub paillier_mod_proof: tecdsa_paillier::zk::pi_mod::NiProof<PI_MOD_SECURITY>,
 }
 
 // ---------------------------------------------------------------------------

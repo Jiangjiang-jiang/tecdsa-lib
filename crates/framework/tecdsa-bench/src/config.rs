@@ -8,9 +8,9 @@
 //!
 //! | Env var | Format | Default | Meaning |
 //! |---------|--------|---------|---------|
-//! | `TECDSA_BENCH_DKG_CONFIGS` | `n:t,n:t,…` | `3:3,7:7,11:11,15:15,20:20` | DKG `(n, t)` pairs |
+//! | `TECDSA_BENCH_DKG_CONFIGS` | `n:t,n:t,…` | `2:2,3:3,7:7,11:11,20:20` | DKG `(n, t)` pairs |
 //! | `TECDSA_BENCH_SIGN_N` | integer | `20` | party count for presign/sign |
-//! | `TECDSA_BENCH_SIGN_THRESHOLDS` | `t,t,…` | `2,3,7,11,15,20` | signing thresholds (quorum sizes) |
+//! | `TECDSA_BENCH_SIGN_THRESHOLDS` | `t,t,…` | `2,3,7,11,20` | signing thresholds (quorum sizes) |
 //!
 //! Example:
 //! ```bash
@@ -34,10 +34,28 @@ const DKG_CONFIGS_VAR: &str = "TECDSA_BENCH_DKG_CONFIGS";
 const SIGN_N_VAR: &str = "TECDSA_BENCH_SIGN_N";
 const SIGN_THRESHOLDS_VAR: &str = "TECDSA_BENCH_SIGN_THRESHOLDS";
 const RUNS_VAR: &str = "TECDSA_BENCH_RUNS";
+const PROTOCOLS_VAR: &str = "TECDSA_BENCH_PROTOCOLS";
 
-const DEFAULT_DKG_CONFIGS: &[(u16, u16)] = &[(2, 2), (3, 3), (7, 7), (11, 11), (15, 15), (20, 20)];
+const DEFAULT_DKG_CONFIGS: &[(u16, u16)] = &[(2, 2), (3, 3), (7, 7), (11, 11), (20, 20)];
 const DEFAULT_SIGN_N: u16 = 20;
 const DEFAULT_SIGN_THRESHOLDS: &[u16] = &[2, 3, 7, 11, 20];
+
+/// Whether the benchmark group `name` should run, per `TECDSA_BENCH_PROTOCOLS`
+/// (comma-separated group names). Every group runs when the variable is unset.
+///
+/// Criterion's positional filter only skips the `bench_function` calls
+/// themselves; the untimed setup around them (DKG runs, class-group CRS
+/// generation, key-share material) executes regardless, which for the CL-based
+/// protocols dominates the run. Gating each `*_benchmarks` entry point on this
+/// makes a subset run actually cheap. Mirrors the filter `protocol_once`
+/// already applies to its own group list, and uses the same variable.
+#[must_use]
+pub fn protocol_enabled(name: &str) -> bool {
+    match env::var(PROTOCOLS_VAR) {
+        Ok(raw) => raw.split(',').map(str::trim).any(|p| p == name),
+        Err(_) => true,
+    }
+}
 
 /// Parse a single `u16` field (trimmed), panicking with context on failure.
 fn parse_u16(var: &str, field: &str) -> u16 {
@@ -98,7 +116,7 @@ fn validate_thresholds(thresholds: &[u16], n: u16) {
 }
 
 /// DKG `(n, t)` sweep from `TECDSA_BENCH_DKG_CONFIGS`
-/// (default `3:3,7:7,11:11,15:15,20:20`).
+/// (default `2:2,3:3,7:7,11:11,20:20`).
 ///
 /// Each comma-separated entry is `n:t`. Validates `1 <= t <= n`. If the variable
 /// is **unset** the default is used; if it is **set but empty** (or only
@@ -133,7 +151,7 @@ pub fn sign_n() -> u16 {
 }
 
 /// Signing thresholds (quorum sizes) for the presign/sign sweep from
-/// `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,15,20`).
+/// `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,20`).
 ///
 /// Validates `1 <= t <= sign_n()` for every threshold, including the defaults;
 /// when lowering `TECDSA_BENCH_SIGN_N` below a default threshold you must also

@@ -37,7 +37,7 @@ checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -51,12 +51,6 @@ name = "az"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be5eb007b7cacc6c660343e96f650fedf4b5a77512399eb952ca6642cf8d13f7"
-
-[[package]]
-name = "base16ct"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
 name = "base16ct"
@@ -136,26 +130,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
-name = "bytemuck"
-version = "1.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
-dependencies = [
- "bytemuck_derive",
-]
-
-[[package]]
-name = "bytemuck_derive"
-version = "1.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -230,12 +204,6 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
-
-[[package]]
-name = "const-oid"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "const-oid"
@@ -327,18 +295,6 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-bigint"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
-dependencies = [
- "generic-array",
- "rand_core 0.6.4",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "crypto-bigint"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271"
@@ -383,32 +339,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "curve25519-dalek"
-version = "4.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
-dependencies = [
- "cfg-if",
- "cpufeatures",
- "curve25519-dalek-derive",
- "fiat-crypto",
- "rustc_version",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "curve25519-dalek-derive"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -429,7 +359,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -440,17 +370,7 @@ checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
  "darling_core",
  "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "der"
-version = "0.7.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
-dependencies = [
- "const-oid 0.9.6",
- "zeroize",
+ "syn",
 ]
 
 [[package]]
@@ -459,7 +379,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
 dependencies = [
- "const-oid 0.10.2",
+ "const-oid",
  "zeroize",
 ]
 
@@ -481,7 +401,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.0",
- "const-oid 0.10.2",
+ "const-oid",
  "crypto-common 0.2.2",
 ]
 
@@ -491,24 +411,12 @@ version = "0.17.0-rc.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54fb064faabbee66e1fc8e5c5a9458d4269dc2d8b638fe86a425adb2510d1a96"
 dependencies = [
- "der 0.8.0",
+ "der",
  "digest 0.11.3",
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "serdect",
  "signature",
  "zeroize",
-]
-
-[[package]]
-name = "educe"
-version = "0.4.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0042ff8246a363dbe77d2ceedb073339e85a804b9a47636c6e016a9a32c05f"
-dependencies = [
- "enum-ordinalize",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -519,30 +427,12 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
 name = "elliptic-curve"
-version = "0.13.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
-dependencies = [
- "base16ct 0.2.0",
- "crypto-bigint 0.5.5",
- "digest 0.10.7",
- "ff",
- "generic-array",
- "group",
- "rand_core 0.6.4",
- "sec1 0.7.3",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "elliptic-curve"
 version = "0.14.0-rc.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cda94f31325c4275e9706adecbb6f0650dee2f904c915a98e3d81adaaaa757aa"
 dependencies = [
- "base16ct 1.0.0",
- "crypto-bigint 0.7.5",
+ "base16ct",
+ "crypto-bigint",
  "crypto-common 0.2.2",
  "digest 0.11.3",
  "hybrid-array",
@@ -550,23 +440,10 @@ dependencies = [
  "rand_core 0.10.1",
  "rustcrypto-ff",
  "rustcrypto-group",
- "sec1 0.8.1",
+ "sec1",
  "serdect",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "enum-ordinalize"
-version = "3.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bf1fa3f06bbff1ea5b1a9c7b14aa992a39657db60a2759457328d7e058f49ee"
-dependencies = [
- "num-bigint",
- "num-traits",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -586,38 +463,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "fast-paillier"
-version = "0.3.2"
-dependencies = [
- "bytemuck",
- "glass_pumpkin",
- "rand_core 0.6.4",
- "rug",
- "serde",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
-
-[[package]]
-name = "ff"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0b50bfb653653f9ca9095b427bed08ab8d75a137839d9ad64eb11810d5b6393"
-dependencies = [
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
-name = "fiat-crypto"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "fnv"
@@ -663,54 +512,6 @@ checksum = "4bb6743198531e02858aeaea5398fcc883e71851fcbcb5a2f773e2fb6cb1edf2"
 dependencies = [
  "typenum",
  "version_check",
- "zeroize",
-]
-
-[[package]]
-name = "generic-ec"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "508a3270730504f9a5cd1dcd7ac743cb06e9b414db28b3a835554bd1268ebd75"
-dependencies = [
- "curve25519-dalek",
- "generic-ec-core",
- "generic-ec-curves",
- "hex",
- "phantom-type",
- "rand_core 0.6.4",
- "serde",
- "serde_with",
- "subtle",
- "udigest",
- "zeroize",
-]
-
-[[package]]
-name = "generic-ec-core"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffea0573b3bdde9a0bbbf17433b19f9628942e075d723702c2f495f0a2f65268"
-dependencies = [
- "generic-array",
- "rand_core 0.6.4",
- "serde",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "generic-ec-curves"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffbc925fd3e3679dc46eb028029be23f3eb215f9392847d10223d853a459ab3c"
-dependencies = [
- "elliptic-curve 0.13.8",
- "generic-ec-core",
- "k256 0.13.4",
- "rand_core 0.6.4",
- "sha2",
- "subtle",
- "zeroize",
 ]
 
 [[package]]
@@ -750,19 +551,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glass_pumpkin"
-version = "1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09b0eef9941bda7cc263c23c3977d437a9aa19abb6a58ed0234d145d9c024bc"
-dependencies = [
- "num-bigint",
- "num-integer",
- "num-traits",
- "once_cell",
- "rand_core 0.10.1",
-]
-
-[[package]]
 name = "gmp-mpfr-sys"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -770,17 +558,6 @@ checksum = "7db155b537cb791b133341f99f68371d86ee7fa4c79aacfbc376d72d23c70531"
 dependencies = [
  "libc",
  "windows-sys",
-]
-
-[[package]]
-name = "group"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
-dependencies = [
- "ff",
- "rand_core 0.6.4",
- "subtle",
 ]
 
 [[package]]
@@ -911,23 +688,13 @@ dependencies = [
 
 [[package]]
 name = "k256"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6e3919bbaa2945715f0bb6d3934a173d1e9a59ac23767fbaaef277265a7411b"
-dependencies = [
- "cfg-if",
- "elliptic-curve 0.13.8",
-]
-
-[[package]]
-name = "k256"
 version = "0.14.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b382cbfd43caf55991a93850ce538aa1aa67bb264af367d22dfe7937c4e997d"
 dependencies = [
  "cpubits",
  "ecdsa",
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "serdect",
 ]
 
@@ -989,25 +756,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-bigint"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
-dependencies = [
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-integer"
-version = "0.1.46"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1035,36 +783,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b97e3bf0465157ae90975ff52dbeb1362ba618924878c9f74c25baa27a65f9a"
 dependencies = [
  "ecdsa",
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "primefield",
  "primeorder",
  "serdect",
-]
-
-[[package]]
-name = "paillier-zk"
-version = "0.7.0-alpha.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a53221e47915281c7d6a744ad033e19455995c56983478564c234e4209e91dda"
-dependencies = [
- "digest 0.10.7",
- "fast-paillier",
- "generic-ec",
- "rand_core 0.6.4",
- "rand_hash",
- "serde",
- "serde_with",
- "thiserror 1.0.69",
- "udigest",
-]
-
-[[package]]
-name = "phantom-type"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e68f5dc797c2a743e024e1c53215474598faf0408826a90249569ad7f47adeaa"
-dependencies = [
- "educe",
 ]
 
 [[package]]
@@ -1079,7 +801,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "451913da69c775a56034ea8d9003d27ee8948e12443eae7c038ba100a4f21cb7"
 dependencies = [
- "der 0.8.0",
+ "der",
  "spki",
 ]
 
@@ -1127,7 +849,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -1136,7 +858,7 @@ version = "0.14.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b52e6ee42db392378a95622b463c9740631171d1efce43fa445a569c1600cb6"
 dependencies = [
- "crypto-bigint 0.7.5",
+ "crypto-bigint",
  "crypto-common 0.2.2",
  "rand_core 0.10.1",
  "rustcrypto-ff",
@@ -1150,7 +872,7 @@ version = "0.14.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0556580e42c19833f5d232aca11a7687a503ee41f937b54f5ae1d50fc2a6a36a"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "serdect",
 ]
 
@@ -1275,6 +997,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
+name = "rand_dev"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbee97c27dada05f03db49ffe6516872f6c926e0fd525f9ce0cb3c051adf145c"
+dependencies = [
+ "hex",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "rand_hash"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1353,16 +1086,6 @@ dependencies = [
  "gmp-mpfr-sys",
  "libc",
  "libm",
- "serde",
-]
-
-[[package]]
-name = "rustc_version"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
-dependencies = [
- "semver",
 ]
 
 [[package]]
@@ -1428,26 +1151,13 @@ dependencies = [
 
 [[package]]
 name = "sec1"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e97a565f76233a6003f9f5c54be1d9c5bdfa3eccfb189469f11ec4901c47dc"
-dependencies = [
- "base16ct 0.2.0",
- "der 0.7.10",
- "generic-array",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "sec1"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d56d437c2f19203ce5f7122e507831de96f3d2d4d3be5af44a0b0a09d8a80e4d"
 dependencies = [
- "base16ct 1.0.0",
+ "base16ct",
  "ctutils",
- "der 0.8.0",
+ "der",
  "hybrid-array",
  "serdect",
  "subtle",
@@ -1497,7 +1207,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -1532,7 +1242,7 @@ dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -1541,7 +1251,7 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66cf8fedced2fcf12406bcb34223dffb92eaf34908ede12fed414c82b7f00b3e"
 dependencies = [
- "base16ct 1.0.0",
+ "base16ct",
  "serde",
 ]
 
@@ -1589,7 +1299,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d9efca8738c78ee9484207732f728b1ef517bbb1833d6fc0879ca898a522f6f"
 dependencies = [
  "base64ct",
- "der 0.8.0",
+ "der",
 ]
 
 [[package]]
@@ -1603,17 +1313,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
-]
 
 [[package]]
 name = "syn"
@@ -1644,7 +1343,7 @@ dependencies = [
  "tecdsa-joye-libert",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
- "tecdsa-ku25",
+ "tecdsa-ku24",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",
@@ -1667,10 +1366,11 @@ name = "tecdsa-abc24"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -1680,7 +1380,7 @@ dependencies = [
  "tecdsa-paillier",
  "tecdsa-protocol",
  "tecdsa-testkit",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -1689,18 +1389,18 @@ name = "tecdsa-bench"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "elliptic-curve 0.14.0-rc.32",
- "generic-ec",
- "k256 0.14.0-rc.9",
- "paillier-zk",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rayon",
  "rug",
  "serde",
  "serde_json",
  "sha2",
  "tecdsa",
  "tecdsa-abc24",
+ "tecdsa-bigint",
  "tecdsa-cggmp20",
  "tecdsa-class-group",
  "tecdsa-core",
@@ -1713,7 +1413,7 @@ dependencies = [
  "tecdsa-joye-libert",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
- "tecdsa-ku25",
+ "tecdsa-ku24",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",
@@ -1740,6 +1440,7 @@ dependencies = [
  "bincode",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rayon",
  "rug",
  "serde",
  "serde_bytes",
@@ -1752,9 +1453,8 @@ dependencies = [
 name = "tecdsa-cggmp20"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "generic-ec",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
@@ -1769,7 +1469,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "udigest",
  "zeroize",
 ]
@@ -1778,9 +1478,9 @@ dependencies = [
 name = "tecdsa-class-group"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "gmp-mpfr-sys",
- "k256 0.14.0-rc.9",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
@@ -1792,7 +1492,7 @@ dependencies = [
  "tecdsa-curve",
  "tecdsa-protocol",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -1800,9 +1500,9 @@ dependencies = [
 name = "tecdsa-commit"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "hex",
- "k256 0.14.0-rc.9",
+ "k256",
  "proptest",
  "rand 0.8.6",
  "rand_core 0.6.4",
@@ -1819,7 +1519,7 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "subtle",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -1827,8 +1527,8 @@ dependencies = [
 name = "tecdsa-curve"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "p256",
  "rand 0.8.6",
  "rand_core 0.6.4",
@@ -1844,8 +1544,8 @@ dependencies = [
 name = "tecdsa-dkls23"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "serde",
@@ -1859,7 +1559,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -1867,16 +1567,16 @@ dependencies = [
 name = "tecdsa-elgamal"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
 ]
 
 [[package]]
 name = "tecdsa-evrf"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "serde",
@@ -1903,10 +1603,11 @@ dependencies = [
 name = "tecdsa-gg18"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -1917,7 +1618,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -1925,10 +1626,11 @@ dependencies = [
 name = "tecdsa-ggn16"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -1938,7 +1640,7 @@ dependencies = [
  "tecdsa-paillier",
  "tecdsa-protocol",
  "tecdsa-testkit",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -1946,10 +1648,10 @@ dependencies = [
 name = "tecdsa-hd"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "hex",
  "hmac",
- "k256 0.14.0-rc.9",
+ "k256",
  "p256",
  "rand 0.8.6",
  "sha2",
@@ -1970,7 +1672,7 @@ dependencies = [
  "tecdsa-bigint",
  "tecdsa-core",
  "tecdsa-protocol",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -1979,8 +1681,8 @@ name = "tecdsa-jtx25"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
@@ -1995,7 +1697,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2004,10 +1706,11 @@ name = "tecdsa-kgg24"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -2017,28 +1720,30 @@ dependencies = [
  "tecdsa-paillier",
  "tecdsa-protocol",
  "tecdsa-testkit",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
 [[package]]
-name = "tecdsa-ku25"
+name = "tecdsa-ku24"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "hmac",
- "k256 0.14.0-rc.9",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "sha2",
  "subtle",
+ "tecdsa-bigint",
  "tecdsa-core",
  "tecdsa-curve",
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2047,10 +1752,11 @@ name = "tecdsa-lin17"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -2060,7 +1766,7 @@ dependencies = [
  "tecdsa-paillier",
  "tecdsa-protocol",
  "tecdsa-testkit",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2069,21 +1775,22 @@ name = "tecdsa-llz25"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
  "serde",
  "sha2",
  "subtle",
+ "tecdsa-bigint",
  "tecdsa-class-group",
  "tecdsa-core",
  "tecdsa-curve",
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2091,10 +1798,11 @@ dependencies = [
 name = "tecdsa-ln18"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -2103,10 +1811,11 @@ dependencies = [
  "tecdsa-curve",
  "tecdsa-ot",
  "tecdsa-paillier",
+ "tecdsa-pedersen-mod",
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2114,8 +1823,8 @@ dependencies = [
 name = "tecdsa-ot"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "serde",
@@ -2124,7 +1833,7 @@ dependencies = [
  "tecdsa-core",
  "tecdsa-curve",
  "tecdsa-protocol",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2133,23 +1842,26 @@ name = "tecdsa-paillier"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "fast-paillier",
- "generic-ec",
- "k256 0.14.0-rc.9",
- "paillier-zk",
+ "digest 0.10.7",
+ "elliptic-curve",
+ "k256",
+ "p256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rand_dev",
+ "rand_hash",
  "rug",
  "serde",
+ "serde_with",
  "sha2",
+ "subtle",
  "tecdsa-bigint",
  "tecdsa-commit",
  "tecdsa-core",
  "tecdsa-curve",
  "tecdsa-pedersen-mod",
  "tecdsa-protocol",
- "thiserror 2.0.18",
+ "thiserror",
  "udigest",
  "zeroize",
 ]
@@ -2171,12 +1883,12 @@ dependencies = [
 name = "tecdsa-protocol"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
+ "elliptic-curve",
  "rand_core 0.6.4",
  "serde",
  "tecdsa-core",
  "tecdsa-curve",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2194,7 +1906,7 @@ dependencies = [
  "tecdsa-testkit",
  "tecdsa-transport",
  "tecdsa-wire",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -2203,14 +1915,16 @@ name = "tecdsa-testkit"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "serde_json",
  "sha2",
  "tecdsa-abc24",
+ "tecdsa-bigint",
  "tecdsa-cggmp20",
  "tecdsa-class-group",
  "tecdsa-core",
@@ -2221,7 +1935,7 @@ dependencies = [
  "tecdsa-ggn16",
  "tecdsa-jtx25",
  "tecdsa-kgg24",
- "tecdsa-ku25",
+ "tecdsa-ku24",
  "tecdsa-lin17",
  "tecdsa-llz25",
  "tecdsa-ln18",
@@ -2255,14 +1969,15 @@ name = "tecdsa-trout"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
  "serde",
  "sha2",
  "subtle",
+ "tecdsa-bigint",
  "tecdsa-class-group",
  "tecdsa-core",
  "tecdsa-curve",
@@ -2270,7 +1985,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2279,8 +1994,8 @@ name = "tecdsa-tx25"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
@@ -2294,7 +2009,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2302,8 +2017,8 @@ dependencies = [
 name = "tecdsa-vss"
 version = "0.1.0"
 dependencies = [
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "proptest",
  "rand 0.8.6",
  "rand_core 0.6.4",
@@ -2324,7 +2039,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tecdsa-core",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2332,8 +2047,8 @@ name = "tecdsa-wmc24"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
@@ -2349,7 +2064,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2358,8 +2073,8 @@ name = "tecdsa-wmy23"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
@@ -2373,7 +2088,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2382,10 +2097,11 @@ name = "tecdsa-xal21"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rug",
  "serde",
  "sha2",
  "tecdsa-bigint",
@@ -2393,9 +2109,10 @@ dependencies = [
  "tecdsa-core",
  "tecdsa-curve",
  "tecdsa-paillier",
+ "tecdsa-pedersen-mod",
  "tecdsa-protocol",
  "tecdsa-testkit",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2404,8 +2121,8 @@ name = "tecdsa-xal23"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.32",
- "k256 0.14.0-rc.9",
+ "elliptic-curve",
+ "k256",
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rug",
@@ -2420,7 +2137,7 @@ dependencies = [
  "tecdsa-protocol",
  "tecdsa-testkit",
  "tecdsa-vss",
- "thiserror 2.0.18",
+ "thiserror",
  "zeroize",
 ]
 
@@ -2439,31 +2156,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.18",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -2474,7 +2171,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -2505,7 +2202,7 @@ checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -2532,7 +2229,7 @@ checksum = "25fd5248861b973cd5d1da5604b0ce22a35fa77f015d9f7ed9ab57078205bb86"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -2646,7 +2343,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
  "wasm-bindgen-shared",
 ]
 
@@ -2763,7 +2460,7 @@ dependencies = [
  "heck",
  "indexmap",
  "prettyplease",
- "syn 2.0.117",
+ "syn",
  "wasm-metadata",
  "wit-bindgen-core",
  "wit-component",
@@ -2779,7 +2476,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
@@ -2838,7 +2535,7 @@ checksum = "0b631b19d36a892ab55420c92dbc83ccd79274f25be714855d3074aa71cab639"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]
@@ -2858,7 +2555,7 @@ checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn",
 ]
 
 [[package]]

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+use rug::Integer;
 use serde::{Deserialize, Serialize};
 use tecdsa_commit::HashCommitment;
-use tecdsa_paillier::{backend::Integer, threshold::PartialDecryption};
+use tecdsa_paillier::threshold::PartialDecryption;
 
 /// All message types for the GGN16 signing protocol (Rounds 1-6).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +28,9 @@ pub struct SignRound1Msg {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignRound2Msg {
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub u_i: Integer,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub v_i: Integer,
     pub nonce: [u8; 32],
     /// Serialized Pi_{1,i} (HomoMultProof).
@@ -46,6 +49,7 @@ pub struct SignRound3Msg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignRound4Msg {
     pub r_i_bytes: Vec<u8>,
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub w_i: Integer,
     pub nonce: [u8; 32],
     /// Serialized Pi_{2,i} (NonceConsistProof).

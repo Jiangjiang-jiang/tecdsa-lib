@@ -18,15 +18,7 @@
 use elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-fn repr_from_slice<T: GroupEncoding>(bytes: &[u8]) -> Option<T::Repr> {
-    let mut repr = T::Repr::default();
-    let buf = repr.as_mut();
-    if bytes.len() != buf.len() {
-        return None;
-    }
-    buf.copy_from_slice(bytes);
-    Some(repr)
-}
+use crate::PointExt;
 
 /// Serialize a `GroupEncoding` type as its canonical byte representation.
 ///
@@ -46,17 +38,15 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if the byte length is wrong or the encoding is invalid.
+/// Returns an error if the byte length is wrong, the encoding is invalid, or the
+/// encoding is valid but not canonical.
 pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: GroupEncoding,
     D: Deserializer<'de>,
 {
     let bytes = Vec::<u8>::deserialize(deserializer)?;
-    let repr = repr_from_slice::<T>(&bytes)
-        .ok_or_else(|| serde::de::Error::custom("invalid byte length for projective point"))?;
-    let ct_opt = T::from_bytes(&repr);
-    Option::from(ct_opt)
+    T::from_bytes_slice(&bytes)
         .ok_or_else(|| serde::de::Error::custom("invalid projective point encoding"))
 }
 
@@ -64,6 +54,8 @@ where
 pub mod vec {
     use elliptic_curve::group::GroupEncoding;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::PointExt;
 
     /// Serialize a `Vec<T>` where each `T: GroupEncoding`.
     ///
@@ -86,7 +78,8 @@ pub mod vec {
     ///
     /// # Errors
     ///
-    /// Returns an error if any element has wrong byte length or invalid encoding.
+    /// Returns an error if any element has wrong byte length, an invalid
+    /// encoding, or a valid but non-canonical encoding.
     pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
     where
         T: GroupEncoding,
@@ -96,11 +89,7 @@ pub mod vec {
         byte_vecs
             .into_iter()
             .map(|bytes| {
-                let repr = super::repr_from_slice::<T>(&bytes).ok_or_else(|| {
-                    serde::de::Error::custom("invalid byte length for projective point")
-                })?;
-                let ct_opt = T::from_bytes(&repr);
-                Option::from(ct_opt)
+                T::from_bytes_slice(&bytes)
                     .ok_or_else(|| serde::de::Error::custom("invalid projective point encoding"))
             })
             .collect()

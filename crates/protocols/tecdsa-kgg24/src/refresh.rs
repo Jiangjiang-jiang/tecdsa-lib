@@ -28,13 +28,16 @@
 
 use elliptic_curve::{sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField};
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_curve::TecdsaCurve;
-use tecdsa_paillier::zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof};
+use tecdsa_paillier::{
+    zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof},
+    BigIntExt,
+};
 
 use crate::{
     error::Kgg24Error,
     key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
-    keygen::curve_order,
 };
 
 /// Security parameter tau.
@@ -111,19 +114,19 @@ where
     let x1_new_point = C::generator() * x1_new;
 
     // Generate fresh Paillier keypair
-    let dk_new = tecdsa_paillier::keygen(rng)
+    let dk_new = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Kgg24Error::Refresh(format!("Paillier keygen failed: {e}")))?;
     let ek_new = dk_new.encryption_key().clone();
 
     // Sample noise t' from [0, 2^{tau + 2*kappa})
-    let q_int = curve_order::<C>();
-    let noise_bound = tecdsa_paillier::backend::Integer::from(1u8) << (TAU + 2 * KAPPA);
-    let t_prime = noise_bound.random_below_ref(rng);
+    let q_int = C::order();
+    let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
+    let t_prime = noise_bound.sample_below_ref(rng);
 
     // Compute x_hat_1_new = x_1_new + t' * q
     let x1_new_bytes = x1_new.to_repr();
-    let x1_new_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_new_bytes.as_ref());
-    let x_hat_1_new = &x1_new_int + &t_prime * &q_int;
+    let x1_new_int = Integer::from_bytes_msf(x1_new_bytes.as_ref());
+    let x_hat_1_new = x1_new_int + t_prime * q_int;
 
     // Encrypt: C' = Enc_{N'}(x_hat_1_new; rho)
     let (c_key_new, enc_nonce) = dk_new.encrypt_with_random(rng, &x_hat_1_new).map_err(|e| {
@@ -287,11 +290,11 @@ mod tests {
 
         // Verify the new ciphertext decrypts to x_1_new mod q
         let decrypted = p1.dk.decrypt(&p2.c_key).expect("decryption failed");
-        let q_int = curve_order::<Secp256k1>();
-        let decrypted_mod_q = decrypted.modulo_ref(&q_int);
+        let q_int = Secp256k1::order();
+        let decrypted_mod_q = decrypted.modulo(&q_int);
 
         let x1_bytes = p1.secret_share.to_repr();
-        let x1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(x1_bytes.as_ref());
+        let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
         assert_eq!(decrypted_mod_q, x1_int);
     }
 }

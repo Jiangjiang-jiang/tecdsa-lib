@@ -25,12 +25,15 @@
 //! 5. EC check: `gamma_2 + sigma * X1 = z1 * G` (mod q on scalar)
 
 use elliptic_curve::{
-    group::GroupEncoding, sec1::ModulusSize, Field, FieldBytes, FieldBytesSize, PrimeField,
+    group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
 use rand_core::CryptoRngCore;
+use rug::{Complete, Integer};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
 use tecdsa_curve::TecdsaCurve;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 /// Security parameter tau (bit-length of the noise exponent base).
 const TAU: u32 = 256;
@@ -48,12 +51,15 @@ where
     FieldBytesSize<C>: ModulusSize,
 {
     /// Ciphertext commitment `gamma_1 = Enc_N(b; delta)`.
-    pub gamma_1: fast_paillier::Ciphertext,
+    #[serde(with = "tecdsa_bigint::int_wire")]
+    pub gamma_1: crate::scheme::Ciphertext,
     /// EC point commitment `gamma_2 = b * G` (reduced mod q).
     pub gamma_2: C::ProjectivePoint,
     /// Integer response `z1 = x_hat_1 * sigma + b`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z1: Integer,
     /// Nonce response `z2 = rho^sigma * delta mod N`.
+    #[serde(with = "tecdsa_bigint::int_wire")]
     pub z2: Integer,
 }
 
@@ -93,24 +99,24 @@ where
         ssid: &[u8],
         ek: &EncryptionKey,
         _dk: &DecryptionKey,
-        c: &fast_paillier::Ciphertext,
+        c: &crate::scheme::Ciphertext,
         x1_point: &C::ProjectivePoint,
         x_hat_1: &Integer,
         enc_nonce: &Integer,
         rng: &mut impl CryptoRngCore,
     ) -> Self {
         let n = ek.n();
-        let q_int = curve_order::<C>();
+        let q_int = C::order();
 
         // Step 1: Sample b from [0, q^2 * 2^{2(tau+kappa)})
-        let b_bound = &q_int * &q_int * Integer::u_pow_u(2, 2 * (TAU + KAPPA));
-        let b = b_bound.random_below_ref(rng);
+        let b_bound = Integer::two_pow(2 * (TAU + KAPPA)) * &q_int * &q_int;
+        let b = b_bound.sample_below_ref(rng);
 
         // Sample delta from Z*_N (nonzero, coprime to N)
-        let delta = sample_coprime_to_n(n, rng);
+        let delta = Integer::sample_in_mult_group_of(rng, n);
 
         // Step 2: gamma_1 = Enc_N(b; delta), gamma_2 = b * G
-        let gamma_1 = raw_encrypt(n, &b, &delta);
+        let gamma_1 = super::paillier_encrypt_raw(n, &(n * n).complete(), &b, &delta);
         let gamma_2 = scalar_mul_generator::<C>(&b);
 
         // Step 3: Fiat-Shamir challenge sigma = H(ssid, C, X1, gamma_1, gamma_2) mod q
@@ -119,14 +125,15 @@ where
         let sigma_int = Integer::from_bytes_msf(sigma_bytes.as_ref());
 
         // Step 4: z1 = x_hat_1 * sigma + b (over integers, no mod)
-        let z1 = x_hat_1 * &sigma_int + &b;
+        let z1 = b + x_hat_1 * &sigma_int;
 
         // Step 5: z2 = rho^sigma * delta mod N
         let z2 = enc_nonce
             .pow_mod_ref(&sigma_int, n)
             .expect("pow_mod for z2 must succeed")
+            .complete()
             * &delta;
-        let z2 = z2.modulo_ref(n);
+        let z2 = z2.modulo(n);
 
         Self {
             gamma_1,
@@ -149,12 +156,12 @@ where
         &self,
         ssid: &[u8],
         ek: &EncryptionKey,
-        c: &fast_paillier::Ciphertext,
+        c: &crate::scheme::Ciphertext,
         x1_point: &C::ProjectivePoint,
     ) -> bool {
         let n = ek.n();
         let nn = ek.nn();
-        let q_int = curve_order::<C>();
+        let q_int = C::order();
 
         // Check 1: z2 != 0
         if self.z2.cmp0().is_eq() {
@@ -162,7 +169,7 @@ where
         }
 
         // Check 2: gcd(C, N) = 1
-        if !c.gcd_ref(n).is_one() {
+        if !c.gcd_ref(n).complete().is_one() {
             return false;
         }
 
@@ -170,8 +177,8 @@ where
         // z1 must be in [0, q^2 * 2^{2(tau+kappa)} + (q^2 - q) * 2^{tau+2kappa}]
         // This is the maximum value z1 can take: x_hat_1 * sigma + b
         // where x_hat_1 <= q * 2^{tau+2kappa} (approximately) and sigma < q, b < q^2 * 2^{2(tau+kappa)}
-        let z1_upper = &q_int * &q_int * &Integer::u_pow_u(2, 2 * (TAU + KAPPA))
-            + (&q_int * &q_int - &q_int) * &Integer::u_pow_u(2, TAU + 2 * KAPPA);
+        let z1_upper = Integer::two_pow(2 * (TAU + KAPPA)) * &q_int * &q_int
+            + ((&q_int * &q_int).complete() - &q_int) * Integer::two_pow(TAU + 2 * KAPPA);
         if self.z1.cmp0().is_lt() {
             return false;
         }
@@ -189,9 +196,10 @@ where
         // gamma_1 * C^sigma == Enc_N(z1; z2) (mod N^2)
         let c_to_sigma = c
             .pow_mod_ref(&sigma_int, nn)
-            .expect("pow_mod for C^sigma must succeed");
-        let lhs = (&self.gamma_1 * &c_to_sigma).modulo_ref(nn);
-        let rhs = raw_encrypt(n, &self.z1, &self.z2);
+            .expect("pow_mod for C^sigma must succeed")
+            .complete();
+        let lhs = (&self.gamma_1 * c_to_sigma).modulo(nn);
+        let rhs = super::paillier_encrypt_raw(n, &(n * n).complete(), &self.z1, &self.z2);
         if lhs != rhs {
             return false;
         }
@@ -200,11 +208,7 @@ where
         // gamma_2 + sigma * X1 == z1 * G (mod q in the exponent)
         let rhs_ec = scalar_mul_generator::<C>(&self.z1);
         let lhs_ec = self.gamma_2 + *x1_point * sigma_scalar;
-        if lhs_ec != rhs_ec {
-            return false;
-        }
-
-        true
+        lhs_ec == rhs_ec
     }
 }
 
@@ -212,61 +216,22 @@ where
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Compute the elliptic curve group order as a `fast_paillier::backend::Integer`.
-fn curve_order<C: TecdsaCurve>() -> Integer
-where
-    FieldBytesSize<C>: ModulusSize,
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    // q - 1 is the repr of -1 in the scalar field
-    let neg_one = -C::Scalar::ONE;
-    let neg_one_bytes = neg_one.to_repr();
-    let q_minus_1 = Integer::from_bytes_msf(neg_one_bytes.as_ref());
-    &q_minus_1 + 1u8
-}
-
-/// Raw Paillier encryption: `Enc_N(m; r) = (1 + m*N) * r^N mod N^2`.
-///
-/// This computes the Paillier ciphertext directly without using the
-/// `EncryptionKey` API, which is needed for the ZK proof verification
-/// where we must reconstruct the ciphertext from components.
-fn raw_encrypt(n: &Integer, plaintext: &Integer, nonce: &Integer) -> Integer {
-    let nn = n * n;
-    // (1 + m*N) mod N^2
-    let term1 = (Integer::one() + plaintext * n).modulo_ref(&nn);
-    // r^N mod N^2
-    let term2 = nonce
-        .pow_mod_ref(n, &nn)
-        .expect("pow_mod for r^N must succeed");
-    (&term1 * &term2).modulo_ref(&nn)
-}
-
-/// Sample a random element from Z*_N (coprime to N and nonzero).
-fn sample_coprime_to_n(n: &Integer, rng: &mut impl CryptoRngCore) -> Integer {
-    loop {
-        let candidate = n.random_below_ref(rng);
-        if candidate.cmp0().is_gt() && candidate.gcd_ref(n).is_one() {
-            return candidate;
-        }
-    }
-}
-
 /// Multiply the generator by a big integer: `b * G` where b is reduced mod q.
 fn scalar_mul_generator<C: TecdsaCurve>(b: &Integer) -> C::ProjectivePoint
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let scalar = tecdsa_curve::conv::bytes_to_scalar::<C>(&b.to_bytes_msf());
+    let scalar = C::scalar_from_bytes(&b.to_bytes_msf());
     C::generator() * scalar
 }
 
 /// Compute the Fiat-Shamir challenge: `sigma = H(ssid, C, X1, gamma_1, gamma_2) mod q`.
 fn fiat_shamir_challenge<C: TecdsaCurve>(
     ssid: &[u8],
-    c: &fast_paillier::Ciphertext,
+    c: &crate::scheme::Ciphertext,
     x1_point: &C::ProjectivePoint,
-    gamma_1: &fast_paillier::Ciphertext,
+    gamma_1: &crate::scheme::Ciphertext,
     gamma_2: &C::ProjectivePoint,
 ) -> C::Scalar
 where
@@ -286,7 +251,7 @@ where
         .finalize()
         .into();
 
-    tecdsa_curve::conv::bytes_to_scalar::<C>(&hash)
+    C::scalar_from_bytes(&hash)
 }
 
 #[cfg(test)]
@@ -299,7 +264,7 @@ mod tests {
     fn setup_test_scenario() -> (
         DecryptionKey,
         EncryptionKey,
-        fast_paillier::Ciphertext,
+        crate::scheme::Ciphertext,
         Integer, // x_hat_1
         Integer, // enc_nonce (rho)
         <Secp256k1 as elliptic_curve::CurveArithmetic>::ProjectivePoint,
@@ -307,7 +272,7 @@ mod tests {
         let mut rng = rand_core::OsRng;
 
         // Generate Paillier keys
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         // Sample x1 scalar
@@ -315,12 +280,12 @@ mod tests {
         let x1_point = <Secp256k1 as TecdsaCurve>::generator() * x1;
 
         // Compute x_hat_1 = x1 + t * q
-        let q_int = curve_order::<Secp256k1>();
+        let q_int = Secp256k1::order();
         let x1_bytes = x1.to_repr();
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
-        let noise_bound = Integer::u_pow_u(2, TAU + 2 * KAPPA);
-        let t = noise_bound.random_below_ref(&mut rng);
-        let x_hat_1 = &x1_int + &t * &q_int;
+        let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
+        let t = noise_bound.sample_below_ref(&mut rng);
+        let x_hat_1 = &x1_int + (t * q_int);
 
         // Encrypt x_hat_1
         let (c, enc_nonce) = dk
@@ -417,7 +382,7 @@ mod tests {
         );
 
         // Use a different Paillier key for verification
-        let dk2 = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk2 = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek2 = dk2.encryption_key().clone();
 
         assert!(

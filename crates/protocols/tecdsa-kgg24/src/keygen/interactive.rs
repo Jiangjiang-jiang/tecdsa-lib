@@ -30,14 +30,14 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pi_eq::PiEqProof},
+    BigIntExt,
 };
 
-use super::curve_order;
 use crate::{
     error::Kgg24Error,
     key_share::{Kgg24Party1KeyShare, Kgg24Party2KeyShare},
@@ -121,6 +121,7 @@ where
     /// DLog proof for `X1`.
     pub dlog_proof: DlogProof<C>,
     /// Paillier ciphertext `C = Enc_N(x1 + t*q)`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c_key: tecdsa_paillier::Ciphertext,
     /// Paillier encryption key.
     pub ek: tecdsa_paillier::EncryptionKey,
@@ -153,7 +154,7 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     // Generate Paillier key pair (one-time setup; see the precomputed variant).
-    let dk = tecdsa_paillier::keygen(rng)
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng)
         .map_err(|e| Kgg24Error::Paillier(format!("Paillier keygen failed: {e}")))?;
 
     party1_keygen_round2_with_dk::<C>(dk, rng)
@@ -185,16 +186,16 @@ where
     let ek = dk.encryption_key().clone();
 
     // Get the curve order q
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
 
     // Sample noise t from [0, 2^{tau + 2*kappa})
-    let noise_bound = Integer::u_pow_u(2, TAU + 2 * KAPPA);
-    let t = noise_bound.random_below_ref(rng);
+    let noise_bound = Integer::two_pow(TAU + 2 * KAPPA);
+    let t = noise_bound.sample_below_ref(rng);
 
     // Compute x_hat_1 = x1 + t * q (the noised share)
     let x1_bytes = x1.to_repr();
     let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
-    let x_hat_1 = &x1_int + &t * &q_int;
+    let x_hat_1 = x1_int + t * q_int;
 
     // Encrypt x_hat_1: C = Enc_pk(x_hat_1; rho)
     let (c_key, enc_nonce) = dk.encrypt_with_random(rng, &x_hat_1).map_err(|e| {
@@ -457,8 +458,8 @@ mod tests {
         let x1_int = Integer::from_bytes_msf(x1_bytes.as_ref());
 
         // The decrypted value is x1 + t*q, so (decrypted mod q) should equal x1
-        let q_int = curve_order::<Secp256k1>();
-        let decrypted_mod_q = decrypted.modulo_ref(&q_int);
+        let q_int = Secp256k1::order();
+        let decrypted_mod_q = decrypted.modulo(&q_int);
         assert_eq!(decrypted_mod_q, x1_int);
     }
 

@@ -13,6 +13,8 @@
 //! `pk = h^sk`. Domain-separated from R_ClKwlg for use in the
 //! key-generation context of TX25/JTX25 protocols.
 
+use rug::{integer::Order, Integer};
+
 use super::{challenge_from_qfi, response_unbounded, sample_random};
 use crate::cl::{ClResult, ClSetup, PublicKey as ClHsmqkPublicKey, Qfi};
 
@@ -28,14 +30,14 @@ pub struct RKeyProof {
 
 impl RKeyProof {
     /// Proves knowledge of `sk` such that `pk = h^{sk}`.
-    pub fn prove(setup: &mut ClSetup, pk: &ClHsmqkPublicKey, sk_bytes: &[u8]) -> ClResult<Self> {
+    pub fn prove(setup: &mut ClSetup, pk: &ClHsmqkPublicKey, sk: &Integer) -> ClResult<Self> {
         let a = sample_random(setup)?;
-        let t = setup.power_of_h_bytes(&a)?;
+        let t = setup.power_of_h(&a)?;
 
         let pk_elt = pk.elt();
         let e = challenge_from_qfi(setup, b"R_key", &[pk_elt, &t], &[b"r_key"])?;
 
-        let z = response_unbounded(&a, &e, sk_bytes)?;
+        let z = response_unbounded(&a, &e, sk);
 
         Ok(Self { t, z, e })
     }
@@ -50,8 +52,10 @@ impl RKeyProof {
         }
 
         // Check: h^z == t * pk^e
-        let h_z = setup.power_of_h_bytes(&self.z)?;
-        let pk_e = setup.exp_bytes(pk_elt, &self.e)?;
+        let z = Integer::from_digits(&self.z, Order::Msf);
+        let e = Integer::from_digits(&self.e, Order::Msf);
+        let h_z = setup.power_of_h(&z)?;
+        let pk_e = setup.exp(pk_elt, &e)?;
         let rhs = setup.compose(&self.t, &pk_e)?;
         if h_z != rhs {
             return Ok(false);
@@ -68,21 +72,21 @@ mod tests {
 
     #[test]
     fn r_key_honest_verifies() {
-        let mut setup = ClSetup::new_secp256k1("14001").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(14001u64).expect("setup");
         let (sk_raw, pk_raw) = setup.keygen().expect("keygen");
-        let sk_bytes = setup.sk_to_bytes(&sk_raw).expect("sk_bytes");
+        let sk = setup.sk_to_integer(&sk_raw);
 
-        let proof = RKeyProof::prove(&mut setup, &pk_raw, &sk_bytes).expect("prove");
+        let proof = RKeyProof::prove(&mut setup, &pk_raw, &sk).expect("prove");
         assert!(proof.verify(&setup, &pk_raw).expect("verify"));
     }
 
     #[test]
     #[ignore = "redundant ZK negative test"]
     fn r_key_rejects_wrong_sk() {
-        let mut setup = ClSetup::new_secp256k1("14002").expect("setup");
+        let mut setup = ClSetup::new_secp256k1(14002u64).expect("setup");
         let (_sk_raw, pk_raw) = setup.keygen().expect("keygen");
         let (sk2, _) = setup.keygen().expect("kg2");
-        let wrong_sk = setup.sk_to_bytes(&sk2).expect("bytes");
+        let wrong_sk = setup.sk_to_integer(&sk2);
 
         let proof = RKeyProof::prove(&mut setup, &pk_raw, &wrong_sk).expect("prove");
         assert!(!proof.verify(&setup, &pk_raw).expect("verify"));

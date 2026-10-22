@@ -13,7 +13,7 @@
 //! - **LLZ25**: NIM over class groups, 3-round keygen + 1-round presign + 1-round sign
 //! - **Trout**: eVRF + CL scaled decryption, 3-round keygen + 1-round presign + 1-round sign
 //! - **XAL23**: JL-based MtA, 2-round keygen + 4-round presign + 1-round sign
-//! - **KU25**: honest-majority PRSS, 1-round keygen + 4-round *batch* presign + 1-round sign
+//! - **KU24**: honest-majority PRSS, 1-round keygen + 4-round *batch* presign + 1-round sign
 //!
 //! Each protocol is measured for keygen, presign, and sign phases with per-party
 //! timing via the Orchestrator. The protocol always runs with all `n` parties
@@ -23,9 +23,9 @@
 //!
 //! The swept `(n, t)` configurations are read from the environment at run time
 //! (see [`tecdsa_bench::config`]), so they can be changed without recompiling:
-//! - **DKG** sweeps `TECDSA_BENCH_DKG_CONFIGS` (default `3:3,7:7,11:11,15:15,20:20`).
+//! - **DKG** sweeps `TECDSA_BENCH_DKG_CONFIGS` (default `2:2,3:3,7:7,11:11,20:20`).
 //! - **Presign/Sign** sweep `TECDSA_BENCH_SIGN_N` (default `20`) parties with the
-//!   thresholds in `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,15,20`); the
+//!   thresholds in `TECDSA_BENCH_SIGN_THRESHOLDS` (default `2,3,7,11,20`); the
 //!   signing quorum is parties `1..=t`.
 //!
 //! LN18 is benchmarked here too. Its per-session Init + Lagrange + Paillier/RP
@@ -41,8 +41,10 @@ use std::sync::Arc;
 use criterion::{criterion_group, criterion_main, Criterion};
 use elliptic_curve::ops::Reduce;
 use k256::Secp256k1;
+use rug::Complete;
 use sha2::{Digest, Sha256};
 use tecdsa_bench::{config, per_party};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{PartyId, PartyInfo, SessionConfig, SessionId};
 use tecdsa_testkit::Orchestrator;
 
@@ -270,11 +272,9 @@ mod gg18_helpers {
 // ===========================================================================
 
 mod ggn16_helpers {
+    use rug::Integer;
     use tecdsa_ggn16::key_share::Ggn16KeyShare;
-    use tecdsa_paillier::{
-        backend::Integer,
-        threshold::{DecryptionShare, ThresholdSetup},
-    };
+    use tecdsa_paillier::threshold::{DecryptionShare, ThresholdSetup};
 
     use super::*;
 
@@ -298,25 +298,20 @@ mod ggn16_helpers {
             .expect("valid primes");
         let ek = dk.encryption_key().clone();
         let n_int = ek.n().clone();
-        let p_minus_1 = &p - Integer::one();
-        let q_minus_1 = &q - Integer::one();
-        let lambda = p_minus_1.lcm_ref(&q_minus_1);
-        let beta = loop {
-            let candidate = n_int.random_below_ref(&mut rng);
-            if candidate > Integer::zero() && candidate.gcd_ref(&n_int) == Integer::one() {
-                break candidate;
-            }
-        };
-        let d = &lambda * &beta;
-        let theta = d.modulo_ref(&n_int);
+        let p_minus_1 = p - Integer::one();
+        let q_minus_1 = q - Integer::one();
+        let lambda = p_minus_1.lcm(&q_minus_1);
+        let beta = Integer::sample_in_mult_group_of(&mut rng, &n_int);
+        let d = lambda * beta;
+        let theta = d.modulo_ref(&n_int).complete();
         let mut delta = Integer::one();
         for i in 2..=n as u32 {
             delta *= Integer::from(i);
         }
-        let m = &n_int * &delta;
+        let m = n_int * &delta;
         let mut coeffs = vec![d];
         for _ in 0..corruption_t {
-            coeffs.push(m.random_below_ref(&mut rng));
+            coeffs.push(m.sample_below_ref(&mut rng));
         }
         let mut shares = Vec::with_capacity(n as usize);
         for i in 1..=n {
@@ -340,10 +335,13 @@ mod ggn16_helpers {
         // Ring-Pedersen
         let rp = Integer::generate_safe_prime(&mut rng, 1536);
         let rq = Integer::generate_safe_prime(&mut rng, 1536);
-        let n_tilde = &rp * &rq;
+        let n_tilde = (&rp * &rq).complete();
         let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-        let rlambda = (&rp - Integer::one()) * (&rq - Integer::one());
-        let h2 = h1.pow_mod_ref(&rlambda, &n_tilde).expect("pow_mod");
+        let rlambda = (rp - Integer::one()) * (rq - Integer::one());
+        let h2 = h1
+            .pow_mod_ref(&rlambda, &n_tilde)
+            .expect("pow_mod")
+            .complete();
 
         (setup, shares, n_tilde, h1, h2)
     }
@@ -400,6 +398,9 @@ mod ggn16_helpers {
 // ===========================================================================
 
 fn cggmp20_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("cggmp20") {
+        return;
+    }
     use tecdsa_cggmp20::{
         aux_info::AuxInfoMachine, keygen::Cggmp20KeygenMachine, presign::Cggmp20PresignMachine,
         security_level::SecurityLevel128, sign::types::PartialSignature,
@@ -593,6 +594,9 @@ fn cggmp20_benchmarks(c: &mut Criterion) {
 }
 
 fn dkls23_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("dkls23") {
+        return;
+    }
     use tecdsa_dkls23::{
         keygen::Dkls23KeygenMachine,
         presign::{Dkls23PresignMachine, PresignConfig},
@@ -765,6 +769,9 @@ fn dkls23_benchmarks(c: &mut Criterion) {
 }
 
 fn gg18_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("gg18") {
+        return;
+    }
     use tecdsa_gg18::{
         keygen::{Gg18KeygenMachine, PaillierPrecomputed},
         presign::{Gg18PresignMachine, PresignConfig},
@@ -954,6 +961,9 @@ fn gg18_benchmarks(c: &mut Criterion) {
 }
 
 fn ggn16_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ggn16") {
+        return;
+    }
     use tecdsa_ggn16::{
         keygen::Ggn16KeygenMachine, presign::Ggn16PresignMachine, sign::Ggn16OnlineSignMachine,
     };
@@ -1092,6 +1102,9 @@ fn ggn16_benchmarks(c: &mut Criterion) {
 }
 
 fn ln18_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ln18") {
+        return;
+    }
     use tecdsa_ln18::{
         key_share::Ln18KeyShare,
         keygen::Ln18KeygenMachine,
@@ -1260,6 +1273,9 @@ fn ln18_benchmarks(c: &mut Criterion) {
 }
 
 fn tx25_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("tx25") {
+        return;
+    }
     use tecdsa_tx25::{
         keygen::Tx25KeygenMachine, presign::Tx25PresignMachine, sign::Tx25OnlineSignMachine,
     };
@@ -1274,7 +1290,7 @@ fn tx25_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/tx25", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1286,8 +1302,10 @@ fn tx25_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -1421,6 +1439,9 @@ fn tx25_benchmarks(c: &mut Criterion) {
 }
 
 fn jtx25_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("jtx25") {
+        return;
+    }
     use tecdsa_jtx25::{
         keygen::Jtx25KeygenMachine, presign::Jtx25PresignMachine, sign::Jtx25OnlineSignMachine,
     };
@@ -1435,7 +1456,7 @@ fn jtx25_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/jtx25", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1447,8 +1468,10 @@ fn jtx25_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -1590,6 +1613,9 @@ fn jtx25_benchmarks(c: &mut Criterion) {
 }
 
 fn jtx25_robust_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("jtx25_robust") {
+        return;
+    }
     use tecdsa_jtx25::{
         keygen::Jtx25KeygenMachine, presign::robust::Jtx25RobustPresignMachine,
         sign::robust::Jtx25RobustOnlineSignMachine,
@@ -1605,7 +1631,7 @@ fn jtx25_robust_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/jtx25_robust", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1617,8 +1643,10 @@ fn jtx25_robust_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     // Keygen is shared between the normal and robust variants.
@@ -1761,6 +1789,9 @@ fn jtx25_robust_benchmarks(c: &mut Criterion) {
 }
 
 fn wmy23_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("wmy23") {
+        return;
+    }
     use tecdsa_wmy23::{
         keygen::Wmy23KeygenMachine,
         presign::{PresignConfig, Wmy23PresignMachine},
@@ -1777,7 +1808,7 @@ fn wmy23_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/wmy23", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1789,11 +1820,13 @@ fn wmy23_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     // WMY23's Feldman-VSS keygen takes the reconstruction threshold (t); the
     // presign machine Lagrange-weights each signer's Shamir share, so any t-of-n
     // subset (here parties 1..=t) reconstructs the key.
     let msg_data = make_data_to_sign(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -1942,6 +1975,9 @@ fn wmy23_benchmarks(c: &mut Criterion) {
 }
 
 fn wmc24_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("wmc24") {
+        return;
+    }
     use tecdsa_wmc24::{
         keygen::Wmc24KeygenMachine, presign::Wmc24PresignMachine, sign::Wmc24OnlineSignMachine,
     };
@@ -1956,7 +1992,7 @@ fn wmc24_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/wmc24", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -1968,8 +2004,10 @@ fn wmc24_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -2112,6 +2150,9 @@ fn wmc24_benchmarks(c: &mut Criterion) {
 }
 
 fn llz25_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("llz25") {
+        return;
+    }
     use tecdsa_llz25::{
         keygen::Llz25KeygenMachine, presign::machine::Llz25PresignMachine,
         sign::machine::Llz25SignMachine,
@@ -2127,7 +2168,7 @@ fn llz25_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/llz25", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 s.keygen().expect("cl keygen")
             });
@@ -2139,8 +2180,10 @@ fn llz25_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let msg_bytes = sha2::Sha256::digest(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // CRS key (shared out-of-band, independent of n/t).
     let pk_crs = {
@@ -2301,6 +2344,9 @@ fn llz25_benchmarks(c: &mut Criterion) {
 }
 
 fn trout_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("trout") {
+        return;
+    }
     use tecdsa_trout::{
         keygen::TroutKeygenMachine, presign::machine::TroutPresignMachine,
         sign::machine::TroutSignMachine,
@@ -2316,7 +2362,7 @@ fn trout_benchmarks(c: &mut Criterion) {
         setup_group.sample_size(10);
         setup_group.bench_function("setup/trout", |b| {
             b.iter(|| {
-                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit("42042")
+                let mut s = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(42042u64)
                     .expect("cl setup");
                 let _evrf = tecdsa_evrf::EvrfSecretKey::<C>::generate(&mut rand_core::OsRng);
                 s.keygen().expect("cl keygen")
@@ -2329,8 +2375,10 @@ fn trout_benchmarks(c: &mut Criterion) {
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     let seed = "42042";
+    let seed_int = rug::Integer::from(42042u64);
     let message = make_data_to_sign(b"benchmark message");
-    let cl_setup = tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(seed).expect("cl setup");
+    let cl_setup =
+        tecdsa_class_group::cl::ClSetup::new_secp256k1_128bit(&seed_int).expect("cl setup");
 
     // --- DKG: sweep (n, t). ---
     for &(n, t) in &dkg_configs {
@@ -2502,6 +2550,9 @@ fn trout_benchmarks(c: &mut Criterion) {
 }
 
 fn xal23_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("xal23") {
+        return;
+    }
     use tecdsa_xal23::{
         keygen::Xal23KeygenMachine, presign::Xal23PresignMachine, sign::Xal23SignMachine,
     };
@@ -2671,24 +2722,24 @@ fn xal23_benchmarks(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// KU25 -- honest majority, PRSS, key-independent batch presignatures
+// KU24 -- honest majority, PRSS, key-independent batch presignatures
 // ---------------------------------------------------------------------------
 
-/// Party counts benchmarked for KU25.
+/// Party counts benchmarked for KU24.
 ///
-/// KU25 fixes the corruption threshold from the party count (`n >= 2t + 1`), so
+/// KU24 fixes the corruption threshold from the party count (`n >= 2t + 1`), so
 /// there is no independent `t` to sweep: each `n` is paired with the largest
 /// admissible reconstruction threshold `t + 1 = floor(n/2) + 1`.
 ///
-/// The sweep is read from `TECDSA_BENCH_KU25_PARTIES` (comma-separated `n`
+/// The sweep is read from `TECDSA_BENCH_KU24_PARTIES` (comma-separated `n`
 /// values, default `3,5,7,11`) rather than the shared
-/// `TECDSA_BENCH_DKG_CONFIGS`, because KU25's cost profile is unrelated to the
+/// `TECDSA_BENCH_DKG_CONFIGS`, because KU24's cost profile is unrelated to the
 /// other protocols': PRSS needs `binomial(n, t)` replicated keys, so both setup
 /// and every derived share are exponential in `n`.  Values below 3 or above
-/// `tecdsa_ku25::prss::MAX_PARTIES` are dropped; note that the default stops at
+/// `tecdsa_ku24::prss::MAX_PARTIES` are dropped; note that the default stops at
 /// 11 (252 keys per party) because `n = 15` already means 3432.
-fn ku25_configs() -> Vec<(u16, u16)> {
-    let mut ns: Vec<u16> = std::env::var("TECDSA_BENCH_KU25_PARTIES")
+fn ku24_configs() -> Vec<(u16, u16)> {
+    let mut ns: Vec<u16> = std::env::var("TECDSA_BENCH_KU24_PARTIES")
         .ok()
         .map(|raw| {
             raw.split(',')
@@ -2696,7 +2747,7 @@ fn ku25_configs() -> Vec<(u16, u16)> {
                 .collect()
         })
         .unwrap_or_else(|| vec![3, 5, 7, 11]);
-    ns.retain(|&n| (3..=tecdsa_ku25::prss::MAX_PARTIES).contains(&n));
+    ns.retain(|&n| (3..=tecdsa_ku24::prss::MAX_PARTIES).contains(&n));
     ns.sort_unstable();
     ns.dedup();
     if ns.is_empty() {
@@ -2712,9 +2763,9 @@ fn ku25_configs() -> Vec<(u16, u16)> {
 /// as the paper also observes, batching pays off against round-trip latency,
 /// which this harness does not simulate.
 ///
-/// Override with `TECDSA_BENCH_KU25_BATCHES` (comma-separated).
-fn ku25_batch_sizes() -> Vec<usize> {
-    std::env::var("TECDSA_BENCH_KU25_BATCHES")
+/// Override with `TECDSA_BENCH_KU24_BATCHES` (comma-separated).
+fn ku24_batch_sizes() -> Vec<usize> {
+    std::env::var("TECDSA_BENCH_KU24_BATCHES")
         .ok()
         .map(|raw| {
             raw.split(',')
@@ -2726,19 +2777,22 @@ fn ku25_batch_sizes() -> Vec<usize> {
         .unwrap_or_else(|| vec![1, 16, 128])
 }
 
-fn ku25_benchmarks(c: &mut Criterion) {
-    use tecdsa_ku25::{
-        keygen::Ku25KeygenMachine, presign::Ku25PresignMachine, prss::PrssKeys,
-        setup::Ku25SetupMachine, sign::Ku25SignMachine,
+fn ku24_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ku24") {
+        return;
+    }
+    use tecdsa_ku24::{
+        keygen::Ku24KeygenMachine, presign::Ku24PresignMachine, prss::PrssKeys,
+        setup::Ku24SetupMachine, sign::Ku24SignMachine,
     };
 
-    let configs = ku25_configs();
-    let batch_sizes = ku25_batch_sizes();
+    let configs = ku24_configs();
+    let batch_sizes = ku24_batch_sizes();
     let digest = make_data_to_sign(b"benchmark message");
 
     // --- One-time, key-independent PRSS setup (F_rss.Init), swept over n. ---
     {
-        let mut setup_group = c.benchmark_group("multiparty/ku25");
+        let mut setup_group = c.benchmark_group("multiparty/ku24");
         per_party::configure_replay_group(&mut setup_group, SAMPLES);
         for &(n, t) in &configs {
             let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
@@ -2748,7 +2802,7 @@ fn ku25_benchmarks(c: &mut Criterion) {
                     .map(|&pid| {
                         let all_parties = all_parties.clone();
                         (pid, move || {
-                            Ku25SetupMachine::<C>::new(pid, all_parties, t).expect("ku25 setup")
+                            Ku24SetupMachine::<C>::new(pid, all_parties, t).expect("ku24 setup")
                         })
                     })
                     .collect();
@@ -2756,7 +2810,7 @@ fn ku25_benchmarks(c: &mut Criterion) {
             });
             per_party::bench_party_replay(
                 &mut setup_group,
-                format!("setup/ku25/n{n}_t{t}/party1"),
+                format!("setup/ku24/n{n}_t{t}/party1"),
                 &runs,
                 PartyId(1),
             );
@@ -2764,7 +2818,7 @@ fn ku25_benchmarks(c: &mut Criterion) {
         setup_group.finish();
     }
 
-    let mut group = c.benchmark_group("multiparty/ku25");
+    let mut group = c.benchmark_group("multiparty/ku24");
     per_party::configure_replay_group(&mut group, SAMPLES);
 
     for &(n, t) in &configs {
@@ -2778,8 +2832,8 @@ fn ku25_benchmarks(c: &mut Criterion) {
                 .map(|&pid| {
                     (
                         pid,
-                        Ku25SetupMachine::<C>::new(pid, all_parties.clone(), t)
-                            .expect("ku25 setup"),
+                        Ku24SetupMachine::<C>::new(pid, all_parties.clone(), t)
+                            .expect("ku24 setup"),
                     )
                 })
                 .collect();
@@ -2800,8 +2854,8 @@ fn ku25_benchmarks(c: &mut Criterion) {
                     let all_parties = all_parties.clone();
                     let keys = keys.clone();
                     (pid, move || {
-                        Ku25KeygenMachine::new(pid, all_parties, &keys, &[0u8; 32])
-                            .expect("ku25 keygen")
+                        Ku24KeygenMachine::new(pid, all_parties, &keys, &[0u8; 32])
+                            .expect("ku24 keygen")
                     })
                 })
                 .collect();
@@ -2809,7 +2863,7 @@ fn ku25_benchmarks(c: &mut Criterion) {
         });
         per_party::bench_party_replay(
             &mut group,
-            format!("dkg/ku25/n{n}_t{t}/party1"),
+            format!("dkg/ku24/n{n}_t{t}/party1"),
             &dkg_runs,
             PartyId(1),
         );
@@ -2822,8 +2876,8 @@ fn ku25_benchmarks(c: &mut Criterion) {
                 .map(|(&pid, keys)| {
                     (
                         pid,
-                        Ku25KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
-                            .expect("ku25 keygen"),
+                        Ku24KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
+                            .expect("ku24 keygen"),
                     )
                 })
                 .collect();
@@ -2851,14 +2905,14 @@ fn ku25_benchmarks(c: &mut Criterion) {
                         let all_parties = all_parties.clone();
                         let keys = keys.clone();
                         (pid, move || {
-                            Ku25PresignMachine::new_with_session(
+                            Ku24PresignMachine::new_with_session(
                                 pid,
                                 all_parties,
                                 &keys,
                                 m,
                                 &session_id,
                             )
-                            .expect("ku25 presign")
+                            .expect("ku24 presign")
                         })
                     })
                     .collect();
@@ -2870,9 +2924,9 @@ fn ku25_benchmarks(c: &mut Criterion) {
             });
             // m = 1 keeps the id shape the table scripts expect.
             let id = if m == 1 {
-                format!("presign/ku25/n{n}_t{t}/party1")
+                format!("presign/ku24/n{n}_t{t}/party1")
             } else {
-                format!("presign/ku25/n{n}_t{t}_m{m}/party1")
+                format!("presign/ku24/n{n}_t{t}_m{m}/party1")
             };
             per_party::bench_party_replay(&mut group, id, &presign_runs, PartyId(1));
         }
@@ -2886,14 +2940,14 @@ fn ku25_benchmarks(c: &mut Criterion) {
                 .map(|(&pid, keys)| {
                     (
                         pid,
-                        Ku25PresignMachine::new_with_session(
+                        Ku24PresignMachine::new_with_session(
                             pid,
                             all_parties.clone(),
                             keys,
                             1,
                             &[0xFEu8; 32],
                         )
-                        .expect("ku25 presign"),
+                        .expect("ku24 presign"),
                     )
                 })
                 .collect();
@@ -2912,8 +2966,8 @@ fn ku25_benchmarks(c: &mut Criterion) {
                     let share = share.clone();
                     let presig = batch.into_vec().remove(0);
                     (pid, move || {
-                        Ku25SignMachine::new(pid, all_parties, &share, presig, digest)
-                            .expect("ku25 sign")
+                        Ku24SignMachine::new(pid, all_parties, &share, presig, digest)
+                            .expect("ku24 sign")
                     })
                 })
                 .collect();
@@ -2921,7 +2975,7 @@ fn ku25_benchmarks(c: &mut Criterion) {
         });
         per_party::bench_party_replay(
             &mut group,
-            format!("online_sign/ku25/n{n}_t{t}/party1"),
+            format!("online_sign/ku24/n{n}_t{t}/party1"),
             &sign_runs,
             PartyId(1),
         );
@@ -2929,10 +2983,10 @@ fn ku25_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-/// End-to-end wall-clock benchmarks for KU25, directly comparable to the
+/// End-to-end wall-clock benchmarks for KU24, directly comparable to the
 /// paper's Table 1.
 ///
-/// The `multiparty/ku25` group above reports *per-party active time*, this
+/// The `multiparty/ku24` group above reports *per-party active time*, this
 /// workspace's convention.  That is not what the paper measures: Section 6
 /// simulates all `n` parties plus a coordinator on a single machine and reports
 /// the wall clock of the joint protocol divided by the batch size.  This group
@@ -2947,19 +3001,22 @@ fn ku25_benchmarks(c: &mut Criterion) {
 /// Communication statistics are deliberately left off (`Orchestrator::new`
 /// defaults to `collect_stats = false`), so no bincode serialization is charged
 /// to these numbers beyond the protocol's own wire encoding.
-fn ku25_e2e_benchmarks(c: &mut Criterion) {
+fn ku24_e2e_benchmarks(c: &mut Criterion) {
+    if !config::protocol_enabled("ku24_e2e") {
+        return;
+    }
     use std::time::{Duration, Instant};
 
-    use tecdsa_ku25::{
-        keygen::Ku25KeygenMachine, presign::Ku25PresignMachine, prss::PrssKeys,
-        setup::Ku25SetupMachine, sign::Ku25SignMachine,
+    use tecdsa_ku24::{
+        keygen::Ku24KeygenMachine, presign::Ku24PresignMachine, prss::PrssKeys,
+        setup::Ku24SetupMachine, sign::Ku24SignMachine,
     };
 
-    let configs = ku25_configs();
-    let batch_sizes = ku25_batch_sizes();
+    let configs = ku24_configs();
+    let batch_sizes = ku24_batch_sizes();
     let digest = make_data_to_sign(b"benchmark message");
 
-    let mut group = c.benchmark_group("multiparty/ku25_e2e");
+    let mut group = c.benchmark_group("multiparty/ku24_e2e");
     group.sample_size(10);
     group.warm_up_time(Duration::from_millis(200));
     group.measurement_time(Duration::from_secs(1));
@@ -2974,8 +3031,8 @@ fn ku25_e2e_benchmarks(c: &mut Criterion) {
                 .map(|&pid| {
                     (
                         pid,
-                        Ku25SetupMachine::<C>::new(pid, all_parties.clone(), t)
-                            .expect("ku25 setup"),
+                        Ku24SetupMachine::<C>::new(pid, all_parties.clone(), t)
+                            .expect("ku24 setup"),
                     )
                 })
                 .collect();
@@ -2995,8 +3052,8 @@ fn ku25_e2e_benchmarks(c: &mut Criterion) {
                 .map(|(&pid, keys)| {
                     (
                         pid,
-                        Ku25KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
-                            .expect("ku25 keygen"),
+                        Ku24KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
+                            .expect("ku24 keygen"),
                     )
                 })
                 .collect();
@@ -3017,14 +3074,14 @@ fn ku25_e2e_benchmarks(c: &mut Criterion) {
                 .map(|(&pid, keys)| {
                     (
                         pid,
-                        Ku25PresignMachine::new_with_session(
+                        Ku24PresignMachine::new_with_session(
                             pid,
                             all_parties.clone(),
                             keys,
                             m,
                             &session,
                         )
-                        .expect("ku25 presign"),
+                        .expect("ku24 presign"),
                     )
                 })
                 .collect();
@@ -3033,7 +3090,7 @@ fn ku25_e2e_benchmarks(c: &mut Criterion) {
 
         // --- Presigning: whole-system wall clock, amortized per presignature. ---
         for &m in &batch_sizes {
-            group.bench_function(format!("presign/ku25/n{n}_t{t}_m{m}"), |b| {
+            group.bench_function(format!("presign/ku24/n{n}_t{t}_m{m}"), |b| {
                 b.iter_custom(|iters| {
                     let mut total = Duration::ZERO;
                     for it in 0..iters {
@@ -3048,7 +3105,7 @@ fn ku25_e2e_benchmarks(c: &mut Criterion) {
         }
 
         // --- Online signing: whole-system wall clock for one signature. ---
-        group.bench_function(format!("online_sign/ku25/n{n}_t{t}"), |b| {
+        group.bench_function(format!("online_sign/ku24/n{n}_t{t}"), |b| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for it in 0..iters {
@@ -3065,14 +3122,14 @@ fn ku25_e2e_benchmarks(c: &mut Criterion) {
                         .map(|(&pid, (share, presig))| {
                             (
                                 pid,
-                                Ku25SignMachine::new(
+                                Ku24SignMachine::new(
                                     pid,
                                     all_parties.clone(),
                                     share,
                                     presig,
                                     digest,
                                 )
-                                .expect("ku25 sign"),
+                                .expect("ku24 sign"),
                             )
                         })
                         .collect();
@@ -3106,7 +3163,7 @@ criterion_group!(
     llz25_benchmarks,
     trout_benchmarks,
     xal23_benchmarks,
-    ku25_benchmarks,
-    ku25_e2e_benchmarks
+    ku24_benchmarks,
+    ku24_e2e_benchmarks
 );
 criterion_main!(benches);

@@ -20,17 +20,17 @@ use std::collections::BTreeMap;
 
 use elliptic_curve::PrimeField;
 use rand::RngCore;
-use tecdsa_class_group::cl::{ClPublicKey as ClHsmqkPublicKey, ClSetup};
+use tecdsa_class_group::cl::{parse_int_auto, ClPublicKey as ClHsmqkPublicKey, ClSetup};
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{ScalarExt, TecdsaCurve};
 use tecdsa_protocol::{state_machine::Outgoing, IaReport, PartyId, Recipient, StateMachine};
 use zeroize::Zeroize;
 
 use super::{
     msg::Llz25KeygenMsg,
     rounds::{
-        compute_commitment, proj_from_bytes, scalar_to_bytes, R1LocalState, R2BcastPayload,
-        R2ReceivedBcast, R3Payload, R3ReceivedData, SerDlogProof,
+        compute_commitment, proj_from_bytes, R1LocalState, R2BcastPayload, R2ReceivedBcast,
+        R3Payload, R3ReceivedData, SerDlogProof,
     },
 };
 use crate::key_share::Llz25KeyShare;
@@ -187,10 +187,12 @@ impl Llz25KeygenMachine {
         use_128bit: bool,
         pk_crs: ClHsmqkPublicKey,
     ) -> tecdsa_core::Result<Self> {
+        let seed = parse_int_auto(cl_setup_seed)
+            .map_err(|e| TecdsaError::Other(format!("cl_setup_seed parse failed: {e}")))?;
         let setup = if use_128bit {
-            ClSetup::new_secp256k1_128bit(cl_setup_seed)
+            ClSetup::new_secp256k1_128bit(&seed)
         } else {
-            ClSetup::new_secp256k1(cl_setup_seed)
+            ClSetup::new_secp256k1(&seed)
         }
         .map_err(|e| TecdsaError::Other(format!("ClSetup creation failed: {e}")))?;
 
@@ -291,7 +293,7 @@ impl Llz25KeygenMachine {
                 .ok_or_else(|| {
                     TecdsaError::Other(format!("VSS share for party {party} must exist"))
                 })?;
-            let share_bytes = scalar_to_bytes(&share_for_j.value);
+            let share_bytes = share_for_j.value.to_bytes_vec();
             self.outgoing.push(Outgoing {
                 to: Recipient::Party(party),
                 msg: Llz25KeygenMsg::Round2Share(share_bytes),
@@ -647,7 +649,8 @@ mod tests {
         let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
         // Create CL setup and CRS public key (shared by all parties out-of-band).
-        let mut setup = ClSetup::new_secp256k1(seed).expect("CL setup");
+        let seed_int = parse_int_auto(seed).expect("parse seed");
+        let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
         let (_sk_crs, pk_crs) = setup.keygen().expect("CRS keygen");
 
         // ClHsmqkPublicKey does not implement Clone, so we duplicate it for

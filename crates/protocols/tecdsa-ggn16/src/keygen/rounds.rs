@@ -22,13 +22,14 @@ use elliptic_curve::{
     FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_curve::TecdsaCurve;
+use tecdsa_curve::{PointExt, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
     threshold::{DecryptionShare, ThresholdSetup},
     zk::pdl_slack::{PdlSlackProof, PdlSlackStatement, PdlSlackWitness},
+    BigIntExt,
 };
 use tecdsa_protocol::{Outgoing, PartyId, Recipient};
 
@@ -359,7 +360,7 @@ where
                 }
 
                 // 2. Deserialize y_j from bytes
-                let y_j = deserialize_point::<C>(&r2.y_i_bytes).map_err(|_| {
+                let y_j = C::ProjectivePoint::from_bytes_slice(&r2.y_i_bytes).ok_or_else(|| {
                     TecdsaError::Other(format!("party {pid} sent invalid y_i point encoding"))
                 })?;
 
@@ -429,24 +430,4 @@ where
             total: self.total,
         })
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Deserialize a projective point from its compressed SEC1 byte encoding.
-fn deserialize_point<C: TecdsaCurve>(bytes: &[u8]) -> Result<C::ProjectivePoint, ()>
-where
-    FieldBytesSize<C>: ModulusSize,
-{
-    let repr = <C::ProjectivePoint as GroupEncoding>::Repr::default();
-    let buf_len = repr.as_ref().len();
-    if bytes.len() != buf_len {
-        return Err(());
-    }
-    let mut repr = repr;
-    repr.as_mut().copy_from_slice(bytes);
-    let opt = C::ProjectivePoint::from_bytes(&repr);
-    Option::from(opt).ok_or(())
 }

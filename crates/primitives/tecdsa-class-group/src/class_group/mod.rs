@@ -7,7 +7,7 @@
 //! (see `README.md`); no GPL source was consulted.
 //!
 //! # Layers
-//! * [`Mpz`] — arbitrary-precision integers (GMP via the LGPL `rug` crate).
+//! * [`rug::Integer`] — arbitrary-precision integers (GMP via the LGPL `rug` crate).
 //! * [`RandGen`] — seedable RNG.
 //! * [`QFI`] / [`ClassGroup`] — binary quadratic forms and class-group arithmetic.
 //! * [`CL_HSMqk`] — the encryption scheme itself.
@@ -23,13 +23,11 @@ pub mod hgcd;
 // without the feature the Lehmer reduction is used.
 #[cfg(feature = "gmp-hgcd")]
 pub mod hgcd_gmp;
-pub mod mpz;
 pub mod nt;
 pub mod rand;
 
 pub mod qfi;
 
-pub use error::{ClassGroupError, Result};
-pub use mpz::Mpz;
+pub use error::{parse_int_auto, ClassGroupError, Result};
 pub use qfi::{ClassGroup, QFI};
 pub use rand::RandGen;

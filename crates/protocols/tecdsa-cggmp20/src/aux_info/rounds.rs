@@ -4,14 +4,17 @@
 use std::collections::BTreeMap;
 
 use rand_core::CryptoRngCore;
-use rug::{integer::Order, Integer};
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_core::TecdsaError;
-use tecdsa_paillier::{zk::paillier_zk::no_small_factor as pi_fac, DecryptionKey, EncryptionKey};
-use tecdsa_pedersen_mod::{PedersenModParams, PiMod, PiPrm};
+use tecdsa_paillier::{
+    zk::{pi_fac, pi_mod},
+    BigIntExt, DecryptionKey, EncryptionKey,
+};
+use tecdsa_pedersen_mod::{PedersenModParams, PiPrm};
 use tecdsa_protocol::{Outgoing, PartyId, Recipient, SessionConfig};
 
-use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3};
+use super::msg::{AuxInfoMsg, MsgRound1, MsgRound2, MsgRound3, PI_MOD_REPS};
 use crate::{bridge::pedersen_to_aux, key_share::AuxInfo, security_level::Cggmp20SecurityParams};
 
 /// Fiat-Shamir domain separation tag for aux-info ZK proofs.
@@ -25,13 +28,6 @@ struct AuxInfoProofTag {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn integer_to_bytes(val: &Integer) -> Vec<u8> {
-    let n = val.significant_digits::<u8>();
-    let mut bytes = vec![0u8; n];
-    val.write_digits(&mut bytes, Order::Msf);
-    bytes
-}
-
 /// Serialise the commitment payload: ek || pedersen_params || pi_prm || rho.
 ///
 /// We concatenate deterministic byte representations of the public data.
@@ -44,9 +40,9 @@ fn commitment_data(msg: &MsgRound2) -> Vec<u8> {
     // EncryptionKey → serialise N as big-endian bytes
     data.extend_from_slice(&msg.paillier_ek.n().to_bytes_msf());
     // PedersenModParams → serialise n, s, t
-    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.n));
-    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.s));
-    data.extend_from_slice(&integer_to_bytes(&msg.pedersen_params.t));
+    data.extend_from_slice(&msg.pedersen_params.n.to_bytes_msf());
+    data.extend_from_slice(&msg.pedersen_params.s.to_bytes_msf());
+    data.extend_from_slice(&msg.pedersen_params.t.to_bytes_msf());
     // PiPrm → hash the debug representation as a deterministic fingerprint.
     // Both prover and verifier call this function with the same data, so
     // determinism is all that matters.
@@ -109,15 +105,29 @@ impl<L: Cggmp20SecurityParams> Round1State<L> {
         let parties = config.parties.clone();
         let party_index = config.local_party.index;
 
-        // 1. Generate Paillier key pair with primes of the configured size
-        let p = tecdsa_paillier::backend::Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
-        let q = tecdsa_paillier::backend::Integer::generate_safe_prime(rng, L::RSA_PRIME_BITS);
+        // 1+2. Generate the Paillier key pair and the ring-Pedersen parameters.
+        // These are four independent safe-prime searches, by far the dominant
+        // cost of the whole protocol, so they are all started concurrently.
+        // Each branch gets its own seeded stream so the result stays a
+        // deterministic function of `rng`.
+        let mut paillier_seed = [0u8; 32];
+        let mut pedersen_seed = [0u8; 32];
+        rng.fill_bytes(&mut paillier_seed);
+        rng.fill_bytes(&mut pedersen_seed);
+        let ((p, q), (pedersen_params, pedersen_secret)) = tecdsa_bigint::par::join(
+            || {
+                use rand::SeedableRng;
+                let mut r = rand::rngs::StdRng::from_seed(paillier_seed);
+                tecdsa_bigint::par::gen_two_primes(&mut r, L::RSA_PRIME_BITS)
+            },
+            || {
+                use rand::SeedableRng;
+                let mut r = rand::rngs::StdRng::from_seed(pedersen_seed);
+                PedersenModParams::generate(u64::from(L::RSA_PRIME_BITS), &mut r)
+            },
+        );
         let dk = DecryptionKey::from_primes(p, q).expect("valid paillier key");
         let ek = dk.encryption_key().clone();
-
-        // 2. Generate ring-Pedersen parameters
-        let (pedersen_params, pedersen_secret) =
-            PedersenModParams::generate(L::RSA_PRIME_BITS as u64, rng);
 
         // 3. Generate PiPrm proof
         let pi_prm = PiPrm::prove(&pedersen_params, &pedersen_secret, rng);
@@ -286,14 +296,20 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
             }
         }
 
-        // 2. Verify all PiPrm proofs.
-        for (&pid, round2) in &self.round2_msgs {
-            if !round2.pi_prm.verify(&round2.pedersen_params) {
-                return Err(TecdsaError::InvalidProof(format!(
+        // 2. Verify all PiPrm proofs. One peer's proof does not depend on any
+        //    other's, and each is m = 80 independent exponentiations, so this
+        //    parallelises both across peers and (inside `verify`) within a peer.
+        let peers: Vec<PartyId> = self.round2_msgs.keys().copied().collect();
+        tecdsa_bigint::par::try_for_each(&peers, |&pid| {
+            let round2 = &self.round2_msgs[&pid];
+            if round2.pi_prm.verify(&round2.pedersen_params) {
+                Ok(())
+            } else {
+                Err(TecdsaError::InvalidProof(format!(
                     "party {pid} PiPrm proof verification failed"
-                )));
+                )))
             }
-        }
+        })?;
 
         // 3. Compute combined rho = XOR(all rhos).
         let mut combined_rho = self.rho;
@@ -304,18 +320,34 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
         }
 
         // 4. Generate π_mod proof (same for all peers — only depends on own N).
-        let mut rng = tecdsa_core::Csprng::new();
-        let paillier_n = Integer::from_digits(&self.dk.n().to_bytes_msf(), Order::Msf);
-        let paillier_p = Integer::from_digits(&self.dk.p().to_bytes_msf(), Order::Msf);
-        let paillier_q = Integer::from_digits(&self.dk.q().to_bytes_msf(), Order::Msf);
-        let pi_mod_proof = PiMod::prove_modulus(&paillier_n, &paillier_p, &paillier_q, &mut rng)
-            .ok_or_else(|| TecdsaError::Other("pi_mod proof generation failed".into()))?;
+        let pi_mod_tag = AuxInfoProofTag {
+            context: "pi_mod",
+            prover: self.my_id.0,
+        };
+        let pi_mod_proof = pi_mod::non_interactive::prove::<PI_MOD_REPS, sha2::Sha256>(
+            &pi_mod_tag,
+            pi_mod::Data { n: self.dk.n() },
+            pi_mod::PrivateData {
+                p: self.dk.p(),
+                q: self.dk.q(),
+            },
+            &mut tecdsa_core::Csprng::new(),
+        )
+        .map_err(|e| TecdsaError::Other(format!("pi_mod proof generation failed: {e}")))?;
 
         // 5. Generate per-peer π_fac proofs and queue P2P MsgRound3 messages.
         let own_n = self.dk.n().clone();
-        let n_root = own_n
-            .sqrt_ref()
-            .expect("sqrt of Paillier modulus must succeed");
+        // `sqrt_ref` panics on a negative operand (unlike the old newtype's
+        // `Option`-returning version); `own_n` is this party's own freshly
+        // generated Paillier modulus (always positive), but we still guard
+        // explicitly so the predicate matches the pre-refactor behaviour
+        // exactly rather than relying on that invariant.
+        let n_root = if own_n.cmp0() == std::cmp::Ordering::Less {
+            None
+        } else {
+            Some(Integer::from(own_n.sqrt_ref()))
+        }
+        .expect("sqrt of Paillier modulus must succeed");
 
         let pi_fac_tag = AuxInfoProofTag {
             context: "pi_fac",
@@ -326,11 +358,9 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
             epsilon: L::EPSILON,
         };
 
-        let mut outgoing = Vec::new();
-        for &peer_pid in &self.parties {
-            if peer_pid == self.my_id {
-                continue;
-            }
+        // One π_fac proof per peer, each bound to that peer's Ring-Pedersen
+        // parameters, so they are independent of one another.
+        let outgoing = tecdsa_bigint::par::try_map(&peers, |&peer_pid| {
             let peer_round2 = self
                 .round2_msgs
                 .get(&peer_pid)
@@ -349,18 +379,18 @@ impl<L: Cggmp20SecurityParams> Round2State<L> {
                     q: self.dk.q(),
                 },
                 &security_params,
-                &mut rng,
+                &mut tecdsa_core::Csprng::new(),
             )
             .map_err(|e| TecdsaError::Other(format!("pi_fac proof generation failed: {e}")))?;
 
-            outgoing.push(Outgoing {
+            Ok(Outgoing {
                 to: Recipient::Party(peer_pid),
                 msg: AuxInfoMsg::Round3(MsgRound3 {
                     pi_mod: pi_mod_proof.clone(),
                     pi_fac: pi_fac_proof,
                 }),
-            });
-        }
+            })
+        })?;
 
         Ok(Round3State {
             my_id: self.my_id,
@@ -435,8 +465,6 @@ impl Round3State {
 
     /// Verify all π_mod and π_fac proofs, then produce the final `AuxInfo`.
     pub fn finish(self) -> tecdsa_core::Result<AuxInfo> {
-        let mut rng = tecdsa_core::Csprng::new();
-
         // Use own ring-Pedersen params as verifier for π_fac.
         let own_aux = pedersen_to_aux(&self.pedersen_params);
         let security_params = pi_fac::SecurityParams {
@@ -444,21 +472,34 @@ impl Round3State {
             epsilon: self.epsilon,
         };
 
-        // 1. Verify all π_mod and π_fac proofs.
-        for (&pid, round3) in &self.round3_msgs {
+        // 1. Verify all π_mod and π_fac proofs. Independent across peers, and
+        //    π_mod is itself 80 independent point checks.
+        let peers: Vec<PartyId> = self.round3_msgs.keys().copied().collect();
+        tecdsa_bigint::par::try_for_each(&peers, |&pid| {
+            let round3 = &self.round3_msgs[&pid];
             let round2 = self
                 .round2_msgs
                 .get(&pid)
                 .ok_or_else(|| TecdsaError::Other(format!("missing round2 from {pid}")))?;
 
-            // Verify π_mod (Paillier-Blum modulus proof).
-            let peer_n_rug =
-                Integer::from_digits(&round2.paillier_ek.n().to_bytes_msf(), Order::Msf);
-            if !round3.pi_mod.verify_modulus(&peer_n_rug, &mut rng) {
-                return Err(TecdsaError::InvalidProof(format!(
-                    "party {pid} pi_mod verification failed"
-                )));
-            }
+            // Verify π_mod (Paillier-Blum modulus proof). The tag binds the
+            // proof to the prover's party id, so a peer cannot replay another
+            // party's proof for a modulus it does not know the factors of.
+            let pi_mod_tag = AuxInfoProofTag {
+                context: "pi_mod",
+                prover: pid.0,
+            };
+            pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
+                &pi_mod_tag,
+                pi_mod::Data {
+                    n: round2.paillier_ek.n(),
+                },
+                &round3.pi_mod,
+                &mut tecdsa_core::Csprng::new(),
+            )
+            .map_err(|e| {
+                TecdsaError::InvalidProof(format!("party {pid} pi_mod verification failed: {e}"))
+            })?;
 
             // Verify π_fac (no-small-factor proof).
             let pi_fac_tag = AuxInfoProofTag {
@@ -466,9 +507,21 @@ impl Round3State {
                 prover: pid.0,
             };
             let peer_n = round2.paillier_ek.n();
-            let peer_n_root = peer_n
-                .sqrt_ref()
-                .expect("sqrt of peer Paillier modulus must succeed");
+            // `peer_n` comes from a wire message sent by another (possibly
+            // malicious) party, so unlike the `own_n` case above this really
+            // is attacker-controlled. Old behaviour: the newtype's
+            // `sqrt_ref` returned `None` for negative input, which the
+            // `.expect(...)` below then turned into a panic — i.e. a
+            // negative peer modulus was already fatal, just via `Option`
+            // rather than a native rug panic. We reproduce that `None` path
+            // explicitly so the externally observable behaviour (panic with
+            // this message on a negative `peer_n`) is unchanged.
+            let peer_n_root = if peer_n.cmp0() == std::cmp::Ordering::Less {
+                None
+            } else {
+                Some(Integer::from(peer_n.sqrt_ref()))
+            }
+            .expect("sqrt of peer Paillier modulus must succeed");
 
             pi_fac::non_interactive::verify::<sha2::Sha256>(
                 &pi_fac_tag,
@@ -481,7 +534,8 @@ impl Round3State {
                 &round3.pi_fac,
             )
             .map_err(|e| TecdsaError::InvalidProof(format!("party {pid} pi_fac: {e}")))?;
-        }
+            Ok(())
+        })?;
 
         // 2. Collect all parties' EncryptionKeys and PedersenModParams, ordered by party id.
         let n = self.parties.len();
@@ -511,5 +565,61 @@ impl Round3State {
             paillier_eks,
             pedersen_params: pedersen_params_vec,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A π_mod proof is bound to the prover's party id, so party `j` cannot
+    /// republish party `i`'s modulus and reuse `i`'s proof. Before the proof
+    /// was migrated onto `tecdsa_paillier::zk::pi_mod` its challenges were
+    /// derived from `(N, w)` alone, making exactly this replay possible.
+    #[test]
+    fn pi_mod_proof_is_bound_to_prover_id() {
+        let mut rng = tecdsa_core::Csprng::new();
+        let p = Integer::generate_safe_prime(&mut rng, 256);
+        let q = Integer::generate_safe_prime(&mut rng, 256);
+        let dk = DecryptionKey::from_primes(p, q).expect("valid paillier key");
+
+        let tag_of = |prover| AuxInfoProofTag {
+            context: "pi_mod",
+            prover,
+        };
+        let data = || pi_mod::Data { n: dk.n() };
+
+        let proof = pi_mod::non_interactive::prove::<PI_MOD_REPS, sha2::Sha256>(
+            &tag_of(1),
+            data(),
+            pi_mod::PrivateData {
+                p: dk.p(),
+                q: dk.q(),
+            },
+            &mut rng,
+        )
+        .expect("prove must succeed for a valid Blum modulus");
+
+        assert!(
+            pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
+                &tag_of(1),
+                data(),
+                &proof,
+                &mut rng,
+            )
+            .is_ok(),
+            "honest proof must verify under the prover's own tag"
+        );
+
+        assert!(
+            pi_mod::non_interactive::verify::<PI_MOD_REPS, sha2::Sha256>(
+                &tag_of(2),
+                data(),
+                &proof,
+                &mut rng,
+            )
+            .is_err(),
+            "proof must not verify under a different prover id"
+        );
     }
 }

@@ -45,13 +45,14 @@ use elliptic_curve::{
 };
 use rand_core::CryptoRngCore;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::MtA;
 
 use crate::{
     error::Xal21Error,
     key_share::{Xal21Party1KeyShare, Xal21Party2KeyShare},
-    keygen::{curve_order, int_to_scalar},
+    keygen::int_to_scalar,
 };
 
 /// Default MtA backend: Paillier-based MtA with Alice/Bob range proofs.
@@ -239,7 +240,7 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let k2_bytes = crate::keygen::scalar_to_bytes::<C>(k2);
+    let k2_bytes = k2.to_bytes_vec();
     let q_bytes = q_bytes::<C>();
 
     M::sender_encrypt(setup, &k2_bytes, &q_bytes, rng)
@@ -266,7 +267,7 @@ where
     let x1_prime = C::random_scalar(rng);
     let Q1_prime = C::generator() * x1_prime;
 
-    let x1p_bytes = crate::keygen::scalar_to_bytes::<C>(&x1_prime);
+    let x1p_bytes = x1_prime.to_bytes_vec();
     let q_bytes = q_bytes::<C>();
 
     // MtA receiver step: homomorphically compute on the sender's ciphertext
@@ -276,7 +277,7 @@ where
         })?;
 
     // t_A = alpha (the receiver's MtA output share)
-    let alpha_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&alpha_bytes);
+    let alpha_int = rug::Integer::from_bytes_msf(&alpha_bytes);
     let t_A = int_to_scalar::<C>(&alpha_int);
 
     // Sample r_1 and compute cc = t_A + x'_1 * r_1 - x_1 mod q
@@ -319,7 +320,7 @@ where
     let beta_bytes = M::sender_decrypt(setup, sender_state, &q_bytes, &p1_msg.mta_msg)
         .map_err(|e| Xal21Error::Paillier(format!("MtA sender_decrypt failed: {e}")))?;
 
-    let beta_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&beta_bytes);
+    let beta_int = rug::Integer::from_bytes_msf(&beta_bytes);
     let t_B = int_to_scalar::<C>(&beta_int);
 
     // 2. Verify consistency check:
@@ -581,6 +582,6 @@ where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
-    let q_int = curve_order::<C>();
+    let q_int = C::order();
     q_int.to_bytes_msf()
 }

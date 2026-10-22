@@ -18,6 +18,7 @@ tecdsa-curve.workspace = true
 tecdsa-protocol.workspace = true
 tecdsa-vss.workspace = true
 tecdsa-class-group.workspace = true
+tecdsa-bigint.workspace = true
 tecdsa-evrf.workspace = true
 k256.workspace = true
 elliptic-curve.workspace = true

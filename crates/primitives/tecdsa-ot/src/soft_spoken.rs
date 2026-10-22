@@ -166,15 +166,6 @@ where
     <C::Scalar as Reduce<FieldBytes<C>>>::reduce(&field_bytes)
 }
 
-/// Convert a scalar to its big-endian byte representation.
-pub(crate) fn scalar_to_bytes<C: CurveArithmetic>(scalar: &C::Scalar) -> Vec<u8>
-where
-    C::Scalar: PrimeField<Repr = FieldBytes<C>>,
-{
-    let fb: FieldBytes<C> = (*scalar).into();
-    AsRef::<[u8]>::as_ref(&fb).to_vec()
-}
-
 /// Sample a uniform random scalar for curve `C` using `rand_core 0.6` RNG.
 ///
 /// Uses rejection sampling: fills `FieldBytes`, tries `from_repr`, and

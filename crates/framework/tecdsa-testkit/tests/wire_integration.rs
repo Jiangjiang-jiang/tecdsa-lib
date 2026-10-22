@@ -11,6 +11,7 @@
 
 #![allow(non_snake_case)]
 
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{PartyId, PartyInfo, SessionConfig, SessionId};
 use tecdsa_testkit::WireOrchestrator;
 
@@ -106,9 +107,10 @@ fn wire_dkls23_keygen() {
 
 #[test]
 fn wire_gg18_keygen() {
+    use rug::Integer;
     use tecdsa_core::Csprng;
     use tecdsa_gg18::keygen::{generate_n_tilde, Gg18KeygenMachine, PaillierPrecomputed};
-    use tecdsa_paillier::{backend::Integer, DecryptionKey};
+    use tecdsa_paillier::DecryptionKey;
 
     let n = 3u16;
     let t = 2u16;
@@ -148,8 +150,9 @@ fn wire_gg18_keygen() {
 #[test]
 #[ignore = "slow Paillier keygen"]
 fn wire_ggn16_keygen() {
+    use rug::Integer;
     use tecdsa_ggn16::keygen::Ggn16KeygenMachine;
-    use tecdsa_paillier::{backend::Integer, threshold::trusted_dealer_setup};
+    use tecdsa_paillier::threshold::trusted_dealer_setup;
 
     let n = 3u16;
     let t = 2u16; // reconstruction threshold: 2-of-3
@@ -161,15 +164,16 @@ fn wire_ggn16_keygen() {
     // Ring-Pedersen parameters.
     let p = Integer::generate_safe_prime(&mut rng, 256);
     let q = Integer::generate_safe_prime(&mut rng, 256);
-    let n_tilde = &p * &q;
+    let n_tilde = p * q;
     let h1 = Integer::sample_in_mult_group_of(&mut rng, &n_tilde);
-    let xhi_bound = Integer::one() << 256u32;
-    let xhi = xhi_bound.random_below_ref(&mut rng);
-    let h1_xhi = h1
-        .pow_mod_ref(&xhi, &n_tilde)
-        .expect("pow_mod must succeed");
+    let xhi_bound = Integer::two_pow(256);
+    let xhi = xhi_bound.sample_below_ref(&mut rng);
+    let h1_xhi = Integer::from(
+        h1.pow_mod_ref(&xhi, &n_tilde)
+            .expect("pow_mod must succeed"),
+    );
     let h2 = h1_xhi
-        .invert_ref(&n_tilde)
+        .invert(&n_tilde)
         .expect("h1^xhi must be invertible mod N_tilde");
 
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
@@ -360,7 +364,7 @@ fn wire_wmc24_keygen() {
 #[test]
 #[ignore = "slow crypto operations (class group)"]
 fn wire_llz25_keygen() {
-    use tecdsa_class_group::cl::ClSetup;
+    use tecdsa_class_group::cl::{parse_int_auto, ClSetup};
     use tecdsa_llz25::keygen::Llz25KeygenMachine;
 
     let n = 3u16;
@@ -371,10 +375,11 @@ fn wire_llz25_keygen() {
     // LLZ25 interactive keygen needs a CL public key (pk_crs).
     // ClHsmqkPublicKey does not impl Clone, so each party creates its own
     // deterministic setup with the same seed and generates the same pk_crs.
+    let seed_int = parse_int_auto(seed).expect("parse seed");
     let machines: Vec<(PartyId, Llz25KeygenMachine)> = all_parties
         .iter()
         .map(|&pid| {
-            let mut setup = ClSetup::new_secp256k1(seed).expect("CL setup");
+            let mut setup = ClSetup::new_secp256k1(&seed_int).expect("CL setup");
             let (_sk, pk_crs) = setup.keygen().expect("CRS keygen");
             let machine = Llz25KeygenMachine::new(pid, all_parties.clone(), t, seed, false, pk_crs)
                 .expect("LLZ25 keygen machine construction");
@@ -543,12 +548,12 @@ fn wire_abc24_keygen() {
 }
 
 // ===========================================================================
-// 17. KU25 -- honest majority, PRSS, key-independent batch presignatures
+// 17. KU24 -- honest majority, PRSS, key-independent batch presignatures
 // ===========================================================================
 
 #[test]
-fn wire_ku25_setup_and_keygen() {
-    use tecdsa_ku25::{keygen::Ku25KeygenMachine, setup::Ku25SetupMachine};
+fn wire_ku24_setup_and_keygen() {
+    use tecdsa_ku24::{keygen::Ku24KeygenMachine, setup::Ku24SetupMachine};
 
     // n = 2t + 1 with t = 2, i.e. reconstruction threshold 3-of-5.
     let n = 5u16;
@@ -556,18 +561,18 @@ fn wire_ku25_setup_and_keygen() {
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
     // Phase 1: the one-time, key-independent PRSS setup (point-to-point only).
-    let setup_machines: Vec<(PartyId, Ku25SetupMachine<k256::Secp256k1>)> = all_parties
+    let setup_machines: Vec<(PartyId, Ku24SetupMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .map(|&pid| {
             (
                 pid,
-                Ku25SetupMachine::new(pid, all_parties.clone(), t)
-                    .expect("KU25 PRSS setup construction"),
+                Ku24SetupMachine::new(pid, all_parties.clone(), t)
+                    .expect("KU24 PRSS setup construction"),
             )
         })
         .collect();
     let setup_results = WireOrchestrator::new(setup_machines, 10).run();
-    assert_all_ok(&setup_results, "KU25 setup");
+    assert_all_ok(&setup_results, "KU24 setup");
 
     let prss: Vec<_> = setup_results
         .outputs
@@ -576,41 +581,41 @@ fn wire_ku25_setup_and_keygen() {
         .collect();
 
     // Phase 2: one-round DKG on top of the PRSS material.
-    let keygen_machines: Vec<(PartyId, Ku25KeygenMachine<k256::Secp256k1>)> = all_parties
+    let keygen_machines: Vec<(PartyId, Ku24KeygenMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .zip(&prss)
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
-                    .expect("KU25 keygen construction"),
+                Ku24KeygenMachine::new(pid, all_parties.clone(), keys, &[0u8; 32])
+                    .expect("KU24 keygen construction"),
             )
         })
         .collect();
     let results = WireOrchestrator::new(keygen_machines, 10).run();
-    assert_all_ok(&results, "KU25 keygen");
+    assert_all_ok(&results, "KU24 keygen");
 }
 
 #[test]
-fn wire_ku25_presign() {
-    use tecdsa_ku25::{presign::Ku25PresignMachine, setup::Ku25SetupMachine};
+fn wire_ku24_presign() {
+    use tecdsa_ku24::{presign::Ku24PresignMachine, setup::Ku24SetupMachine};
 
     let n = 5u16;
     let t = 3u16;
     let all_parties: Vec<PartyId> = (1..=n).map(PartyId).collect();
 
-    let setup_machines: Vec<(PartyId, Ku25SetupMachine<k256::Secp256k1>)> = all_parties
+    let setup_machines: Vec<(PartyId, Ku24SetupMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .map(|&pid| {
             (
                 pid,
-                Ku25SetupMachine::new(pid, all_parties.clone(), t)
-                    .expect("KU25 PRSS setup construction"),
+                Ku24SetupMachine::new(pid, all_parties.clone(), t)
+                    .expect("KU24 PRSS setup construction"),
             )
         })
         .collect();
     let setup_results = WireOrchestrator::new(setup_machines, 10).run();
-    assert_all_ok(&setup_results, "KU25 setup");
+    assert_all_ok(&setup_results, "KU24 setup");
     let prss: Vec<_> = setup_results
         .outputs
         .into_iter()
@@ -619,17 +624,17 @@ fn wire_ku25_presign() {
 
     // A batch of four presignatures, generated with no key in sight.
     let session = [1u8; 32];
-    let machines: Vec<(PartyId, Ku25PresignMachine<k256::Secp256k1>)> = all_parties
+    let machines: Vec<(PartyId, Ku24PresignMachine<k256::Secp256k1>)> = all_parties
         .iter()
         .zip(&prss)
         .map(|(&pid, keys)| {
             (
                 pid,
-                Ku25PresignMachine::new_with_session(pid, all_parties.clone(), keys, 4, &session)
-                    .expect("KU25 presign construction"),
+                Ku24PresignMachine::new_with_session(pid, all_parties.clone(), keys, 4, &session)
+                    .expect("KU24 presign construction"),
             )
         })
         .collect();
     let results = WireOrchestrator::new(machines, 10).run();
-    assert_all_ok(&results, "KU25 presign");
+    assert_all_ok(&results, "KU24 presign");
 }

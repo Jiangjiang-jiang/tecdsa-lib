@@ -29,11 +29,12 @@ use elliptic_curve::{
     group::GroupEncoding, sec1::ModulusSize, FieldBytes, FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
 use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
 use tecdsa_paillier::{
-    backend::Integer,
     zk::{correct_key_ni::NICorrectKeyProof, pdl},
+    BigIntExt,
 };
 
 use crate::{
@@ -83,7 +84,7 @@ where
     C::Scalar: PrimeField<Repr = FieldBytes<C>>,
 {
     // Generate Paillier keys (one-time setup; see the precomputed variant).
-    let dk = tecdsa_paillier::keygen(rng).expect("Paillier keygen failed");
+    let dk = tecdsa_paillier::DecryptionKey::generate(rng).expect("Paillier keygen failed");
     server_keygen_step1_with_dk::<C>(dk, rng)
 }
 
@@ -219,6 +220,7 @@ where
     /// Commitment opening nonce for B.
     pub nonce: [u8; 32],
     /// `E = enc_N(x'_2; rho)` -- Paillier encryption of server's share.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub enc_x2: tecdsa_paillier::Ciphertext,
 }
 

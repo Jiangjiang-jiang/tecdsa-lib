@@ -32,6 +32,10 @@ pub mod types;
 use std::collections::BTreeMap;
 
 use elliptic_curve::{group::GroupEncoding, PrimeField};
+use rounds::{
+    DrgPresignR1Bcast, DrgPresignR1P2P, DrgPresignR1State, DrgPresignR2Bcast, DrgPresignR2State,
+    DrgPresignR3Data, DrgPresignR4State,
+};
 use serde::{Deserialize, Serialize};
 use tecdsa_class_group::{
     cl::{ClCiphertext, ClSetup, Qfi},
@@ -39,16 +43,13 @@ use tecdsa_class_group::{
     zk::r_enc_pc::REncPcProof,
 };
 use tecdsa_core::TecdsaError;
+use tecdsa_curve::PointExt;
 use tecdsa_protocol::{
     state_machine::Outgoing, AbortReason, IaReport, PartyId, Recipient, StateMachine,
 };
 pub use types::Wmy23Presignature;
 
 use crate::key_share::Wmy23KeyShare;
-use rounds::{
-    DrgPresignR1Bcast, DrgPresignR1P2P, DrgPresignR1State, DrgPresignR2Bcast, DrgPresignR2State,
-    DrgPresignR3Data, DrgPresignR4State,
-};
 
 // ---------------------------------------------------------------------------
 // Message types
@@ -176,9 +177,7 @@ fn scalar_from_bytes(bytes: &[u8], label: &str) -> Result<k256::Scalar, String> 
 
 /// Deserialize a compressed EC point from bytes.
 fn point_from_bytes(bytes: &[u8], label: &str) -> Result<k256::ProjectivePoint, String> {
-    let repr = k256::CompressedPoint::try_from(bytes)
-        .map_err(|e| format!("invalid point bytes ({label}): {e}"))?;
-    Option::from(k256::ProjectivePoint::from_bytes(&repr))
+    k256::ProjectivePoint::from_bytes_slice(bytes)
         .ok_or_else(|| format!("invalid EC point: {label}"))
 }
 

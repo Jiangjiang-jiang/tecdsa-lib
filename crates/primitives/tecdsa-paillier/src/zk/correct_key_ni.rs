@@ -18,9 +18,12 @@
 //! The `domain` parameter provides protocol-specific domain separation for the
 //! Fiat-Shamir challenges (e.g. `b"lin17-correct-key-challenge"`).
 
-use fast_paillier::{backend::Integer, DecryptionKey, EncryptionKey};
+use rug::{Complete, Integer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tecdsa_bigint::BigIntExt;
+
+use crate::scheme::{DecryptionKey, EncryptionKey};
 
 /// Number of repetitions for the correct-key proof.
 /// Each repetition halves the soundness error, so 80 gives 2^{-80}.
@@ -31,6 +34,7 @@ const SECURITY_PARAM: usize = 80;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NICorrectKeyProof {
     /// N-th root responses: `x_i` such that `x_i^N = y_i mod N`.
+    #[serde(with = "tecdsa_bigint::int_wire::vec")]
     pub responses: Vec<Integer>,
 }
 
@@ -45,21 +49,20 @@ impl NICorrectKeyProof {
     #[must_use]
     pub fn prove(dk: &DecryptionKey, domain: &[u8]) -> Self {
         let n = dk.n();
-        let phi_n = (dk.p() - 1u8) * (dk.q() - 1u8);
+        let phi_n = (dk.p() - 1u8).complete() * (dk.q() - 1u8).complete();
 
         // Compute N^{-1} mod phi(N). This exists iff gcd(N, phi(N)) = 1,
         // which holds when N = p*q with p, q safe primes.
         let n_inv_phi = n
             .invert_ref(&phi_n)
-            .expect("gcd(N, phi(N)) must be 1 for safe primes");
+            .expect("gcd(N, phi(N)) must be 1 for safe primes")
+            .complete();
 
         let mut responses = Vec::with_capacity(SECURITY_PARAM);
         for i in 0..SECURITY_PARAM {
             let y_i = derive_challenge(n, domain, i);
             // x_i = y_i^{N^{-1} mod phi(N)} mod N
-            let x_i = y_i
-                .pow_mod_ref(&n_inv_phi, n)
-                .expect("pow_mod must succeed");
+            let x_i = y_i.pow_mod(&n_inv_phi, n).expect("pow_mod must succeed");
             responses.push(x_i);
         }
 
@@ -85,6 +88,7 @@ impl NICorrectKeyProof {
             let Some(lhs) = x_i.pow_mod_ref(n, n) else {
                 return false;
             };
+            let lhs = lhs.complete();
             if lhs != y_i {
                 return false;
             }
@@ -120,10 +124,10 @@ fn derive_challenge(n: &Integer, domain: &[u8], index: usize) -> Integer {
         }
 
         let candidate = Integer::from_bytes_msf(&hash_bytes[..n_byte_len]);
-        let reduced = candidate.modulo_ref(n);
+        let reduced = candidate.modulo(n);
 
         // Ensure we get a value in Z*_N (nonzero and coprime to N)
-        if reduced.cmp0().is_gt() && reduced.gcd_ref(n).is_one() {
+        if reduced.in_mult_group_of(n) {
             return reduced;
         }
         attempt += 1;
@@ -137,7 +141,7 @@ mod tests {
     #[test]
     fn correct_key_proof_valid() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let proof = NICorrectKeyProof::prove(&dk, b"test-domain");
@@ -147,8 +151,8 @@ mod tests {
     #[test]
     fn correct_key_proof_wrong_key() {
         let mut rng = rand_core::OsRng;
-        let dk1 = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
-        let dk2 = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk1 = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk2 = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek2 = dk2.encryption_key().clone();
 
         // Proof generated with dk1 should NOT verify with ek2
@@ -163,7 +167,7 @@ mod tests {
     #[ignore = "redundant boundary test"]
     fn correct_key_proof_deterministic() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
 
         let proof1 = NICorrectKeyProof::prove(&dk, b"test-domain");
         let proof2 = NICorrectKeyProof::prove(&dk, b"test-domain");
@@ -179,7 +183,7 @@ mod tests {
     #[ignore = "redundant boundary test"]
     fn correct_key_proof_truncated_fails() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let mut proof = NICorrectKeyProof::prove(&dk, b"test-domain");
@@ -194,7 +198,7 @@ mod tests {
     #[ignore = "redundant boundary test"]
     fn correct_key_proof_wrong_domain_fails() {
         let mut rng = rand_core::OsRng;
-        let dk = fast_paillier::DecryptionKey::generate(&mut rng).expect("keygen");
+        let dk = crate::scheme::DecryptionKey::generate(&mut rng).expect("keygen");
         let ek = dk.encryption_key().clone();
 
         let proof = NICorrectKeyProof::prove(&dk, b"domain-a");

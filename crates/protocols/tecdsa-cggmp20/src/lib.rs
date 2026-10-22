@@ -25,10 +25,9 @@ use tecdsa_protocol::Protocol;
 /// Concrete protocol descriptor for the CGGMP20 (revised, 2024) threshold
 /// ECDSA scheme instantiated over secp256k1.
 ///
-/// CGGMP20 is NOT generic over `C: TecdsaCurve` because the presign and
-/// sign state machines require the `BridgeCurve` bound for interop with
-/// `paillier-zk` (which uses `generic_ec` types).  `BridgeCurve` is
-/// currently only implemented for `k256::Secp256k1`.
+/// The `Protocol` trait requires a single concrete `Curve`, so `Cggmp20` is
+/// pinned to `k256::Secp256k1` here even though the underlying presign and
+/// sign state machines are generic over any `C: TecdsaCurve`.
 pub struct Cggmp20;
 
 impl Protocol for Cggmp20 {

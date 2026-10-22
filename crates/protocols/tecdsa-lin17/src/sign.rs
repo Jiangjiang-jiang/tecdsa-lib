@@ -25,8 +25,10 @@ use elliptic_curve::{
     FieldBytesSize, PrimeField,
 };
 use rand_core::CryptoRngCore;
+use rug::Integer;
 use tecdsa_commit::HashCommitment;
-use tecdsa_curve::{zk::dlog::DlogProof, TecdsaCurve};
+use tecdsa_curve::{zk::dlog::DlogProof, ScalarExt, TecdsaCurve};
+use tecdsa_paillier::BigIntExt;
 use tecdsa_protocol::{low_s_normalize, verify_ecdsa, DataToSign, Signature};
 
 use crate::{
@@ -77,6 +79,7 @@ where
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Party2Round4Msg {
     /// `c_3 = Enc(rho*q + k_2^{-1}*m') (+) (c_key ^ (k_2^{-1} * r * x_2))`.
+    #[cfg_attr(feature = "serde", serde(with = "tecdsa_bigint::int_wire"))]
     pub c3: tecdsa_paillier::Ciphertext,
 }
 
@@ -201,7 +204,7 @@ where
 
     // Convert s' from big integer to scalar (reduce mod q)
     let s_prime_bytes = s_prime_int.to_bytes_msf();
-    let s_prime_scalar = bytes_to_scalar::<C>(&s_prime_bytes);
+    let s_prime_scalar = C::scalar_from_bytes(&s_prime_bytes);
 
     // Compute s'' = k_1^{-1} * s' mod q
     let k1_inv = state
@@ -322,30 +325,24 @@ where
 
     // Sample rho from Z_{q^2} for masking
     // q is the curve order. We need q^2 as the sampling range.
-    let q_bytes = scalar_to_bytes::<C>(&(-C::Scalar::ONE));
-    // q = -(-1) in the field, but we need the actual order.
-    // For secp256k1, the order is a known constant.
-    // We extract q from the scalar field: q = order of the group
-    // A scalar of value -1 has repr = q - 1, so q = repr(-1) + 1
-    let q_minus_1_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&q_bytes);
-    let q_int = &q_minus_1_int + 1u8;
-    let q_squared = &q_int * &q_int;
+    let q_int = C::order();
+    let q_squared = Integer::from(&q_int * &q_int);
 
     // rho <- Z_{q^2}: sample a random value in [0, q^2)
-    let rho = q_squared.random_below_ref(rng);
+    let rho = q_squared.sample_below_ref(rng);
 
     // Compute: rho * q + k_2^{-1} * m' mod q
-    let k2_inv_bytes = scalar_to_bytes::<C>(&k2_inv);
-    let k2_inv_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&k2_inv_bytes);
+    let k2_inv_bytes = k2_inv.to_bytes_vec();
+    let k2_inv_int = Integer::from_bytes_msf(&k2_inv_bytes);
 
-    let m_prime_bytes = scalar_to_bytes::<C>(&m_prime);
-    let m_prime_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&m_prime_bytes);
+    let m_prime_bytes = m_prime.to_bytes_vec();
+    let m_prime_int = Integer::from_bytes_msf(&m_prime_bytes);
 
     // k_2^{-1} * m' mod q
-    let k2inv_m = (&k2_inv_int * &m_prime_int) % &q_int;
+    let k2inv_m = Integer::from(&k2_inv_int * &m_prime_int) % &q_int;
 
     // partial_sig = rho * q + (k_2^{-1} * m' mod q)
-    let partial_sig = &rho * &q_int + &k2inv_m;
+    let partial_sig = rho * &q_int + &k2inv_m;
 
     // Step 5: Encrypt partial_sig: c_1 = Enc(partial_sig)
     let (c1, _nonce) = key_share
@@ -354,13 +351,14 @@ where
         .map_err(|e| Lin17Error::Paillier(format!("encryption of partial_sig failed: {e}")))?;
 
     // Step 6: Compute v = k_2^{-1} * r * x_2 mod q
-    let r_bytes = scalar_to_bytes::<C>(&r);
-    let r_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&r_bytes);
+    let r_bytes = r.to_bytes_vec();
+    let r_int = Integer::from_bytes_msf(&r_bytes);
 
-    let x2_bytes = scalar_to_bytes::<C>(&key_share.secret_share);
-    let x2_int = tecdsa_paillier::backend::Integer::from_bytes_msf(&x2_bytes);
+    let x2_bytes = key_share.secret_share.to_bytes_vec();
+    let x2_int = Integer::from_bytes_msf(&x2_bytes);
 
-    let v = (&k2_inv_int * ((&r_int * &x2_int) % &q_int)) % &q_int;
+    let r_x2_mod_q = (r_int * x2_int) % &q_int;
+    let v = (k2_inv_int * r_x2_mod_q) % q_int;
 
     // Step 7: c_2 = c_key ^ v (Paillier homomorphic scalar multiplication)
     let c2 = key_share
@@ -380,8 +378,6 @@ where
 // ---------------------------------------------------------------------------
 // Utility functions (delegating to tecdsa_curve::conv)
 // ---------------------------------------------------------------------------
-
-use tecdsa_curve::conv::{bytes_to_scalar, scalar_to_bytes};
 
 // ---------------------------------------------------------------------------
 // End-to-end signing convenience function
